@@ -79,7 +79,8 @@ Before a retry it waits as long as `Retry-After` says (seconds or a date, at mos
 1, 2, 4 ... s up to 30 s.
 
 400/401/403 drop the batch with one warning. A full queue drops new events and counts them. An
-`atexit` flush is bounded to 2 s.
+`atexit` flush is bounded to 2 s. When it or `shutdown()` runs out of time, it warns once, with
+the number of events not sent, and drops them.
 
 ```python
 coding_sh.flush(timeout=5)     # e.g. at the end of a script, a job or a serverless handler
@@ -114,7 +115,9 @@ env = otel_env()                    # OTEL_EXPORTER_OTLP_* vars for a subprocess
 
 `pip install 'coding-sh[otel]'`. `configure()` uses the standard `OTEL_EXPORTER_OTLP_*` env vars
 when set, else `CODING_SH_URL` / `CODING_SH_INGEST_KEY`, and stamps `gen_ai.conversation.id` from
-the current `with_session` / `trace(session_id=...)`.
+the current `with_session` / `trace(session_id=...)`. Inside `trace()`, a span that would start a
+trace of its own gets the open `trace()` or `span()` as parent instead, so each model call is a step
+of the trace's one turn, not a turn of its own.
 
 ## Tests
 

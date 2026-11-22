@@ -1125,7 +1125,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/run.ts",
-      "max": 2,
+      "max": 1,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -1425,7 +1425,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/eval/report.ts",
-      "max": 6,
+      "max": 4,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -2097,7 +2097,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/server/config.ts",
-      "max": 4,
+      "max": 2,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

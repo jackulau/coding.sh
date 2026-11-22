@@ -91,6 +91,15 @@ describe("latest", () => {
     assert.equal((await resolveSession(ctx, "latest")).id, "new");
   });
 
+  test("skips a session an eval, compare or experiment trial made, unless there is nothing else", async () => {
+    const { index, ctx } = await open();
+    await index.upsertSession(session("trial-only", now - 9000, { runId: "run_01" }));
+    assert.equal((await resolveSession(ctx, "latest")).id, "trial-only");
+    await index.upsertSession(session("mine", now - 5000));
+    await index.upsertSession(session("trial", now, { runId: "run_02" }));
+    assert.equal((await resolveSession(ctx, "latest")).id, "mine");
+  });
+
   test("an agent run under `coding.sh run` resolves to its wrapper session", async () => {
     const { index, ctx } = await open();
     await index.upsertSession(session("unrelated", now - 3600e3));

@@ -573,7 +573,10 @@ const openai = observe(new OpenAI());          // or new Anthropic(); unknown ob
   `experimental_telemetry: { isEnabled: true, tracer }`. AI SDK 7 dropped `tracer` and `metadata`
   from telemetry options, so there it goes in `telemetry: { integrations: new OpenTelemetry({ tracer }) }`
   from `@ai-sdk/otel`, and the session comes from `withSession`/`trace` or the `sessionId` option,
-  stamped as `session.id`. It encodes spans as OTLP JSON and sends them to `/v1/traces`, where the
+  stamped as `session.id`. Inside `trace()`, unless the call names another session, its outermost
+  span gets the trace's current span as parent and `coding_sh.sdk_parent=true`: the server maps the
+  call as a step of that turn, not a turn of its own, and an `invoke_agent` span there is not a
+  subagent. It encodes spans as OTLP JSON and sends them to `/v1/traces`, where the
   server's existing `ai.*`/`gen_ai.*` mapping handles them. The plain OTel exporter path also works (J3).
 - `flush(timeoutMs?)`, `shutdown()`, `stats() → {queued, sent, dropped, failed}`.
 - Optional env: `CODING_SH_SERVICE` (else `OTEL_SERVICE_NAME`), `CODING_SH_CAPTURE_MODE`,
@@ -605,7 +608,8 @@ It is stdlib only (Python ≥ 3.9): `urllib`, `threading`, `queue`, `gzip`, `ate
 - `coding_sh.trace(name, session_id=…)` and `coding_sh.span("tool", name)` work as both context
   managers and decorators.
 - `coding_sh.flush()`. A daemon sender thread does the sending, and an `atexit` flush is bounded
-  to 2 s.
+  to 2 s. When it or `shutdown()` runs out of time, it warns once, naming which flush gave up and
+  how many events were not sent, and drops them.
 - The transport, behavior and env vars match the TS SDK. The rest of the API mirrors it in
   snake_case: `init(url, key, service, capture, flush_interval_ms, max_batch, max_queue, disabled, debug)`,
   `with_session(id)` (context manager or decorator), `shutdown()`, `stats()`, `current_session_id()`.
@@ -616,7 +620,9 @@ It is stdlib only (Python ≥ 3.9): `urllib`, `threading`, `queue`, `gzip`, `ate
 - `coding_sh.otel` (extra `coding-sh[otel]`) is the OTel helper for §4.3: `configure()` installs a
   TracerProvider with the OTLP/HTTP exporter (standard `OTEL_EXPORTER_OTLP_*` env, else
   `CODING_SH_URL` + `CODING_SH_INGEST_KEY`) and stamps `gen_ai.conversation.id` from the current
-  session; `otel_env()` returns the `OTEL_*` vars for a subprocess.
+  session. Inside `trace()`, a span its tracers start with no OTel parent gets the trace's current
+  span as parent and `coding_sh.sdk_parent=true`, as `aiSdkTracer()` does, unless it names another
+  session. `otel_env()` returns the `OTEL_*` vars for a subprocess.
 - Tests use `unittest` against an in-process `http.server`. The golden test (`tests/test_golden.py`)
   runs the core's real OTLP receiver and `buildSession` through `tests/golden/harness.ts`.
 - `examples/production/python` also has `app_api.py`, an HTTP API with one trace per request.
@@ -691,8 +697,8 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
     - `CODING_SH_BLOB_URL=s3://coding-sh/blobs?endpoint=http://minio:9000`
     - `CODING_SH_INGEST_KEYS=demo:${INGEST_KEY_DEMO},flood:${INGEST_KEY_FLOOD}`
     - `CODING_SH_READ_KEYS=*:${READ_KEY}`
-  - It also mounts `deploy/compose/config.toml`, which pins `[pricing."mock-gpt"] input=1 output=2`
-    and `[pricing."mock-claude"] input=3 output=15`.
+  - It also mounts `deploy/compose/config.toml`, which pins `[prices."mock-gpt"] input=1 output=2`
+    and `[prices."mock-claude"] input=3 output=15`.
 - **`deploy/fly.toml`:** `internal_port = 4318`, an HTTP check on `/readyz`, and a `[mounts]` volume
   at `/data` for sqlite mode. Keys are made on first start and kept on the volume, or set with
   `fly secrets set`.

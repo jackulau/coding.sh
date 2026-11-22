@@ -106,7 +106,8 @@ Subagents
 ```
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
-session id, a unique prefix of 4 or more characters, or `latest`.
+session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
+with work in it; eval, compare and experiment trials count only when there is nothing else.
 
 A failed model call shows its status and error on its `llm` line, and the Model errors row counts
 them. When the source records model calls only (the proxy, or an SDK call outside `trace()`), the
@@ -166,7 +167,6 @@ viewer needs.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Theme.** The top bar's theme button overrides the system's light or dark setting.
 - **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
   control character or `& | < >` is shown but not copied: no quoting is safe for it in every
   shell.

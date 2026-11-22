@@ -3,7 +3,7 @@
 // (mcp/tools.ts) and `work show` resolve through findSessionRef, so a short id one of them prints
 // opens in the others.
 import { isEmptySession } from "./sessions.ts";
-import type { IndexStore, Session } from "./types.ts";
+import type { IndexStore, Session, SessionFilter } from "./types.ts";
 
 /** Shortest prefix that may stand for a session id (git's minimum for short hashes). */
 export const MIN_ID_PREFIX = 4;
@@ -234,13 +234,19 @@ export async function findSessionRef(index: IndexStore, ref: string): Promise<Se
  * The newest top-level session worth looking at: the newest one that is not empty (a hook with
  * no work behind it), else the newest of all. When that session is an agent run under
  * `coding.sh run` (no snapshots of its own), the wrapper session around it, the one `run`
- * printed, which holds the start and end snapshots `eval new` needs.
+ * printed, which holds the start and end snapshots `eval new` needs. Sessions with a run id
+ * (eval, compare and experiment trials carry one) count only when there are no others.
  */
 export async function latestSession(index: IndexStore): Promise<Session | undefined> {
+  return (await newestSession(index, { runId: null })) ?? (await newestSession(index, {}));
+}
+
+/** {@link latestSession} among the top-level sessions `filter` keeps. */
+async function newestSession(index: IndexStore, filter: SessionFilter): Promise<Session | undefined> {
   const page = 50;
   let newest: Session | undefined;
   for (let offset = 0; offset < page * 4; offset += page) {
-    const rows = await index.listSessions({ limit: page, offset, parentSessionId: null });
+    const rows = await index.listSessions({ ...filter, limit: page, offset, parentSessionId: null });
     newest ??= rows[0];
     const hit = rows.find((s) => !isEmptySession(s));
     if (hit) return (await wrapperAround(index, hit)) ?? hit;

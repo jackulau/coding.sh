@@ -152,7 +152,9 @@ describe("scoring", () => {
     const docx = a.prompts.find((p) => p.expectSkill === "docx")!;
     assert.deepEqual([docx.triggered, docx.expectHits, docx.correct, docx.others], [0, 1, 1, { docx: 1 }]);
     const text = formatTrigger(rep);
-    assert.match(text, /precision 71% {2}recall 71% {2}F1 0\.71 {2}accuracy 73%/);
+    assert.match(text, /precision 71% {2}recall 71% \(unweighted 75% \[\d+%–\d+%\]\) {2}F1 0\.71 {2}accuracy 73%/);
+    assert.equal(text.match(/recall/g)?.length, 1, "recall is on one line; the interval is over the unweighted runs");
+    assert.match(text, /^ {2}false triggers 25% \[\d+%–\d+%\] \(intervals: Wilson 95%, over 8 runs\)$/m);
     assert.match(text, /expected routes: docx 1\/1/);
     assert.match(text, /should_not false trigger 1\/1 {2}"Explain what a pdf is in one line"/);
   });

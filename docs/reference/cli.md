@@ -148,7 +148,7 @@ coding.sh doctor --conformance
 coding.sh doctor --conformance --agent codex --since 30d --json
 ```
 
-- A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. The exit code and ok in --json are 1 and false only when the spool or the store fails.
+- A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. An agent whose only problem is a stale hook file it still runs may be capturing; the last line counts it as N agents with stale hooks. The exit code and ok in --json are 1 and false only when the spool or the store fails.
 - --conformance runs each agent's backfill over the transcripts on this machine and checks the events: ids, timestamps, tool and subagent pairing, parent links, usage and prompts. It only reads: blobs are hashed and dropped, SQLite sources are read from a copy, and the coding.sh store is not opened. Exits 1 when any agent has a violation.
 
 ## `coding.sh status`
@@ -3544,12 +3544,12 @@ coding.sh harness tools pin
 A/B two harness bundles on eval tasks.
 
 ```text
-coding.sh compare <A> [b] [options]
+coding.sh compare [a] [b] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `a` | yes | Baseline bundle id or name (with --parity: a URL, or a command that prints the page) |
+| `a` | no | Baseline bundle id or name (with --experiment, omit both arms to take them from its runs; with --parity: a URL, or a command that prints the page) |
 | `b` | no | Candidate bundle id or name (omit with --without or --with; with --parity: the other URL or command) |
 
 | Option | Default | Description |

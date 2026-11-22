@@ -10,7 +10,7 @@ import { ADAPTERS, detectAll } from "../../adapters/index.ts";
 import { mcpTargetOf, readMcpEntry } from "../../adapters/_shared/mcp.ts";
 import type { Adapter, IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
-import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
+import { MCP_CONFIG_NAME, runningCli } from "../../mcp/launch.ts";
 import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
@@ -19,15 +19,17 @@ import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { spoolFile } from "../../spool/write.ts";
 import { maskStoreUrl, maskUrlsIn } from "../../core/store-url.ts";
+import { storeOwner } from "../../core/store-guard.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
 import { gatewayFlag, GATEWAYS, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
 import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
+import { version } from "../meta.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
-import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters } from "./init.ts";
+import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, runningStaleNotes, staleNotes } from "./init.ts";
 import { ingestStoppedText } from "./status.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
@@ -328,6 +330,16 @@ function hooksHere(a: { hooked: boolean; hookFiles: HookFile[] }): HookFile | tr
   return here ?? (a.hooked && !user.length ? true : undefined);
 }
 
+/** Hooked, and every blocker is a stale hook file: init writes the hooks again and clears them. */
+function staleHooks(a: DoctorAgent): boolean {
+  return a.capture === "hooks" && hooksHere(a) !== undefined && a.blockers.length > 0 && staleNotes(a.blockers).length === a.blockers.length;
+}
+
+/** Stale hooks, and the agent still runs one of them (it differs from what this CLI writes): it may be capturing. */
+function mayCapture(a: DoctorAgent): boolean {
+  return staleHooks(a) && runningStaleNotes(a.blockers).length > 0;
+}
+
 /** One agent as doctor reports it (the `agents` rows of --json). */
 interface DoctorAgent {
   id: string;
@@ -348,7 +360,7 @@ interface DoctorAgent {
   lastEventAt: string | null;
   lastEventAgeMs: number | null;
   notes: string[];
-  /** What keeps its hooks from firing (agent too old, hooks disabled, not trusted yet), hooked or not. */
+  /** What keeps its hooks from firing (agent too old, hooks disabled, not trusted yet, a stale hook file), hooked or not. */
   blockers: string[];
 }
 
@@ -377,7 +389,7 @@ function agentRow(a: DoctorAgent, hookInstalled: boolean, env: NodeJS.ProcessEnv
   const where = (f: HookFile) => `${f.file}${f.scope === "project" ? " (project)" : ""}`;
   const more = (n: number) => (n > 1 ? ` and ${n - 1} more` : "");
   const state =
-    here !== undefined && a.blockers.length ? "hooked but not firing"
+    here !== undefined && a.blockers.length ? (staleHooks(a) ? "hooked but stale" : "hooked but not firing")
     : here !== undefined ? `hooked${here === true ? "" : ` in ${where(here)}${more(a.hookFiles.filter((f) => f.current).length)}`}${hookInstalled ? "" : ", but the hook it runs is missing"}`
     : elsewhere ? `hooks in ${where(elsewhere)} run ${elsewhere.hook}, not this home's hook`
     : recent ? "events arriving, hook not in user config" : "not hooked";
@@ -452,12 +464,20 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   // After an update the bin can lag the CLI (stale hook.mjs, cli-path naming an old install).
-  const health = hookBinHealth(env);
+  const self = runningCli();
+  const health = hookBinHealth(env, self);
   // The files the installed commands run: hook.sh outside Windows (it hands what it
   // does not handle to the hook.mjs beside it), hook.mjs on Windows.
   const hookGone = (process.platform === "win32" ? [p.hook] : [p.hookSh, p.hook]).find((f) => !existsSync(f));
-  const hookBin: { path: string; installed: boolean; missing?: string; stale: boolean } & typeof health = { path: p.hook, installed: hookGone === undefined, ...health, stale: hookGone === undefined && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
+  const hookBin: { path: string; installed: boolean; missing?: string; stale: boolean; owner?: string; ownerVersion?: string } & typeof health = { path: p.hook, installed: hookGone === undefined, ...health, stale: hookGone === undefined && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
   if (hookGone !== undefined) hookBin.missing = hookGone;
+  // bin/cli-path names another install that is still there: the hooks run it, and it owns the store.
+  // Refreshing the bin would hand them to this one without asking; upgrade-store asks first.
+  const owner = self !== undefined && hookGone === undefined ? storeOwner(p.root) : undefined;
+  if (owner && owner.cli !== self) {
+    hookBin.owner = owner.cli;
+    if (owner.version) hookBin.ownerVersion = owner.version;
+  }
   const home = resolve(userHome(env));
   const agents: DoctorAgent[] = [];
   for (const { adapter, result } of detected) {
@@ -534,6 +554,7 @@ export async function run(c: CommandContext): Promise<number> {
   // The CLI as the user's shell runs it (codingsh in PowerShell and cmd).
   const bin = nextStepBin(env);
   let notCapturing = 0;
+  let withStaleHooks = 0;
   for (const a of shown) {
     const r = agentRow(a, hookBin.installed, env);
     // The built-in wrapper is not something "installed": it is part of coding.sh.
@@ -545,19 +566,26 @@ export async function run(c: CommandContext): Promise<number> {
     const label = a.name.length >= LABEL_WIDTH ? a.name.replace(/\s*\(.*\)$/, "") : a.name;
     if (r.ok) out.row(label, parts.join(", "), "ok");
     else {
-      notCapturing++;
+      const maybe = mayCapture(a);
+      if (maybe) withStaleHooks++;
+      else notCapturing++;
       const hooks = a.capture === "hooks";
-      const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} is not capturing: ${r.state}` };
+      const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} ${maybe ? "may not be capturing" : "is not capturing"}: ${r.state}` };
       if (hooks && a.blockers.length) w.blockers = a.blockers;
-      if (hooks && hooksHere(a) === undefined) w.next = cliCommand(env, ["init", "--agent", a.id]);
+      if (hooks && (hooksHere(a) === undefined || staleHooks(a))) w.next = cliCommand(env, ["init", "--agent", a.id]);
       warn(label, parts.join(", "), w);
     }
     // Every blocker, hooked or not: each names what to change.
     for (const n of r.notes) out.note(n);
   }
-  if (!shown.length) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
+  // The built-in wrapper's row is always shown: it is not an agent doctor found.
+  if (!shown.some((a) => a.id !== "wrapper")) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
   if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run ${bin} init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: `${bin} init` });
-  else if (hookBin.stale) {
+  else if (hookBin.owner !== undefined) {
+    const named = `the coding.sh${hookBin.ownerVersion ? ` ${hookBin.ownerVersion}` : ""} at ${hookBin.owner}`;
+    const upgrade = cliCommand(env, ["upgrade-store"]);
+    warn("Hook", `hooks run ${named}, another install; run ${upgrade} to have them run this coding.sh ${version()} (it asks first)`, { check: "hook", message: `Hooks run ${named}, another install`, next: upgrade });
+  } else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
     warn("Hook", `${hookBin.path} is stale (${why}); run ${bin} update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: `${bin} update --refresh-bin` });
@@ -607,9 +635,15 @@ export async function run(c: CommandContext): Promise<number> {
   for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
   const unhooked = shown.filter((a) => a.capture === "hooks" && hooksHere(a) === undefined);
   if (unhooked.length) out.next("Capture the agents without hooks", cliCommand(env, ["init", ...unhooked.flatMap((a) => ["--agent", a.id])]));
+  const stale = shown.filter(staleHooks);
+  if (stale.length) out.next("Rewrite the stale hooks", cliCommand(env, ["init", ...stale.flatMap((a) => ["--agent", a.id])]));
   // `ok` and the exit code are about the spool and the store, so a script that checks them keeps
   // working; an agent that cannot capture is in `warnings` and on the last line.
   out.data({ ok: problems === 0, warnings, agents, hook: hookBin, mcp, spool, store, ...ingestStoppedField(stopped), receiver, proxy, gateway });
-  out.print(problems ? "problems found" : notCapturing ? `${plural(notCapturing, "agent")} not capturing` : "ok");
+  const counts: string[] = [];
+  if (notCapturing) counts.push(`${plural(notCapturing, "agent")} not capturing`);
+  // Stale hooks the agent still runs may capture, so those agents are counted apart.
+  if (withStaleHooks) counts.push(`${notCapturing ? withStaleHooks : plural(withStaleHooks, "agent")} with stale hooks`);
+  out.print(problems ? "problems found" : counts.join(", ") || "ok");
   return problems ? 1 : 0;
 }

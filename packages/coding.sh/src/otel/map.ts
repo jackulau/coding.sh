@@ -30,6 +30,10 @@
 //   A root span that is itself a model/tool call keeps its own events in slots 4/5 (and 3).
 //   A Vercel AI SDK loop that arrived before the ai.toolCall that runs it is mapped again as a
 //   subagent once the tool call arrives; Rehome.replace swaps its stored events.
+//   A span with coding_sh.sdk_parent = true has a coding.sh SDK trace() or step span as its
+//   parent, which the SDK sends as events, never as a span (see sdkParented). It is a step of
+//   that trace's turn: an agent span maps as "anything else", not as a subagent, and nothing
+//   waits for its parent.
 //
 // Session = trace, unless a span (or its trace, or its resource) carries a
 // conversation id (gen_ai.conversation.id, session.id, langfuse.session.id, ai.telemetry.metadata.sessionId);
@@ -472,6 +476,13 @@ function rpcError(a: Attrs): string | undefined {
   const code = str(a, "rpc.status_code", "rpc.response.status_code");
   return code && code !== "OK" && code !== "0" ? `rpc status ${code}` : undefined;
 }
+
+/**
+ * The coding.sh SDKs set coding_sh.sdk_parent on a span that would be a root inside trace()
+ * (aiSdkTracer() in TypeScript, coding_sh.otel in Python): its parent is the trace's root or step
+ * span, sent as native events.
+ */
+const sdkParented = (span: OtelSpan): boolean => !!span.parentSpanId && bool(span.attributes, "coding_sh.sdk_parent") === true;
 
 export function classifySpan(span: OtelSpan): SpanClass {
   const a = span.attributes;
@@ -1302,7 +1313,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     await llm(0);
   } else if (klass === "tool") {
     await tool(0, 1);
-  } else if (klass === "agent") {
+  } else if (klass === "agent" && !sdkParented(span)) {
     const child = childSessionId(traceId, spanId);
     const prompt = userText(inputMessages(a));
     const result = assistantText(outputMessages(a));
@@ -1489,7 +1500,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           if (loop) nestedLoops.add(sp);
           const klass = classifySpan(sp);
           const agentSpan = loop || klass === "agent";
-          const node: SpanNode = { subagent: !!sp.parentSpanId && agentSpan };
+          // Under an SDK trace() or step span: a step of that turn, and its parent never arrives as a span.
+          const sdk = sdkParented(sp);
+          const node: SpanNode = { subagent: !!sp.parentSpanId && agentSpan && !sdk };
           if (!sp.parentSpanId && agentSpan) node.turn = true;
           if (agentSpan) node.startMs = spanStartMs(sp);
           const aiTool = aiTools.has(`${sp.traceId}:${sp.spanId}`);
@@ -1505,7 +1518,7 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
             nestedLoops.add(h.span);
             late.push(h);
           }
-          if (sp.parentSpanId) {
+          if (sp.parentSpanId && !sdk) {
             orphans.push({ sp, resource: rs.resource.attributes, scope: ss.scope });
             // What a model call replied, so its agent span's result equal to it is not stored twice (see mapSpan).
             if (klass === "llm") {

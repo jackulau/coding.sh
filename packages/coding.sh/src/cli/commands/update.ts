@@ -6,17 +6,21 @@
 // After an install, the NEW CLI runs `update --refresh-bin` so the hook,
 // MCP launcher and cli-path in ~/.coding.sh/bin match the version just
 // installed (agents keep running those files, not the package).
+// --refresh-bin leaves the bin alone when another install that is still there
+// owns the store (bin/cli-path names it): moving the hooks to this one is
+// upgrade-store's job, which asks first (core/store-guard.ts).
 // Exit codes: 0 ok (updated, up to date, or reported), 1 check or install
 // failed, 130 interrupted.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../../core/paths.ts";
 import { execFile, spawn } from "../../core/spawn.ts";
+import { storeOwner } from "../../core/store-guard.ts";
 import { runningCli } from "../../mcp/launch.ts";
 import { shellQuote } from "../common.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
-import { nextStepBin, windowsShell } from "../next-steps.ts";
+import { cliCommand, nextStepBin, windowsShell } from "../next-steps.ts";
 import { CliError, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { checkForUpdate, RELEASES_URL, type CheckOptions, type UpdateCache } from "../../update/index.ts";
@@ -31,10 +35,13 @@ export interface InstallResult {
   output: string;
 }
 
-/** What the post-update bin refresh did. */
+/** What the post-update bin refresh did. other_install: another install owns the store, so its bin was left alone. */
 export interface RefreshResult {
-  status: "refreshed" | "current" | "not_installed" | "failed";
+  status: "refreshed" | "current" | "not_installed" | "other_install" | "failed";
   error?: string;
+  /** other_install: the CLI bin/cli-path names, and its version when known. */
+  owner?: string;
+  ownerVersion?: string;
 }
 
 export interface UpdateDeps {
@@ -43,6 +50,13 @@ export interface UpdateDeps {
   /** Refresh ~/.coding.sh/bin from the CLI just installed (default: spawn it with --refresh-bin). */
   refresh?: (env: NodeJS.ProcessEnv, signal: AbortSignal) => Promise<RefreshResult>;
   current?: string;
+  /** The running CLI (default: runningCli()). */
+  cli?: string;
+}
+
+/** "the coding.sh 0.1.6 at <path>": the install bin/cli-path names. */
+function installAt(cli: string, ver: string | undefined): string {
+  return `the coding.sh${ver ? ` ${ver}` : ""} at ${cli}`;
 }
 
 function execText(cmd: string, args: string[], env: NodeJS.ProcessEnv, signal: AbortSignal, timeout: number): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -68,15 +82,25 @@ export async function installedCli(env: NodeJS.ProcessEnv, signal: AbortSignal):
  * launcher and path), so agents run the new hook, not this process's code.
  * Skipped when init never set the bin up.
  */
-export async function refreshAfterUpdate(env: NodeJS.ProcessEnv, signal: AbortSignal, locate = installedCli): Promise<RefreshResult> {
-  if (!existsSync(paths(env).hook)) return { status: "not_installed" };
+export async function refreshAfterUpdate(env: NodeJS.ProcessEnv, signal: AbortSignal, locate = installedCli, self: string | undefined = runningCli()): Promise<RefreshResult> {
+  const p = paths(env);
+  if (!existsSync(p.hook)) return { status: "not_installed" };
   const cli = await locate(env, signal);
   if (!cli) return { status: "failed", error: "can't find the installed CLI" };
+  // npm put the new version at another path than this CLI (another prefix). When this CLI owns
+  // the store, it hands the hooks over first, or the new CLI would leave them to this one.
+  if (self !== undefined && cli !== self && storeOwner(p.root)?.cli === self) {
+    const { atomicWrite } = await import("../../adapters/_shared/files.ts");
+    await atomicWrite(p.cliPointer, cli + "\n", 0o644);
+  }
   const r = await execText(process.execPath, [cli, "update", "--refresh-bin", "--json"], { ...env, NO_UPDATE_NOTIFIER: "1" }, signal, 60_000);
   if (r.code !== 0) return { status: "failed", error: clean(r.stderr.trim().split("\n").pop() ?? "") || `exit ${r.code}` };
   try {
-    const status = (JSON.parse(r.stdout) as { bin?: RefreshResult["status"] }).bin;
-    return { status: status ?? "refreshed" };
+    const doc = JSON.parse(r.stdout) as { bin?: RefreshResult["status"]; owner?: unknown; ownerVersion?: unknown };
+    const res: RefreshResult = { status: doc.bin ?? "refreshed" };
+    if (typeof doc.owner === "string") res.owner = doc.owner;
+    if (typeof doc.ownerVersion === "string") res.ownerVersion = doc.ownerVersion;
+    return res;
   } catch {
     return { status: "refreshed" };
   }
@@ -142,10 +166,23 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
   const cli = nextStepBin(c.env);
   if (c.flags["refresh-bin"] === true) {
     // Run by the previous version right after it installed this one (or by hand after `npm i -g`).
-    const bin = await refreshHookBin(c.env);
-    if (out.json) out.data({ bin, hook: paths(c.env).hook });
+    const self = deps.cli ?? runningCli();
+    const p = paths(c.env);
+    // Another install owns the store and is still there: rewriting the bin would have hooks start
+    // this one, whose next command can migrate the store past what the owner opens.
+    const owner = self !== undefined && existsSync(p.hook) ? storeOwner(p.root) : undefined;
+    if (owner && owner.cli !== self) {
+      if (out.json) out.data({ bin: "other_install", hook: p.hook, owner: owner.cli, ownerVersion: owner.version ?? null });
+      else {
+        out.warn(`Hooks run ${installAt(owner.cli, owner.version)}, another install: ${p.bin} is left as it is`);
+        out.next(`To have them run this coding.sh ${version()} instead (it asks first)`, cliCommand(c.env, ["upgrade-store"]));
+      }
+      return 0;
+    }
+    const bin = await refreshHookBin(c.env, self);
+    if (out.json) out.data({ bin, hook: p.hook });
     else if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style(`${cli} init`, "cyan", "err")} to set up capture`);
-    else out.ok(bin === "refreshed" ? `Refreshed ${paths(c.env).bin}` : `${paths(c.env).bin} is current`);
+    else out.ok(bin === "refreshed" ? `Refreshed ${p.bin}` : `${p.bin} is current`);
     return 0;
   }
   const dryRun = c.flags["dry-run"] === true;
@@ -229,12 +266,21 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
 
   // The hook and launcher in ~/.coding.sh/bin are copies: refresh them from the new install.
   const refreshed = await (deps.refresh ?? refreshAfterUpdate)(c.env, c.signal);
-  if (out.json) out.data({ status: "updated", ...base, bin: refreshed.status, ...(refreshed.error ? { binError: refreshed.error } : {}) });
-  else {
+  if (out.json) {
+    const doc: Record<string, unknown> = { status: "updated", ...base, bin: refreshed.status, ...(refreshed.error ? { binError: refreshed.error } : {}) };
+    if (refreshed.owner) {
+      doc.owner = refreshed.owner;
+      doc.ownerVersion = refreshed.ownerVersion ?? null;
+    }
+    out.data(doc);
+  } else {
     out.ok(`Updated coding.sh ${current} → ${latest}`);
     if (refreshed.status === "failed") {
       out.warn(`Couldn't refresh the hook in ${paths(c.env).bin}${refreshed.error ? `: ${refreshed.error}` : ""}`);
       out.next("Refresh it", `${cli} init`);
+    } else if (refreshed.status === "other_install") {
+      out.warn(`Hooks still run ${refreshed.owner ? `${installAt(refreshed.owner, refreshed.ownerVersion)}, another install` : "another install"}, not the coding.sh ${latest} just installed`);
+      out.next(`To have them run coding.sh ${latest} (it asks first)`, cliCommand(c.env, ["upgrade-store"]));
     }
   }
   return 0;

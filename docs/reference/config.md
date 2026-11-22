@@ -65,13 +65,21 @@ Redaction runs at ingest, before anything is written to the index, blobs or sink
 
 ## `[snapshot]`
 
-Used by `coding.sh run --`, which snapshots the repo before and after the command.
+A snapshot records a repo's working tree, untracked files included and ignored files left out, as
+a commit in a shadow repo under `~/.coding.sh/repos`. Two things take one, and a repo's own
+`.coding.sh/config.toml` can set these keys for both:
+
+- `coding.sh run --` snapshots the repo before and after the command, and records the files that
+  changed between the two.
+- For live capture, ingest snapshots the repo when it runs within 10 minutes of a turn's or
+  session's end, so `eval new` has the session's end state. Eval trials and other sessions with a
+  run id get none.
 
 | Key | Default | Settable | What |
 |---|---|---|---|
-| `snapshot.enabled` | `true` | yes | Take repo snapshots. |
-| `snapshot.maxFiles` | `20000` | yes | Skip the snapshot for repos with more files than this. |
-| `snapshot.timeoutMs` | `2000` | yes | Give up on a snapshot after this many milliseconds. |
+| `snapshot.enabled` | `true` | yes | Take snapshots. `false` turns off both; `coding.sh run --` then records the repo's HEAD and branch only. |
+| `snapshot.maxFiles` | `20000` | yes | A repo with more files than this, tracked plus untracked ones that are not ignored, gets a snapshot of its tracked files only. Minimum 1. |
+| `snapshot.timeoutMs` | `2000` | yes | Milliseconds a full snapshot may take. Past it, the snapshot falls back to tracked files only, with the same time again; when that runs out too, only HEAD is recorded. Minimum 1. |
 
 ## `[retention]`
 

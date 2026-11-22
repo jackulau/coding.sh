@@ -148,12 +148,26 @@ export function joinNames(names: string[]): string {
 
 // DetectResult.notes is free text that mixes tips with real problems; these
 // phrasings mark the notes that mean the installed hooks will not capture
-// anything (an agent too old for hooks, hooks disabled, hooks not trusted).
-const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b/i;
+// anything (an agent too old for hooks, hooks disabled, hooks not trusted),
+// or may not: a hook file that "is stale", not the one this CLI writes, which
+// init writes again. A stale file the agent "will not run" captures nothing.
+const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b|\bis stale\b/i;
+const STALE_NOTE = /\bis stale\b/i;
+const WONT_RUN_NOTE = /\bwill not run\b/i;
 
 /** The detect notes that block capture. */
 export function blockingNotes(notes: readonly string[] | undefined): string[] {
   return (notes ?? []).filter((n) => BLOCKING_NOTE.test(n));
+}
+
+/** The blocking notes init clears by writing the agent's hooks again. */
+export function staleNotes(notes: readonly string[] | undefined): string[] {
+  return (notes ?? []).filter((n) => STALE_NOTE.test(n));
+}
+
+/** The stale notes on hook files the agent still runs: they differ from what this CLI writes, so they may still capture. */
+export function runningStaleNotes(notes: readonly string[] | undefined): string[] {
+  return staleNotes(notes).filter((n) => !WONT_RUN_NOTE.test(n));
 }
 
 interface Blocker {
@@ -426,6 +440,8 @@ export async function run(c: CommandContext): Promise<number> {
         pl.hooks = { changes: [] };
       }
     }
+    // A stale hook file the plan writes again or removes does not block capture after it.
+    pl.detectBlockers = pl.detectBlockers.filter((n) => !(staleNotes([n]).length && pl.hooks.changes.some((ch) => n.includes(ch.path))));
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
     if (withProxy && isProxyAgent(adapter.id)) {
       const id = adapter.id;
@@ -581,12 +597,18 @@ export async function run(c: CommandContext): Promise<number> {
   if (codexTrust) out.warn("Codex: start codex, run /hooks and approve the coding.sh hooks once");
   const ready = applied.filter((x) => !x.hooks.error && !x.pl.skipped);
   // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
-  const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
+  const listed = ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp);
+  // One outcome per agent, as its plan row says: set up when this run wrote its files, else already set up.
+  const wrote = (x: (typeof applied)[number]) => [x.hooks, x.mcp, x.proxy].some((part) => part !== undefined && !part.error && part.changes.length > 0);
+  const summary = (xs: typeof listed) => setupSummary(xs.map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (allFailed) {
     out.warn(`No agent was set up: fix the file, then run ${bin} init again`);
     return 1;
   }
-  if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
+  const already = summary(listed.filter((x) => !wrote(x)));
+  const setUp = summary(listed.filter(wrote));
+  if (already) out.ok(`Already set up: ${already}`);
+  if (setUp) out.ok(`Set up ${setUp}`);
   // Agents load hooks when a session starts: one open while init ran (often the one that ran it) is not recorded live.
   const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);
   if (hookedNow.length) out.note(firstSessionNote(hookedNow));
