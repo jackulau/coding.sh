@@ -442,7 +442,8 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 
 ### `GET /`, `GET /index.html`
 
-The viewer page (HTML, also `HEAD`). Auth: read key or basic auth.
+The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. A `GET` that sends
+`Accept-Encoding: gzip` gets the page gzipped; the answer says `Vary: Accept-Encoding` either way.
 
 `/?t=<read key>` trades the key for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and
 redirects to `/`, so the key leaves the address bar. The exchange happens when:
@@ -499,6 +500,9 @@ share these errors:
 | 403 | the server binds loopback and the `Host` header is not loopback (DNS-rebinding guard) | `{"error":"forbidden host","status":403}` |
 | 404 | unknown route, a session outside the key's project, or a session id with a raw `/` (the error says to send `%2F`) | `{"error":"not found","status":404}` |
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
+
+A JSON answer of 32 KB or more goes gzipped when the request sends `Accept-Encoding: gzip`, and
+says `Vary: Accept-Encoding`.
 
 Times are epoch milliseconds. `since` is inclusive and `until` exclusive, both on a session's start.
 

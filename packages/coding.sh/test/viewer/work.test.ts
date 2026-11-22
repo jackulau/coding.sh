@@ -2,17 +2,21 @@
 // what `coding.sh work --json` gives for the same store and filters, and an ack or a
 // snooze made in the viewer must be one `coding.sh work` sees (the same work.json).
 import assert from "node:assert/strict";
-import { createServer, request as httpRequest, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
+import { gunzipSync } from "node:zlib";
 import * as work from "../../src/cli/commands/work.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { FLAGS } from "../../src/core/sessions.ts";
 import type { Session } from "../../src/core/types.ts";
 import { workItemId } from "../../src/core/work.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
@@ -21,6 +25,9 @@ import { workSessions } from "./_work.ts";
 
 interface Res {
   status: number;
+  headers: IncomingHttpHeaders;
+  /** The bytes as sent: gzipped when the answer says Content-Encoding: gzip. */
+  raw: Buffer;
   body: string;
   json: () => any;
 }
@@ -33,8 +40,9 @@ function req(port: number, path: string, opts: { method?: string; headers?: Reco
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        resolve({ status: res.statusCode ?? 0, body, json: () => JSON.parse(body) });
+        const raw = Buffer.concat(chunks);
+        const body = raw.toString("utf8");
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, raw, body, json: () => JSON.parse(body) });
       });
       res.on("error", reject);
     });
@@ -297,5 +305,60 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
     const got = (await req(bare.port, "/api/work", { token: bare.token })).json();
     assert.equal("index" in got, false);
     assert.equal("index" in (await req(bare.port, "/api/ingest", { token: bare.token })).json(), false);
+  });
+});
+
+describe("viewer /api/work: a big queue", () => {
+  const MIN = 60e3;
+  const now = Date.now();
+  const index = new MemoryIndexStore();
+  let dir: string;
+  let v: Viewer;
+  const get = (path: string, headers: Record<string, string> = {}) => req(v.port, path, { token: v.token, headers });
+  const gunzip = (r: Res) => JSON.parse(gunzipSync(r.raw).toString("utf8"));
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), "work-big-"));
+    // 1,050 changes to review, one a minute: more than one answer lists.
+    for (let n = 0; n < 1050; n++) await index.upsertSession(mkSession(`r${n}`, now - (n + 10) * MIN, { cwd: "/work/demo", title: `change ${n}`, stats: { filesChanged: 1 } }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any, work: { overlay: join(dir, "work.json"), home: dir, cwd: dir } });
+  });
+  after(async () => {
+    await v?.close();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("gzips the answer when the request takes gzip, and sends it plain when not", async () => {
+    const path = "/api/work?limit=200";
+    const plain = await get(path);
+    assert.equal(plain.status, 200);
+    assert.equal(plain.headers["content-encoding"], undefined);
+    assert.equal(plain.headers.vary, "Accept-Encoding");
+    assert.ok(plain.raw.length > 32 * 1024, `${plain.raw.length} bytes: big enough to gzip`);
+    const zipped = await get(path, { "accept-encoding": "gzip, deflate, br" });
+    assert.equal(zipped.status, 200);
+    assert.equal(zipped.headers["content-encoding"], "gzip");
+    assert.equal(zipped.headers.vary, "Accept-Encoding");
+    assert.equal(zipped.headers["content-type"], "application/json; charset=utf-8");
+    assert.equal(Number(zipped.headers["content-length"]), zipped.raw.length);
+    assert.ok(zipped.raw.length * 4 < plain.raw.length, `${zipped.raw.length} gzipped bytes, ${plain.raw.length} plain`);
+    const ids = (doc: { items: { id: string }[] }) => doc.items.map((i) => i.id);
+    assert.deepEqual(ids(gunzip(zipped)), ids(plain.json()));
+    // A client that refuses gzip gets it plain.
+    const refused = await get(path, { "accept-encoding": "gzip;q=0, identity" });
+    assert.equal(refused.headers["content-encoding"], undefined);
+    assert.deepEqual(ids(refused.json()), ids(plain.json()));
+    // A small answer goes plain, with no Vary: it is the same whatever the client takes.
+    const small = await get("/api/work?limit=1", { "accept-encoding": "gzip" });
+    assert.equal(small.headers["content-encoding"], undefined);
+    assert.equal(small.headers.vary, undefined);
+  });
+
+  test("gzips a big /api/sessions answer too", async () => {
+    const r = await get("/api/sessions?scope=top&limit=500", { "accept-encoding": "gzip" });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers["content-encoding"], "gzip");
+    assert.equal(r.headers.vary, "Accept-Encoding");
+    assert.equal(gunzip(r).items.length, 500);
   });
 });

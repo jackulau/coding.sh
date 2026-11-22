@@ -346,12 +346,19 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
         const first = await firstPaint(apiCtx(access)).catch(() => undefined);
         if (first) body = renderPage(body, first.main, first.boot, nonce);
       }
+      // Gzipped per request: the nonce and the first paint differ every time, so nothing is cached.
+      const zipped = req.method === "GET" && takesGzip(req) && body.length >= GZIP_MIN_BYTES ? await gzipAsync(body, { level: 1 }) : undefined;
+      if (zipped) {
+        res.setHeader("Content-Encoding", "gzip");
+        res.setHeader("Content-Length", zipped.length);
+      }
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": pageCsp(nonce),
         "Cache-Control": "no-store",
+        Vary: "Accept-Encoding",
       });
-      res.end(req.method === "HEAD" ? undefined : body);
+      res.end(req.method === "HEAD" ? undefined : (zipped ?? body));
       return;
     }
 
@@ -704,7 +711,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
   switch (head) {
     case "sessions": {
       if (sub !== "fork") get();
-      if (id === undefined || (id === "" && sub === undefined)) return sendJson(res, 200, await listSessions(ctx.index, q, projectParam(ctx, q)));
+      if (id === undefined || (id === "" && sub === undefined)) return sendJsonCompressed(req, res, await listSessions(ctx.index, q, projectParam(ctx, q)));
       const sessionId = checkId(id, "session id");
       if (sub === undefined) {
         // ?missing=null: a session that is not there (or not the caller's) is a 200 with null, not a 404,
@@ -717,7 +724,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         // has them. Eval assets belong to no project: a project-scoped key sees none.
         const hashes = s.stats.weightEdits?.checkpoints;
         const runs = hashes?.length && ctx.project === undefined && ctx.experiments ? await checkpointRuns(ctx.experiments, hashes) : [];
-        return sendJson(res, 200, runs.length ? { ...s, checkpointExperiments: runs } : s);
+        return sendJsonCompressed(req, res, runs.length ? { ...s, checkpointExperiments: runs } : s);
       }
       if (sub === "events") {
         await visibleSession(ctx, sessionId);
@@ -742,11 +749,11 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (!total && (from !== undefined || to !== undefined || step !== undefined)) throw new HttpError(400, "this session has no steps");
         if (from !== undefined || to !== undefined) {
           if (from === undefined || to === undefined) throw new HttpError(400, "from and to go together");
-          return sendJson(res, 200, await replay.range(from, to));
+          return sendJsonCompressed(req, res, await replay.range(from, to));
         }
-        if (step !== undefined) return sendJson(res, 200, await replay.at(step, { file }));
+        if (step !== undefined) return sendJsonCompressed(req, res, await replay.at(step, { file }));
         if (file !== undefined) throw new HttpError(400, "file needs a step");
-        return sendJson(res, 200, { ...replay.index(), ...(ctx.fork ? { canFork: true } : {}) });
+        return sendJsonCompressed(req, res, { ...replay.index(), ...(ctx.fork ? { canFork: true } : {}) });
       }
       if (sub === "fork") {
         // GET ?step=N: the call a fork at step N starts from and the context files it carried. POST {step, files, trials}: the fork.
@@ -755,7 +762,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const replay = await cachedReplay(ctx, s);
         const total = replay.steps.length;
         if (!total) throw new HttpError(400, "this session has no steps");
-        if (method === "GET") return sendJson(res, 200, await ctx.fork.preview(s, replay, intParam(q, "step", total, 1, total)).catch(forkHttpError));
+        if (method === "GET") return sendJsonCompressed(req, res, await ctx.fork.preview(s, replay, intParam(q, "step", total, 1, total)).catch(forkHttpError));
         if (method !== "POST") throw new HttpError(405, "method not allowed");
         checkOrigin(req, ctx.checkHost);
         const body = await readJson(req, res);
@@ -765,7 +772,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (typeof files !== "object" || files === null || Array.isArray(files) || !Object.values(files).every((v) => typeof v === "string")) throw new HttpError(400, "files maps a context file path to its text");
         const trials = b.trials === undefined ? 1 : b.trials;
         if (typeof trials !== "number" || !Number.isInteger(trials) || trials < 1 || trials > 5) throw new HttpError(400, "trials is from 1 to 5");
-        return sendJson(res, 200, await ctx.fork.run(s, replay, b.step, files as Record<string, string>, trials).catch(forkHttpError));
+        return sendJsonCompressed(req, res, await ctx.fork.run(s, replay, b.step, files as Record<string, string>, trials).catch(forkHttpError));
       }
       if (sub === "outline") {
         // Phases (start, resumes, compactions, idle gaps), day marks and derails: a long session at a glance.
@@ -778,7 +785,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (!m && (s.stats.events ?? 0) <= OUTLINE_INLINE_EVENTS) m = await cachedModel(ctx, s);
         // After the response: a SQLite read of every event runs synchronously.
         else if (!m) setImmediate(() => cachedModel(ctx, s).catch(() => undefined));
-        return sendJson(res, 200, { phases: viewerPhases(o.phases), days: o.days, derails, events: s.stats.events, ...(m ? modelOutline(m) : { spans: "building" }) });
+        return sendJsonCompressed(req, res, { phases: viewerPhases(o.phases), days: o.days, derails, events: s.stats.events, ...(m ? modelOutline(m) : { spans: "building" }) });
       }
       if (sub === "rows") {
         // One page of a turn's rows: events, with long runs of routine ones folded (never a failure).
@@ -790,7 +797,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const limit = intParam(q, "limit", ROWS_LIMIT, 1, ROWS_MAX);
         const fold = q.get("fold") !== "0";
         const { slots, next } = layoutRows(m, t, after + 1, limit, fold);
-        return sendJson(res, 200, { turn: t, rows: await readRows(ctx.index, sessionId, m, slots), ...(next !== undefined ? { next: next - 1 } : {}) });
+        return sendJsonCompressed(req, res, { turn: t, rows: await readRows(ctx.index, sessionId, m, slots), ...(next !== undefined ? { next: next - 1 } : {}) });
       }
       if (sub === "tree") {
         // The whole multi-agent run this session belongs to: its top-level agent
@@ -800,7 +807,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (!tree) throw notFound();
         const worst = worstNode(tree.roots);
         const t = tree.totals;
-        return sendJson(res, 200, {
+        return sendJsonCompressed(req, res, {
           root: tree.roots[0]?.session.id ?? sessionId,
           totals: {
             sessions: t.sessions,
@@ -838,7 +845,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const b = await call(id);
       if (!diff) {
         const l = await loadCall(ctx.blobs, b);
-        return sendJson(res, 200, { call: b, request: l.request ?? null, response: l.response ?? null });
+        return sendJsonCompressed(req, res, { call: b, request: l.request ?? null, response: l.response ?? null });
       }
       const withRef = q.get("with");
       let a = withRef ? await call(withRef) : undefined;
@@ -846,7 +853,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         a = await previousCall(ctx.index, b);
         if (!a) throw new HttpError(404, "no earlier model call in this session; pass ?with=<call id>");
       }
-      return sendJson(res, 200, diffCalls(await loadCall(ctx.blobs, a), await loadCall(ctx.blobs, b)));
+      return sendJsonCompressed(req, res, diffCalls(await loadCall(ctx.blobs, a), await loadCall(ctx.blobs, b)));
     }
 
     case "blobs": {
@@ -904,9 +911,9 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (where) {
         // The other list filters join the query as session clauses; search applies it at event level.
         const hits = await searchWhere(ctx.index, text, withFacets(where, f, scopeParam(q) === "top"), { limit, ...(agent ? { agent } : {}), ...(project !== undefined ? { project } : {}) }).catch((e) => Promise.reject(queryHttpError(e)));
-        return sendJson(res, 200, { items: hits });
+        return sendJsonCompressed(req, res, { items: hits });
       }
-      return sendJson(res, 200, { items: await searchSessions(ctx, text, limit, { ...f, agent, project, top: scopeParam(q) === "top" }) });
+      return sendJsonCompressed(req, res, { items: await searchSessions(ctx, text, limit, { ...f, agent, project, top: scopeParam(q) === "top" }) });
     }
 
     case "facets": {
@@ -925,7 +932,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const prefix = q.get("prefix") ?? "";
       if (prefix.length > 200) throw new HttpError(400, "prefix is too long");
       const facets = await facetCounts(ctx.index, whereParam(q) ?? {}, keys, { filter, limit: intParam(q, "limit", 20, 1, 200), ...(prefix ? { prefix } : {}) }).catch((e) => Promise.reject(queryHttpError(e)));
-      return sendJson(res, 200, { facets });
+      return sendJsonCompressed(req, res, { facets });
     }
 
     case "where": {
@@ -945,7 +952,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const hit = ctx.index.eventsByIdPrefix ? (await ctx.index.eventsByIdPrefix(ref, 2)).find((e) => e.id === ref) : undefined;
         if (!hit) throw new HttpError(404, "event not found");
         await visibleSession(ctx, hit.sessionId).catch(() => Promise.reject(new HttpError(404, "event not found")));
-        return sendJson(res, 200, hit);
+        return sendJsonCompressed(req, res, hit);
       }
       const where = whereParam(q) ?? {};
       const limit = intParam(q, "limit", 50, 1, 200);
@@ -964,7 +971,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const sessions = new Map<string, Session | undefined>();
       for (const e of r.items) if (!sessions.has(e.sessionId)) sessions.set(e.sessionId, await ctx.index.getSession(e.sessionId).catch(() => undefined));
       const terms = textTerms(where.root);
-      return sendJson(res, 200, {
+      return sendJsonCompressed(req, res, {
         items: r.items.map((e) => eventRow(e, sessions.get(e.sessionId), terms)),
         ...(r.next ? { next: r.next } : {}),
         ...(r.total !== undefined ? { total: r.total, totalCapped: !!r.totalCapped } : {}),
@@ -981,7 +988,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const tag = q.get("tag") || undefined;
       // Eval assets belong to no project: a project-scoped key sees none.
       if (ctx.project !== undefined) return sendJson(res, 200, { items: [] });
-      return sendJson(res, 200, { items: await ctx.index.listTasks({ status, tag }) });
+      return sendJsonCompressed(req, res, { items: await ctx.index.listTasks({ status, tag }) });
     }
 
     case "runs": {
@@ -993,7 +1000,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         bundleId: q.get("bundleId") || undefined,
       };
       if (ctx.project !== undefined) return sendJson(res, 200, { items: [] });
-      return sendJson(res, 200, { items: await ctx.index.listRuns(filter) });
+      return sendJsonCompressed(req, res, { items: await ctx.index.listRuns(filter) });
     }
 
     case "bundles": {
@@ -1009,7 +1016,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         createdAt: b.createdAt,
         note: b.note,
       }));
-      return sendJson(res, 200, { items });
+      return sendJsonCompressed(req, res, { items });
     }
 
     case "experiments": {
@@ -1023,14 +1030,14 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const name = q.get("name") || undefined;
         if (scoped || !ctx.experiments) return sendJson(res, 200, { items: [] });
         const rows = await ctx.experiments.listExperiments({ limit, ...(datasetId ? { datasetId } : {}), ...(name ? { name } : {}) });
-        return sendJson(res, 200, { items: rows.map(experimentSummary) });
+        return sendJsonCompressed(req, res, { items: rows.map(experimentSummary) });
       }
       if (!EXPERIMENT_ID_RE.test(id) || id.includes("..")) throw new HttpError(400, "invalid experiment id");
       const exp = scoped || !ctx.experiments ? undefined : await ctx.experiments.getExperiment(id);
       if (!exp) throw new HttpError(404, "experiment not found");
       // Next to the stored record, as `exp show --json`: the stamp with the sessions that recorded that weights file as a checkpoint.
       const { weights } = withSessions(stampedWith({}, weightsOf(exp)), await checkpointSessions(ctx.index, [weightsOf(exp)]));
-      return sendJson(res, 200, weights?.sessions ? { ...experimentDetail(exp), weights } : experimentDetail(exp));
+      return sendJsonCompressed(req, res, weights?.sessions ? { ...experimentDetail(exp), weights } : experimentDetail(exp));
     }
 
     case "workflows": {
@@ -1042,7 +1049,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         throw new HttpError(404, "not found");
       }
       try {
-        return sendJson(res, 200, await workflowsApi(src, id, sub, q));
+        return sendJsonCompressed(req, res, await workflowsApi(src, id, sub, q));
       } catch (e) {
         if (e instanceof WorkflowApiError) throw new HttpError(e.status, e.message);
         throw e;
@@ -1061,12 +1068,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           if (runs.length) items.push(benchmarkSummary(name, runs, src));
         }
         items.sort((a, b) => (a.latest.date < b.latest.date ? 1 : a.latest.date > b.latest.date ? -1 : a.name < b.name ? -1 : 1));
-        return sendJson(res, 200, { items });
+        return sendJsonCompressed(req, res, { items });
       }
       if (!NAME_RE.test(id)) throw new HttpError(400, "invalid benchmark name");
       const runs = src ? await src.runs(id) : [];
       if (!runs.length) throw new HttpError(404, "benchmark not found");
-      return sendJson(res, 200, await benchmarkDetail(ctx, runs, src!));
+      return sendJsonCompressed(req, res, await benchmarkDetail(ctx, runs, src!));
     }
 
     case "compare": {
@@ -1085,7 +1092,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const checkpoints = await checkpointSessions(ctx.index, [cmp.a.weights?.sha256, cmp.b.weights?.sha256]);
       withSessions(cmp.a, checkpoints);
       withSessions(cmp.b, checkpoints);
-      return sendJson(res, 200, { ...cmp, partial });
+      return sendJsonCompressed(req, res, { ...cmp, partial });
     }
 
     case "labels": {
@@ -1108,7 +1115,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           for (const l of items) if (l.sessionId && (await visible(l.sessionId))) keep.push(l);
           items = keep;
         }
-        return sendJson(res, 200, { items });
+        return sendJsonCompressed(req, res, { items });
       }
       if (method === "POST") {
         checkOrigin(req, ctx.checkHost);
@@ -1121,22 +1128,22 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
 
     case "scores": {
       if (id !== undefined) throw new HttpError(404, "not found");
-      if (method === "GET") return sendScores(res, () => getScores(scoresCtx(ctx), q));
+      if (method === "GET") return sendScores(req, res, () => getScores(scoresCtx(ctx), q));
       if (method === "POST") {
         checkOrigin(req, ctx.checkHost);
         const body = await readJson(req, res);
-        return sendScores(res, () => postScore(scoresCtx(ctx), body));
+        return sendScores(req, res, () => postScore(scoresCtx(ctx), body));
       }
       throw new HttpError(405, "method not allowed");
     }
 
     case "score-configs": {
       if (id !== undefined) throw new HttpError(404, "not found");
-      if (method === "GET") return sendScores(res, () => getScoreConfigs(scoresCtx(ctx)));
+      if (method === "GET") return sendScores(req, res, () => getScoreConfigs(scoresCtx(ctx)));
       if (method === "POST") {
         checkOrigin(req, ctx.checkHost);
         const body = await readJson(req, res);
-        return sendScores(res, () => postScoreConfig(scoresCtx(ctx), body));
+        return sendScores(req, res, () => postScoreConfig(scoresCtx(ctx), body));
       }
       throw new HttpError(405, "method not allowed");
     }
@@ -1159,7 +1166,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           }
           throw new HttpError(405, "method not allowed");
         }
-        if (method === "GET") return sendJson(res, 200, { items: await viewStore(ctx.index).listViews() });
+        if (method === "GET") return sendJsonCompressed(req, res, { items: await viewStore(ctx.index).listViews() });
         if (method === "POST") {
           write();
           const body = await readJson(req, res, 16 * 1024);
@@ -1186,11 +1193,11 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       try {
         if (id === undefined || id === "") {
           get();
-          return sendJson(res, 200, { items: await listQueues(ctx.index) });
+          return sendJsonCompressed(req, res, { items: await listQueues(ctx.index) });
         }
         if (sub === undefined) {
           get();
-          return sendJson(res, 200, await queueStatus(ctx.index, id));
+          return sendJsonCompressed(req, res, await queueStatus(ctx.index, id));
         }
         if (sub === "next") {
           get();
@@ -1267,7 +1274,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       try {
         if (id === undefined || id === "") {
           get();
-          return sendJson(res, 200, await workList(ctx.index, src, q));
+          return sendJsonCompressed(req, res, await workList(ctx.index, src, q));
         }
         if (id === "ack") {
           if (sub !== undefined) throw notFound();
@@ -1301,7 +1308,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
       const project = projectParam(ctx, q);
-      return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", project, facetParams(q), whereParam(q)).catch((e) => Promise.reject(queryHttpError(e))));
+      return sendJsonCompressed(req, res, await computeStats(ctx.index, scopeParam(q) === "top", project, facetParams(q), whereParam(q)).catch((e) => Promise.reject(queryHttpError(e))));
     }
 
     case "metrics": {
@@ -1313,7 +1320,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const filter: MetricsSpec["filter"] = scopeParam(q) === "top" ? { parentSessionId: null } : {};
       if (project !== undefined) filter.project = project;
       const where = whereParam(q);
-      return sendJson(res, 200, await computeMetrics(ctx.index, { ...spec, filter, ...(where ? { where } : {}) }).catch((e) => Promise.reject(e instanceof MetricsError ? new HttpError(400, e.message, { reason: e.reason }) : queryHttpError(e))));
+      return sendJsonCompressed(req, res, await computeMetrics(ctx.index, { ...spec, filter, ...(where ? { where } : {}) }).catch((e) => Promise.reject(e instanceof MetricsError ? new HttpError(400, e.message, { reason: e.reason }) : queryHttpError(e))));
     }
 
     case "playground": {
@@ -1322,7 +1329,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const pg = ctx.playground;
       if (id === undefined || id === "") {
         get();
-        return sendJson(res, 200, { providers: pg.providers(), datasets: await pg.datasets() });
+        return sendJsonCompressed(req, res, { providers: pg.providers(), datasets: await pg.datasets() });
       }
       if (id === "calls") {
         get();
@@ -1338,7 +1345,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           if (event) await visibleSession(ctx, event.sessionId);
         }
         if (!event) throw new HttpError(404, "call not found");
-        return sendJson(res, 200, await rebuildCall(ctx.index, ctx.blobs, event).catch(playgroundHttpError));
+        return sendJsonCompressed(req, res, await rebuildCall(ctx.index, ctx.blobs, event).catch(playgroundHttpError));
       }
       // POST run and POST save take an edited request from the viewer's own page.
       const posted = async () => {
@@ -1356,7 +1363,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (method !== "POST") throw new HttpError(405, "method not allowed");
         const { b, request } = await posted();
         if (typeof b.provider !== "string") throw new HttpError(400, "provider is required");
-        return sendJson(res, 200, await pg.run(b.provider, request).catch(playgroundHttpError));
+        return sendJsonCompressed(req, res, await pg.run(b.provider, request).catch(playgroundHttpError));
       }
       if (id === "save") {
         if (method !== "POST") throw new HttpError(405, "method not allowed");
@@ -1377,7 +1384,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const ids = new Set<string>(ctx.projects ? await ctx.projects() : []);
       if (!ctx.projects) for await (const s of scanSessions(ctx.index)) ids.add(projectOf(s));
       ids.add("default");
-      return sendJson(res, 200, { items: [...ids].sort() });
+      return sendJsonCompressed(req, res, { items: [...ids].sort() });
     }
 
     default:
@@ -1854,7 +1861,7 @@ async function visibleItem(ctx: ApiCtx, queue: string, raw: string): Promise<num
 }
 
 /** Sends a scores API reply; its ScoreErrors become HTTP errors. */
-async function sendScores(res: ServerResponse, fn: () => Promise<ApiReply>): Promise<void> {
+async function sendScores(req: IncomingMessage, res: ServerResponse, fn: () => Promise<ApiReply>): Promise<void> {
   let reply: ApiReply;
   try {
     reply = await fn();
@@ -1862,6 +1869,7 @@ async function sendScores(res: ServerResponse, fn: () => Promise<ApiReply>): Pro
     if (e instanceof ScoreError) throw new HttpError(e.status, e.message);
     throw e;
   }
+  if (reply.status === 200) return sendJsonCompressed(req, res, reply.body);
   sendJson(res, reply.status, reply.body);
 }
 
@@ -2132,19 +2140,31 @@ const gzipAsync = promisify(gzip);
 /** Bodies under this go as they are: gzip would save a packet or two. */
 const GZIP_MIN_BYTES = 32 * 1024;
 
+/** Whether the request's Accept-Encoding takes gzip; `gzip;q=0` refuses it. */
+function takesGzip(req: IncomingMessage): boolean {
+  for (const part of String(req.headers["accept-encoding"] ?? "").split(",")) {
+    const [name, ...params] = part.split(";").map((s) => s.trim().toLowerCase());
+    if (name !== "gzip") continue;
+    const q = params.find((p) => p.startsWith("q="));
+    return q === undefined || Number(q.slice(2)) > 0;
+  }
+  return false;
+}
+
 /**
  * A 200 JSON body, gzipped (level 1, off the event loop) when it is big and the client takes gzip:
- * an events page repeats the same keys and values on every row, which gzip takes out.
+ * an events page repeats the same keys and values on every row, which gzip takes out. A body that
+ * big says `Vary: Accept-Encoding` either way.
  */
 async function sendJsonCompressed(req: IncomingMessage, res: ServerResponse, body: unknown): Promise<void> {
   const json = JSON.stringify(body);
-  const accepts = /\bgzip\b/i.test(String(req.headers["accept-encoding"] ?? ""));
-  if (!accepts || json.length < GZIP_MIN_BYTES) return sendJson(res, 200, body, json);
+  if (json.length < GZIP_MIN_BYTES) return sendJson(res, 200, body, json);
+  res.setHeader("Vary", "Accept-Encoding");
+  if (!takesGzip(req)) return sendJson(res, 200, body, json);
   const zipped = await gzipAsync(json, { level: 1 });
   res.writeHead(200, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Encoding": "gzip",
-    Vary: "Accept-Encoding",
     "Content-Length": zipped.length,
   });
   res.end(zipped);
