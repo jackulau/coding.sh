@@ -371,6 +371,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** On Windows a trial no longer fails when its work folder is busy for a moment (another trial's git or an antivirus scan holding it) while the verifier's tree is swapped in: each move waits briefly and tries again. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#verifier-isolation))
 - **Evals.** In PowerShell and cmd, the commands that `eval run`, `eval init`, `eval new`, `eval validate` and `eval trigger` print inside notes and reports name `codingsh`: the `show` beside a failed trial, and the import, validate, compare and init steps. They printed `coding.sh`, which PowerShell can't run. Started with npx, they print npx's form. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#the-report))
 - **Evals.** A trial whose agent program is not installed or not on PATH counts as unknown, not failed, and is retried once like a failed setup step. Its reason says `the agent could not start: claude was not found; install it or put it on PATH`, and the verifier no longer grades the untouched start. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#long-runs-resume-retries-status))
+- **Evals.** `eval trigger` names each expected route once, summed over the prompts that expect it: two prompts that expect `docx` read `docx 2/2`. They read `docx 1/1, docx 1/1`, one entry per prompt. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#skill-triggers))
 
 ## [0.1.7] - 2026-11-16
 

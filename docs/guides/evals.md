@@ -3020,7 +3020,8 @@ or a sibling, and a model fills the rest. It reads this git repo's sessions only
 `--repo all` widens that. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
 
 The report gives precision, recall, F1 and accuracy (weighted), Wilson intervals on recall and on
-the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes.
+the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes: for
+each sibling named in `expect_skill`, how many runs of its prompts it took (`docx 2/2`).
 `--description TEXT|@FILE` or `--candidate DIR` adds a second arm. Both arms run the same prompts,
 interleaved in a seeded order. The delta is a paired bootstrap CI on per-prompt accuracy, plus
 McNemar at k=1, an exact sign-flip test over prompts and the prompts whose majority answer flipped.

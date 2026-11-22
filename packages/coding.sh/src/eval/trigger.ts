@@ -723,8 +723,14 @@ export function formatTrigger(r: TriggerReport): string {
         lines.push(`    ${p.side === "should" ? "should    " : "should_not"} ${what}${p.flaky ? " (flaky)" : ""}${others ? ` · loaded ${others}` : ""}  ${JSON.stringify(clip(p.prompt))}`);
       }
     }
-    const routes = a.prompts.filter((p) => p.expectSkill);
-    if (routes.length) lines.push(`  expected routes: ${routes.map((p) => `${p.expectSkill} ${p.expectHits}/${p.n}`).join(", ")}`);
+    // One entry per expected skill, summed over its prompts: two docx prompts read `docx 2/2`, not `docx 1/1, docx 1/1`.
+    const routes = new Map<string, { hits: number; n: number }>();
+    for (const p of a.prompts) {
+      if (!p.expectSkill) continue;
+      const r = routes.get(p.expectSkill) ?? { hits: 0, n: 0 };
+      routes.set(p.expectSkill, { hits: r.hits + (p.expectHits ?? 0), n: r.n + p.n });
+    }
+    if (routes.size) lines.push(`  expected routes: ${[...routes].map(([s, r]) => `${s} ${r.hits}/${r.n}`).join(", ")}`);
     if (a.costUsd || a.unpriced < a.runs + a.errors) lines.push(`  agent spend $${a.costUsd.toFixed(2)}${a.unpriced ? ` (${a.unpriced} runs unpriced)` : ""}`);
   }
   const d = r.delta;
