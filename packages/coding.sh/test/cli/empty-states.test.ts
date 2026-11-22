@@ -25,7 +25,8 @@ describe("empty store", () => {
     test(`${name} says how the first session gets here`, async () => {
       const r = await runCmd(mod as never, empty, { action: name === "cache doctor" ? "doctor" : undefined, flags: flags as never, positionals: pos as never });
       assert.equal(r.error, undefined, String(r.error?.message));
-      assert.match(r.stderr, /coding\.sh init/);
+      // The sandbox sets no MSYSTEM or SHELL: on Windows that is PowerShell or cmd, which run codingsh.
+      assert.match(r.stderr, process.platform === "win32" ? /codingsh init/ : /coding\.sh init/);
     });
   }
 });

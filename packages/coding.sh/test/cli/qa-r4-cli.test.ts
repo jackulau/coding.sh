@@ -15,6 +15,7 @@ import * as work from "../../src/cli/commands/work.ts";
 import { nextText } from "../../src/cli/commands/work.ts";
 import { ago, CliError, localTime } from "../../src/cli/output.ts";
 import { UsageError } from "../../src/cli/args.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { CLI } from "../_cli.ts";
 import { runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
@@ -43,7 +44,7 @@ describe("outside a git repo", () => {
     const r = await runCmd(blame, sb, { positionals: ["AGENTS.md"], cwd: dir, json: true });
     assert.ok(r.error instanceof CliError, String(r.error));
     assert.equal(r.error.reason, "not_a_repo");
-    assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", "coding.sh blame <path> --repo <dir>"]);
+    assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", `${nextStepBin(sb.env)} blame <path> --repo <dir>`]);
   });
 
   test("improve check, with or without --repo all, is not_a_repo and names --repo <dir>", async () => {
