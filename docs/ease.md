@@ -27,6 +27,15 @@ node scripts/e2e/ease.mjs --pkg <base>/packages/coding.sh --install-sh <base>/in
 It exits 0 when the agent path's setup succeeds and the person saw their session. The human path
 needs `python3` for its pseudo-terminal; without it, that path is skipped.
 
+## On Windows
+
+It measures nothing on Windows yet. The human path is skipped there. The run then stops before the
+agent path: it packs the CLI by running `npm` without a shell, which finds nothing because npm is
+`npm.cmd` on Windows, so it exits 1 with `spawnSync npm ENOENT` and prints no report. Past that, the
+agent path runs each command with `sh -c` and starts the CLI from `<prefix>/bin/coding.sh`, where
+npm puts it on macOS and Linux only. It does not cover PowerShell or cmd, where the command is
+`codingsh`.
+
 ## What it measures
 
 **Human.** `install.sh` runs in a pseudo-terminal from a local tarball (`CODING_SH_TARBALL`), and
