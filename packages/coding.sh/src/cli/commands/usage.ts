@@ -16,7 +16,7 @@ import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, agentsWithoutSessions, autoIngest, rejectAgentTypos, emptyStateNext, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
-import { CliError, Output, bytes, duration, plural, usd } from "../output.ts";
+import { Output, bytes, duration, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { Session } from "../../schema/index.ts";
@@ -128,7 +128,6 @@ export async function run(c: CommandContext): Promise<number> {
   const cap = scanCap(c.env) ?? TOTALS_SCAN_CAP;
   const by = str(c.flags.by) ?? "agent";
   const attributed = (ATTRIBUTED_GROUPS as readonly string[]).includes(by);
-  if (!attributed && !(USAGE_GROUPS as readonly string[]).includes(by)) throw new CliError(`--by must be one of ${[...USAGE_GROUPS, ...ATTRIBUTED_GROUPS].join(", ")}`, { reason: "bad_flag" });
   const sinceWhen = parseSinceWhen(str(c.flags.since) ?? "30d");
   const since = sinceWhen.ms;
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
