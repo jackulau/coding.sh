@@ -1179,7 +1179,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/workflows.ts",
-      "max": 19,
+      "max": 15,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

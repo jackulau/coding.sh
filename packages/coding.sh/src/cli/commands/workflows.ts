@@ -15,19 +15,20 @@ import { loadCases } from "../../workflows/cases.ts";
 import { replayWorkflow } from "../../workflows/replay.ts";
 import { scoreWorkflowCase, verifyEntries, type CaseScore, type ScoreCaseDeps } from "../../workflows/score/case.ts";
 import { validateCase } from "../../workflows/seed/bugs.ts";
-import { WorkflowStore } from "../../workflows/store.ts";
+import { WorkflowStore, type RunFilter } from "../../workflows/store.ts";
 import { DETAIL_KINDS, runSummary } from "../../workflows/viewer.ts";
 import { buildWorkflowTree, markStalled } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
 import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { captureRedactor } from "../../runner/verifier-output.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
-import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, CliError, duration, LABEL_WIDTH, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const FRAMEWORKS: WorkflowFramework[] = ["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command", "vercel-workflow", "temporal", "inngest", "restate", "dbos"];
@@ -149,20 +150,21 @@ async function listRuns(c: CommandContext): Promise<number> {
       for (const e of r.errors.slice(0, 3)) out.warn(`Couldn't import ${e.path}: ${e.error}`);
     }
   }
-  const runs = await storeOf(c).listRuns({
-    ...(framework ? { framework: framework as WorkflowFramework } : {}),
-    ...(str(c.flags.name) ? { name: str(c.flags.name)! } : {}),
-    ...(str(c.flags.experiment) ? { experimentId: str(c.flags.experiment)! } : {}),
-    ...(since !== undefined ? { since } : {}),
-    limit,
-  });
+  // The filters other than --since, which the empty state looks past.
+  const filter: RunFilter = {};
+  if (framework) filter.framework = framework as WorkflowFramework;
+  if (str(c.flags.name)) filter.name = str(c.flags.name)!;
+  if (str(c.flags.experiment)) filter.experimentId = str(c.flags.experiment)!;
+  const store = storeOf(c);
+  const query: RunFilter = { ...filter, limit };
+  if (since !== undefined) query.since = since;
+  const runs = await store.listRuns(query);
   if (out.json) {
     out.data({ runs: runs.map(runJson), pending });
     return 0;
   }
   if (!runs.length) {
-    out.note("No workflow runs");
-    out.next("Import the workflow runs in your Claude Code projects, or in a run directory", "coding.sh workflows import [path]");
+    await emptyList(out, store, filter, since);
     return 0;
   }
   const tty = out.stdoutTTY;
@@ -180,6 +182,38 @@ async function listRuns(c: CommandContext): Promise<number> {
     ]),
   );
   return 0;
+}
+
+/**
+ * What `workflows list` says when nothing matched. With no filter, the store is empty: say how to import runs. With
+ * --since, say when the newest older run started and how to list it; with another filter that matches no run, how to
+ * list every run.
+ */
+async function emptyList(out: Output, store: WorkflowStore, filter: RunFilter, since: number | undefined): Promise<void> {
+  const what: string[] = [];
+  if (filter.name !== undefined) what.push(`named ${JSON.stringify(clean(filter.name))}`);
+  if (filter.framework !== undefined) what.push(`from ${filter.framework}`);
+  if (filter.experimentId !== undefined) what.push(`in experiment ${JSON.stringify(clean(filter.experimentId))}`);
+  if (since !== undefined) what.push(`since ${localTime(since)}`);
+  out.note(["No workflow runs", ...what].join(" "));
+  if (since !== undefined) {
+    // None in the window: the same filters without it, newest first.
+    const older = await store.listRuns(filter);
+    if (older.length) {
+      out.note(`${plural(older.length, "older run")}; the newest started ${ago(older[0]!.startedAt)}`);
+      let cmd = "coding.sh workflows list";
+      if (filter.name !== undefined) cmd += ` --name ${shellQuote(filter.name)}`;
+      if (filter.framework !== undefined) cmd += ` --framework ${filter.framework}`;
+      if (filter.experimentId !== undefined) cmd += ` --experiment ${shellQuote(filter.experimentId)}`;
+      out.next("See older runs", cmd);
+      return;
+    }
+  }
+  if (what.length && (await store.listRuns({ limit: 1 })).length) {
+    out.next("List every workflow run", "coding.sh workflows list");
+    return;
+  }
+  out.next("Import the workflow runs in your Claude Code projects, or in a run directory", "coding.sh workflows import [path]");
 }
 
 async function importRuns(c: CommandContext): Promise<number> {
@@ -305,6 +339,12 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Run", `${run.id} (${run.framework})`);
   out.row("Workflow", clean(run.name));
   out.row("Status", stalled ? `${run.status} (${plural(stalled, "agent")} stalled)` : run.status, run.status === "ok" ? "ok" : run.status === "running" && !stalled ? "none" : "fail");
+  if (run.error) {
+    // The first line on the row, the rest under it.
+    const [first = "", ...rest] = clean(run.error).split("\n");
+    out.row("Error", first);
+    for (const l of rest) out.note(`${" ".repeat(LABEL_WIDTH)}${l}`);
+  }
   out.row("Wall", `${duration(wallOf(run))}${segmentsText(run.stats)}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
@@ -517,8 +557,11 @@ async function score(c: CommandContext): Promise<number> {
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** `name=script` (claude), `name=cmd args…` (command), a JSON object, or a .json path. */
-export async function parseVariant(raw: string, driver: "claude" | "command"): Promise<WorkflowVariant> {
+/** The fields a JSON variant may set. */
+const VARIANT_FIELDS = ["name", "script", "command", "args", "resumeFromRunId", "fromCheckpoint", "replayFrom"];
+
+/** `name=script` (claude), `name=cmd args…` (command), a JSON object, or a .json path. `warn` hears of JSON fields it ignores. */
+export async function parseVariant(raw: string, driver: "claude" | "command", warn?: (message: string) => void): Promise<WorkflowVariant> {
   const t = raw.trim();
   let v: unknown;
   if (t.startsWith("{")) v = await jsonArg(t, "--variant");
@@ -531,6 +574,17 @@ export async function parseVariant(raw: string, driver: "claude" | "command"): P
     return driver === "claude" ? { name, script: value } : { name, command: value.split(/\s+/) };
   }
   if (!isObj(v) || typeof v.name !== "string" || !v.name) throw new UsageError(`--variant JSON needs a "name"`, { reason: "invalid_value" });
+  const keys = Object.keys(v);
+  const unknown = keys.filter((k) => !VARIANT_FIELDS.includes(k));
+  if (unknown.length && warn) {
+    // Suggest only a field the variant leaves unset: "note" next to "name" suggests nothing.
+    const unset = VARIANT_FIELDS.filter((f) => !keys.includes(f));
+    const named = unknown.map((k) => {
+      const near = suggest(k, unset);
+      return `${JSON.stringify(k)}${near ? ` (did you mean ${near}?)` : ""}`;
+    });
+    warn(`Variant ${JSON.stringify(v.name)}: ignored unknown ${unknown.length > 1 ? "fields" : "field"} ${named.join(", ")}. Known fields: ${VARIANT_FIELDS.join(", ")}`);
+  }
   const out: WorkflowVariant = { name: v.name };
   if (typeof v.script === "string") out.script = v.script;
   if (Array.isArray(v.command) && v.command.every((x) => typeof x === "string")) out.command = v.command as string[];
@@ -603,7 +657,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   if (driverKind !== "claude" && driverKind !== "command") throw new UsageError("--driver must be claude or command", { reason: "invalid_value" });
   const rawVariants = list(c.flags.variant);
   if (!rawVariants.length) throw new UsageError("Pass at least one --variant", { reason: "missing_value" });
-  const variants = await Promise.all(rawVariants.map((v) => parseVariant(v, driverKind)));
+  const variants = await Promise.all(rawVariants.map((v) => parseVariant(v, driverKind, (m) => out.warn(m))));
   const names = new Set<string>();
   for (const v of variants) {
     if (names.has(v.name)) throw new UsageError(`Variant name ${JSON.stringify(v.name)} is used twice`, { reason: "invalid_value" });
@@ -660,6 +714,8 @@ async function runExperiment(c: CommandContext): Promise<number> {
           job: job.scope(),
           retry: retryFlag(c),
           experimentId: job.id,
+          // The capture profile's redaction, as everything else a run keeps.
+          redactor: captureRedactor(ctx.config, c.env),
           // Every truth kind, as `workflows score` grades it: seeded bugs, verifier tests, judge.
           score: async (r, output, kase) => (await scoreWorkflowCase(output, kase, scoreDeps(c, r.id, ctx.index.getJudge ? (jid) => ctx.index.getJudge!(jid) : undefined))).score,
           onProgress: (p) =>
@@ -687,13 +743,28 @@ async function runExperiment(c: CommandContext): Promise<number> {
   out.print(result.experimentId);
   if (result.cancelled) {
     out.warn(`Cancelled after ${plural(result.runs.length, "workflow run")} of ${jobs}`);
+    warnFailed(out, result.runs, k);
     resumeNote(c, job);
     return 1;
   }
   out.ok(`Ran ${plural(result.runs.length, "workflow run")}${failed ? `, ${failed} failed` : ""}${infra ? `, ${infra} hit infrastructure errors` : ""}`);
+  warnFailed(out, result.runs, k);
   resumeNote(c, job);
   if (variants.length >= 2) out.next("Compare two variants", `coding.sh workflows compare ${result.experimentId} --baseline ${shellQuote(variants[0]!.name)} --candidate ${shellQuote(variants[1]!.name)}`);
   return 0;
+}
+
+/** Failed runs `workflows run` names, each with why it failed. */
+const FAILED_SHOWN = 5;
+
+/** One line per failed run that kept an error: variant, case, the error on one line, and the run id for `workflows show`. */
+function warnFailed(out: Output, runs: readonly WorkflowRun[], k: number): void {
+  const failed = runs.filter((r) => r.status === "failed" && r.error);
+  for (const r of failed.slice(0, FAILED_SHOWN)) {
+    const attempt = k > 1 && r.attempt !== undefined ? `, attempt ${r.attempt}` : "";
+    out.warn(`${clean(r.variant ?? "")} on ${clean(r.caseId ?? "")}${attempt} failed: ${oneLine(clean(r.error ?? ""), 160)} (${r.id})`);
+  }
+  if (failed.length > FAILED_SHOWN) out.note(`${failed.length - FAILED_SHOWN} more failed; coding.sh workflows show <run> prints why a run failed`);
 }
 
 const ci = (b: { mean: number; lo: number; hi: number }, f: (x: number) => string) => `${f(b.mean)} [${f(b.lo)}, ${f(b.hi)}]`;
@@ -756,7 +827,8 @@ async function compare(c: CommandContext): Promise<number> {
     const r = await store.getRun(rid);
     if (r) runs.push(r.run);
   }
-  const threshold = num(c.flags.threshold);
+  // --threshold for every case, else each case's own, as the experiment recorded it; 0.5 for a case with none.
+  const threshold = num(c.flags.threshold) ?? (exp.thresholds ? new Map(Object.entries(exp.thresholds)) : undefined);
   const seed = num(c.flags.seed);
   const report = compareWorkflowVariants(runs, new Map(Object.entries(exp.scores)), { baseline, candidate, ...(threshold !== undefined ? { threshold } : {}), ...(seed !== undefined ? { seed } : {}), ...(select ? { select } : {}) });
   if (out.json) {

@@ -278,9 +278,11 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   const supersededN = allAgents.filter((n) => n.status === "superseded").length;
   if (cancelled) stats.cancelledAgents = cancelled;
   if (supersededN) stats.supersededAgents = supersededN;
-  if (counted.length) {
-    stats.nullRate = stats.nullAgents / counted.length;
-    stats.failRate = stats.failedAgents / counted.length;
+  // Shares of the agents that ran, as `agents` counts them: a cached agent only returned its recorded
+  // result, and counts under cacheHits.
+  if (ran.length) {
+    stats.nullRate = stats.nullAgents / ran.length;
+    stats.failRate = stats.failedAgents / ran.length;
   }
   if (wallMs !== undefined) {
     stats.wallMs = wallMs;
