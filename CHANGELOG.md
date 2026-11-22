@@ -306,6 +306,7 @@ grouped by area, with links to the docs for the details.
 - **Budgets.** On Windows, `budget set` with `--repo` updates the budget for that folder when the path differs only in case, as in `C:\Work\web` and `c:\work\web`. Before, it added a second budget, such as `month-web-2`, that counted the same sessions. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-budget-set))
 - **Alerts.** When an alert command fails, the error `alert list` and `alert check` show keeps the start of its stderr, where cmd and PowerShell name the problem. Before, it kept the last line only, so a missing program read `operable program or batch file.` with no program named. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-alert))
 - **Budgets.** `budget set 20 day`, with the amount before the period, suggests `budget set day 20`. Before, it said only that the period must be day, week or month. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-budget-set))
+- **Docs.** A new page shows how to add, test and schedule an alert, check a webhook by its `X-Coding-Sh-Signature-V2` and timestamp, and write a command target that works on Windows, where it runs in cmd.exe. `alert --help` names the V2 header too; before, it named only the body signature, which does not stop a replay. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/alerts.md#verify-a-webhook))
 
 ## [0.1.7] - 2026-11-16
 

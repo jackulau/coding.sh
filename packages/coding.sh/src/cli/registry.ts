@@ -693,9 +693,9 @@ export const COMMANDS: CommandSpec[] = [
     examples: ["coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook", "coding.sh alert check", "coding.sh alert list"],
     notes: [
       "States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:<NAME> averages the scores of that name given to those sessions (coding.sh score, a judge, a review).",
-      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: \"under\" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body, keyed with the alert's secret>. A command gets the same JSON on stdin and succeeds by exiting 0.",
+      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: \"under\" only with --under, by only with --by agent) signed with the alert's secret: X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of \"<timestamp>.<body>\">, with the timestamp in X-Coding-Sh-Timestamp (unix seconds), and X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body>. A command gets the same JSON on stdin and succeeds by exiting 0; on Windows it runs in cmd.exe.",
       "Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.",
-      "alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.",
+      "alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute, the first a minute after it starts. The hook and the read commands never run alerts.",
       "Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.",
     ],
     load: () => import("./commands/alert.ts"),
