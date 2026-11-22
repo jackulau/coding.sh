@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
+import { dirname, join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { flush, init, shutdown, stats, trace, withSession } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
 import { baseUrl, resolveConfig } from "../src/config.ts";
@@ -259,4 +262,36 @@ test("Retry-After parsing", () => {
   assert.equal(retryAfterMs("junk"), undefined);
   const d = retryAfterMs(new Date(Date.now() + 3000).toUTCString())!;
   assert.ok(d > 1000 && d <= 3000);
+});
+
+// The Python SDK's tests read the same cases, so both SDKs wait the same for each value.
+const retryAfter = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "retry-after.json"), "utf8")) as {
+  now: number;
+  cases: { value: string | null; wait: number | null; why: string }[];
+};
+
+test("Retry-After is read as RFC 9110 defines it, case for case as in the Python SDK", () => {
+  // A zone that is not GMT, so a date read in local time fails here on a machine in GMT too.
+  const tz = process.env.TZ;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  process.env.TZ = "Asia/Kolkata";
+  try {
+    assert.equal(new Date(0).getTimezoneOffset(), -330, "the zone took effect");
+    // One comparison of every case, so a failure lists each value read wrong.
+    const got = retryAfter.cases.map((c) => {
+      const ms = retryAfterMs(c.value, retryAfter.now * 1000);
+      return { ...c, wait: ms === undefined ? null : ms / 1000 };
+    });
+    assert.deepEqual(got, retryAfter.cases);
+  } finally {
+    // Deleting TZ does not bring the old zone back on every platform, so set it first.
+    process.env.TZ = tz ?? zone;
+    if (tz === undefined) delete process.env.TZ;
+  }
+});
+
+test("a Retry-After of thousands of digits waits 60 s, as in the Python SDK", () => {
+  // Too big for a number, but still whole seconds.
+  assert.equal(retryAfterMs("9".repeat(5000)), 60_000);
+  assert.equal(retryAfterMs("0".repeat(5000) + "5"), 5000);
 });

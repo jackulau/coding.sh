@@ -4,8 +4,8 @@ Transport contract (docs/PRODUCTION.md section 4, shared with the TS SDK):
 
 - batches of <= max_batch events and <= 4 MiB go to POST <url>/v1/ingest, gzip-compressed;
 - one request in flight at a time, from a daemon thread;
-- retries on 429, 5xx and network errors, honoring Retry-After (seconds or an HTTP date, at
-  most 60 s), otherwise backing off 1, 2, 4 ... s up to 30 s, with at most 5 attempts;
+- retries on 429, 5xx and network errors, honoring Retry-After (whole seconds or an HTTP date,
+  at most 60 s), otherwise backing off 1, 2, 4 ... s up to 30 s, with at most 5 attempts;
 - 400/401/403 (and any other 4xx) drop the batch and warn once per status;
 - a full queue drops new events, counts them, and warns at most once a minute;
 - an atexit flush is bounded to 2 s; when it or shutdown() runs out of time, it warns once and
@@ -18,11 +18,10 @@ Nothing here ever raises into the app, and nothing logs the key or a request bod
 from __future__ import annotations
 
 import atexit
+import calendar
 import collections
-import email.utils
 import json
 import logging
-import math
 import os
 import re
 import threading
@@ -30,7 +29,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import timezone
 from typing import Any, Deque, Dict, List, Optional
 
 try:  # gzip needs zlib, which a few minimal builds lack.
@@ -179,26 +177,56 @@ class _Result:
         self.body = body
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_MONTH = "(?P<mon>%s)" % "|".join(_MONTHS)
+_DAY = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)"
+_TIME = "(?P<h>[0-9]{2}):(?P<mi>[0-9]{2}):(?P<s>[0-9]{2})"
+_DELAY_SECONDS = re.compile("[0-9]+")
+# The three HTTP-date forms of RFC 9110 section 5.6.7. All are in GMT, and case matters.
+_HTTP_DATES = (
+    re.compile("%s, (?P<d>[0-9]{2}) %s (?P<y>[0-9]{4}) %s GMT" % (_DAY, _MONTH, _TIME)),  # Sun, 06 Nov 1994 08:49:37 GMT
+    re.compile(
+        "(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, (?P<d>[0-9]{2})-%s-(?P<yy>[0-9]{2}) %s GMT" % (_MONTH, _TIME)
+    ),  # Sunday, 06-Nov-94 08:49:37 GMT
+    re.compile("%s %s (?P<d>[0-9]{2}| [0-9]) %s (?P<y>[0-9]{4})" % (_DAY, _MONTH, _TIME)),  # Sun Nov  6 08:49:37 1994
+)
+
+
+def _http_date(v: str, now: float) -> Optional[float]:
+    """An HTTP date as epoch seconds, or None for anything else. `now` places a two-digit year."""
+    m = next(filter(None, (p.fullmatch(v) for p in _HTTP_DATES)), None)
+    if m is None:
+        return None
+    g = m.groupdict()
+    if g.get("yy") is not None:
+        # The latest year ending in those two digits that is at most 50 years ahead (RFC 9110).
+        latest = time.gmtime(now).tm_year + 50
+        y = latest - (latest - int(g["yy"])) % 100
+    else:
+        y = int(g["y"])
+    mon = _MONTHS.index(g["mon"]) + 1
+    d, h, mi, s = int(g["d"]), int(g["h"]), int(g["mi"]), int(g["s"])
+    days = (31, 29 if calendar.isleap(y) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)[mon - 1]
+    if not (1 <= d <= days and h <= 23 and mi <= 59 and s <= 60):  # second 60 is a leap second
+        return None
+    # Any date before 1970 has passed. datetime, which timegm uses, has no year 0.
+    return 0.0 if y < 1970 else float(calendar.timegm((y, mon, d, h, mi, s)))
+
+
 def _parse_retry_after(v: Optional[str], now: Optional[float] = None) -> Optional[float]:
-    """Seconds to wait for a Retry-After value, read as the TS SDK reads it: seconds, or an HTTP
-    date (0 once it has passed), at most MAX_RETRY_AFTER_S. None for a value that is neither,
-    so the sender backs off. `now` is the time in epoch seconds; tests pass it."""
+    """Seconds to wait for a Retry-After value (RFC 9110 section 10.2.3): whole seconds, or an
+    HTTP date (0 once it has passed), at most MAX_RETRY_AFTER_S. None for anything else, so the
+    sender backs off. The TS SDK reads it the same way (packages/sdk/test/fixtures/retry-after.json).
+    `now` is the time in epoch seconds; tests pass it."""
     if not v:
         return None
-    try:
-        s = float(v.strip())
-    except ValueError:
-        s = math.nan
-    if math.isfinite(s) and s >= 0:
-        return min(s, MAX_RETRY_AFTER_S)
-    try:
-        at = email.utils.parsedate_to_datetime(v.strip())  # TypeError before 3.10, ValueError since
-        if at.tzinfo is None:  # an asctime date has no zone; HTTP dates are in GMT
-            at = at.replace(tzinfo=timezone.utc)
-        wait = at.timestamp() - (time.time() if now is None else now)
-    except Exception:
-        return None
-    return max(0.0, min(wait, MAX_RETRY_AFTER_S))
+    v = v.strip(" \t")  # spaces and tabs around a field value are not part of it
+    if _DELAY_SECONDS.fullmatch(v):
+        # float(), not int(): int() refuses a string of more than 4300 digits.
+        return min(float(v), MAX_RETRY_AFTER_S)
+    now = time.time() if now is None else now
+    at = _http_date(v, now)
+    return None if at is None else max(0.0, min(at - now, MAX_RETRY_AFTER_S))
 
 
 class Transport:
