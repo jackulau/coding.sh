@@ -90,10 +90,11 @@ describe("CLI and MCP over a store with T3-hosted Claude Code and Codex sessions
       };
       const st = await call("status");
       assert.deepEqual((st.last24h as { agents: string[] }).agents, ["claude-code", "codex"]);
-      const last = Object.fromEntries((st.lastCapture as { agent: string; at: string; sessionId: string }[]).map((x) => [x.agent, x]));
+      const last = Object.fromEntries((st.lastCapture as { agent: string; at: string; sessionId: string; shortId: string }[]).map((x) => [x.agent, x]));
       assert.deepEqual(Object.keys(last).sort(), ["claude-code", "codex"]);
-      // status names a session by the shortest id that resolves (8 characters or more).
-      assert.ok(HOSTED_CLAUDE.startsWith(last["claude-code"]!.sessionId), last["claude-code"]!.sessionId);
+      // status keeps the session's full id, with the shortest id that resolves (8 characters or more) beside it.
+      assert.equal(last["claude-code"]!.sessionId, HOSTED_CLAUDE);
+      assert.ok(HOSTED_CLAUDE.startsWith(last["claude-code"]!.shortId) && last["claude-code"]!.shortId.length >= 8, last["claude-code"]!.shortId);
       assert.equal(last["claude-code"]!.at, new Date(NOW - 3600e3 + 60_000).toISOString());
       const u = await call("usage", { since: "1d", groupBy: "agent" });
       assert.deepEqual((u.groups as { key: string }[]).map((g) => g.key).sort(), ["claude-code", "codex"]);

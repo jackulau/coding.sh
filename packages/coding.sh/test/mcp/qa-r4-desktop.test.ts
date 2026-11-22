@@ -22,7 +22,7 @@ let w: World;
 let mcp: CodingShMcp;
 let tools: { name: string; outputSchema: Record<string, unknown> }[];
 const IDS = { t3: "r4-t3-hosted", cc: "r4-claude", cx: "r4-codex" };
-/** How search hits name each session: the shortest id that resolves, at least 8 characters (core/session-ref.ts). */
+/** The shortId a search hit gives beside its session's full id: the shortest id that resolves, at least 8 characters (core/session-ref.ts). */
 const HIT = { t3: "r4-t3-ho", cc: "r4-claud", cx: "r4-codex" };
 
 async function call(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -34,7 +34,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<R
   return sc;
 }
 
-type Hit = { sessionId: string; agent: string };
+type Hit = { sessionId: string; shortId: string; agent: string };
 const hitsOf = (r: Record<string, unknown>) => r.hits as Hit[];
 
 before(async () => {
@@ -75,20 +75,22 @@ describe("search picks and labels hits by the session's agent", () => {
   it("agent t3code finds the T3 Code session's hits, labeled t3code", async () => {
     const hits = hitsOf(await call("search", { query: "worktree", agent: "t3code" }));
     assert.ok(hits.length > 0, "the t3code session matches");
-    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [HIT.t3]);
+    // The full id, as an agent keeps and compares it; shortId beside it resolves too.
+    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [IDS.t3]);
+    assert.deepEqual([...new Set(hits.map((h) => h.shortId))], [HIT.t3]);
     assert.deepEqual([...new Set(hits.map((h) => h.agent))], ["t3code"]);
   });
 
   it("agent claude-code leaves out the T3 Code session, as sessions_list does", async () => {
     const hits = hitsOf(await call("search", { query: "worktree", agent: "claude-code" }));
-    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [HIT.cc]);
+    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [IDS.cc]);
     const listed = (await call("sessions_list", { agent: "claude-code", since: "30d" })).sessions as { id: string }[];
     assert.deepEqual(listed.map((s) => s.id), [IDS.cc]);
   });
 
   it("agent and where combine, and where agent: hits carry the session's agent", async () => {
     const both = hitsOf(await call("search", { query: "worktree", agent: "t3code", where: "kind:assistant.message" }));
-    assert.deepEqual(both.map((h) => [h.sessionId, h.agent]), [[HIT.t3, "t3code"]]);
+    assert.deepEqual(both.map((h) => [h.sessionId, h.shortId, h.agent]), [[IDS.t3, HIT.t3, "t3code"]]);
     const viaWhere = hitsOf(await call("search", { query: "worktree", where: "agent:t3code" }));
     assert.ok(viaWhere.length > 0);
     assert.deepEqual([...new Set(viaWhere.map((h) => h.agent))], ["t3code"]);
@@ -97,6 +99,6 @@ describe("search picks and labels hits by the session's agent", () => {
   it("unfiltered hits carry each session's agent", async () => {
     const hits = hitsOf(await call("search", { query: "worktree", limit: 50 }));
     const bySession = new Map(hits.map((h) => [h.sessionId, h.agent]));
-    assert.deepEqual(Object.fromEntries(bySession), { [HIT.t3]: "t3code", [HIT.cc]: "claude-code", [HIT.cx]: "codex" });
+    assert.deepEqual(Object.fromEntries(bySession), { [IDS.t3]: "t3code", [IDS.cc]: "claude-code", [IDS.cx]: "codex" });
   });
 });
