@@ -13,7 +13,8 @@
 //
 // A failure exits 1 with one line per problem and leaves the file as it was.
 // The write goes to a temp file that is renamed over CHANGELOG.md; when the file
-// changed since it was read, the line is placed again (up to 5 tries).
+// changed since it was read, the line is placed again (up to 5 tries), and when
+// another program holds the file, the rename is tried again after a wait.
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,8 @@ export const MAX_WORDS = 60;
 export const SECTIONS = ["Added", "Changed", "Fixed", "Removed", "Deprecated", "Security", "Performance"];
 const REPO = "https://github.com/jackulau/coding.sh/blob/main/";
 const TRIES = 5;
+/** The first wait after a rename another program blocked; it doubles each try. */
+const RENAME_WAIT_MS = 100;
 
 /** Words as the shape test counts them: whitespace-separated tokens after the "-". */
 export const words = (line) => line.split(/\s+/).length - 1;
@@ -260,6 +263,9 @@ export function insert(md, section, line) {
   return { md: lines.join(eol) };
 }
 
+/** Blocks for ms milliseconds: the script is synchronous. */
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 /** Takes CHANGELOG.md.lock, waiting for another run of this script to let it go. */
 function lock(file) {
   const path = `${file}.lock`;
@@ -274,18 +280,24 @@ function lock(file) {
         if (Date.now() - statSync(path).mtimeMs > 10_000) rmSync(path, { force: true });
       } catch {}
       if (Date.now() > until) throw new Error(`${path} is held by another run; remove it if no run is going`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 + Math.random() * 30);
+      pause(20 + Math.random() * 30);
     }
   }
 }
 
-/** Adds the line. Returns the problems, empty on success. */
-export function add({ file = join(ROOT, "CHANGELOG.md"), root = ROOT, section, area, text, link }) {
+/**
+ * Adds the line. Returns the problems, empty on success. A rename that fails because
+ * another program (an editor, a virus scanner) holds the file is tried again after
+ * 100, 200, 400 and 800 ms. `rename` and `sleep` stand in for renameSync and the
+ * wait in tests.
+ */
+export function add({ file = join(ROOT, "CHANGELOG.md"), root = ROOT, section, area, text, link, rename = renameSync, sleep = pause }) {
   const problems = inputProblems({ section, area, text, link }, root);
   if (problems.length) return problems;
   const line = makeLine({ area, text, link });
   const release = lock(file);
   try {
+    let held;
     for (let n = 0; n < TRIES; n++) {
       const before = readFileSync(file, "utf8");
       const out = insert(before, section, line);
@@ -298,15 +310,18 @@ export function add({ file = join(ROOT, "CHANGELOG.md"), root = ROOT, section, a
         continue;
       }
       try {
-        renameSync(tmp, file);
+        rename(tmp, file);
       } catch (e) {
         rmSync(tmp, { force: true });
-        if (e.code === "EPERM" || e.code === "EBUSY" || e.code === "EACCES") continue;
-        throw e;
+        if (e.code !== "EPERM" && e.code !== "EBUSY" && e.code !== "EACCES") throw e;
+        held = e.code;
+        if (n < TRIES - 1) sleep(RENAME_WAIT_MS * 2 ** n);
+        continue;
       }
+      held = undefined;
       if (readFileSync(file, "utf8").split(/\r?\n/).includes(line)) return [];
     }
-    return [`CHANGELOG.md kept changing while the line was written; tried ${TRIES} times`];
+    return [held ? `CHANGELOG.md is held by another program (${held}); tried ${TRIES} times` : `CHANGELOG.md kept changing while the line was written; tried ${TRIES} times`];
   } finally {
     release();
   }

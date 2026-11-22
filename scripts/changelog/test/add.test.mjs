@@ -3,10 +3,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { add } from "../add.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..", "..");
@@ -124,6 +125,43 @@ test("two concurrent runs both land", async () => {
   const md = read(r);
   for (const i of [0, 1, 2, 3]) assert.ok(md.includes(`Concurrent line ${i}.`), `line ${i} is missing`);
   assert.deepEqual(parseChangelog(md).problems, []);
+});
+
+test("a CHANGELOG.md held by another program is tried again after 100, 200, 400 and 800 ms", () => {
+  const busy = () => Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+  const input = { section: "Fixed", area: "Work", text: "A held file is written on a later try.", link: "guides/explore.md" };
+  // Held for two tries, then free: the line lands on the third.
+  let r = root();
+  let fails = 2;
+  const waits = [];
+  const held = (from, to) => {
+    if (fails-- > 0) throw busy();
+    renameSync(from, to);
+  };
+  assert.deepEqual(add({ ...input, root: r, file: join(r, "CHANGELOG.md"), rename: held, sleep: (ms) => waits.push(ms) }), []);
+  assert.deepEqual(waits, [100, 200]);
+  assert.ok(read(r).includes("A held file is written on a later try."));
+  // Held on every try: the reason names it, and the file, with nothing left beside it, stays as it was.
+  r = root();
+  const before = read(r);
+  waits.length = 0;
+  const problems = add({ ...input, root: r, file: join(r, "CHANGELOG.md"), rename: () => { throw busy(); }, sleep: (ms) => waits.push(ms) });
+  assert.deepEqual(problems, ["CHANGELOG.md is held by another program (EBUSY); tried 5 times"]);
+  assert.deepEqual(waits, [100, 200, 400, 800]);
+  assert.equal(read(r), before);
+  assert.deepEqual(readdirSync(r).filter((f) => f.startsWith("CHANGELOG.md.")), []);
+});
+
+test("the wait before another try is real: a file held once is written at least 100 ms later", () => {
+  const r = root();
+  let fails = 1;
+  const held = (from, to) => {
+    if (fails-- > 0) throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+    renameSync(from, to);
+  };
+  const t = performance.now();
+  assert.deepEqual(add({ section: "Fixed", area: "Work", text: "Written after a wait.", link: "guides/explore.md", root: r, file: join(r, "CHANGELOG.md"), rename: held }), []);
+  assert.ok(performance.now() - t >= 95, "the second try came without a wait");
 });
 
 test("--check names each unreleased problem by line and skips released versions", () => {
