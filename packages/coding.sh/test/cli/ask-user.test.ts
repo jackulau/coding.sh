@@ -132,10 +132,11 @@ describe("Output.error", () => {
     assert.ok(ci.err().includes(ASK_USER), ci.err());
   });
 
-  it("text at a terminal an agent runs (its env names it): the lines for the agent stay", () => {
+  it("text at a terminal an agent runs (its env names it): no prompts, and the lines for the agent stay", () => {
     for (const k of AGENT_ENV) {
       const a = capture(false, true, { [k]: "1" });
-      assert.equal(a.out.interactive, true, k);
+      // The agent reads the terminal (Codex runs a command in one): it could answer a prompt itself.
+      assert.equal(a.out.interactive, false, k);
       assert.equal(a.out.forAgent, true, k);
       a.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
       assert.equal(a.err(), `✗ x exists\n    ${ASK_USER}\n    Overwrite it:\n    coding.sh x --force\n`, k);
@@ -146,6 +147,7 @@ describe("Output.error", () => {
     }
     // Set but empty names no agent: the person at the terminal is the user.
     const empty = capture(false, true, { AI_AGENT: "" });
+    assert.equal(empty.out.interactive, true);
     assert.equal(empty.out.forAgent, false);
     empty.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
     assert.ok(!empty.err().includes(ASK_USER), empty.err());
@@ -153,10 +155,12 @@ describe("Output.error", () => {
 });
 
 describe("requireConsent", () => {
+  /** The context requireConsent reads: the flags and the output. */
+  const ctx = (out: Output, flags: Record<string, unknown> = {}) => ({ flags, out }) as unknown as CommandContext;
+
   it("without a terminal or --yes: confirmation_required with askUser, telling the agent to ask", async () => {
     const { out } = capture(true);
-    const c = { flags: {}, out } as unknown as CommandContext;
-    await assert.rejects(requireConsent(c, "Run 4 agent sessions?", "coding.sh eval run s --yes"), (e: unknown) => {
+    await assert.rejects(requireConsent(ctx(out), "Run 4 agent sessions?", "coding.sh eval run s --yes"), (e: unknown) => {
       assert.ok(e instanceof UsageError);
       assert.equal(e.reason, "confirmation_required");
       assert.equal(e.askUser, true);
@@ -164,6 +168,43 @@ describe("requireConsent", () => {
       assert.equal(e.message, "Run 4 agent sessions needs confirmation from the user");
       return true;
     });
-    await requireConsent({ flags: { yes: true }, out } as unknown as CommandContext, "Run 4 agent sessions?", "x");
+    await requireConsent(ctx(out, { yes: true }), "Run 4 agent sessions?", "x");
+  });
+
+  it("at a terminal an agent runs: no prompt the agent could answer, the same confirmation_required", async () => {
+    for (const k of AGENT_ENV) {
+      const { out } = capture(false, true, { [k]: "1" });
+      out.confirm = () => assert.fail(`${k}: asked at the agent's terminal`);
+      await assert.rejects(requireConsent(ctx(out), "Run 4 agent sessions?", "coding.sh eval run s --yes"), (e: unknown) => {
+        assert.ok(e instanceof UsageError, k);
+        assert.equal(e.reason, "confirmation_required", k);
+        assert.equal(e.askUser, true, k);
+        return true;
+      });
+    }
+    // A person at the terminal is asked.
+    const { out } = capture(false, true);
+    let asked = "";
+    out.confirm = async (q: string) => ((asked = q), true);
+    await requireConsent(ctx(out), "Run 4 agent sessions?", "x");
+    assert.equal(asked, "Run 4 agent sessions?");
+  });
+});
+
+describe("Output.spin", () => {
+  /** stderr of a spinner started and stopped at a colored terminal, with the given env. */
+  function spun(env: NodeJS.ProcessEnv, stdinTTY = true): string {
+    let buf = "";
+    const sink = { write: (s: string) => ((buf += s), true), isTTY: true } as unknown as NodeJS.WriteStream;
+    const out = new Output({ json: false, env: { FORCE_COLOR: "1", ...env }, platform: "linux", stdout: sink, stderr: sink, stdin: { isTTY: stdinTTY } as NodeJS.ReadStream });
+    out.spin("Reading sessions").stop();
+    return buf;
+  }
+
+  it("draws frames for a person; one plain line in CI or under an agent, whose output is read back", () => {
+    assert.match(spun({}), /^\r\S Reading sessions/);
+    assert.match(spun({}, false), /^\r\S Reading sessions/, "a person piping stdin still sees the spinner");
+    assert.equal(spun({ CI: "1" }), "  Reading sessions\n");
+    for (const k of AGENT_ENV) assert.equal(spun({ [k]: "1" }), "  Reading sessions\n", k);
   });
 });
