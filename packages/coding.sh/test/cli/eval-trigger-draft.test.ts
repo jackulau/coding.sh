@@ -4,7 +4,7 @@
 // temp HOME; no model is called (provider "mock").
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -29,6 +29,7 @@ describe("eval trigger --draft", () => {
     const r = cli(["eval", "trigger", skill, "--draft", "mock", "--no-traces"]);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /triggers\.toml exists; pass --force/);
+    assert.match(r.stderr, /With their approval: coding\.?sh eval trigger \S+ --draft mock --no-traces --force\n/, "the approved command replaces the file, every flag kept");
     assert.equal(readFileSync(file, "utf8"), "# mine\n");
     rmSync(file);
   });
@@ -82,6 +83,11 @@ describe("eval trigger --draft", () => {
     assert.deepEqual(draft(["--repo", repoB], repoA).sources, ["trace:b-docx", "trace:b-pdf"]);
     assert.deepEqual(draft(["--repo", "../b"], repoA).sources, ["trace:b-docx", "trace:b-pdf"], "a relative --repo is read from the cwd");
     assert.deepEqual(draft(["--repo", "all"], repoA).sources, ["trace:a-docx", "trace:a-pdf", "trace:b-docx", "trace:b-pdf"]);
+    // Written to --spec, the next step runs that file.
+    const w = cli(["eval", "trigger", skill, "--draft", "mock", "--n", "1", "--spec", "../pdf-triggers.toml"], repoA);
+    assert.equal(w.status, 0, w.stderr);
+    assert.ok(existsSync(join(root, "pdf-triggers.toml")));
+    assert.match(w.stderr, /coding\.?sh eval trigger \S+ --spec \.\.\/pdf-triggers\.toml -k 3\n/);
     // A directory with no sessions under it mines nothing, so the model is asked (and the mock can't answer):
     // the other repos' prompts are never the fallback. Its own repo, so a TMPDIR inside another work
     // tree does not make that tree's root (which holds a and b) the repo it mines.

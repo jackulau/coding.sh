@@ -113,7 +113,8 @@ describe("eval trigger", () => {
     assert.ok(existsSync(out.file) && out.file.startsWith(join(home, ".coding.sh", "triggers", "pdf")), out.file);
     const text = cli(["eval", "trigger", "skills/pdf/SKILL.md", "--harness", "fake", "--yes", "--no-siblings"]);
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /precision 67% {2}recall 50% {2}F1 0\.57/);
+    assert.match(text.stdout, /precision 67% {2}recall 50% \[\d+%–\d+%\] {2}F1 0\.57/);
+    assert.equal(text.stdout.match(/recall/g)?.length, 1, "one recall line");
     assert.match(text.stderr + text.stdout, /no sibling skills/);
   });
 
@@ -144,6 +145,10 @@ describe("eval trigger", () => {
     const e2 = cli(["eval", "trigger", "skills/docx", "--yes"]);
     assert.equal(e2.status, 2);
     assert.match(e2.stderr, /No trigger spec at .*triggers\.toml/);
+    assert.match(e2.stderr, /Did you mean coding\.?sh eval trigger skills\/docx --draft\?/, "a hint that runs when pasted");
+    const e3 = cli(["eval", "trigger", "skills/docx", "--spec", "docx.toml", "--yes"]);
+    assert.equal(e3.status, 2);
+    assert.match(e3.stderr, /Did you mean coding\.?sh eval trigger skills\/docx --spec docx\.toml --draft\?/, "the draft goes where the run looks");
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--fail-on", "regression", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--candidate", "skills/docx", "--description", "x", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--min-f1", "2", "--yes"]).status, 2);

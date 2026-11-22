@@ -232,6 +232,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** `eval init` prints the setup every trial runs, where it was guessed from, and how to change it. A `package.json` with no lockfile gets no guessed `npm install`, since that install pins no versions. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
 - **Evals.** When `compare`, `eval run` or `eval trigger` asks to confirm, the command it prints keeps every flag you gave, plus `--yes`. Before, it dropped flags such as `--harness`, `--budget` and `-c`, and `eval run` of a trigger suite printed an `eval trigger` command instead. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 - **Compare.** `compare --experiment <id>` with no arms takes both from the stored comparison, baseline first, instead of failing on a missing `<A>`. When nothing records which arm was the baseline, it asks you to name both. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/compare-agents.md#5-look-again-without-re-running))
+- **Evals.** `eval trigger` prints recall once, with its interval, which is marked unweighted when prompt weights change the rate. A missing `triggers.toml` suggests `--draft`, the hint when a draft exists names `--force` with every flag you gave, and the hint after a draft keeps `--spec`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load))
 
 ## [0.1.7] - 2026-11-16
 
