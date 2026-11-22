@@ -24,7 +24,7 @@ function hookExit(): void {
   // beforeExit fires when the loop runs dry (not on process.exit): flush once, bounded.
   process.on("beforeExit", () => {
     const t = state?.transport;
-    if (t && t.stats().queued > 0 && t.enabled && !t.skipExitFlush) void t.close(EXIT_FLUSH_MS);
+    if (t && t.stats().queued > 0 && t.enabled && !t.skipExitFlush) void t.close(EXIT_FLUSH_MS, "the flush at exit");
   });
 }
 
@@ -113,7 +113,7 @@ export async function flush(timeoutMs = 5000): Promise<boolean> {
 export async function shutdown(timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   await settle(deadline);
-  return state ? state.transport.close(Math.max(0, deadline - Date.now())) : true;
+  return state ? state.transport.close(Math.max(0, deadline - Date.now()), "shutdown()") : true;
 }
 
 export function stats(): TransportStats {
