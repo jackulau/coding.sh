@@ -496,7 +496,7 @@ interface TransportStats {
 
 | Field | Type | Description |
 |---|---|---|
-| `queued` | `number` | Events waiting to be sent. |
+| `queued` | `number` | Events not sent yet, including the batch in flight or waiting for its retry. |
 | `sent` | `number` | Events the server accepted. |
 | `dropped` | `number` | Events dropped before sending: the queue was full, or the event was too large or not serializable. |
 | `failed` | `number` | Events the server rejected, or that were still unsent when retries or `shutdown()` gave up. |
@@ -543,7 +543,7 @@ def refund(invoice_id: int) -> dict:
 coding_sh.flush(timeout=5)  # end of a script, a job or a serverless handler
 ```
 
-`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it with `contextvars.copy_context().run`.
+`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it in a copy of the context, one per task: `pool.submit(contextvars.copy_context().run, fn, *args)`.
 
 ### Public names
 
@@ -681,13 +681,15 @@ def current_session_id() -> Optional[str]
 
 Send everything queued so far. Returns True when the queue drained in time.
 
+Waits at most `timeout` seconds. With `None` it waits until the queue is sent or the sender gives up on it: a minute or more when the server never answers.
+
 ```python
-def flush(timeout: Optional[float] = None) -> bool
+def flush(timeout: Optional[float] = 5.0) -> bool
 ```
 
 | Parameter | Type | Default |
 |---|---|---|
-| `timeout` | `Optional[float]` | `None` |
+| `timeout` | `Optional[float]` | `5.0` |
 
 ### `coding_sh.shutdown(...)`
 
@@ -858,7 +860,7 @@ A constant: `"gen_ai.conversation.id"`.
 
 ## Differences between the SDKs
 
-- `flush()` waits at most `5000` ms by default in TypeScript. In Python, `flush()` with `timeout=None` waits until the queue is sent or the sender gives up on it.
+- `flush()` waits at most `5000` ms by default in TypeScript and `5.0` s in Python. In Python, `flush(timeout=None)` waits until the queue is sent or the sender gives up on it.
 - `shutdown()` waits at most `5000` ms in TypeScript and `2.0` s in Python. Without a call, Python flushes at exit for at most `2.0` s, and TypeScript flushes on `beforeExit` for at most `5000` ms.
 - TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.
 - In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.

@@ -111,6 +111,28 @@ test("stream with stream_options.include_usage set by the app keeps the usage ch
   assert.deepEqual(llmCalls("keep-usage")[0]!.usage, { inputTokens: 1000, outputTokens: 500 });
 });
 
+test("no URL: the request goes out as the app wrote it, and init() later turns recording on", async () => {
+  _reset();
+  init({});
+  const openai = observe(client());
+  const params = { model: "mock-gpt", messages: [{ role: "user" as const, content: "hi" }], stream: true as const };
+  let text = "";
+  for await (const ch of await openai.chat.completions.create(params)) text += ch.choices[0]?.delta.content ?? "";
+  assert.equal(text, "pong");
+  assert.equal("stream_options" in llm.requests.at(-1)!.body, false, "no stream_options added while the SDK is off");
+  assert.deepEqual(stats(), { queued: 0, sent: 0, dropped: 0, failed: 0 });
+
+  init({ url: serve.url, flushIntervalMs: 10 });
+  text = "";
+  await withSession("on-later", async () => {
+    for await (const ch of await openai.chat.completions.create(params)) text += ch.choices[0]?.delta.content ?? "";
+  });
+  assert.equal(text, "pong");
+  assert.deepEqual(llm.requests.at(-1)!.body.stream_options, { include_usage: true });
+  await flush();
+  assert.deepEqual(llmCalls("on-later")[0]!.usage, { inputTokens: 1000, outputTokens: 500 });
+});
+
 test("tee() and toReadableStream() are observed once", async () => {
   const openai = observe(client());
   await withSession("tee", async () => {

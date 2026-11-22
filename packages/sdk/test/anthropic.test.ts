@@ -75,6 +75,20 @@ test("messages.stream() is recorded once, events and finalMessage unchanged", as
   assert.deepEqual(cs[0]!.usage, { inputTokens: 1000, outputTokens: 500 });
 });
 
+test("in a tool loop, the prompt is the user's text, not a tool result", async () => {
+  const anthropic = observe(client());
+  const ask = { role: "user" as const, content: "Look up order 42" };
+  const use = { role: "assistant" as const, content: [{ type: "tool_use" as const, id: "toolu_1", name: "lookup_order", input: { id: "42" } }] };
+  const result = { type: "tool_result" as const, tool_use_id: "toolu_1", content: [{ type: "text" as const, text: "order 42: shipped" }] };
+  await withSession("a-loop", () => anthropic.messages.create({ ...msg, messages: [ask, use, { role: "user", content: [result] }] }));
+  await withSession("a-loop-text", () => anthropic.messages.create({ ...msg, messages: [ask, use, { role: "user", content: [result, { type: "text", text: "And order 43?" }] }] }));
+  await flush();
+  const prompts = (sid: string) => serve.events().filter((e) => e.sessionId === sid && e.kind === "user.message").map((e) => e.payload.text);
+  assert.deepEqual(prompts("a-loop"), ["Look up order 42"]);
+  assert.equal(serve.session("a-loop")!.title, "Look up order 42");
+  assert.deepEqual(prompts("a-loop-text"), ["And order 43?"]);
+});
+
 test("tool_use blocks are listed; errors are rethrown and recorded", async () => {
   const anthropic = observe(client());
   await withSession("a-tool", () => anthropic.messages.create({ ...msg, model: "tool-claude" }));

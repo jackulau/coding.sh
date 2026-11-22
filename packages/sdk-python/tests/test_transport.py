@@ -186,6 +186,19 @@ class TransportTest(unittest.TestCase):
         self.assertFalse(coding_sh.flush(0.1))
         self.assertTrue(coding_sh.flush(5))
 
+    def test_bare_flush_waits_at_most_5_s(self) -> None:
+        # The quick start ends a script with a bare flush(). A server that is slow or
+        # down must not hold the script for the sender's whole retry schedule.
+        self.server.delay = 8.0
+        start_sdk(self.server)
+        self._span()
+        start = time.monotonic()
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            ok = coding_sh.flush()
+        self.assertFalse(ok)
+        self.assertLess(time.monotonic() - start, 7.0)
+        self.assertIn("flush() gave up after 5 s", "\n".join(logs.output))
+
     def test_env_configuration(self) -> None:
         import os
 
