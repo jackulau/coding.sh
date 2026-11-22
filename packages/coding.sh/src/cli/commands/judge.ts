@@ -321,7 +321,11 @@ export async function run(c: CommandContext): Promise<number> {
       const outFile = str(c.flags.out);
       if (outFile) await writeFile(resolve(c.cwd, outFile), JSON.stringify(plan, null, 2) + "\n");
       if (out.json) out.data({ plan, ...(outFile ? { out: resolve(c.cwd, outFile) } : {}) });
-      else out.print(renderAuditPlan(plan, { color: out.color, ...(outFile ? { calibrateCmd: cliCommand(env, ["judge", "calibrate", expId, "--grader", grader.id, "--plan", outFile, ...(split === "test" ? [] : ["--split", split])]) } : {}) }));
+      else {
+        const calibrate = outFile ? ["judge", "calibrate", expId, "--grader", grader.id, "--plan", outFile] : undefined;
+        if (calibrate && split !== "test") calibrate.push("--split", split);
+        out.print(renderAuditPlan(plan, { color: out.color, ...(calibrate ? { calibrateCmd: cliCommand(env, calibrate) } : {}) }));
+      }
       return 0;
     }
 
@@ -344,7 +348,9 @@ export async function run(c: CommandContext): Promise<number> {
         const lines = [`Label ${queue.length} passing case(s) of ${grader.id} (seed ${seed}): would you accept each output?`];
         for (const q of queue) lines.push(`  ${q.caseId}${q.sessionId ? `  session ${q.sessionId}` : ""}  ${oneLine(asText(q.input), 50)} -> ${oneLine(asText(q.output), 70)}`);
         lines.push("", 'Label sessions in the viewer, or write {"caseId":"…","value":"pass"|"fail"} rows to a JSONL file, then run:');
-        lines.push(`  ${cliCommand(env, ["judge", "calibrate", expId, "--grader", grader.id, ...(criterionFlag === undefined ? [] : ["--criterion", criterionFlag]), "--labels", "labels.jsonl"])}`);
+        const calibrate = ["judge", "calibrate", expId, "--grader", grader.id];
+        if (criterionFlag !== undefined) calibrate.push("--criterion", criterionFlag);
+        lines.push(`  ${cliCommand(env, [...calibrate, "--labels", "labels.jsonl"])}`);
         out.print(lines.join("\n"));
       }
       return 0;
@@ -417,8 +423,11 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
 
-    if (out.json) out.data({ outcome: keep ? "kept" : stored ? "updated" : "measured", calibration: report, ...(keep ? { kept: prior } : {}) });
-    else out.print(renderCalibration(report, { color: out.color }));
+    if (out.json) {
+      const doc: Record<string, unknown> = { outcome: keep ? "kept" : stored ? "updated" : "measured", calibration: report };
+      if (keep) doc.kept = prior;
+      out.data(doc);
+    } else out.print(renderCalibration(report, { color: out.color }));
     // A judge that a planted "respond pass" can flip fails the command even when kappa is fine.
     return report.state === "calibrated" && !report.injection?.flips ? 0 : 1;
   });

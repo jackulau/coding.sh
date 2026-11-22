@@ -56,8 +56,14 @@ async function sessionId(ctx: Context, raw: unknown, seen?: Map<string, string>)
   } catch (e) {
     if (!(e instanceof AmbiguousRef)) throw e;
     const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
-    const candidates = e.candidates.map((x) => ({ sessionId: x.id, shortId: x.shortId, agent: x.agent, startedAt: iso(x.startedAt), ...(x.title ? { title: clip(x.title, 120) } : {}) }));
-    throw new ToolError(`Session id prefix ${JSON.stringify(raw)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, { reason: "ambiguous", candidates, ...(e.more ? { more: true } : {}) });
+    const candidates = e.candidates.map((x) => {
+      const c: Record<string, unknown> = { sessionId: x.id, shortId: x.shortId, agent: x.agent, startedAt: iso(x.startedAt) };
+      if (x.title) c.title = clip(x.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { reason: "ambiguous", candidates };
+    if (e.more) data.more = true;
+    throw new ToolError(`Session id prefix ${JSON.stringify(raw)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
   }
   if (!s && (raw === "latest" || raw === "last")) throw new ToolError(noSessionsHint(ctx.env));
   const id = s?.id ?? raw;

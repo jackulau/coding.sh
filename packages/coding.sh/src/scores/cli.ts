@@ -103,7 +103,9 @@ async function add(c: CommandContext, ctx: Context): Promise<number> {
   const r = await addScore(ctx.index, body, { by: whoami(), source: "human", now: Date.now() }).catch((e) => Promise.reject(cliError(e)));
   const replaced = held && r.changed && (held.target !== r.score.target || held.targetId !== r.score.targetId || held.name !== r.score.name) ? held : undefined;
   if (c.out.json) {
-    c.out.data({ score: r.score, created: r.created, changed: r.changed, ...(replaced ? { replaced } : {}) });
+    const doc: Record<string, unknown> = { score: r.score, created: r.created, changed: r.changed };
+    if (replaced) doc.replaced = replaced;
+    c.out.data(doc);
     return 0;
   }
   c.out.print(r.score.id);
