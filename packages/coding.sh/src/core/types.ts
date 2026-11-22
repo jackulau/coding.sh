@@ -605,6 +605,8 @@ export interface SinkAck {
   error?: string;
   /** Retry after this many ms when not ok. */
   retryAfterMs?: number;
+  /** Events of the batch the sink left out on purpose (its `since`): acknowledged, not sent. */
+  skipped?: number;
 }
 
 /** A session whose events were written to a sink with no session.end among them. */
@@ -681,6 +683,8 @@ export interface SinkConfig {
   mode: "full" | "metadata";
   headers?: Record<string, string>;
   batchSize?: number;
+  /** Ms since epoch: sessions that started before it are never sent (sinks/since.ts). `init --remote` sets it. */
+  since?: number;
 }
 
 // ---------------------------------------------------------------- adapters

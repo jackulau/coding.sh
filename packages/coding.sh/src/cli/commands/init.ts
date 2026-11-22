@@ -415,7 +415,7 @@ export async function run(c: CommandContext): Promise<number> {
   const configBefore = existsSync(p.config) ? readFileSync(p.config, "utf8") : undefined;
   let configChange: FileChange | undefined = configBefore === undefined ? { path: p.config, action: "create", summary: "write the default coding.sh config", after: defaultConfigToml(env) } : undefined;
   if (remote) {
-    const after = withRemoteSink(configBefore ?? defaultConfigToml(env), remote);
+    const after = withRemoteSink(configBefore ?? defaultConfigToml(env), remote, new Date().toISOString());
     validateConfigText(after, env);
     if (after !== configBefore) {
       const summary = `send sessions to ${remote.url} (${remote.mode})`;

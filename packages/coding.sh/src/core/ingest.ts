@@ -823,6 +823,7 @@ async function sinkSend(index: IndexStore, sink: Sink, state: SinkState, write: 
   } catch (err) {
     ack = { ok: false, error: (err as Error).message };
   }
+  if (ack.ok && ack.skipped) state.sent -= ack.skipped; // the caller adds the whole batch; these were left out (the sink's since)
   if (ack.ok) return true;
   state.ok = false;
   state.failed = true;

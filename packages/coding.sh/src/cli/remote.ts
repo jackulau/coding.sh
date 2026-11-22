@@ -2,6 +2,8 @@
 // `coding.sh serve`. It writes one http sink named "team" (endpoint <url>/v1/ingest, the key as a
 // Bearer header) into ~/.coding.sh/config.toml, replacing an earlier "team" sink and keeping
 // every other line. The server is asked first, so a wrong URL or key fails before anything is written.
+// The sink's `since` is when init first connected: sessions that started before it stay on this
+// machine (sinks/since.ts), and running init again keeps it.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,14 +41,15 @@ export function parseRemote(rawUrl: string, rawKey: string | undefined, rawMode:
   return { url, key, mode };
 }
 
-/** The `[[sinks]]` block for the remote, as TOML lines. */
-export function remoteSinkBlock(r: Remote): string[] {
+/** The `[[sinks]]` block for the remote, as TOML lines. `since`: when init connected, as ISO text. */
+export function remoteSinkBlock(r: Remote, since: string): string[] {
   return [
     "[[sinks]] # written by coding.sh init --remote",
     `name = "${REMOTE_SINK}"`,
     'kind = "http"',
     `endpoint = ${JSON.stringify(`${r.url}/v1/ingest`)}`,
     `mode = "${r.mode}"${r.mode === "metadata" ? ' # "full" also sends prompts, code and tool output' : ""}`,
+    `since = ${JSON.stringify(since)} # sessions that started before this stay on this machine`,
     `headers = { Authorization = ${JSON.stringify(`Bearer ${r.key}`)} }`,
   ];
 }
@@ -54,25 +57,30 @@ export function remoteSinkBlock(r: Remote): string[] {
 const isHeader = (line: string) => /^\s*\[/.test(line);
 const isSinksHeader = (line: string) => /^\s*\[\[\s*sinks\s*\]\]\s*(#.*)?$/.test(line);
 const NAMED = new RegExp(`^\\s*name\\s*=\\s*["']${REMOTE_SINK}["']`);
+const SINCE = /^\s*since\s*=\s*(?:"([^"]*)"|'([^']*)')/;
 
-/** Config text with the "team" sink added, or replaced in place; every other line is kept. */
-export function withRemoteSink(text: string, r: Remote): string {
+/**
+ * Config text with the "team" sink added, or replaced in place; every other line is kept. A "team"
+ * sink that already has a `since` keeps it, so sessions from before the first connect stay local.
+ */
+export function withRemoteSink(text: string, r: Remote, since: string): string {
   const nl = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(/\r?\n/);
-  const block = remoteSinkBlock(r);
   for (let i = 0; i < lines.length; i++) {
     if (!isSinksHeader(lines[i]!)) continue;
     let end = i + 1;
     while (end < lines.length && !isHeader(lines[end]!)) end++;
-    if (!lines.slice(i + 1, end).some((l) => NAMED.test(l))) continue;
+    const body = lines.slice(i + 1, end);
+    if (!body.some((l) => NAMED.test(l))) continue;
+    const kept = body.map((l) => SINCE.exec(l)).find((m) => m !== null);
     // Keep the blank lines and comments that trail the old block (they belong to what follows).
     let last = end - 1;
     while (last > i && (!lines[last]!.trim() || lines[last]!.trim().startsWith("#"))) last--;
-    lines.splice(i, last - i + 1, ...block);
+    lines.splice(i, last - i + 1, ...remoteSinkBlock(r, kept ? (kept[1] ?? kept[2]!) : since));
     return lines.join(nl);
   }
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return [...lines, ...(lines.length ? [""] : []), ...block, ""].join(nl);
+  return [...lines, ...(lines.length ? [""] : []), ...remoteSinkBlock(r, since), ""].join(nl);
 }
 
 /**

@@ -125,7 +125,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 ```
 
 `coding.sh init --remote` writes an `http` sink named `team` for you: see
-[Self-host for a team](../how-to/self-host-team.md).
+[Self-host for a team](../how-to/self-host-team.md). It sets the sink's `since` to the time you
+first connect, so sessions that started before it stay on your machine. A sink you write by hand
+without `since` can also send past sessions that are still on disk
+([`[[sinks]]`](../reference/config.md#sinks)).
 
 ## The model API proxy
 
