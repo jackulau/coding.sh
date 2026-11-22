@@ -29,6 +29,7 @@ import { renderAuditPlan, renderCalibration } from "../../judge/render.ts";
 import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, oneLine, str, withContext } from "../common.ts";
+import { cliCommand, quoteArg } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -244,7 +245,12 @@ export async function run(c: CommandContext): Promise<number> {
       throw new UsageError(`Judge ${grader.version} is not stored, so its tuning splits are unknown. Pass --tuned-on <SPLIT> (e.g. --tuned-on dev)`, { reason: "missing_argument" });
     }
     const tunedOn = (tunedFlag.length ? tunedFlag : (stored?.tunedOn ?? [])) as Split[];
-    const criterion = str(c.flags.criterion) ?? stored?.criterion;
+    // calibrate --plan reads the labels the plan was drawn for, unless --criterion names others.
+    const planFile = sampling || sampleN !== undefined ? undefined : str(c.flags.plan);
+    if (!judge && planFile) throw new UsageError(`--plan needs an LLM judge; ${grader.id} is a ${grader.kind} grader`, { reason: "invalid_argument" });
+    const plan = planFile ? await readPlan(resolve(c.cwd, planFile)) : undefined;
+    const criterionFlag = str(c.flags.criterion);
+    const criterion = criterionFlag ?? plan?.criterion ?? stored?.criterion;
 
     // Verdicts: first trial per case (one verdict per case; later trials are retries, not votes).
     const verdicts = new Map<string, JudgedCase>();
@@ -278,6 +284,15 @@ export async function run(c: CommandContext): Promise<number> {
       const named = new Set(fromFile.map((l) => l.caseId));
       labels = [...labels.filter((l) => !named.has(l.caseId)), ...fromFile];
     }
+    // Only labels named after the criterion count (the viewer's Pass/Fail is "outcome"): name the others these cases have.
+    if (criterion !== undefined && !labels.length) {
+      const all = labelsFromCore(await ctx.index.listLabels({}), (sid) => caseBySession.get(sid), hasCase);
+      if (ctx.index.listScores) all.push(...caseLabelsFromScores(await ctx.index.listScores({ target: "case", source: "human" }), hasCase));
+      const counts = new Map<string, number>();
+      for (const l of all) if (l.value !== "skip" && l.criterion !== undefined) counts.set(l.criterion, (counts.get(l.criterion) ?? 0) + 1);
+      const names = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      if (names.length) out.warn(`No human label on these cases is named ${JSON.stringify(criterion)}; there are labels named ${names.map(([n, k]) => `${n} (${k})`).join(", ")}. Pass --criterion ${quoteArg(names[0]![0], env)} to read those.`);
+    }
 
     if (sampling) {
       const seed = num(c.flags.seed) ?? 0;
@@ -306,7 +321,11 @@ export async function run(c: CommandContext): Promise<number> {
       const outFile = str(c.flags.out);
       if (outFile) await writeFile(resolve(c.cwd, outFile), JSON.stringify(plan, null, 2) + "\n");
       if (out.json) out.data({ plan, ...(outFile ? { out: resolve(c.cwd, outFile) } : {}) });
-      else out.print(renderAuditPlan(plan, { color: out.color, ...(outFile ? { calibrateCmd: `coding.sh judge calibrate ${expId} --grader ${grader.id} --plan ${outFile}` } : {}) }));
+      else {
+        const calibrate = outFile ? ["judge", "calibrate", expId, "--grader", grader.id, "--plan", outFile] : undefined;
+        if (calibrate && split !== "test") calibrate.push("--split", split);
+        out.print(renderAuditPlan(plan, { color: out.color, ...(calibrate ? { calibrateCmd: cliCommand(env, calibrate) } : {}) }));
+      }
       return 0;
     }
 
@@ -329,14 +348,14 @@ export async function run(c: CommandContext): Promise<number> {
         const lines = [`Label ${queue.length} passing case(s) of ${grader.id} (seed ${seed}): would you accept each output?`];
         for (const q of queue) lines.push(`  ${q.caseId}${q.sessionId ? `  session ${q.sessionId}` : ""}  ${oneLine(asText(q.input), 50)} -> ${oneLine(asText(q.output), 70)}`);
         lines.push("", 'Label sessions in the viewer, or write {"caseId":"…","value":"pass"|"fail"} rows to a JSONL file, then run:');
-        lines.push(`  coding.sh judge calibrate ${expId} --grader ${grader.id} --labels labels.jsonl`);
+        const calibrate = ["judge", "calibrate", expId, "--grader", grader.id];
+        if (criterionFlag !== undefined) calibrate.push("--criterion", criterionFlag);
+        lines.push(`  ${cliCommand(env, [...calibrate, "--labels", "labels.jsonl"])}`);
         out.print(lines.join("\n"));
       }
       return 0;
     }
 
-    const planFile = str(c.flags.plan);
-    if (!judge && planFile) throw new UsageError(`--plan needs an LLM judge; ${grader.id} is a ${grader.kind} grader`, { reason: "invalid_argument" });
     if (!judge) {
       const minN = num(c.flags["min-n"]);
       const audit = auditVerifier({
@@ -358,7 +377,6 @@ export async function run(c: CommandContext): Promise<number> {
     const judgeCost = num(c.flags["judge-cost"]);
     if (judgeCost !== undefined && !(judgeCost >= 0 && Number.isFinite(judgeCost))) throw new UsageError(`--judge-cost must be a number of dollars ≥ 0, got ${judgeCost}`, { reason: "invalid_argument" });
     const reportSplit = (str(c.flags.split) ?? "test") as Split;
-    const plan = planFile ? await readPlan(resolve(c.cwd, planFile)) : undefined;
     if (plan) {
       const seed = num(c.flags.seed);
       if (plan.experimentId !== undefined && plan.experimentId !== exp.id) throw new UsageError(`--plan was drawn for experiment ${plan.experimentId}, not ${exp.id}`, { reason: "invalid_argument" });
@@ -377,7 +395,13 @@ export async function run(c: CommandContext): Promise<number> {
       ...(judgeCost !== undefined ? { judgeCost } : {}),
       ...(plan ? { plan } : {}),
     });
-    if (stored) await store.putJudge(withCalibration(stored, report));
+    // A run with no held-out case that has both a label and a verdict measured nothing: keep a calibration that did.
+    const prior = stored?.calibration;
+    const keep = report.status.n === 0 && (prior?.n ?? 0) > 0;
+    if (stored && !keep) await store.putJudge(withCalibration(stored, report));
+    if (keep && prior) {
+      out.warn(`Kept the judge's stored calibration (${prior.state}, n=${prior.n}${prior.ts ? `, ${new Date(prior.ts).toISOString().slice(0, 10)}` : ""}): this run has no held-out case with both a human label and a verdict`);
+    }
 
     if (probeSpec) {
       const judge = await probeJudge(c, probeSpec);
@@ -399,8 +423,11 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
 
-    if (out.json) out.data({ outcome: stored ? "updated" : "measured", calibration: report });
-    else out.print(renderCalibration(report, { color: out.color }));
+    if (out.json) {
+      const doc: Record<string, unknown> = { outcome: keep ? "kept" : stored ? "updated" : "measured", calibration: report };
+      if (keep) doc.kept = prior;
+      out.data(doc);
+    } else out.print(renderCalibration(report, { color: out.color }));
     // A judge that a planted "respond pass" can flip fails the command even when kappa is fine.
     return report.state === "calibrated" && !report.injection?.flips ? 0 : 1;
   });
