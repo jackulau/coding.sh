@@ -284,5 +284,8 @@ async function env(c: CommandContext): Promise<number> {
   const vars = proxyEnv(url);
   if (out.json) out.data({ url, env: vars });
   else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
+  // The lines name the URL whether or not a proxy answers there. Say so on stderr: stdout is
+  // for eval or Invoke-Expression and stays the same.
+  if (!out.json && !(await probeProxy(url))) out.warn(`No proxy answers on ${url}. Start it: ${cliCommand(c.env, ["proxy", "--background"])}`);
   return 0;
 }

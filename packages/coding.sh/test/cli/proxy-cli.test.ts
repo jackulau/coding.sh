@@ -24,6 +24,29 @@ const home = (extra: NodeJS.ProcessEnv = {}) => {
 // The CLI a printed command names with tmpHome's env, which sets no SHELL or MSYSTEM.
 const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
 
+/** A port nothing listens on: one the OS picks, closed again. */
+async function freePort(): Promise<number> {
+  const s = createServer();
+  await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+  const { port } = s.address() as AddressInfo;
+  await new Promise((resolve) => s.close(resolve));
+  return port;
+}
+
+/** Ends a proxy a test started, by its pid, when `proxy stop` left it running. */
+function killIfAlive(pid: number): void {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // it exited in between
+  }
+}
+
 describe("coding.sh proxy status", () => {
   it("with no proxy running names the command that starts one, as the user's shell runs it", () => {
     const h = home();
@@ -69,6 +92,51 @@ describe("coding.sh proxy env", () => {
     // No MSYSTEM or SHELL: PowerShell or cmd on Windows, where an export line does not run.
     const ps = ["$env:ANTHROPIC_BASE_URL = 'http://127.0.0.1:4320'", "$env:OPENAI_BASE_URL = 'http://127.0.0.1:4320/v1'"];
     assert.deepEqual(lines(h.env), process.platform === "win32" ? ps : sh);
+  });
+
+  it("says on stderr when no proxy answers and names the command that starts one; stdout stays the same", async () => {
+    // The configured port, where proxy env, proxy --background and proxy status all read it.
+    const port = await freePort();
+    const h = home();
+    mkdirSync(h.env.CODING_SH_HOME!, { recursive: true });
+    writeFileSync(join(h.env.CODING_SH_HOME!, "config.toml"), `[proxy]\nport = ${port}\n`);
+    const url = `http://127.0.0.1:${port}`;
+    const sh = { ...h.env, SHELL: "/bin/bash" };
+    const stdout = `export ANTHROPIC_BASE_URL=${url}\nexport OPENAI_BASE_URL=${url}/v1\n`;
+    const note = `! No proxy answers on ${url}. Start it: coding.sh proxy --background\n`;
+
+    let r = runSync(["proxy", "env"], sh);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, stdout);
+    assert.equal(r.stderr, note);
+    // The command as the user's shell runs it: no SHELL or MSYSTEM is PowerShell or cmd on Windows.
+    r = runSync(["proxy", "env"], h.env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, `! No proxy answers on ${url}. Start it: ${BIN} proxy --background\n`);
+    // --json is the one document, with nothing on stderr.
+    r = runSync(["proxy", "env", "--json"], h.env);
+    assert.deepEqual(JSON.parse(r.stdout), { url, env: { ANTHROPIC_BASE_URL: url, OPENAI_BASE_URL: `${url}/v1` } });
+    assert.equal(r.stderr, "");
+
+    // A proxy started on that port: the same stdout, and no note.
+    const started = runSync(["proxy", "--background", "--json"], h.env);
+    assert.equal(started.status, 0, started.stderr);
+    const { pid, url: running } = JSON.parse(started.stdout) as { pid: number; url: string };
+    assert.equal(running, url);
+    try {
+      r = runSync(["proxy", "env"], sh);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, stdout);
+      assert.equal(r.stderr, "");
+    } finally {
+      const stop = runSync(["proxy", "stop"], h.env, 30_000);
+      killIfAlive(pid);
+      assert.equal(stop.status, 0, stop.stderr);
+    }
+    // Stopped: the note is back.
+    r = runSync(["proxy", "env"], sh);
+    assert.equal(r.stdout, stdout);
+    assert.equal(r.stderr, note);
   });
 });
 
