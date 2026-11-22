@@ -125,7 +125,7 @@ describe("work show with a short session prefix", () => {
   test("says a prefix needs at least 4 characters", async () => {
     const r = await runCmd(work, box(), { action: "show", positionals: ["abc"] });
     assert.ok(r.error, "an error");
-    assert.match(r.error.message, /a session id prefix needs at least 4 characters/);
+    assert.match(r.error.message, /an id prefix needs at least 4 characters/);
   });
 });
 

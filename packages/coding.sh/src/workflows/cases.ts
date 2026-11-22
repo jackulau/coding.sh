@@ -28,10 +28,9 @@ import type { SeededBug, VerifierTest, WorkflowCase, WorkflowTruth } from "./typ
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const SEVERITIES = new Set(["P0", "P1", "P2"]);
 
-/** A patch file parseBugs read: the bug it belongs to, as written and as resolved. */
+/** A patch file parseBugs read: the bug it belongs to, and its path, resolved. */
 interface PatchRead {
   bug: string;
-  given: string;
   path: string;
 }
 
@@ -49,14 +48,15 @@ async function parseBugs(list: unknown, baseDir: string, blobs: Pick<BlobStore, 
     if (typeof b.patch === "string" && /^[0-9a-f]{64}$/.test(b.patch)) {
       patch = b.patch; // already a blob ref (e.g. truth written by buildSeededTree)
     } else if (typeof b.patch === "string" && b.patch) {
-      const p = isAbsolute(b.patch) ? b.patch : resolve(baseDir, b.patch);
+      // An absolute path is resolved too: it names the same file, and messages print it with one kind of separator.
+      const p = isAbsolute(b.patch) ? resolve(b.patch) : resolve(baseDir, b.patch);
       let text: string;
       try {
         text = await readFile(p, "utf8");
       } catch {
-        throw new Error(`${where}: can't read patch ${JSON.stringify(b.patch)} for bug ${id}`);
+        throw new Error(`${where}: can't read patch ${p} for bug ${id}`);
       }
-      read.push({ bug: id, given: b.patch, path: p });
+      read.push({ bug: id, path: p });
       patch = await blobs.put(text);
     }
     const bug: SeededBug = {
@@ -136,7 +136,7 @@ export async function parseCase(text: string, file: string, workflow: string, bl
     let list: unknown = tr.bugs;
     let listBase = baseDir;
     if (typeof tr.file === "string") {
-      const p = isAbsolute(tr.file) ? tr.file : resolve(baseDir, tr.file);
+      const p = isAbsolute(tr.file) ? resolve(tr.file) : resolve(baseDir, tr.file);
       truthFile = p;
       const v = JSON.parse(await readFile(p, "utf8")) as unknown;
       list = Array.isArray(v) ? v : isObj(v) ? v.bugs : undefined;
@@ -153,16 +153,19 @@ export async function parseCase(text: string, file: string, workflow: string, bl
     // The truth is hidden from the workflow: a truth file inside the tree it works on could be read by its agents,
     // and so could a case file there that lists bugs, whether they are the truth or left over beside truth.file,
     // and so could a bug's patch, which is the bug itself. A patch already stored (a blob ref) is not a file.
+    // Messages print each path resolved, with one kind of separator. c.start keeps the trees as written, since an
+    // experiment's job config (--resume) hashes the cases.
     const trees = [c.start.repoRoot, c.start.snapshot];
     const listsBugs = kind === "seeded-bugs" && Array.isArray(tr.bugs) && tr.bugs.length > 0;
-    for (const tree of trees) {
-      if (truthFile && tree && isInside(truthFile, tree)) throw new Error(`${file}: truth.file ${JSON.stringify(tr.file)} is inside the workflow's tree ${tree}, where its agents could read it; move it, with the patches it names, to ${truthFolder(tree, trees)}, then set truth.file to its new path`);
+    for (const given of trees) {
+      const tree = given && resolve(given);
+      if (truthFile && tree && isInside(truthFile, tree)) throw new Error(`${file}: truth.file ${truthFile} is inside the workflow's tree ${tree}, where its agents could read it; move it, with the patches it names, to ${truthFolder(tree, trees)}, then set truth.file to its new path`);
       if (listsBugs && tree && isInside(file, tree)) {
         const listed = `${file}: this case file lists [[truth.bugs]] and is inside the workflow's tree ${tree}, where its agents could read them`;
         throw new Error(truthFile ? `${listed}; truth.file is set, so they are not used: delete them` : `${listed}; move them, with the patches they name, to a truth file in ${truthFolder(tree, trees)}, then set truth.file to its path`);
       }
       const inTree = tree ? patches.find((x) => isInside(x.path, tree)) : undefined;
-      if (inTree) throw new Error(`${file}: the patch ${JSON.stringify(inTree.given)} of bug ${inTree.bug} is inside the workflow's tree ${tree}, where its agents could read it; move it to ${truthFolder(tree, trees)}, then set its patch to the new path`);
+      if (inTree) throw new Error(`${file}: the patch ${inTree.path} of bug ${inTree.bug} is inside the workflow's tree ${tree}, where its agents could read it; move it to ${truthFolder(tree, trees)}, then set its patch to the new path`);
     }
   }
   if (typeof t.threshold === "number") c.threshold = t.threshold;
