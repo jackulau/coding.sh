@@ -18,7 +18,7 @@ export default {
   Script: "Script",
   "Copy the npx command: {{NPX}}": "Copiar o comando npx: {{NPX}}",
   "Paste it into your coding agent.": "Cole no seu agente de código.",
-  "Needs Node.js 22.16 or newer. It does not work on Windows.": "Precisa do Node.js 22.16 ou mais recente. Não funciona no Windows.",
+  "Needs Node.js 22.16 or newer. On Windows: ": "Precisa do Node.js 22.16 ou mais recente. No Windows: ",
   "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
     "No Windows, execute no Git Bash. Não funciona no PowerShell nem no cmd.",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
