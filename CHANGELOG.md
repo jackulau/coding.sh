@@ -366,6 +366,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** An unknown `--agent` with no close match lists the agent ids to pick from, on `init`, `doctor`, `ingest`, `uninstall`, `harness audit`, `harness snapshot`, `eval run` and `eval trigger`. A close match is still suggested. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/agents.md#coding-agents))
 - **Query.** `--where` given more than once joins the queries with AND, as if written in one, instead of keeping only the last. A later `sort:` or `limit:` wins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where))
 - **Query.** When `sessions --flag` or a `flag:` term finds nothing and the name is close to a flag coding.sh sets or a stored session carries, `sessions` exits 2 and names that flag. A name a stored session carries is not a typo. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
+- **Work.** `work snooze` on an item blocked on you says it stays hidden until the snooze ends, even if it waits on you again. Before, it said the item comes back sooner if it moves to a more urgent bucket, and no bucket is more urgent. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#acknowledging-and-snoozing))
 
 ## [0.1.7] - 2026-11-16
 
