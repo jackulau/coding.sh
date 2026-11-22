@@ -29,8 +29,8 @@ coding-sh-triage  8         8      13.4k   221     1679      0%          ~$0.009
 ```
 
 `coding-sh-triage` is an SDK app; its rows sit next to the coding agents. `--since` defaults to
-`30d`. `-a codex` keeps one agent, `--repo` keeps one repo (a path or a repo name, read as
-`sessions --repo` reads it), and `--where` takes any [query](https://coding.sh/docs/query).
+`30d`. `-a codex` keeps one agent, `--repo` keeps one repo, and `--where` takes any
+[query](https://coding.sh/docs/query).
 
 ## 2. Find the most expensive sessions
 
@@ -248,10 +248,8 @@ coding.sh budget status
 
 Spend is the estimated cost of the sessions that started in the current period, subagents
 included: the same total as `coding.sh usage` over that window with the budget's `--agent` and
-`--repo`. For a `day` budget set with `--repo .`, that is `coding.sh usage --since today --repo .`
-run from the same folder. A session counts in the period it started in. A repo counts the sessions
-`coding.sh sessions --repo` lists for it: a checkout's root, or a folder in a linked worktree,
-takes in every worktree of the repo.
+`--repo`. A session counts in the period it started in. A repo budget counts the sessions
+`coding.sh sessions --repo` lists.
 
 `budget status` shows spend, limit, percent and next reset, or `-` and a warning for a budget it
 can't read (exit code 1). Setting the same period and scope again changes the limit. `budget list`
@@ -269,13 +267,10 @@ matches and their subagents. The status line counts only `day` budgets on sessio
 The [status line](https://coding.sh/docs/agents#status-line) adds `budget 82%` once the highest
 budget passes 80%.
 
-`coding.sh proxy --enforce-budget` answers 429, with a `Retry-After` header in seconds until the
-reset, to a call a budget over its limit applies to. The call never goes upstream. The body is the
-vendor's error shape and names the budget, its limit and its reset. It ignores `--repo` and
-`--where` budgets.
-See
+`coding.sh proxy --enforce-budget` answers 429 to a call a budget over its limit applies to, and
+the call never goes upstream. It ignores `--repo` and `--where` budgets.
 [Log every model call with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#stop-calls-over-a-budget)
-for which budgets it can match.
+says which budgets it can match and what the 429 holds.
 
 ## Read the result
 

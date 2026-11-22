@@ -182,17 +182,19 @@ coding.sh proxy --enforce-budget
 With `--enforce-budget`, a model call that a [budget](https://coding.sh/docs/cost#set-a-budget)
 over its limit applies to gets a 429 and never goes upstream. The body uses the vendor's error
 shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
-its limit, its estimated spend, when it resets and the command that shows the budgets, as the
-shell the proxy started in runs it (`codingsh budget status` in PowerShell or cmd).
-`Retry-After` gives the seconds until the reset. The 429 also carries `x-should-retry: false`, so
-the Anthropic and OpenAI SDKs raise it at once instead of retrying.
+its limit, its estimated spend and when it resets.
+
+The body also names the command that shows the budgets, as the shell the proxy started in runs it
+(`codingsh budget status` in PowerShell or cmd). `Retry-After` gives the seconds until the reset,
+and `x-should-retry: false` makes the Anthropic and OpenAI SDKs raise the 429 at once instead of
+retrying.
 
 Which budgets the proxy can match:
 
 - A budget with no `--agent`, `--repo` or `--where` applies to every call.
 - A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
-  their headers. Every other call counts as agent `proxy`, the agent the proxy stores it under:
-  another client's, and a Codex call that sends no session id.
+  their headers. Every other call, a Codex call with no session id included, is stored and counted
+  as agent `proxy`.
 - A budget with `--repo` or `--where` never blocks a call, and the proxy does not read its spend:
   the proxy does not know a call's repo or session.
 
