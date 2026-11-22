@@ -110,7 +110,9 @@ async function start(c: CommandContext): Promise<number> {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") {
         // The same command on a free port: a detached child names --background, as the user ran it.
-        const again = ["proxy", ...(c.env[DETACHED_ENV] === "1" ? ["--background"] : []), ...startFlags(c.flags), "--port", "0"];
+        const again = ["proxy"];
+        if (c.env[DETACHED_ENV] === "1") again.push("--background");
+        again.push(...startFlags(c.flags), "--port", "0");
         throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", cliCommand(c.env, again)] });
       }
       throw new CliError(`Can't start the proxy: ${(e as Error).message}`, { reason: "proxy_failed" });
