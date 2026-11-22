@@ -169,6 +169,7 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     scores: {},
     createdAt: Date.now(),
   };
+  for (const c of o.cases) if (c.threshold !== undefined) (record.thresholds ??= {})[c.id] = c.threshold;
   if (!resumed) await o.store.putExperiment(record);
   let done = kept.size;
   await pool(jobs, o.concurrency ?? 1, async (job, i) => {

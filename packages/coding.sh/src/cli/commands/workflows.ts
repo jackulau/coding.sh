@@ -827,7 +827,8 @@ async function compare(c: CommandContext): Promise<number> {
     const r = await store.getRun(rid);
     if (r) runs.push(r.run);
   }
-  const threshold = num(c.flags.threshold);
+  // --threshold for every case, else each case's own, as the experiment recorded it; 0.5 for a case with none.
+  const threshold = num(c.flags.threshold) ?? (exp.thresholds ? new Map(Object.entries(exp.thresholds)) : undefined);
   const seed = num(c.flags.seed);
   const report = compareWorkflowVariants(runs, new Map(Object.entries(exp.scores)), { baseline, candidate, ...(threshold !== undefined ? { threshold } : {}), ...(seed !== undefined ? { seed } : {}), ...(select ? { select } : {}) });
   if (out.json) {

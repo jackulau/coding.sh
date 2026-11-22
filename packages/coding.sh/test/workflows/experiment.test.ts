@@ -142,6 +142,12 @@ describe("runWorkflowExperiment + compareWorkflowVariants", () => {
     const exp = (await store.getExperiment(res.experimentId))!;
     assert.equal(exp.runIds.length, 8);
     assert.equal(Object.keys(exp.scores).length, 8);
+    // `workflows compare` reads each case's pass threshold from the record: seeded-1 sets 0.5, seeded-2 none.
+    assert.deepEqual(exp.thresholds, { "seeded-1": 0.5 });
+    const unset = new WorkflowStore(join(root, "store1-unset"));
+    const failing: WorkflowDriver = { id: "command", run: async () => Promise.reject(new Error("x")) };
+    const none = await runWorkflowExperiment({ workflow: "review", variants: [{ name: "x" }], cases: cases.slice(1), k: 1, driver: failing, store: unset });
+    assert.equal("thresholds" in (await unset.getExperiment(none.experimentId))!, false);
 
     const report = compareWorkflowVariants(res.runs, res.scores, { baseline: "bad", candidate: "good", iters: 500, seed: 1 });
     assert.equal(report.pairedCases, 2);

@@ -1,7 +1,7 @@
 // `coding.sh workflows` through the command module's run(), with a fake
 // Output and a temp HOME / CODING_SH_HOME / CLAUDE_CONFIG_DIR.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -301,6 +301,23 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("compare", [experimentId], { ...flags, select: "min-cost", "q-min": 0.5, "q-drop": 10 }), /--q-min or --q-drop, not both/);
     await assert.rejects(cli("compare", [experimentId], { ...flags, select: "pareto", lambda: 1 }), /--select pareto takes no --lambda/);
     await assert.rejects(cli("compare", [experimentId], { ...flags, select: "cheapest" }), /--select must be one of min-cost, weighted, pareto/);
+  });
+
+  it("compare counts a pass at each case's threshold, and --threshold sets one for every case", async () => {
+    const e = { CODING_SH_HOME: join(root, "threshold-home") };
+    const dir = join(root, "cases-threshold");
+    writeReviewCases(dir);
+    // seeded-1 asks for 0.9, so the good variant's F1 of 0.8 fails there, as the bad variant's 0 does.
+    const file = join(dir, "seeded-1.toml");
+    writeFileSync(file, readFileSync(file, "utf8").replace("threshold = 0.5", "threshold = 0.9"));
+    const variant = [`bad=node ${join(root, "fake-wf.mjs")} bad`, `good=node ${join(root, "fake-wf.mjs")} good`];
+    const id = (await json("run", ["review"], { driver: "command", variant, cases: dir, split: "dev", k: 1, yes: true }, e)).experimentId;
+    const passes = async (flags: Record<string, FlagValue>) => {
+      const { mcnemar } = await json("compare", [id], { baseline: "bad", candidate: "good", ...flags }, e);
+      return [mcnemar.b, mcnemar.c];
+    };
+    assert.deepEqual(await passes({}), [0, 0]);
+    assert.deepEqual(await passes({ threshold: 0.5 }), [0, 1]);
   });
 
   it("replay predicts cache hits (dry run), asks above the threshold, and resumes through claude", async () => {
