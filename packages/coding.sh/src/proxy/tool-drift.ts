@@ -12,9 +12,14 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname } from "node:path";
 import { paths } from "../core/paths.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
+import { parseWhere } from "../query/where.ts";
+import type { AgentEvent } from "../schema/index.ts";
 
 /** At most this many distinct tools arrays are read; the most recently used first. */
 export const MAX_TOOL_BLOBS = 2000;
+
+/** Model calls read per page when looking for one toolDrift counts. */
+const SCAN_PAGE = 1000;
 
 /** One tool across the window: the hashes of its latest definition, and how many it had. */
 export interface ToolRow {
@@ -145,6 +150,38 @@ function sessionIds(from: Iterable<Seen>): string[] {
     .map(([id]) => id);
 }
 
+/** A proxy call that sent tools but stored no tools array (capture mode metadata). */
+const sentToolsOnly = (e: AgentEvent): boolean =>
+  e.source === "proxy" && ((typeof e.payload.toolCount === "number" && e.payload.toolCount > 0) || e.payload.toolsHash !== undefined);
+
+/**
+ * Whether a model call at or after `since` is one toolDrift counts: it stored
+ * a tools array, or it is a proxy call that sent tools without storing them.
+ * Reads the model calls newest first, a page at a time (index.queryEvents),
+ * and stops at the first one counted or the first before `since`. That reads
+ * the window's model calls only, where the walk in toolDrift reads every
+ * session. Undefined when the store has no event query or the query fails.
+ */
+async function anyCounted(index: IndexStore, since: number, signal?: AbortSignal): Promise<boolean | undefined> {
+  if (!index.queryEvents) return undefined;
+  try {
+    const q = parseWhere("kind:llm.call");
+    for (let cursor: string | undefined; ; ) {
+      signal?.throwIfAborted();
+      const page = await index.queryEvents(q, cursor ? { limit: SCAN_PAGE, cursor } : { limit: SCAN_PAGE });
+      for (const e of page.items) {
+        if (e.ts < since) return false;
+        if (e.kind === "llm.call" && (str(e.payload.toolsRef) || sentToolsOnly(e))) return true;
+      }
+      if (!page.next) return false;
+      cursor = page.next;
+    }
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    return undefined;
+  }
+}
+
 /**
  * Every tool offered in the proxy calls at or after `since`: each stored tools
  * array (payload.toolsRef) is read once, the most recently used first, up to
@@ -155,15 +192,17 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
   const refs = new Map<string, Seen>();
   let calls = 0;
   let callsWithoutTools = 0;
+  // Most stores hold no proxy calls: when the window has no call this walk would count, it reads no session.
+  const sessions = (await anyCounted(index, o.since, o.signal)) === false ? [] : await index.listSessions();
   // A session that started before the window can still have calls in it: keep any not ended before it.
-  for (const s of await index.listSessions()) {
+  for (const s of sessions) {
     o.signal?.throwIfAborted();
     if (s.startedAt < o.since && s.endedAt !== undefined && s.endedAt < o.since) continue;
     for (const e of await index.listEvents(s.id, { kinds: ["llm.call"] })) {
       if (e.ts < o.since) continue;
       const ref = str(e.payload.toolsRef);
       if (!ref) {
-        if (e.source === "proxy" && ((typeof e.payload.toolCount === "number" && e.payload.toolCount > 0) || e.payload.toolsHash !== undefined)) callsWithoutTools++;
+        if (sentToolsOnly(e)) callsWithoutTools++;
         continue;
       }
       calls++;
