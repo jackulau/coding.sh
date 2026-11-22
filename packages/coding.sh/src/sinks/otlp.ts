@@ -22,10 +22,12 @@ import type { BlobStore, OpenSession, Sink, SinkAck, SinkConfig } from "../core/
 import { hashParts } from "../core/ids.ts";
 import { redactShown, sessionToMetadata, toMetadata } from "../core/redact.ts";
 import { isWeightsCheckpoint, isWeightsEdit, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_KIND, weightsCheckpointAttrs, weightsEditAttrs } from "../core/weights.ts";
+import { version } from "../cli/meta.ts";
 import { postJson } from "./post.ts";
 
-export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.37.0";
-const SCOPE = { name: "coding.sh", version: "0.0.1" };
+// semantic-conventions-genai v0.1.0 builds on core semconv 1.45.0.
+export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.45.0";
+const SCOPE = { name: "coding.sh", version: version() };
 const MAX_CONTENT = 8192;
 
 type AnyValue =
@@ -156,6 +158,38 @@ function textMessage(role: string, text: string): Record<string, unknown> {
   return { role, parts: [{ type: "text", content: t.length > MAX_CONTENT ? `${t.slice(0, MAX_CONTENT)}…` : t }] };
 }
 
+/** gen_ai.provider.name for an agent whose model calls all go to one provider. */
+const AGENT_PROVIDER: Record<string, string> = { "claude-code": "anthropic", codex: "openai", "gemini-cli": "gcp.gemini" };
+
+/** gen_ai.provider.name: the payload's provider, else the agent's, else the model name's prefix, else undefined. */
+function providerOf(provider: unknown, agent: string | undefined, model: string | undefined): string | undefined {
+  if (typeof provider === "string" && provider) return provider;
+  const byAgent = agent ? AGENT_PROVIDER[agent] : undefined;
+  if (byAgent) return byAgent;
+  const m = model?.toLowerCase();
+  if (!m) return undefined;
+  if (m.startsWith("claude-")) return "anthropic";
+  if (m.startsWith("gpt-") || /^o\d/.test(m)) return "openai";
+  if (m.startsWith("gemini-")) return "gcp.gemini";
+  return undefined;
+}
+
+/** A short name (an effort level, a skill): metadata mode sends it like a tool name. */
+const NAME = /^[\w.:-]{1,128}$/;
+const nameOf = (v: unknown): string | undefined => (typeof v === "string" && NAME.test(v) ? v : undefined);
+
+const SKILL_TOOLS = new Set(["skill", "activate_skill", "load_skill"]);
+
+/** The skill a Skill tool call loads, from its payload.skill tag or its input. */
+function skillOf(tool: string, start: AgentEvent | undefined): string | undefined {
+  if (!start) return undefined;
+  const tagged = nameOf(start.payload.skill);
+  if (tagged) return tagged;
+  if (!SKILL_TOOLS.has(tool.toLowerCase())) return undefined;
+  const input = start.payload.input as Record<string, unknown> | undefined;
+  return nameOf(input?.skill) ?? nameOf(input?.name) ?? nameOf(input?.command);
+}
+
 /** Subagent sessions join their parent's trace (walking up as far as the batch knows). */
 function rootIn(sessionsById: Map<string, Session>): (id: string) => string {
   return (id) => {
@@ -178,10 +212,17 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
   const events = full ? unique : unique.map(toMetadata);
   const sessionsById = new Map(sessions.map((s) => [s.id, full ? s : sessionToMetadata(s)]));
   const starts = new Map<string, AgentEvent>();
-  for (const e of events) {
+  // The stored tool.start too: metadata mode drops a call's input, but still sends the skill it names.
+  const rawStarts = new Map<string, AgentEvent>();
+  for (const [i, e] of events.entries()) {
     const id = e.payload.toolUseId;
-    if (e.kind === "tool.start" && typeof id === "string") starts.set(`${e.sessionId}\u001f${id}`, e);
+    if (e.kind === "tool.start" && typeof id === "string") {
+      starts.set(`${e.sessionId}\u001f${id}`, e);
+      rawStarts.set(`${e.sessionId}\u001f${id}`, unique[i]!);
+    }
   }
+  // Metadata mode drops the effort level with the payload's other strings; it is a short name, so it is sent.
+  const effortOf = (i: number): string | undefined => nameOf(unique[i]!.payload.reasoningEffort);
 
   // When a session reports llm.call events, those are the model-call spans;
   // assistant.message spans are only a fallback for agents without them.
@@ -192,7 +233,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
 
   const spans: OtlpSpan[] = [];
   const lastPrompt = new Map<string, string>();
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (e.kind === "user.message" && typeof e.payload.text === "string") lastPrompt.set(e.sessionId, e.payload.text);
     const traceId = traceIdFor(rootOf(e.sessionId));
     const parentSpanId = sessionSpanId(e.sessionId);
@@ -200,6 +241,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
       const tool = typeof e.payload.tool === "string" ? e.payload.tool : "unknown";
       const toolUseId = typeof e.payload.toolUseId === "string" ? e.payload.toolUseId : undefined;
       const start = toolUseId ? starts.get(`${e.sessionId}\u001f${toolUseId}`) : undefined;
+      const rawStart = toolUseId ? rawStarts.get(`${e.sessionId}\u001f${toolUseId}`) : undefined;
       const duration = e.durationMs ?? (typeof e.payload.durationMs === "number" ? e.payload.durationMs : undefined);
       const startMs = start?.ts ?? (duration !== undefined ? e.ts - duration : e.ts);
       const ok = e.payload.ok;
@@ -215,6 +257,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
           "gen_ai.operation.name": "execute_tool",
           "gen_ai.tool.name": tool,
           "gen_ai.tool.call.id": toolUseId,
+          "gen_ai.skill.name": skillOf(tool, rawStart),
           "gen_ai.agent.name": e.agent,
           "coding_sh.event.id": e.id,
           ...(full ? { "gen_ai.tool.call.arguments": structured(start?.payload.input), "gen_ai.tool.call.result": structured(e.payload.output) } : {}),
@@ -234,8 +277,9 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
         endTimeUnixNano: nanos(e.ts + (e.durationMs ?? 0)),
         attributes: attrs({
           "gen_ai.operation.name": "chat",
-          "gen_ai.provider.name": p.provider,
+          "gen_ai.provider.name": providerOf(p.provider, e.agent, model),
           "gen_ai.request.model": model,
+          "gen_ai.request.reasoning.level": effortOf(i),
           "gen_ai.response.model": p.responseModel,
           "gen_ai.response.finish_reasons": typeof p.stopReason === "string" ? [p.stopReason] : undefined,
           "gen_ai.agent.name": e.agent,
@@ -258,7 +302,9 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
         endTimeUnixNano: nanos(e.ts),
         attributes: attrs({
           "gen_ai.operation.name": "chat",
+          "gen_ai.provider.name": providerOf(e.payload.provider, e.agent, model),
           "gen_ai.request.model": model,
+          "gen_ai.request.reasoning.level": effortOf(i),
           "gen_ai.agent.name": e.agent,
           "coding_sh.event.id": e.id,
           ...usageAttrs(e.usage),
@@ -303,6 +349,7 @@ function sessionSpan(s: Session, endMs: number, full: boolean, traceId: string):
     endTimeUnixNano: nanos(s.endedAt ?? endMs),
     attributes: attrs({
       "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.provider.name": providerOf(undefined, s.agent, s.model),
       "gen_ai.agent.name": s.agent,
       "gen_ai.request.model": s.model,
       "gen_ai.conversation.id": s.id,

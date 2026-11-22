@@ -3,6 +3,7 @@
 // uncached part. The receiver (src/otel/map.ts) subtracts the cache parts again, so a span that
 // leaves the sink comes back as the same Usage.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session, Usage } from "../../src/schema/index.ts";
@@ -356,5 +357,75 @@ describe("otlp sink: structured tool arguments and results (semconv #634)", () =
     const end = events.find((e) => e.kind === "tool.end");
     assert.deepEqual(start?.payload.input, input);
     assert.deepEqual(end?.payload.output, output);
+  });
+});
+
+describe("otlp sink: semconv-genai v0.1.0", () => {
+  const ev = (id: string, kind: string, payload: Record<string, unknown>, extra: Partial<AgentEvent> = {}): AgentEvent =>
+    ({ id, v: 0, sessionId: "otlp-sink-s1", ts: T0 + 100, agent: "claude-code", kind, payload, ...extra }) as AgentEvent;
+  const sess = (agent: string, model: string | undefined): Session => ({ ...session(), agent, model }) as Session;
+  /** A session whose model calls come only from its transcript: assistant.message events, no llm.call. */
+  const transcript = (agent: string, model: string | undefined): AgentEvent[] => [
+    ev("m1", "assistant.message", { text: "one" }, { agent, model, usage: { inputTokens: 1, outputTokens: 2 } }),
+    ev("m2", "assistant.message", { text: "two" }, { agent, usage: { inputTokens: 3, outputTokens: 4 } }),
+    ev("m3", "assistant.message", { text: "three" }, { agent, model }),
+    ev("end", "session.end", {}, { agent, ts: T0 + 5_000 }),
+  ];
+  const providers = (agent: string, model: string | undefined, mode: "full" | "metadata" = "metadata") => {
+    const spans = toOtlpSpans(transcript(agent, model), [sess(agent, model)], mode);
+    const chats = spans.filter((s) => s.name.startsWith("chat"));
+    assert.equal(chats.length, 3);
+    const root = spans.find((s) => s.name.startsWith("invoke_agent"))!;
+    return { chats: chats.map((s) => attrsOf(s.attributes)["gen_ai.provider.name"]), root: attrsOf(root.attributes)["gen_ai.provider.name"] };
+  };
+
+  it("stamps schema URL 1.45.0 on the resource and the scope", () => {
+    const req = toOtlpRequest([llmCall("s1", undefined)], [], "metadata");
+    assert.equal(req.resourceSpans[0]!.schemaUrl, "https://opentelemetry.io/schemas/1.45.0");
+    assert.equal(req.resourceSpans[0]!.scopeSpans[0]!.schemaUrl, "https://opentelemetry.io/schemas/1.45.0");
+  });
+
+  it("the scope version is the package version", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
+    const req = toOtlpRequest([llmCall("s1", undefined)], [], "metadata");
+    assert.deepEqual(req.resourceSpans[0]!.scopeSpans[0]!.scope, { name: "coding.sh", version: pkg.version });
+  });
+
+  it("a Claude Code transcript session has provider anthropic on every chat span and the invoke_agent span", () => {
+    for (const mode of ["full", "metadata"] as const) assert.deepEqual(providers("claude-code", "claude-sonnet-4-5", mode), { chats: ["anthropic", "anthropic", "anthropic"], root: "anthropic" });
+  });
+
+  it("a Codex session has openai; an unknown agent and model has none", () => {
+    assert.deepEqual(providers("codex", "gpt-5.1-codex"), { chats: ["openai", "openai", "openai"], root: "openai" });
+    assert.deepEqual(providers("house-agent", "house-coder-2"), { chats: [undefined, undefined, undefined], root: undefined });
+  });
+
+  it("without a known agent the model prefix names the provider; payload.provider comes first", () => {
+    assert.deepEqual(providers("opencode", "claude-opus-4-5").chats, ["anthropic", "anthropic", "anthropic"]);
+    assert.deepEqual(providers("opencode", "o3-mini").chats, ["openai", "openai", "openai"]);
+    assert.deepEqual(providers("opencode", "gpt-5").chats, ["openai", "openai", "openai"]);
+    assert.deepEqual(providers("opencode", "gemini-2.5-pro").chats, ["gcp.gemini", "gcp.gemini", "gcp.gemini"]);
+    assert.equal(chatAttrs(llmCall("p1", undefined, { provider: "aws.bedrock" }))["gen_ai.provider.name"], "aws.bedrock");
+    assert.equal(chatAttrs({ ...llmCall("p2", undefined, { provider: undefined }), agent: "gemini-cli" } as AgentEvent)["gen_ai.provider.name"], "gcp.gemini");
+  });
+
+  it("effort high and skill pdf produce gen_ai.request.reasoning.level and gen_ai.skill.name; a session without them has neither", () => {
+    const skill = [
+      ev("t1", "tool.start", { tool: "Skill", toolUseId: "tu1", input: { skill: "pdf" } }),
+      ev("t2", "tool.end", { tool: "Skill", toolUseId: "tu1", ok: true }, { ts: T0 + 200 }),
+      ev("t3", "tool.start", { tool: "Bash", toolUseId: "tu2", input: { command: "ls" } }),
+      ev("t4", "tool.end", { tool: "Bash", toolUseId: "tu2", ok: true }, { ts: T0 + 300 }),
+    ];
+    for (const mode of ["full", "metadata"] as const) {
+      const spans = toOtlpSpans([llmCall("c1", undefined, { reasoningEffort: "high" }), ...skill], [], mode);
+      assert.equal(attrsOf(spans.find((s) => s.name.startsWith("chat"))!.attributes)["gen_ai.request.reasoning.level"], "high", mode);
+      assert.equal(attrsOf(spans.find((s) => s.name === "execute_tool Skill")!.attributes)["gen_ai.skill.name"], "pdf", mode);
+      assert.equal(attrsOf(spans.find((s) => s.name === "execute_tool Bash")!.attributes)["gen_ai.skill.name"], undefined, mode);
+      const fallback = toOtlpSpans([ev("m1", "assistant.message", { text: "x", reasoningEffort: "high" }, { model: "claude-sonnet-4-5" })], [], mode);
+      assert.equal(attrsOf(fallback[0]!.attributes)["gen_ai.request.reasoning.level"], "high", mode);
+    }
+    const plain = toOtlpSpans([llmCall("c2", undefined), ...skill.slice(2)], [], "full").flatMap((s) => s.attributes.map((kv) => kv.key));
+    assert.equal(plain.includes("gen_ai.request.reasoning.level"), false);
+    assert.equal(plain.includes("gen_ai.skill.name"), false);
   });
 });

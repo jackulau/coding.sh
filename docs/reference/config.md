@@ -143,6 +143,20 @@ An object or array of 8192 characters or less as JSON goes out as a structured v
 or `arrayValue`). A string, a larger value, or one with a `null` inside a list or nesting past eight
 levels goes out as text, cut at 8192 characters.
 
+The spans follow the GenAI semantic conventions (semconv v0.1.0), with schema URL
+`https://opentelemetry.io/schemas/1.45.0` on the resource and the scope. The scope is `coding.sh`
+at the installed version. Every `chat` span, and the `invoke_agent` span, sets
+`gen_ai.provider.name` from the first of these that is known:
+
+1. the provider the model call reported;
+2. the agent: `claude-code` is `anthropic`, `codex` is `openai`, `gemini-cli` is `gcp.gemini`;
+3. the model name: `claude-` is `anthropic`, `gpt-` or `o` and a digit is `openai`, `gemini-` is
+   `gcp.gemini`.
+
+When none is known, the attribute is absent. A `chat` span carries the call's reasoning effort in
+`gen_ai.request.reasoning.level`, and an `execute_tool` span for a Skill call carries the skill in
+`gen_ai.skill.name`. Both are sent in either mode, and are absent when the event has no value.
+
 ## `[prices]`
 
 One `[prices."<model>"]` table per model, with prices in USD per million tokens. Ingest and
