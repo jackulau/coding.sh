@@ -31,6 +31,9 @@ coding.sh doctor --json   # the same as one JSON document
 1 agent not capturing
 ```
 
+The rows and the last line go to stdout, and the next steps to stderr, so
+`coding.sh doctor > doctor.txt` saves every row.
+
 A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
 show up, work down this list:
 
