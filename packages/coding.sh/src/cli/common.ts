@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
-import { isEmptySession } from "../core/sessions.ts";
+import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX } from "../core/session-ref.ts";
 import type { EvalTask, IndexStore, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
@@ -411,128 +411,42 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
   throw new CliError(`Can't find task ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List tasks:", "coding.sh eval list"] });
 }
 
-/** Exact session id, or "latest" (newest top-level session). Never prefix-matches. */
+/**
+ * The session a reference names (core/session-ref.ts findSessionRef, which the MCP tools and
+ * `work show` use too): the exact id, "latest" or "last" (the newest top-level session worth
+ * opening), a unique prefix of at least MIN_ID_PREFIX characters like a git short hash, an SDK id
+ * without its default project, a subagent's own id, or a short subagent id (shortSessionId). An
+ * ambiguous prefix fails with the candidates listed (data.candidates in --json).
+ */
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
-  if (id === "latest" || id === "last") {
-    const s = await latestSession(ctx.index);
-    if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
-    return s;
+  let s: Session | undefined;
+  try {
+    s = await findSessionRef(ctx.index, id);
+  } catch (e) {
+    if (e instanceof AmbiguousRef) throw ambiguousError(e);
+    throw e;
   }
-  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id)) ?? (await sdkSession(ctx, id)) ?? (await subagentById(ctx, id)) ?? (await subagentByShortId(ctx, id));
-  if (!s) {
-    const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
-    throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
-  }
-  return s;
+  if (s) return s;
+  if (id === "latest" || id === "last") throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
+  const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+  throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
+}
+
+/** An ambiguous prefix as the CLI reports it: each candidate by the shortest id that names it alone. */
+function ambiguousError(e: AmbiguousRef): CliError {
+  const lines = e.candidates.map((x) => `  ${x.shortId}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
+  if (e.more) lines.push(`  …and more`);
+  return new CliError(`Session id prefix ${JSON.stringify(e.ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Pass one of these ids, more of the id, or list sessions:", "coding.sh sessions"],
+    data: { candidates: e.candidates.map((x) => ({ id: x.id, shortId: x.shortId, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: e.more },
+  });
 }
 
 // In args.ts, so main.ts quotes its hints without loading this module.
 export { shellQuote } from "./args.ts";
 
-/**
- * The newest top-level session worth looking at: the newest one that is not empty (a hook with
- * no work behind it), else the newest of all. When that session is an agent run under
- * `coding.sh run` (no snapshots of its own), the wrapper session around it, the one `run`
- * printed, which holds the start and end snapshots `eval new` needs.
- */
-export async function latestSession(index: IndexStore): Promise<Session | undefined> {
-  const page = 50;
-  let newest: Session | undefined;
-  for (let offset = 0; offset < page * 4; offset += page) {
-    const rows = await index.listSessions({ limit: page, offset, parentSessionId: null });
-    newest ??= rows[0];
-    const hit = rows.find((s) => !isEmptySession(s));
-    if (hit) return (await wrapperAround(index, hit)) ?? hit;
-    if (rows.length < page) break;
-  }
-  return newest;
-}
-
-/** The `coding.sh run` wrapper session that was running when `s` started, when `s` has no snapshots of its own. */
-async function wrapperAround(index: IndexStore, s: Session): Promise<Session | undefined> {
-  if (s.agent === "wrapper" || s.repo?.snapshot || s.endSnapshot) return undefined;
-  const wrappers = await index.listSessions({ agent: "wrapper", since: s.startedAt - 6 * 3600e3, limit: 20, parentSessionId: null });
-  return wrappers.find((w) => w.startedAt <= s.startedAt && (w.endedAt === undefined || w.endedAt >= s.startedAt) && (!w.cwd || !s.cwd || w.cwd === s.cwd));
-}
-
-/** Shortest prefix that may stand for a session id (git's minimum for short hashes). */
-export const MIN_ID_PREFIX = 4;
-const MAX_CANDIDATES = 10;
-
-/**
- * The session a unique id prefix names, like a git short hash. An ambiguous
- * prefix fails with the candidates listed (data.candidates in --json).
- */
-async function sessionByPrefix(ctx: Context, prefix: string): Promise<Session | undefined> {
-  if (prefix.length < MIN_ID_PREFIX) return undefined;
-  const ids = ctx.index.sessionIdsByPrefix
-    ? await ctx.index.sessionIdsByPrefix(prefix, MAX_CANDIDATES + 1)
-    : (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.startsWith(prefix)).sort().slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, prefix, ids);
-}
-
-/**
- * An SDK session id as the user wrote it (`tenant-7/conv-123`): the server stores it under the
- * default project (`default/tenant-7/conv-123`, see server/project.ts scopeSessionId).
- */
-async function sdkSession(ctx: Context, id: string): Promise<Session | undefined> {
-  if (!id.includes("/") || id.startsWith("default/")) return undefined;
-  const scoped = `default/${id}`;
-  return (await ctx.index.getSession(scoped)) ?? (await sessionByPrefix(ctx, scoped));
-}
-
-/** A subagent by the id its transcript carries (`a33e97aa…`), without its parent's id in front of it. */
-async function subagentById(ctx: Context, id: string): Promise<Session | undefined> {
-  if (id.length < MIN_ID_PREFIX || id.includes(":")) return undefined;
-  const marker = `:sub:${id}`;
-  const ids = (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.includes(marker)).sort().slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, id, ids);
-}
-
-/**
- * A session id short enough for a table: its first 8 characters, and for a subagent
- * (`<parent>:sub:<agentId>`) 8 of each part (`a03d2f6b:sub:a7d49789`), so it does not read as
- * its parent. resolveSession takes it back.
- */
-export function shortSessionId(id: string): string {
-  return id.split(":sub:").map((part) => part.slice(0, 8)).join(":sub:");
-}
-
-/** A subagent by its short id (shortSessionId): each `:sub:` part a prefix of the same part of the stored id. */
-async function subagentByShortId(ctx: Context, id: string): Promise<Session | undefined> {
-  const parts = id.split(":sub:");
-  if (parts.length < 2 || parts[0]!.length < MIN_ID_PREFIX || parts.some((p) => !p)) return undefined;
-  const ids = (await ctx.index.listSessions())
-    .map((s) => s.id)
-    .filter((x) => {
-      const xs = x.split(":sub:");
-      return xs.length === parts.length && xs.every((p, i) => p.startsWith(parts[i]!));
-    })
-    .sort()
-    .slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, id, ids);
-}
-
-/**
- * The one session `ids` stand for. A parent X with its subagents X:sub:* is X, so a prefix of a
- * parent id does not turn ambiguous because its subagents share it. Else an ambiguous prefix
- * fails with the candidates listed (data.candidates in --json).
- */
-async function pickSession(ctx: Context, prefix: string, ids: string[]): Promise<Session | undefined> {
-  if (ids.length === 0) return undefined;
-  if (ids.length === 1) return ctx.index.getSession(ids[0]!);
-  const parent = ids.find((x) => !x.includes(":sub:"));
-  if (parent !== undefined && ids.every((x) => x === parent || x.startsWith(`${parent}:sub:`))) return ctx.index.getSession(parent);
-  const shown = (await Promise.all(ids.slice(0, MAX_CANDIDATES).map((x) => ctx.index.getSession(x)))).filter((x): x is Session => x !== undefined);
-  shown.sort((a, b) => b.startedAt - a.startedAt);
-  const lines = shown.map((x) => `  ${x.id}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
-  if (ids.length > MAX_CANDIDATES) lines.push(`  …and more`);
-  throw new CliError(`Session id prefix ${JSON.stringify(prefix)} is ambiguous. It matches:\n${lines.join("\n")}`, {
-    reason: "ambiguous",
-    next: ["Use more of the id, or list sessions:", "coding.sh sessions"],
-    data: { candidates: shown.map((x) => ({ id: x.id, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: ids.length > MAX_CANDIDATES },
-  });
-}
+export { latestSession, MIN_ID_PREFIX, shortSessionId } from "../core/session-ref.ts";
 
 /** `--where <query>`, parsed; undefined without the flag. A bad query is a usage error (exit 2) naming where it broke. */
 export function whereFlag(c: CommandContext): Query | undefined {

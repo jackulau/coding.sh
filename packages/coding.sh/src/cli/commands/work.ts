@@ -8,8 +8,9 @@ import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-healt
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
 import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
-import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
+import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
+import { MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
 import type { CommandContext } from "../types.ts";
 
 /** How far back items are read unless --since says otherwise. */
@@ -62,7 +63,8 @@ async function list(c: CommandContext): Promise<number> {
     const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at });
+    // Next steps name sessions by the shortest id that resolves (core/session-ref.ts).
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at, shortId: await shortener(ctx.index) });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
     await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
@@ -165,34 +167,46 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 
 // ------------------------------------------------------------ one item
 
-/** The item an id names: an item id (w + 6 hex), else a session id in one. Unknown: exit 1. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[] }> {
+/**
+ * The item an id names: an item id (w + 6 hex), else a session in one, by any reference `show` takes
+ * (cli/common.ts resolveSession: a prefix, a subagent id, latest). Unknown: exit 1; an ambiguous prefix
+ * lists its candidates. `shortId` is how the item's next step names a session.
+ */
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
   const w = windowOf(c);
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
-  const pick = (ss: Session[]) => {
-    const q = buildWorkQueue(ss, { all: true, overlay, now });
+  const shortId = await shortener(ctx.index);
+  const pick = (ss: Session[], id: string) => {
+    const q = buildWorkQueue(ss, { all: true, overlay, now, shortId });
     // A session id names the item it is in before a run item it started (whose rootId it is).
-    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref)) ?? q.items.find((i) => i.rootId === ref);
+    return q.items.find((i) => i.id === id) ?? q.items.find((i) => i.sessionIds.includes(id)) ?? q.items.find((i) => i.rootId === id);
   };
-  let item = pick(sessions);
+  let item = pick(sessions, ref);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
-    // A session outside the window: add it and its stored parents, then group again.
-    const s = await ctx.index.getSession(ref);
+    // Any other reference to a session: its full id, then the item it is in. A session outside the
+    // window is added with its stored parents, and the sessions grouped again.
+    const s = await resolveSession(ctx, ref).catch((e: unknown) => {
+      if (e instanceof CliError && e.reason === "not_found") return undefined;
+      throw e;
+    });
     if (s) {
+      item = pick(sessions, s.id);
       const have = new Set(sessions.map((x) => x.id));
-      let cur: Session | undefined = s;
+      let cur: Session | undefined = item ? undefined : s;
       for (let n = 0; cur && n < 20 && !have.has(cur.id); n++) {
         sessions.push(cur);
         have.add(cur.id);
         cur = cur.parent ? await ctx.index.getSession(cur.parent.sessionId) : undefined;
       }
-      item = pick(sessions);
+      item ??= pick(sessions, s.id);
     }
   }
   if (!item) {
-    throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
+    // A session reference too short to look up says so, as `show` does.
+    const short = ref.length < MIN_ID_PREFIX && ref !== "latest" && ref !== "last" ? ` (a session id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+    throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
-  return { item, sessions };
+  return { item, sessions, shortId };
 }
 
 function idArg(c: CommandContext): string {
@@ -209,7 +223,7 @@ async function show(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
     const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
-    const { item, sessions } = await findItem(c, ctx, ref, overlay, stale?.at);
+    const { item, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
@@ -256,7 +270,7 @@ async function show(c: CommandContext): Promise<number> {
         const inPhase = agents.filter((a) => a.phase === p.name);
         for (const a of inPhase.slice(0, 20)) {
           const cost = a.costUsd !== undefined ? usd(a.costUsd) : "";
-          out.print(`      ${a.sessionId}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
+          out.print(`      ${shortId(a.sessionId)}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
         }
         if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
       }
@@ -264,9 +278,9 @@ async function show(c: CommandContext): Promise<number> {
     out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));
-    out.row("Sessions", `${item.primaryId}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
-    for (const s of children.slice(0, 10)) out.print(`    ${s.id}  ${s.agent}  ${oneLine(s.title, 50)}`);
-    if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${item.primaryId}`, "faint"));
+    out.row("Sessions", `${shortId(item.primaryId)}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
+    for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
+    if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${shortId(item.primaryId)}`, "faint"));
     out.row("Next", nextText(item.next), "none", true);
     return 0;
   });

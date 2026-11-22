@@ -42,13 +42,13 @@ before(async () => {
   await ctx.index.putEvents(evs);
   await ctx.index.upsertSession(buildSession(evs));
   // Sixty sessions with long ids and long prompts: a search for "needle" finds one hit in each, with rows
-  // too long for 50 of them to fit.
+  // too long for 50 of them to fit. A hit names its session by a short id, so the event ids are long too.
   for (let k = 0; k < 60; k++) {
     const sid = `sess-long-${k}-${"q".repeat(150)}`;
     const lb = { ...base, sessionId: sid };
     const lev: AgentEvent[] = [
       { ...lb, id: `l${k}-0`, ts: t0 + k, kind: "session.start", payload: {} },
-      { ...lb, id: `l${k}-1`, ts: t0 + k + 1, kind: "user.message", payload: { text: `needle ${"w".repeat(900)}` } },
+      { ...lb, id: `l${k}-1-${"e".repeat(150)}`, ts: t0 + k + 1, kind: "user.message", payload: { text: `needle ${"w".repeat(900)}` } },
     ];
     await ctx.index.putEvents(lev);
     await ctx.index.upsertSession(buildSession(lev));

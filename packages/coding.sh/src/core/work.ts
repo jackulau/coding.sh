@@ -101,6 +101,8 @@ export interface WorkItem {
   workflow?: WorkWorkflow;
   /** For an agent that reports no prompts: the stall may be an approval wait. */
   hint?: string;
+  /** The short id `next` names the cause's session by (WorkOptions.shortId), when it names one. */
+  causeShortId?: string;
   reason: string;
   next: string;
   stage: Stage;
@@ -168,6 +170,8 @@ export interface WorkOptions {
   stages?: readonly Stage[];
   /** Whether a folder between a cwd and its repo root holds a `.git` file (a linked worktree). Default gitFileAt. */
   isCheckout?: (dir: string, root: string) => boolean;
+  /** The id a next step prints for a session: core/session-ref.ts shortener, the shortest that resolves. Default the full id. */
+  shortId?: (id: string) => string;
 }
 
 export const workItemId = (rootId: string): string => `w${createHash("sha256").update(rootId).digest("hex").slice(0, 6)}`;
@@ -490,7 +494,7 @@ function reviewReason(age: string, files: number, sessions?: number): string {
 }
 
 /** Reason and next step for an item in a bucket. */
-function describe(item: WorkItem, cause: WorkCause, members: readonly Session[], now: number): { reason: string; next: string; hint?: string } {
+function describe(item: WorkItem, cause: WorkCause, members: readonly Session[], now: number, shortId: (id: string) => string = (id) => id): { reason: string; next: string; hint?: string } {
   const s = members.find((m) => m.id === cause.sessionId) ?? members[0]!;
   const age = short(now - cause.at);
   const place = s.cwd ? ` in ${s.cwd}` : "";
@@ -504,7 +508,8 @@ function describe(item: WorkItem, cause: WorkCause, members: readonly Session[],
       return { reason, next: item.probablyClosed ? `probably closed: ${closedNext}` : `answer in ${where}` };
     }
     case "failed":
-      return { reason: `ended ${age} ago on ${cause.failure}`, next: resume ? `\`coding.sh show ${s.id}\`, then \`${resume}\`` : `\`coding.sh show ${s.id}\`` };
+      // The agent's own resume command keeps the full id: the agent's CLI takes no prefix.
+      return { reason: `ended ${age} ago on ${cause.failure}`, next: resume ? `\`coding.sh show ${shortId(s.id)}\`, then \`${resume}\`` : `\`coding.sh show ${shortId(s.id)}\`` };
     case "stalled": {
       const hint = reportsPrompts(s) ? undefined : `${promptAgent(s)} reports no prompts: it may be waiting on approval`;
       const reason = `quiet for ${age} mid-turn${hint ? `; ${hint}` : ""}`;
@@ -678,11 +683,11 @@ interface BuiltItem {
 }
 
 /** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
-export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean): WorkItem {
-  return buildItem(raw, now, overlay, checkouts, isCheckout).item;
+export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string): WorkItem {
+  return buildItem(raw, now, overlay, checkouts, isCheckout, shortId).item;
 }
 
-function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean): BuiltItem {
+function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string): BuiltItem {
   const members = [...raw.members].sort((a, b) => a.startedAt - b.startedAt);
   const root = raw.workflow ? undefined : members.find((s) => s.id === raw.rootId);
   const primary = root ?? members[0]!;
@@ -737,7 +742,8 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   if (shown) {
     item.cause = shown;
     if (shown.bucket !== "review" && now - shown.at >= PROBABLY_CLOSED_MS) item.probablyClosed = true;
-    const d = describe(item, shown, members, now);
+    const d = describe(item, shown, members, now, shortId);
+    if (shortId && shown.bucket === "failed") item.causeShortId = shortId(shown.sessionId);
     item.reason = d.reason;
     item.next = d.next;
     if (d.hint) item.hint = d.hint;
@@ -808,7 +814,7 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const checkouts = rootCheckouts(sessions);
   // Every item is built, so an item outside the filter can still supersede one inside it.
   const raws = groupWorkItems(sessions);
-  const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout));
+  const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout, opts.shortId));
   supersede(built);
   const all = built.filter((_, n) => keep(raws[n]!)).map((b) => b.item);
   all.sort(compare);
@@ -1011,6 +1017,7 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
   if (c) {
     out.since = iso(c.at);
     out.causeSessionId = c.sessionId;
+    if (i.causeShortId) out.causeShortId = i.causeShortId;
     if (c.waiting) out.waiting = { ...c.waiting, at: iso(c.waiting.at) };
     if (c.failure) out.failure = c.failure;
   }
@@ -1047,11 +1054,13 @@ export interface WorkRead {
   stages?: readonly Stage[];
   now?: number;
   overlay: WorkOverlay;
+  /** WorkOptions.shortId: the id a next step prints for a session. */
+  shortId?: (id: string) => string;
 }
 
 /** Loads the window's sessions and builds the queue. */
 export async function readWorkQueue(index: IndexStore, r: WorkRead): Promise<{ queue: WorkQueue; sessions: Session[]; truncated: boolean }> {
   const { sessions, truncated } = await loadWorkSessions(index, { since: r.since });
-  const queue = buildWorkQueue(sessions, { now: r.now, all: r.all, overlay: r.overlay, agents: r.agents, place: r.place, stages: r.stages });
+  const queue = buildWorkQueue(sessions, { now: r.now, all: r.all, overlay: r.overlay, agents: r.agents, place: r.place, stages: r.stages, shortId: r.shortId });
   return { queue, sessions, truncated };
 }

@@ -32,6 +32,7 @@ import {
   sessionSummary,
   SESSION_ENV_VARS,
   subagentTree,
+  type SubagentNode,
   usage,
   type ScanQuery,
   type UsageGroup,
@@ -47,6 +48,7 @@ import { scoreTools } from "../scores/mcp.ts";
 import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
 import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
+import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -78,7 +80,7 @@ const WHERE = {
     "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
-const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest".' };
+const SESSION_ID = { type: "string", minLength: 1, description: 'Id, prefix or "latest".' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
@@ -113,12 +115,16 @@ const TREE_NODE_OUT: Obj = out(
   ["sessionId", "depth", "children"],
 );
 
-/** One session_tree node: the session's own numbers plus its subagents. `top`: a page's top level, where a subagent names its parent (it was on an earlier page). */
-function treeNodeJson(n: TreeNode, top = false): Obj {
+/**
+ * One session_tree node: the session's own numbers plus its subagents. `top`: a page's top level, where a
+ * subagent names its parent (it was on an earlier page). `short` gives each id as the shortest reference
+ * that resolves (core/session-ref.ts), so a page holds more nodes.
+ */
+function treeNodeJson(n: TreeNode, short: (id: string) => string, top = false): Obj {
   const s = n.session;
   const u = s.stats.usage;
-  const head: Obj = { sessionId: s.id };
-  if (top && n.depth > 0 && s.parent?.sessionId) head.parentSessionId = s.parent.sessionId;
+  const head: Obj = { sessionId: short(s.id) };
+  if (top && n.depth > 0 && s.parent?.sessionId) head.parentSessionId = short(s.parent.sessionId);
   return {
     ...head,
     role: n.depth === 0 ? "root" : (s.parent?.type ?? "subagent"),
@@ -133,7 +139,7 @@ function treeNodeJson(n: TreeNode, top = false): Obj {
     toolCalls: s.stats.toolCalls,
     toolErrors: s.stats.toolErrors,
     flags: worstFirst(s.flags),
-    children: n.children.map((c) => treeNodeJson(c)),
+    children: n.children.map((c) => treeNodeJson(c, short)),
   };
 }
 
@@ -330,15 +336,42 @@ async function expSession(a: Obj, c: ToolCtx): Promise<{ session: { id: string; 
   return { session, root };
 }
 
+/** How long one read of the store's ids serves the short ids of later answers: fitPage renders a page several times. */
+const SHORT_IDS_MS = 5_000;
+const shortIdCache = new WeakMap<object, { at: number; get: Promise<(id: string) => string> }>();
+
+/** The shortest id that resolves for each stored session (core/session-ref.ts shortener), read at most once per SHORT_IDS_MS. */
+function shortIds(ctx: Context): Promise<(id: string) => string> {
+  const now = Date.now();
+  const hit = shortIdCache.get(ctx.index);
+  if (hit && now - hit.at < SHORT_IDS_MS) return hit.get;
+  const get = shortener(ctx.index);
+  shortIdCache.set(ctx.index, { at: now, get });
+  get.catch(() => shortIdCache.delete(ctx.index));
+  return get;
+}
+
+/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", a unique prefix, an SDK id or a subagent's id. */
 async function resolveSession(ctx: Context, id: string): Promise<Session> {
-  if (id === "latest" || id === "last") {
-    const [s] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
-    if (!s) throw new ToolError(noSessionsHint(ctx.env));
-    return s;
+  let s: Session | undefined;
+  try {
+    s = await findSessionRef(ctx.index, id);
+  } catch (e) {
+    if (!(e instanceof AmbiguousRef)) throw e;
+    const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
+    const candidates = e.candidates.map((x) => {
+      const c: Record<string, unknown> = { sessionId: x.id, shortId: x.shortId, agent: x.agent, startedAt: iso(x.startedAt) };
+      if (x.title) c.title = clip(x.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { reason: "ambiguous", candidates };
+    if (e.more) data.more = true;
+    throw new ToolError(`Session id prefix ${JSON.stringify(id)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
   }
-  const s = await ctx.index.getSession(id);
-  if (!s) throw new ToolError(`No session with id ${JSON.stringify(id)}. Find ids with sessions_list or search; ids are exact (no prefixes).`);
-  return s;
+  if (s) return s;
+  if (id === "latest" || id === "last") throw new ToolError(noSessionsHint(ctx.env));
+  const short = id.length < MIN_ID_PREFIX ? ` A prefix needs at least ${MIN_ID_PREFIX} characters.` : "";
+  throw new ToolError(`No session with id ${JSON.stringify(id)}.${short} Find ids with sessions_list or search; a unique prefix of an id works too.`);
 }
 
 /**
@@ -471,7 +504,7 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const asked = numArg(a, "limit", 20);
   const age = storeIndexAge(ctx, now);
   const stale = age?.stale ? age : undefined;
-  const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work) });
+  const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work), shortId: await shortIds(ctx) });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
   await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
   return (limit: number): Obj => {
@@ -767,6 +800,7 @@ function toolDefs(): PagedTool[] {
         const raw = where ? await searchWhere(ctx.index, text, where, opts).catch((e) => Promise.reject(queryToolError(e))) : await ctx.index.search(text, opts);
         const page = raw.slice(offset, offset + limit);
         const sessions = new Map<string, { title?: string; agent?: string }>();
+        const short = page.length ? await shortIds(ctx) : (id: string) => id;
         for (const h of page) {
           if (sessions.has(h.event.sessionId)) continue;
           const s = await ctx.index.getSession(h.event.sessionId);
@@ -775,7 +809,7 @@ function toolDefs(): PagedTool[] {
         return {
           hits: page.map((h) => {
             const s = sessions.get(h.event.sessionId);
-            return { sessionId: h.event.sessionId, eventId: h.event.id, agent: s?.agent ?? h.event.agent, kind: h.event.kind, at: iso(h.event.ts), snippet: clip(h.snippet, 240) ?? "", sessionTitle: s?.title };
+            return { sessionId: short(h.event.sessionId), eventId: h.event.id, agent: s?.agent ?? h.event.agent, kind: h.event.kind, at: iso(h.event.ts), snippet: clip(h.snippet, 240) ?? "", sessionTitle: s?.title };
           }),
           ...(raw.length > offset + limit ? { nextCursor: String(offset + limit) } : {}),
         };
@@ -943,7 +977,14 @@ function toolDefs(): PagedTool[] {
         const limit = numArg(a, "limit", 20);
         const tree = await subagentTree(ctx.index, s.id);
         const more = tree.length > offset + limit;
-        return { sessionId: s.id, count: countNodes(tree), topLevel: tree.length, subagents: tree.slice(offset, offset + limit), ...(more ? { nextCursor: String(offset + limit), truncated: true } : {}) };
+        // Each child by the shortest id that resolves, as session_tree gives it; the session asked about keeps its full id.
+        const short = await shortIds(ctx);
+        const shorten = (nodes: SubagentNode[]): SubagentNode[] => nodes.map((n) => {
+          const out: SubagentNode = { ...n, children: shorten(n.children) };
+          if (n.sessionId) out.sessionId = short(n.sessionId);
+          return out;
+        });
+        return { sessionId: s.id, count: countNodes(tree), topLevel: tree.length, subagents: shorten(tree.slice(offset, offset + limit)), ...(more ? { nextCursor: String(offset + limit), truncated: true } : {}) };
       },
     },
     {
@@ -981,6 +1022,7 @@ function toolDefs(): PagedTool[] {
         }
         const worst = worstNode(tree.roots);
         const t = tree.totals;
+        const short = await shortIds(ctx);
         // A page of nodes; a subagent whose parent was on an earlier page is at the top, with parentSessionId.
         const page = pageTree(tree.roots, cursorArg(a), numArg(a, "limit", TREE_PAGE_NODES));
         const doc: Obj = {
@@ -997,8 +1039,8 @@ function toolDefs(): PagedTool[] {
             ...(t.wallMs !== undefined ? { durationMs: t.wallMs } : {}),
             flags: t.flags,
           },
-          ...(worst ? { worst: { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } } : {}),
-          tree: page.roots.map((n) => treeNodeJson(n, true)),
+          ...(worst ? { worst: { sessionId: short(worst.session.id), role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } } : {}),
+          tree: page.roots.map((n) => treeNodeJson(n, short, true)),
         };
         if (page.next !== undefined) Object.assign(doc, { nextCursor: String(page.next), truncated: true });
         return doc;
@@ -1628,7 +1670,8 @@ function toolDefs(): PagedTool[] {
         const spool = spoolStats(ctx.paths.spool);
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         // The work queue `coding.sh work` shows (core/work.ts), over its default window, with acks and snoozes applied.
-        const { queue, truncated } = await readWorkQueue(ctx.index, { since: now - WORK_WINDOW_MS, now, overlay: readOverlay(ctx.paths.work) });
+        const short = await shortIds(ctx);
+        const { queue, truncated } = await readWorkQueue(ctx.index, { since: now - WORK_WINDOW_MS, now, overlay: readOverlay(ctx.paths.work), shortId: short });
         const hints: string[] = [];
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? "coding.sh update"}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
@@ -1641,7 +1684,7 @@ function toolDefs(): PagedTool[] {
           home: ctx.paths.root,
           store: ctx.config.store.index,
           last24h: { sessions: day.sessions.length, agents: [...new Set(day.sessions.map((s) => s.agent))].sort() },
-          lastCapture: [...lastByAgent].sort((x, y) => x[0].localeCompare(y[0])).map(([agent, s]) => ({ agent, at: iso(lastActivity(s)), sessionId: s.id })),
+          lastCapture: [...lastByAgent].sort((x, y) => x[0].localeCompare(y[0])).map(([agent, s]) => ({ agent, at: iso(lastActivity(s)), sessionId: short(s.id) })),
           latest: latest ? sessionSummary(latest, now) : undefined,
           spool,
           lastError,
