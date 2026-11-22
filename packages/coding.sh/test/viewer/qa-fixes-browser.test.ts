@@ -72,7 +72,7 @@ describe("viewer QA fixes in a browser", { skip: chrome ? false : "no Chrome/Chr
     const p = await open("#/s/" + CELL);
     await p.waitFor("document.querySelectorAll('#steps .st').length >= 6", "steps");
     // The Bash command and the cell that failed on its own; not the cell around the failed Bash.
-    await p.waitFor("/2 failures/.test(document.querySelector('.fail-nav .lbl')?.textContent ?? '')", "two failures", 5000);
+    await p.waitFor("/2 failed steps/.test(document.querySelector('.fail-nav .lbl')?.textContent ?? '')", "two failed steps", 5000);
     assert.match(await selected(p), /lookup INTST --full/, "opens on the failed command, not its cell");
     await p.eval("document.querySelector('#steps').focus()");
     await p.press("]");

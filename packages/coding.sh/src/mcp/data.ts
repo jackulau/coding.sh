@@ -41,13 +41,19 @@ export function clip(s: unknown, n = 160): string | undefined {
 
 export const iso = (ms: number | undefined): string | undefined => (ms === undefined || !Number.isFinite(ms) ? undefined : new Date(ms).toISOString());
 
+/**
+ * 850ms, 4.2s, 42s, 3m07s, 2h05m, as the CLI prints a duration (cli/output.ts duration()). It
+ * rounds the whole value to the unit shown before splitting it, so 119.6s is 2m00s, not 1m60s.
+ */
 export function fmtMs(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms)) return "-";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
+  if (Math.round(ms) < 1000) return `${Math.round(ms)}ms`;
+  const tenths = Math.round(ms / 100);
+  if (tenths < 100) return `${(tenths / 10).toFixed(1)}s`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+  const m = Math.round(ms / 60e3);
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 }
 
