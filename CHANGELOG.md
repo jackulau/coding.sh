@@ -343,6 +343,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** The `score_add`, `score_add_batch` and `score_list` MCP tools take a short session id, as the CLI does, and `latest` names the session `coding.sh score add latest` scores. Before, a short id was refused or listed nothing, and `latest` could be a newer session with no work in it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#scores))
 - **Judges.** `coding.sh judge slop` on a session with no captured diffs names the `git diff` command to grade instead with the CLI of the user's shell (`codingsh` in PowerShell and cmd). ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
 - **Docs.** The evals guide says `coding.sh judge slop` exits 1, not 2, when there is nothing to grade, and 2 on a usage error. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
+- **Evals.** `review next`, `done` and `skip` with `--json` print the item's command for the user's shell (`codingsh` in PowerShell and cmd), and `review create` with a query that matches nothing prints that query for `sessions --where`, quoted for the shell. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#review-queues))
 
 ## [0.1.7] - 2026-11-16
 
