@@ -122,16 +122,16 @@ flaky: fix-passallk-in-packages-coding-sh. These pass some trials and fail other
 1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
 1 task without a reference solution (fix-passallk-in-packages-coding-sh): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>
 
-Verifier output of failed runs (last 8 lines):
+Verifier output of failed runs (8 lines from the first failing test):
   fix-passallk-in-packages-coding-sh · attempt 1  exit 1 · run_01M803KKCEA29Y1N5CAS46MZFM
-    │       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
-    │     generatedMessage: false,
-    │     code: 'ERR_ASSERTION',
-    │     actual: false,
-    │     expected: true,
-    │     operator: '==',
-    │     diff: 'simple'
-    │   }
+    │ test at test/stats/seqk.test.ts:41:3
+    │ ✖ matches the known values (1.298ms)
+    │   AssertionError [ERR_ASSERTION]: 0.2222222222222222 ≉ 1
+    │       at close (file:///work/demo/packages/coding.sh/test/stats/seqk.test.ts:6:72)
+    │       at TestContext.<anonymous> (file:///work/demo/packages/coding.sh/test/stats/seqk.test.ts:42:5)
+    │       at Test.runInAsyncScope (node:async_hooks:227:14)
+    │       at Test.run (node:internal/test_runner/test:1397:25)
+    │       at Test.start (node:internal/test_runner/test:1257:17)
 captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session a921c754-42cd-4265-98f7-26b9fec9eddb)
 harness claude-code-project (1 file) · experiment exp_01M803KK8N8F234W5AZK438E4X
 ```

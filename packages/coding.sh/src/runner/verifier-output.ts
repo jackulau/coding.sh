@@ -6,6 +6,7 @@
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { RunResult, VerifierOutput } from "../core/types.ts";
 import { infraKind, type InfraKind } from "../jobs/retry.ts";
+import { FAILING_TEST_LINES } from "./repair.ts";
 
 /** The redactor capture uses (capture.redact and capture.redactPatterns), for the runs a command starts. */
 export function captureRedactor(config: { capture: { redact: readonly string[]; redactPatterns: readonly string[] } }, env?: NodeJS.ProcessEnv): Redactor {
@@ -61,11 +62,43 @@ export function verifierOutput(v: { stdoutTail: string; stderrTail: string }, re
   return { ...(stdout ? { stdout } : {}), ...(stderr ? { stderr } : {}) };
 }
 
-/** The last `lines` lines a failed run's verifier printed, stderr after stdout. */
-export function outputTail(o: VerifierOutput | undefined, lines: number): string[] {
-  if (!o) return [];
+/** Headings test runners print over their failures (node:test's spec reporter, pytest, mocha, cargo test): the failures follow. */
+const FAILURE_HEADINGS = [/^\s*✖ failing tests:$/, /^=+ FAILURES =+$/, /^\s*\d+ failing$/, /^failures:$/];
+/** Jest's block for one failing test (● suite › test), not its console block. */
+const JEST_FAILURE = /^\s*● (?!Console$)/;
+/** A TAP to-do or skip: a `not ok` that fails nothing. */
+const TAP_DIRECTIVE = /#\s*(?:todo|skip)\b/i;
+/** go test's line for a failing test, and the line `-v` prints when a test starts, before what the test logs. */
+const GO_FAIL = /^\s*--- FAIL: (\S+)/;
+const GO_RUN = /^=== RUN\s+(\S+)$/;
+/** A line worth showing: it holds a letter or a digit. */
+const WORDY = /[\p{L}\p{N}]/u;
+
+/** The line where the first failing test starts, or -1 when no test runner reported one. */
+function failureStart(lines: readonly string[]): number {
+  const heading = lines.findIndex((l) => FAILURE_HEADINGS.some((re) => re.test(l)));
+  if (heading >= 0) return heading + 1;
+  const jest = lines.findIndex((l) => JEST_FAILURE.test(l));
+  if (jest >= 0) return jest;
+  const i = lines.findIndex((l) => FAILING_TEST_LINES.some((re) => re.test(l)) && !TAP_DIRECTIVE.test(l));
+  const go = GO_FAIL.exec(lines[i] ?? "")?.[1];
+  const run = go ? lines.slice(0, i).findLastIndex((l) => GO_RUN.exec(l)?.[1] === go) : -1;
+  return run >= 0 ? run : i;
+}
+
+/**
+ * The lines of a failed run's verifier output the report shows, stderr after
+ * stdout, without the lines that hold no letter or digit: `count` of them from
+ * where the first failing test starts when a test runner reported one
+ * (node:test, TAP, pytest, Jest, mocha, go test, cargo test), else the last `count`.
+ */
+export function outputExcerpt(o: VerifierOutput | undefined, count: number): { lines: string[]; fromFailure: boolean } {
+  if (!o) return { lines: [], fromFailure: false };
   const all = [o.stdout, o.stderr].filter((s): s is string => !!s).join("\n").split("\n");
-  return all.slice(-lines);
+  const start = failureStart(all);
+  const failure = start < 0 ? [] : all.slice(start).filter((l) => WORDY.test(l));
+  if (failure.length) return { lines: failure.slice(0, count), fromFailure: true };
+  return { lines: all.filter((l) => WORDY.test(l)).slice(-count), fromFailure: false };
 }
 
 /** A failed run as `compare --json` and `eval run --json` list it. */
@@ -174,8 +207,8 @@ export function runReason(r: RunResult, redactor: Redactor = createRedactor()): 
 
 /**
  * The human report's block for failed runs: up to `max` of them, each with why
- * its agent failed (when it did) and the last `lines` lines of its verifier
- * output. Empty when no failed run kept either.
+ * its agent failed (when it did) and `lines` lines of its verifier output
+ * (outputExcerpt). The heading says which lines. Empty when no failed run kept either.
  */
 export function renderFailedRuns(
   failed: readonly FailedRun[],
@@ -186,15 +219,19 @@ export function renderFailedRuns(
   const max = o.max ?? 5;
   const lines = o.lines ?? 8;
   const dim = o.dim ?? ((s: string) => s);
-  const out = [withOutput.some((f) => f.verifierOutput) ? `Verifier output of failed runs (last ${lines} lines):` : "Failed runs:"];
-  for (const f of withOutput.slice(0, max)) {
+  const shown = withOutput.slice(0, max).map((f) => ({ f, excerpt: outputExcerpt(f.verifierOutput, lines) }));
+  const kept = shown.filter((s) => s.f.verifierOutput);
+  const fromFailure = kept.filter((s) => s.excerpt.fromFailure).length;
+  const which = !fromFailure ? `last ${lines} lines` : `${lines} lines from the first failing test${fromFailure < kept.length ? `, or the last ${lines}` : ""}`;
+  const out = [withOutput.some((f) => f.verifierOutput) ? `Verifier output of failed runs (${which}):` : "Failed runs:"];
+  for (const { f, excerpt } of shown) {
     const who = [o.names?.(f.taskId) ?? f.taskId, o.arm?.(f.bundleId), `attempt ${f.attempt}`].filter(Boolean).join(" · ");
     out.push(`  ${who}  ${dim(`exit ${f.verifierExit ?? "-"} · ${f.runId}`)}`);
     if (f.agent) {
       out.push(`    ${f.agent.timedOut ? "the agent timed out" : `the agent exited ${f.agent.exitCode}`}${f.agent.stderr ? ", its stderr ends:" : ""}`);
       for (const l of f.agent.stderr?.split("\n").slice(-lines) ?? []) out.push(`    ${dim("!")} ${l}`);
     }
-    for (const l of outputTail(f.verifierOutput, lines)) out.push(`    ${dim("│")} ${l}`);
+    for (const l of excerpt.lines) out.push(`    ${dim("│")} ${l}`);
   }
   if (withOutput.length > max) out.push(dim(`  … ${withOutput.length - max} more failed run(s); --json lists every one with its output`));
   return out;
