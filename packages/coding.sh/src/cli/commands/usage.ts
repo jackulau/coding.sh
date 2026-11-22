@@ -170,7 +170,9 @@ export async function run(c: CommandContext): Promise<number> {
       if (r.window.truncated) out.warn(stoppedAfter(cap));
       return 0;
     }
-    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(place ? { place } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit, { cap, baseline }).catch((e) => Promise.reject(queryCliError(e)))) as {
+    const q: ScanQuery = { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) };
+    if (place) q.place = place;
+    const r = (await usage(ctx.index, q, by as (typeof USAGE_GROUPS)[number], limit, { cap, baseline }).catch((e) => Promise.reject(queryCliError(e)))) as {
       window: { truncated?: boolean; [k: string]: unknown };
       groups: Row[];
       total: Row;

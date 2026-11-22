@@ -163,7 +163,8 @@ describe("coding.sh budget (in process)", () => {
   test("usage --repo gives the total a budget with the same agent and repo counts, for a path and a repo name", async () => {
     const { b, checkout } = await repoBox();
     for (const [repo, agent] of [[checkout, undefined], ["demo", undefined], [checkout, "codex"]] as const) {
-      const scope = { repo, ...(agent ? { agent } : {}) };
+      const scope: { repo: string; agent?: string } = { repo };
+      if (agent) scope.agent = agent;
       const set = await runCmd(budget, b, { action: "set", positionals: ["day", "10"], flags: scope, json: true });
       assert.equal(set.code, 0, String(set.error));
       const [status] = (await runCmd(budget, b, { action: "status", json: true })).json.budgets.filter((s: { id: string }) => s.id === set.json.budget.id);
