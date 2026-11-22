@@ -14,7 +14,7 @@ import { bundle } from "../../scripts/bundle.mjs";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
 import { WRITER_KEY } from "../../src/store/upgrade.ts";
-import { nextStepBin } from "../../src/cli/next-steps.ts";
+import { nextStepBin, quoteArg } from "../../src/cli/next-steps.ts";
 import { SOURCE_CLI } from "../_cli.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
@@ -97,12 +97,14 @@ describe("a build that is not newer than the store's last writer", () => {
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, new RegExp(`index schema v${OLD}\\b`));
     assert.ok(r.stderr.includes(`last written by coding.sh ${VERSION}`), r.stderr);
-    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
+    // PATH starts no coding.sh: the command names this install by its path, so it migrates with the build that refused.
+    const command = `node ${quoteArg(CLI, {})} upgrade-store`;
+    assert.ok(r.stderr.includes(`\n    ${command}\n`), r.stderr);
     const j = run(CLI, ["sessions", "--json"], h);
     const err = JSON.parse(j.stderr) as { reason: string; askUser?: boolean; next: string[]; data: { from: number; to: number; writer: string } };
     assert.equal(err.reason, "store_version");
     assert.equal(err.askUser, true, "an agent asks the user before a one-way migration");
-    assert.ok(err.next.some((l) => /^(?:coding\.sh|codingsh) upgrade-store$/.test(l)), err.next.join(" | "));
+    assert.equal(err.next[1], command, err.next.join(" | "));
     assert.deepEqual([err.data.from, err.data.to, err.data.writer], [OLD, SQLITE_SCHEMA_VERSION, VERSION]);
     assert.equal(await schemaOf(h.index), OLD, "the store was not migrated");
     assert.deepEqual(files(h.data), ["index.db"], "no copy, no bin/, nothing else");
@@ -386,7 +388,9 @@ describe("a store one schema ahead of this coding.sh", () => {
     const h = await ahead();
     // The copy the newer coding.sh kept when it migrated.
     await storeAt(`${h.index}.v${SQLITE_SCHEMA_VERSION}.bak`, SQLITE_SCHEMA_VERSION);
-    assert.match(run(CLI, ["sessions"], h).stderr, /(?:coding\.sh|codingsh) upgrade-store --restore puts back the index from before the migration/);
+    // In the message, as a command that runs this coding.sh: PATH starts none, so it is named by its path.
+    const told = run(CLI, ["sessions"], h).stderr;
+    assert.ok(told.includes(` node ${quoteArg(CLI, {})} upgrade-store --restore puts back the index from before the migration`), told);
     run(CLI, ["ingest", "--background"], h);
     assert.ok(existsSync(join(h.data, "ingest-stopped.json")));
 

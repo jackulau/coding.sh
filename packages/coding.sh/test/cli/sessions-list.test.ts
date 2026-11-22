@@ -1,8 +1,9 @@
-// `coding.sh sessions`: what counts as empty, the hidden-count footer, and how
-// many sessions matched against how many are shown.
+// `coding.sh sessions`: what counts as empty, the hidden-count footer, how
+// many sessions matched against how many are shown, and the host app a row names.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import * as sessions from "../../src/cli/commands/sessions.ts";
+import * as show from "../../src/cli/commands/show.ts";
 import { buildSession, isEmptySession } from "../../src/core/sessions.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
@@ -84,5 +85,32 @@ describe("sessions list: a subagent with no session.start", () => {
   test("the default list shows only the parent; --subagents shows both", async () => {
     assert.deepEqual(ids(await runCmd(sessions, sb, { json: true })), ["abc"]);
     assert.deepEqual(ids(await runCmd(sessions, sb, { json: true, flags: { subagents: true } })), ["abc", "abc:sub:a1"]);
+  });
+});
+
+describe("sessions list and show: a session a host app drove", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([mkSession("hosted", now - 1000, { host: "t3code", provider: "claude-code" }), mkSession("direct", now - 2000)]);
+  });
+  after(() => sb.cleanup());
+  // Off a TTY the table is a header row, then one tab-separated row per session: id, agent, ...
+  const agentCells = (stdout: string) => Object.fromEntries(stdout.trim().split("\n").slice(1).map((l) => l.split("\t").slice(0, 2)));
+
+  test("the AGENT cell names the host, so a row --agent t3code lists says why it matched", async () => {
+    assert.deepEqual(agentCells((await runCmd(sessions, sb)).stdout), { hosted: "claude-code via t3code", direct: "claude-code" });
+    assert.deepEqual(agentCells((await runCmd(sessions, sb, { flags: { agent: ["t3code"] } })).stdout), { hosted: "claude-code via t3code" });
+  });
+
+  test("--json keeps agent and host apart, as before", async () => {
+    const rows = (await runCmd(sessions, sb, { json: true })).json.sessions as { id: string; agent: string; host?: string }[];
+    assert.deepEqual(rows.map((s) => [s.id, s.agent, s.host]), [["hosted", "claude-code", "t3code"], ["direct", "claude-code", undefined]]);
+  });
+
+  test("show's Agent row names the host; a session no host drove reads as before", async () => {
+    assert.match((await runCmd(show, sb, { positionals: ["hosted"] })).stdout, /^ {2}Agent +claude-code {2}via t3code$/m);
+    assert.match((await runCmd(show, sb, { positionals: ["direct"] })).stdout, /^ {2}Agent +claude-code$/m);
   });
 });

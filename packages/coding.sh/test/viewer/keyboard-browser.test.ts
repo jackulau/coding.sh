@@ -426,7 +426,7 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     const lines: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-work')].map((e) => e.textContent)");
     assert.equal(lines.length, 10);
     assert.equal(lines[0], "▸1 step · read 1 file");
-    assert.equal(lines[6], "▸2 steps · read 1 file, 1 command · 1 error");
+    assert.equal(lines[6], "▸2 steps · read 1 file, 1 command · 1 failed step");
     // Activating turn 9's line goes back to Steps on turn 9's prompt (a folded turn opens).
     await p.eval("document.querySelectorAll('#chat .chat-work')[8].click()");
     await p.waitFor(`document.querySelector('#chat').hidden && /question 9/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Steps at turn 9");

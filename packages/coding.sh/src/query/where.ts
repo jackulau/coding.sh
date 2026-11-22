@@ -699,8 +699,9 @@ export function parseWhere(q: string, opts: ParseOptions = {}): Query {
       if (!top) throw new QueryError(`${name}: applies to the whole query, so it can't sit inside parentheses, OR or a negation`, t.at, { reason: "bad_directive" });
       if (op !== ":") throw new QueryError(`${name}: takes ':'`, t.at, { reason: "bad_directive" });
       if (name === "limit") {
+        // Decimal digits only, as --limit takes: Number() reads 1e3, 0x10 and 5.0 as whole numbers.
         const n = Number(rawValue);
-        if (!Number.isInteger(n) || n < 1) throw new QueryError(`limit: must be a whole number of at least 1, got ${JSON.stringify(rawValue)}`, valueAt, { reason: "bad_value" });
+        if (!/^\d+$/.test(rawValue) || !Number.isSafeInteger(n) || n < 1) throw new QueryError(`limit: must be a whole number from 1 to ${Number.MAX_SAFE_INTEGER}, got ${JSON.stringify(rawValue)}`, valueAt, { reason: "bad_value" });
         out.limit = n;
       } else {
         const desc = rawValue.startsWith("-");

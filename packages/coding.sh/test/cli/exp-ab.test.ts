@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { defaultModel } from "../../src/cli/commands/exp-ab.ts";
+import { cliCommand, nextStepBin } from "../../src/cli/next-steps.ts";
 import { DEFAULT_MODELS } from "../../src/core/pricing.ts";
 import type { Case } from "../../src/datasets/types.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
@@ -130,6 +131,8 @@ function cli(e: Env, args: string[]): Promise<{ status: number | null; stdout: s
 }
 
 const withoutIds = (cmp: Record<string, unknown>) => ({ ...cmp, a: { ...(cmp.a as object), id: "" }, b: { ...(cmp.b as object), id: "" }, timing: undefined });
+/** A pattern that matches `s` as written. */
+const lit = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 describe("cli exp ab", () => {
   it("compares git HEAD with an uncommitted CLAUDE.md edit; a rerun makes no calls and gives the same verdict", async () => {
@@ -169,8 +172,21 @@ describe("cli exp ab", () => {
     assert.match(text.stdout, /3 decision points from 3 sessions \| A 0\/3 -> B 3\/3 \| fixed 3, broke 0 \| paired p=0\.25 \| \$0, 6\/6 cached/);
     assert.match(text.stdout, /^Hold: not enough evidence/m);
     assert.match(text.stdout, /Replay noise floor 0%/);
-    assert.match(text.stdout, /Fixed \(A failed, B passed\):\n {2}unverified-claim .*coding\.sh show sess-main-0/);
-    assert.match(text.stdout, /^Full comparison: coding\.sh exp compare exp_\w+ exp_\w+$/m);
+    // The commands the report names run where the user is (cli/next-steps.ts): codingsh in
+    // PowerShell and cmd (this env has no MSYSTEM and no SHELL), coding.sh in Git Bash, and npx's
+    // own form under npx. The reruns are answered from the caches.
+    if (process.platform === "win32") {
+      assert.match(text.stdout, / {2}codingsh show sess-main-0$/m);
+      assert.match(text.stdout, /^Full comparison: codingsh exp compare /m);
+    }
+    const calls = hits.length;
+    for (const env of [e.env, { ...e.env, MSYSTEM: "MINGW64" }, { ...e.env, npm_command: "exec" }]) {
+      const out = env === e.env ? text : await cli({ ...e, env }, ["exp", "ab"]);
+      assert.equal(out.status, 0, out.stderr);
+      assert.match(out.stdout, new RegExp(`Fixed \\(A failed, B passed\\):\\n {2}unverified-claim .* {2}${lit(cliCommand(env, ["show", "sess-main-0"]))}$`, "m"));
+      assert.match(out.stdout, new RegExp(`^Full comparison: ${lit(nextStepBin(env))} exp compare exp_\\w+ exp_\\w+$`, "m"));
+    }
+    assert.equal(hits.length, calls);
 
     // --gate turns the (hold) verdict into the exit code.
     const gated = await cli(e, ["exp", "ab", "--gate"]);
@@ -244,7 +260,15 @@ describe("cli exp ab", () => {
     const text = await cli(e, ["exp", "ab", "--gate"]);
     assert.equal(text.status, 1, text.stderr);
     assert.match(text.stderr, /protected-line: CLAUDE\.md:2 .*\n.*can't see the harm of dropping a safety rule, so --gate will fail\. Allow it on purpose: --allow-protected-edit CLAUDE\.md:2/);
-    assert.match(text.stdout, /^Protected: B deletes, rewords or relaxes 1 protected line; --gate fails \(coding\.sh refine check lists them\)$/m);
+    assert.match(text.stdout, new RegExp(`^Protected: B deletes, rewords or relaxes 1 protected line; --gate fails \\(${lit(cliCommand(e.env, ["refine", "check"]))} lists them\\)$`, "m"));
+    if (process.platform === "win32") assert.ok(text.stdout.includes("(codingsh refine check lists them)"), text.stdout);
+    // Under npx the command it names is npx's (a rerun, answered from the caches).
+    const npx = { ...e.env, npm_command: "exec" };
+    const calls = hits.length;
+    const viaNpx = await cli({ ...e, env: npx }, ["exp", "ab", "--gate"]);
+    assert.equal(viaNpx.status, 1, viaNpx.stderr);
+    assert.equal(hits.length, calls);
+    assert.ok(viaNpx.stdout.includes(`--gate fails (${cliCommand(npx, ["refine", "check"])} lists them)`), viaNpx.stdout);
 
     const allowed = await cli(e, ["exp", "ab", "--json", "--allow-protected-edit", "CLAUDE.md:2"]);
     assert.equal(allowed.status, 0, allowed.stderr);

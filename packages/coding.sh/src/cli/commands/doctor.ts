@@ -599,10 +599,15 @@ export async function run(c: CommandContext): Promise<number> {
   const gateway = { configured: gatewaySetups, counted: countedGateways, key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
 
   // The rows below print nothing with --json (the document is the answer); every "!" row is also a warning in it.
+  // Without --json the report is the answer, as in status: the rows and the notes under them go to
+  // stdout, ending with the verdict, so `doctor | less` and `doctor > doctor.txt` keep all of it.
+  // The next steps stay on stderr.
+  const row = (label: string, value: string, glyph: "ok" | "warn" | "fail" | "none") => out.row(label, value, glyph, true);
+  const note = (msg: string) => out.print(`  ${msg}`);
   const warnings: DoctorWarning[] = [];
   const warn = (label: string, value: string, w: DoctorWarning) => {
     warnings.push(w);
-    out.row(label, value, "warn");
+    row(label, value, "warn");
   };
   const shown = agents.filter((a) => a.installed || named.includes(a.id));
   // The CLI as the user's shell runs it (codingsh in PowerShell and cmd).
@@ -618,7 +623,7 @@ export async function run(c: CommandContext): Promise<number> {
     } else parts.push(a.capture === "wrapper" ? "no runs yet" : "no events yet");
     // "Any command (coding.sh run --)" reads better as "Any command" than cut off.
     const label = a.name.length >= LABEL_WIDTH ? a.name.replace(/\s*\(.*\)$/, "") : a.name;
-    if (r.ok) out.row(label, parts.join(", "), "ok");
+    if (r.ok) row(label, parts.join(", "), "ok");
     else {
       const maybe = mayCapture(a);
       if (maybe) withStaleHooks++;
@@ -630,7 +635,7 @@ export async function run(c: CommandContext): Promise<number> {
       warn(label, parts.join(", "), w);
     }
     // Every blocker, hooked or not: each names what to change.
-    for (const n of r.notes) out.note(n);
+    for (const n of r.notes) note(n);
   }
   // The built-in wrapper's row is always shown: it is not an agent doctor found.
   if (!shown.some((a) => a.id !== "wrapper")) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
@@ -643,7 +648,7 @@ export async function run(c: CommandContext): Promise<number> {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
     warn("Hook", `${hookBin.path} is stale (${why}); run ${bin} update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: `${bin} update --refresh-bin` });
-  } else out.row("Hook", hookBin.path, "ok");
+  } else row("Hook", hookBin.path, "ok");
   for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run ${bin} init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: `${bin} init` });
   // Windows: a status line installed by 0.1.7 or earlier runs `coding.sh statusline`, which PowerShell can't run.
   const line = staleStatusLine(env);
@@ -653,8 +658,8 @@ export async function run(c: CommandContext): Promise<number> {
     warn("Status line", `${message}; run ${reinstall}`, { check: "statusline", message: `Claude Code's status line ${message}`, next: reinstall });
   }
   if (spool.ok && spoolProblems.length) for (const m of spoolProblems) warn("Spool", m, { check: "spool", message: m });
-  else out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
-  out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
+  else row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
+  row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
   // The ingest the hook starts runs unseen: a failed one leaves a marker (core/ingest-health.ts).
   const stopped = readIngestStopped(p.ingestStopped);
   if (stopped) {
@@ -677,23 +682,23 @@ export async function run(c: CommandContext): Promise<number> {
     const message = `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError})`;
     warn("Sessions", `${message}; update coding.sh, then run ${bin} ingest`, { check: "sessions", message, next: `${bin} ingest` });
   }
-  out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with ${bin} collector`, receiver.listening ? "ok" : "none");
+  row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with ${bin} collector`, receiver.listening ? "ok" : "none");
   const routedNames = proxy.routes.filter((r) => r.ok).map((r) => `${ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent}${r.chained ? ` (then ${r.chained})` : ""}`);
-  if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
+  if (proxy.running) row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
   else if (routedNames.length) {
     const message = `not running, but ${routedNames.join(" and ")} call it`;
     warn("Proxy", `${message}; it restarts on the next session start, or now with ${bin} proxy --background`, { check: "proxy", message: `The proxy is ${message}`, next: `${bin} proxy --background` });
   }
-  else out.row("Proxy", `not running; route agents through it with ${bin} init --proxy`, "none");
+  else row("Proxy", `not running; route agents through it with ${bin} init --proxy`, "none");
   for (const r of proxy.routes.filter((x) => !x.ok)) {
     const message = `${r.agent} no longer points at the proxy (${r.file})`;
     warn("Proxy", `${message}; with the user's approval, ${bin} init --proxy or ${bin} uninstall --proxy`, { check: "proxy", agent: r.agent, message });
   }
   const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
-  out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");
-  if (others.length) out.row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
-  for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
+  row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");
+  if (others.length) row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
+  for (const f of gateway.configured) note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
   const unhooked = shown.filter((a) => a.capture === "hooks" && hooksHere(a) === undefined);
   if (unhooked.length) out.next("Capture the agents without hooks", cliCommand(env, ["init", ...unhooked.flatMap((a) => ["--agent", a.id])]));
   const stale = shown.filter(staleHooks);
