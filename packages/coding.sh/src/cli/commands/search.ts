@@ -1,7 +1,8 @@
 // coding.sh search <text> [--where <query>]
+import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { searchWhere } from "../../query/run.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { agentQuery, agentsFlag, autoIngest, emptyStateNext, pendingField, queryCliError, readIngest, oneLine, str, whereFlag, withContext } from "../common.ts";
+import { agentQuery, agentsFlag, autoIngest, emptyStateNext, pendingField, queryCliError, readIngest, oneLine, rejectAgentTypos, str, whereFlag, withContext } from "../common.ts";
 import { ago, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -21,6 +22,11 @@ export async function run(c: CommandContext): Promise<number> {
     const project = str(c.flags.project);
     const opts = { limit, ...(project ? { project } : {}) };
     const hits = where ? await searchWhere(ctx.index, text, where, opts).catch((e) => Promise.reject(queryCliError(e))) : await ctx.index.search(text, opts);
+    // Nothing matched: an --agent or flag: value typed wrong is named, as `sessions` does.
+    if (!hits.length) {
+      await rejectAgentTypos(ctx.index, agents);
+      await rejectFlagTypos(ctx.index, undefined, userWhere);
+    }
     if (out.json) {
       // The session's agent, not the event's: the same one `sessions` reports.
       const agentOf = new Map<string, string>();
