@@ -45,7 +45,7 @@ export class CliError extends Error {
   }
 }
 
-/** The line an error prints before a step that only the user may approve (askUser). */
+/** The line an error prints before a step that only the user may approve (askUser), when no one is at a terminal. */
 export const ASK_USER = "The user must approve this first: ask them, and run it only once they agree.";
 
 /** Ctrl-C at a prompt or during work: exit 130. */
@@ -350,8 +350,10 @@ export class Output {
       } else {
         this.ew(`${this.style("✗", "red", "err")} ${e.message}\n`);
         if (e.askUser) {
-          this.ew(`    ${ASK_USER}\n`);
-          if (e.suggestion) this.ew(`    With their approval: ${this.style(this.command(e.suggestion), "cyan", "err")}\n`);
+          // The approval lines speak to an agent. At a terminal the person reading is the user,
+          // who gets the step as is.
+          if (!this.interactive) this.ew(`    ${ASK_USER}\n`);
+          if (e.suggestion) this.ew(`    ${this.interactive ? "" : "With their approval: "}${this.style(this.command(e.suggestion), "cyan", "err")}\n`);
         } else if (e.suggestion) this.ew(`    Did you mean ${this.style(this.command(e.suggestion), "cyan", "err")}?\n`);
       }
       return 2;
@@ -370,7 +372,7 @@ export class Output {
     } else {
       this.ew(`${this.style("✗", "red", "err")} ${message}\n`);
       for (const [k, v] of ce?.details ?? []) this.ew(`  ${formatLabel(k)}${v}\n`);
-      if (ce?.askUser) this.ew(`    ${ASK_USER}\n`);
+      if (ce?.askUser && !this.interactive) this.ew(`    ${ASK_USER}\n`);
       for (const n of ce?.next ?? []) this.ew(`    ${this.command(n)}\n`);
       if (debug && e instanceof Error && e.stack) this.ew(e.stack + "\n");
     }

@@ -254,8 +254,9 @@ stderr:
 ```
 
 When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
-`--force`, `purge`, a rollback), the message says it needs your approval, and the JSON has
-`askUser: true`. An AI agent that hits such an error asks you before it runs `next`.
+`--force`, `purge`, a rollback), the JSON has `askUser: true`, and without a terminal the message
+says the step needs your approval. An AI agent that hits such an error asks you before it runs
+`next`. At a terminal you are the one who approves, so the message shows the step as is.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
