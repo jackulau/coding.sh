@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { confirmAboveUsd, parseVariant, renderTree, run, verifyEntries } from "../../src/cli/commands/workflows.ts";
@@ -160,6 +160,74 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("show", []), /Missing <run>/);
   });
 
+  it("show, stats, score and replay take a unique prefix of a run id, and a prefix several runs share lists them", async () => {
+    // The two imported runs share only "wf_".
+    assert.equal((await json("show", ["wf_b"])).run.id, RUN);
+    assert.equal((await json("show", ["wf_res"])).run.id, RESUMED);
+    assert.match((await cli("show", ["wf_base"])).stderr, new RegExp(`Run +${RUN} \\(claude-code-workflow\\)`));
+    assert.equal((await json("stats", ["wf_base"])).runId, RUN);
+    assert.equal((await json("score", ["wf_base"], { case: "verify-1" })).runId, RUN);
+    // replay finds the run before it reads the script.
+    await assert.rejects(cli("replay", ["wf_base"], { script: join(root, "missing.js") }), /Can't read --script/);
+    const short = (e: Error & { reason?: string }) => e.reason === "not_found" && e.message === `Can't find workflow run "wf_" (an id prefix needs at least 4 characters)`;
+    await assert.rejects(cli("show", ["wf_"]), short);
+    await assert.rejects(cli("show", ["wf_nope"]), (e: Error) => e.message === `Can't find workflow run "wf_nope"`);
+    // Command-driver runs share "wfr_": two of them, newest first.
+    const e = { CODING_SH_HOME: join(root, "prefix-home") };
+    const ran = await json("run", ["review"], { driver: "command", variant: [JSON.stringify({ name: "solo", command: [process.execPath, join(root, "fake-wf.mjs"), "good"] })], split: "dev", k: 1, yes: true }, e);
+    const ids = (await json("list", [], { import: false }, e)).runs.map((r: { id: string }) => r.id);
+    assert.equal(ids.length, 2);
+    assert.deepEqual([...ids].sort(), ran.runs.map((r: { id: string }) => r.id).sort());
+    const ambiguous = await cli("show", ["wfr_"], {}, { env: e }).then(
+      () => assert.fail("a shared prefix opened a run"),
+      (x: Error & { reason?: string; next?: string[]; data?: { candidates: { id: string; name: string; status: string }[]; more: boolean } }) => x,
+    );
+    assert.equal(ambiguous.reason, "ambiguous");
+    assert.equal(ambiguous.message.split("\n")[0], `Workflow run id prefix "wfr_" is ambiguous. It matches:`);
+    assert.deepEqual(ambiguous.message.split("\n").slice(1).map((l) => l.split("  ")[1]), ids);
+    assert.match(ambiguous.message, /\n {2}wfr_\w+ {2}review {2}ok {2}\S/);
+    assert.deepEqual(ambiguous.next, ["Pass one of these ids, more of the id, or list workflow runs:", "coding.sh workflows list"]);
+    assert.deepEqual(ambiguous.data?.candidates.map((x) => [x.id, x.name, x.status]), ids.map((id: string) => [id, "review", "ok"]));
+    assert.equal(ambiguous.data?.more, false);
+    // One more character than they share names one of them.
+    let common = 0;
+    while (ids[0][common] === ids[1][common]) common++;
+    assert.equal((await json("show", [ids[1].slice(0, common + 1)], {}, e)).run.id, ids[1]);
+  });
+
+  it("show prints the start of what a run returned, as stored, and --json all of it", async () => {
+    // An imported Claude Code run: the result its record holds.
+    assert.deepEqual((await json("show", [RUN])).run.output, RUN_OUTPUT);
+    // Command-driver runs: what the command printed, as JSON, as text, or nothing.
+    const home = join(root, "output-home");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), '[capture]\nredactPatterns = ["hunter2"]\n');
+    writeFileSync(join(root, "text-wf.mjs"), 'console.log("first line\\nsecond line, hunter2");\n');
+    writeFileSync(join(root, "silent-wf.mjs"), "");
+    const e = { CODING_SH_HOME: home };
+    const cmd = (name: string, ...argv: string[]) => JSON.stringify({ name, command: [process.execPath, ...argv] });
+    const variant = [cmd("good", join(root, "fake-wf.mjs"), "good"), cmd("text", join(root, "text-wf.mjs")), cmd("silent", join(root, "silent-wf.mjs"))];
+    const doc = await json("run", ["review"], { driver: "command", variant, split: "dev", k: 1, yes: true }, e);
+    const idOf = (name: string): string => doc.runs.find((r: { variant: string }) => r.variant === name).id;
+    const printed = { findings: [{ file: "src/a.ts", line: 11, summary: "x" }, { file: "src/b.ts", line: 40, summary: "y" }] };
+    assert.deepEqual((await json("show", [idOf("good")], {}, e)).run.output, printed);
+    // Its 14 lines as JSON: the first 6 under the row, then how many more and where they are.
+    const lines = JSON.stringify(printed, null, 2).split("\n");
+    const pad = " ".repeat(18);
+    const good = (await cli("show", [idOf("good")], {}, { env: e })).stderr;
+    assert.ok(good.includes(`\n  Output          ${lines[0]}\n${lines.slice(1, 6).map((l) => `${pad}${l}\n`).join("")}${pad}… 8 more lines (--json for all)\n\n`), good);
+    // Text prints as text, redacted as it was stored.
+    const text = await cli("show", [idOf("text")], {}, { env: e });
+    assert.match(text.stderr, /\n {2}Output {10}first line\n {18}second line, \[redacted[^\n]*\n\n/);
+    assert.doesNotMatch(text.stderr + text.stdout, /hunter2|more line/);
+    assert.match((await json("show", [idOf("text")], {}, e)).run.output, /^first line\nsecond line, \[redacted/);
+    // A run that printed nothing stored nothing: no row, and null in JSON.
+    const silent = await cli("show", [idOf("silent")], {}, { env: e });
+    assert.match(silent.stderr, /✓ Status +ok\n/);
+    assert.doesNotMatch(silent.stderr, /Output/);
+    assert.equal((await json("show", [idOf("silent")], {}, e)).run.output, null);
+  });
+
   it("stats prints the metrics", async () => {
     const doc = await json("stats", [RUN]);
     assert.equal(doc.stats.barrierIdleMs, 30_000);
@@ -233,6 +301,46 @@ describe("coding.sh workflows", () => {
     const ok = await cli("run", ["review"], flags);
     assert.equal(ok.code, 0);
     assert.match(ok.stderr, /Validated 1 seeded bug/);
+  });
+
+  it("run and score print each path of a case they refuse in full, and point at --cases only when it was not given", async () => {
+    // A case outside the trees whose bug's patch is inside the snapshot, with paths as a case file may write them.
+    const dir = join(root, "cases-leak");
+    const snap = join(root, "leak-snap");
+    for (const d of [dir, join(root, "leak-repo"), join(snap, "bugs")]) mkdirSync(d, { recursive: true });
+    writeFileSync(join(snap, "bugs", "b1.patch"), BUG_PATCH);
+    const s = root.replaceAll("\\", "/");
+    writeFileSync(join(dir, "s1.toml"), `[start]\nrepoRoot = "${s}/leak-repo"\nsnapshot = "${s}/./leak-snap"\n[[truth.bugs]]\nid = "b1"\nfile = "src/a.ts"\nlines = [2, 2]\npatch = "../leak-snap/bugs/b1.patch"\n`);
+    const refusal = (p: Promise<unknown>) => p.then(() => assert.fail("the cases should be refused"), (e: Error & { reason?: string; next?: string[] }) => e);
+    const variant = [`good=node ${join(root, "fake-wf.mjs")} good`];
+    const ran = await refusal(cli("run", ["review"], { driver: "command", variant, cases: dir, yes: true }));
+    assert.equal(ran.reason, "invalid_cases");
+    assert.equal(ran.message, `Can't read cases from ${dir}: ${join(dir, "s1.toml")}: the patch ${join(snap, "bugs", "b1.patch")} of bug b1 is inside the workflow's tree ${snap}, where its agents could read it; move it to a folder outside repoRoot and snapshot, such as ${join(root, "leak-snap-truth")}, then set its patch to the new path`);
+    assert.ok(!ran.message.includes(sep === "/" ? "\\" : "/"), ran.message);
+    // The message says what to do, and the cases came from --cases: no hint points at --cases again.
+    assert.deepEqual(ran.next, []);
+    const scored = await refusal(cli("score", [RUN], { case: "s1", cases: dir }));
+    assert.equal(scored.message, ran.message);
+    assert.deepEqual(scored.next, []);
+    // Cases from the default folder keep the hint.
+    const missing = await refusal(cli("run", ["no-cases"], { driver: "command", variant, yes: true }));
+    assert.match(missing.message, /^Can't read cases from .*no-cases/);
+    assert.deepEqual(missing.next, ["Point at the cases directory:", "coding.sh workflows run no-cases --cases <dir> --variant …"]);
+    // So does a --cases that names no folder: a file, or nothing there.
+    const notFolder = join(root, "cases.txt");
+    writeFileSync(notFolder, "not a folder\n");
+    for (const cases of [notFolder, join(root, "cases-gone")]) {
+      const wrong = await refusal(cli("run", ["review"], { driver: "command", variant, cases, yes: true }));
+      assert.equal(wrong.reason, "invalid_cases");
+      assert.deepEqual(wrong.next, ["Point at the cases directory:", "coding.sh workflows run review --cases <dir> --variant …"]);
+      assert.deepEqual((await refusal(cli("score", [RUN], { case: "s1", cases }))).next, ["Point at the cases directory:", `coding.sh workflows score ${RUN} --case s1 --cases <dir>`]);
+    }
+    // An empty folder names where a case file goes, with one kind of separator.
+    const empty = join(root, "cases-empty");
+    mkdirSync(empty, { recursive: true });
+    const none = await refusal(cli("run", ["review"], { driver: "command", variant, cases: empty, yes: true }));
+    assert.equal(none.reason, "no_cases");
+    assert.deepEqual(none.next, ["Add cases as TOML files:", join(empty, "<case>.toml")]);
   });
 
   let experimentId = "";

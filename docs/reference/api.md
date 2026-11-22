@@ -1910,9 +1910,11 @@ to 500 or a malformed `framework` gets 400.
 
 One run, as `coding.sh workflows show <run> --json` prints it: `run` (the list fields plus `stats`
 and, when set, `concurrencyCap`) and `nodes` (every node but subagent, tool and LLM nodes, as
-`show` without `--tree`). `/api/workflows/{id}/gantt` answers the timeline `workflows show --gantt
---json` prints: `phases` with one row per node (`start`, `end`, `status`, `critical`), and
-`concurrency` over time.
+`show` without `--tree`). The CLI's `run` also has `output`, what the run returned; this endpoint
+leaves it out.
+
+`/api/workflows/{id}/gantt` answers the timeline `workflows show --gantt --json` prints: `phases`
+with one row per node (`start`, `end`, `status`, `critical`), and `concurrency` over time.
 
 ```sh
 curl -sS "$CSH/api/workflows/wf_45d472ff-246/gantt" -H "Authorization: Bearer $READ_KEY"

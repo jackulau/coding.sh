@@ -270,9 +270,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   files (or `coding.sh work show <id>` for more than three) instead of a `git diff` that comes back
   empty; `work`, `work --json` and the MCP `work` tool read the shown review items' files to say
   the same.
-  The id is an item id or the id of any session in the item. A session outside the window is
-  still found by its id. An unknown id exits 1.
-- `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
+  The id is an item id or the id of any session in the item. An item id may be cut to a prefix of
+  4 characters or more that only one item in the window starts with; a prefix that several
+  share exits 1 and lists them. A session outside the window is still found by its id. An
+  unknown id exits 1.
+- `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>` take the ids `work show`
+  takes. A bad duration exits 2.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
   that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with
