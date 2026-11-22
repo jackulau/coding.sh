@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { UsageError } from "../../src/cli/args.ts";
 import { requireConsent } from "../../src/cli/common.ts";
-import { ASK_USER, CliError, Output } from "../../src/cli/output.ts";
+import { AGENT_ENV, ASK_USER, CliError, Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 
 const SRC = fileURLToPath(new URL("../../src/", import.meta.url));
@@ -130,6 +130,25 @@ describe("Output.error", () => {
     assert.equal(ci.out.interactive, false);
     ci.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
     assert.ok(ci.err().includes(ASK_USER), ci.err());
+  });
+
+  it("text at a terminal an agent runs (its env names it): the lines for the agent stay", () => {
+    for (const k of AGENT_ENV) {
+      const a = capture(false, true, { [k]: "1" });
+      assert.equal(a.out.interactive, true, k);
+      assert.equal(a.out.forAgent, true, k);
+      a.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+      assert.equal(a.err(), `✗ x exists\n    ${ASK_USER}\n    Overwrite it:\n    coding.sh x --force\n`, k);
+      const u = capture(false, true, { [k]: "1" });
+      u.out.error(new UsageError("Run 2 agent sessions needs confirmation", { suggestion: "coding.sh eval run s --yes", askUser: true }));
+      assert.ok(u.err().includes(ASK_USER), `${k}: ${u.err()}`);
+      assert.match(u.err(), /\n {4}With their approval: coding\.sh eval run s --yes\n$/, k);
+    }
+    // Set but empty names no agent: the person at the terminal is the user.
+    const empty = capture(false, true, { AI_AGENT: "" });
+    assert.equal(empty.out.forAgent, false);
+    empty.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+    assert.ok(!empty.err().includes(ASK_USER), empty.err());
   });
 });
 

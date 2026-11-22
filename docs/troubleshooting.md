@@ -261,9 +261,13 @@ stderr:
 ```
 
 When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
-`--force`, `purge`, a rollback), the JSON has `askUser: true`, and without a terminal the message
-says it needs your approval. An AI agent that hits such an error asks you before it runs `next`.
-At a terminal you approve it yourself, so the message leaves that out.
+`--force`, `purge`, a rollback), the JSON has `askUser: true`. An AI agent that hits such an error
+asks you before it runs `next`.
+
+The message says it needs your approval when an agent may be reading: without a terminal, or when
+a variable that agents set is present (`CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`). At a terminal with none of them set, you approve the step yourself, so the
+message leaves that out.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 

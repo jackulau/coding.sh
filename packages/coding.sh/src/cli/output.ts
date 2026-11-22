@@ -45,8 +45,15 @@ export class CliError extends Error {
   }
 }
 
-/** The line an error prints before a step that only the user may approve (askUser), when no one is at a terminal. */
+/** The line an error prints before a step that only the user may approve (askUser), unless the user is at a terminal. */
 export const ASK_USER = "The user must approve this first: ask them, and run it only once they agree.";
+
+/**
+ * Variables an agent sets for the commands it runs: Claude Code sets CLAUDECODE, AI_AGENT and
+ * CLAUDE_CODE_SESSION_ID, and Codex sets CODEX_THREAD_ID. Any one set means an agent reads the
+ * output, even at a terminal (Codex can run a command in one).
+ */
+export const AGENT_ENV = ["AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"] as const;
 
 /** Ctrl-C at a prompt or during work: exit 130. */
 export class Interrupted extends Error {
@@ -99,6 +106,8 @@ export class Output {
   readonly errColor: boolean;
   /** Prompts allowed: stdin and stderr are TTYs, not --json, not CI. */
   readonly interactive: boolean;
+  /** An agent may read the output: no one is at a terminal, or the env names an agent (AGENT_ENV). Errors then print the askUser lines. */
+  readonly forAgent: boolean;
   /** The help command for what is running (`coding.sh run --help`); errors with no next step point at it. */
   helpCommand?: string;
   readonly stdoutTTY: boolean;
@@ -122,6 +131,7 @@ export class Output {
     this.errColor = !this.json && colorEnabled(this.se, env, opts.noColor);
     const ci = env.CI !== undefined && env.CI !== "" && env.CI !== "0" && env.CI !== "false";
     this.interactive = !this.json && !ci && stdin.isTTY === true && this.se.isTTY === true;
+    this.forAgent = !this.interactive || AGENT_ENV.some((k) => !!env[k]);
   }
 
   style(s: string, style: Style, stream: "out" | "err" = "out"): string {
@@ -355,10 +365,10 @@ export class Output {
       } else {
         this.ew(`${this.style("✗", "red", "err")} ${e.message}\n`);
         if (e.askUser) {
-          // The approval lines speak to an agent. At a terminal the person reading is the user,
-          // who gets the step as is.
-          if (!this.interactive) this.ew(`    ${ASK_USER}\n`);
-          if (e.suggestion) this.ew(`    ${this.interactive ? "" : "With their approval: "}${this.style(this.command(e.suggestion), "cyan", "err")}\n`);
+          // The approval lines speak to an agent. At a terminal with no agent's env, the person
+          // reading is the user, who gets the step as is.
+          if (this.forAgent) this.ew(`    ${ASK_USER}\n`);
+          if (e.suggestion) this.ew(`    ${this.forAgent ? "With their approval: " : ""}${this.style(this.command(e.suggestion), "cyan", "err")}\n`);
         } else if (e.suggestion) this.ew(`    Did you mean ${this.style(this.command(e.suggestion), "cyan", "err")}?\n`);
       }
       return 2;
@@ -377,7 +387,7 @@ export class Output {
     } else {
       this.ew(`${this.style("✗", "red", "err")} ${message}\n`);
       for (const [k, v] of ce?.details ?? []) this.ew(`  ${formatLabel(k)}${v}\n`);
-      if (ce?.askUser && !this.interactive) this.ew(`    ${ASK_USER}\n`);
+      if (ce?.askUser && this.forAgent) this.ew(`    ${ASK_USER}\n`);
       for (const n of ce?.next ?? []) this.ew(`    ${this.command(n)}\n`);
       if (debug && e instanceof Error && e.stack) this.ew(e.stack + "\n");
     }
