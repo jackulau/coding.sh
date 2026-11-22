@@ -210,6 +210,7 @@ export class MemoryIndexStore implements IndexStore {
     const terms = searchTerms(text);
     if (!terms.length) return this.symbolHits(text, opts);
     const hits: { hit: SearchHit; score: number }[] = [];
+    const matched = new Map<AgentEvent, { body: string; score: number }>();
     for (const { event } of this.events.values()) {
       if (opts.agent && event.agent !== opts.agent) continue;
       if (opts.project !== undefined && projectOf(event) !== opts.project) continue;
@@ -218,7 +219,18 @@ export class MemoryIndexStore implements IndexStore {
       const words = searchTerms(body);
       // Every term must appear as a word, the last as a word prefix (mirrors ftsQuery, minus stemming).
       if (!terms.every((_, i) => words.some((w) => termMatches(w, terms, i)))) continue;
-      const score = terms.reduce((n, _, i) => n + words.filter((w) => termMatches(w, terms, i)).length, 0);
+      matched.set(event, { body, score: terms.reduce((n, _, i) => n + words.filter((w) => termMatches(w, terms, i)).length, 0) });
+    }
+    // A wrapper (a Codex code-mode cell) repeats the calls it made: its event is left out when an
+    // event of the same kind from one of its calls also matches (as the SQLite store does).
+    const echoes = new Set<string>();
+    for (const e of matched.keys()) {
+      if (!e.parentId || (e.kind !== "tool.start" && e.kind !== "tool.end")) continue;
+      const start = this.events.get(e.parentId)?.event;
+      if (start?.kind === "tool.start" && start.sessionId === e.sessionId && typeof start.payload.toolUseId === "string") echoes.add(JSON.stringify([e.sessionId, start.payload.toolUseId, e.kind]));
+    }
+    for (const [event, { body, score }] of matched) {
+      if (event.payload.wrapper === true && echoes.has(JSON.stringify([event.sessionId, event.payload.toolUseId, event.kind]))) continue;
       hits.push({ hit: { event: clone(event), snippet: snippet(body, terms) }, score });
     }
     hits.sort((a, b) => b.score - a.score || b.hit.event.ts - a.hit.event.ts);

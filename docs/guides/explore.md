@@ -125,9 +125,10 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and output, and errors: error events (message, type and
-status code), failed model calls, tool errors, and the error a session or subagent ended with.
-Every word must match within one event. Open a hit with `coding.sh show <session>`.
+Search covers prompts, replies, tool input and output, error events, failed model calls, tool
+errors and the error a session ended with. Every word must match within one event. When a call
+inside a Codex code-mode cell matches, search lists the call, not the cell.
+Open a hit with `coding.sh show <session>`.
 
 ## Open the viewer
 

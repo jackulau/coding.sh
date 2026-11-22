@@ -91,6 +91,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Search.** A Codex code-mode cell no longer doubles its calls in search: when a call the cell ran matches, the cell's copy of its command or output is left out, so each match is listed once and a page holds distinct hits. [Explore](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#search-every-session)
 - **Improve.** For a failing command, the "Find every time it failed" step now runs `coding.sh search "<command>" --where 'kind:tool.end ok:false'`, which lists the failed calls instead of every call that mentions the command. [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#see-what-to-fix-first)
 - **MCP.** The first calls after an upgrade answer within a few seconds. While the index is folded again, every result carries `index.refolding: true`, and a session not yet refolded shows its older stats whole. `latency` keeps to its time budget on very large stores, where it could fail before. [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#output-and-updates)
 - **Viewer.** A long session's page moves a fraction of the bytes: events load as compact, gzipped rows with long tool output clipped, and opening a step reads its events whole. The timeline, deep links and Find in steps are unchanged. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsidevents)

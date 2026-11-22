@@ -1411,11 +1411,11 @@ export class SqliteIndexStore implements IndexStore {
     // where the prefix ("the*": then, there, these, …) merges every matching word's list.
     const many = over(fts.slice(0, -1)) || over(fts);
     let sql: string;
-    let args: (string | number)[];
+    let args: (n: number) => (string | number)[];
     if (many) {
       sql = `SELECT ${eventCols("e")} FROM events_fts JOIN events e ON e.rowid = events_fts.rowid ${sessions}
         WHERE events_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""} ORDER BY events_fts.rowid DESC LIMIT ?`;
-      args = [fts, ...params, limit];
+      args = (n) => [fts, ...params, n];
     } else {
       // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
       // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass. Ties in rank break
@@ -1424,14 +1424,30 @@ export class SqliteIndexStore implements IndexStore {
       const page = where.length ? "" : "ORDER BY rank, rowid DESC LIMIT ?";
       sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
         JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, f.r DESC LIMIT ?`;
-      args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
+      args = (n) => (where.length ? [fts, ...params, n] : [fts, n, n]);
     }
     const terms = searchTerms(text);
     // A --where query compiles to new SQL each time: prepared once, not cached.
-    return ((q?.root ? this.db.prepare(sql) : this.stmt(sql)).all(...args) as Row[]).map((r) => {
-      const event = rowToEvent(r);
-      return { event, snippet: snippet(searchableText(event) ?? "", terms) };
-    });
+    const stmt = q?.root ? this.db.prepare(sql) : this.stmt(sql);
+    // A wrapper (a Codex code-mode cell) repeats the calls it made, each its own tool.start and
+    // tool.end: its script holds their commands and its output theirs. A wrapper's event is left
+    // out when an event of the same kind from one of its calls also matches, so a hit is listed once.
+    // Fetched again, longer, while dropped hits leave the page short and more rows remain.
+    const echoSql = `SELECT 1 FROM events st JOIN events e ON e.session_id = st.session_id AND e.ts >= st.ts AND e.parent_id = st.id ${sessions}
+      WHERE st.session_id = ? AND st.kind = 'tool.start' AND st.ts <= ? AND json_extract(st.payload, '$.toolUseId') = ?
+        AND e.kind = ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
+        AND EXISTS (SELECT 1 FROM events_fts WHERE events_fts MATCH ? AND events_fts.rowid = e.rowid) LIMIT 1`;
+    const echo = q?.root ? this.db.prepare(echoSql) : this.stmt(echoSql);
+    const echoed = (e: AgentEvent): boolean =>
+      (e.kind === "tool.start" || e.kind === "tool.end") && e.payload.wrapper === true && typeof e.payload.toolUseId === "string" &&
+      echo.get(e.sessionId, e.ts, e.payload.toolUseId, e.kind, ...params, fts) !== undefined;
+    for (let n = limit; ; n *= 2) {
+      const rows = stmt.all(...args(n)) as Row[];
+      const events = rows.map(rowToEvent).filter((e) => !echoed(e));
+      if (events.length >= limit || rows.length < n) {
+        return events.slice(0, limit).map((event) => ({ event, snippet: snippet(searchableText(event) ?? "", terms) }));
+      }
+    }
   }
 
   /**
