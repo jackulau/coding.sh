@@ -102,6 +102,18 @@ async function postOnce(url: string, body: string, o: DeliverOptions): Promise<s
   }
 }
 
+/**
+ * A failed command's stderr on one line of at most 200 characters: all of it when it fits, else
+ * its first and last lines. cmd ("'x' is not recognized as an internal or external command,")
+ * and PowerShell put the message first; a Python traceback puts it last.
+ */
+export function stderrLine(stderr: string): string {
+  const lines = stderr.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const all = lines.join(" ");
+  if (all.length <= 200 || lines.length < 2) return all.slice(0, 200);
+  return `${lines[0]!.slice(0, 98)} … ${lines.at(-1)!.slice(0, 98)}`;
+}
+
 function runOnce(command: string, body: string, o: DeliverOptions): Promise<string | undefined> {
   return new Promise((resolve) => {
     let stderr = "";
@@ -127,7 +139,7 @@ function runOnce(command: string, body: string, o: DeliverOptions): Promise<stri
       if (stderr.length < 2000) stderr += d.toString();
     });
     child.on("error", (e) => finish(`command failed to start: ${e.message}`));
-    child.on("close", (code) => finish(code === 0 ? undefined : `command exited ${code ?? "on a signal"}${stderr.trim() ? `: ${stderr.trim().split("\n").at(-1)!.slice(0, 200)}` : ""}`));
+    child.on("close", (code) => finish(code === 0 ? undefined : `command exited ${code ?? "on a signal"}${stderrLine(stderr) ? `: ${stderrLine(stderr)}` : ""}`));
     // A command that exits without reading stdin closes the pipe: that is not a failed delivery.
     child.stdin!.on("error", () => {});
     child.stdin!.end(body);
