@@ -234,7 +234,7 @@ describe("compare: iterate on a comparison", () => {
       [["--experiment", "exp_1", "--sample", "2"], /--failing and --sample pick tasks for new runs/],
       [["--seed", "3"], /--seed needs --sample/],
       [["--failing-mode", "majority"], /--failing-mode needs --failing/],
-      [["--sample", "0"], /--sample must be an integer of at least 1/],
+      [["--sample", "0"], /--sample must be a whole number from 1 to 9007199254740991, got "0"/],
     ];
     for (const [flags, re] of cases) {
       const r = cli(["compare", "base", ...WITHOUT, ...flags, "--yes"]);
