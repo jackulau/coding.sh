@@ -215,8 +215,8 @@ function names(set: IdSet, ref: string, id: string): boolean {
  * characters: a prefix of a top-level id; for a subagent, a prefix of its own id or the short
  * subagent form. When that is longer than MAX_REF characters or needs quoting in a shell
  * (PLAIN_REF), an alias instead: x_ and the first 8 alias digits, or more when 8 also name another
- * id. An id with no shorter form (or one of SHORT_ID_MIN characters or fewer) comes back whole, and
- * so does one not stored.
+ * id or start a stored one. An id with no shorter form (or one of SHORT_ID_MIN characters or fewer)
+ * comes back whole, and so does one not stored.
  */
 export function shortestRef(set: IdSet, id: string): string {
   if (!set.has(id)) return id;
@@ -225,7 +225,8 @@ export function shortestRef(set: IdSet, id: string): string {
   const digits = aliasDigits(id);
   for (let k = ALIAS_MIN; k <= ALIAS_MAX; k++) {
     const ref = `${ALIAS}${digits.slice(0, k)}`;
-    if (names(set, ref, id)) return ref;
+    // An SDK may name a session x_…: an alias that starts a stored id would read as a prefix of it.
+    if (set.withPrefix(ref).length === 0 && names(set, ref, id)) return ref;
   }
   return best;
 }

@@ -106,11 +106,12 @@ describe("an id whose shortest prefix is long or needs quoting prints an alias",
     assert.equal(resolves(s, "x_xnbfypjk8"), b);
   });
 
-  test("a reference is read as the exact id first, then as an alias, then as a prefix", () => {
+  test("a reference is read as the exact id first, then as an alias, then as a prefix; a printed alias starts no stored id", () => {
     const s = new IdSet([LONG_A, LONG_B, "x_d52r41f3", "x_8n2twz83-sdk"]);
     assert.deepEqual(matchRef(s, "x_d52r41f3"), { id: "x_d52r41f3" });
     assert.equal(shortestRef(s, LONG_A), "x_d52r41f3j", "a stored id takes the alias, so the alias grows");
     assert.deepEqual(matchRef(s, "x_8n2twz83"), { id: LONG_B }, "the alias comes before a prefix");
+    assert.equal(shortestRef(s, LONG_B), "x_8n2twz83h", "an alias a stored id starts with grows too, so it never reads as a prefix of that id");
     const sdk = shortestRef(s, "x_8n2twz83-sdk");
     assert.equal(resolves(s, sdk), "x_8n2twz83-sdk", sdk);
   });
