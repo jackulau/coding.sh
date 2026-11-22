@@ -151,7 +151,8 @@ order.
   `session_meta.originator` of "T3 Code". The session keeps the agent that ran as `agent` (`claude-code`,
   `codex`, or the provider name) and gets `host: "t3code"`; `provider` repeats the agent. A T3 thread that
   never reached a provider keeps `agent: "t3code"` and has no `host`. `--agent t3code` matches both, and
-  `usage --by agent`, `status` and the viewer's Agent facet count the agent that ran.
+  `usage --by agent`, `status` and the viewer's Agent facet count the agent that ran. The `sessions` list
+  and `show` print a hosted session's agent as `claude-code via t3code`.
 - **Provider instances:** T3 names a provider by its driver or by an instance id the user chose. An id
   that is a known driver maps to its agent; otherwise one that starts with a driver kind, ignoring case, maps
   to that agent (`claudeHub` is Claude Code, `codex-work` is Codex; likewise Cursor, OpenCode and Pi). Any

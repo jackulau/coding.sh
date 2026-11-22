@@ -73,11 +73,12 @@ function fmtDuration(ms: number): string {
   if (tenths < 100) return (tenths / 10).toFixed(1) + "s";
   const s = Math.round(ms / 1000);
   if (s < 60) return s + "s";
-  const m = Math.floor(s / 60);
-  if (m < 60) return m + "m " + (s % 60) + "s";
-  const hr = Math.floor(m / 60);
-  if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
-  return hr + "h " + (m % 60) + "m";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  // Past an hour the whole value rounds to the minute first, past a day to the hour, so a carry moves up a unit (as cli/output.ts duration()).
+  const m = Math.round(ms / 60e3);
+  if (m < 1440) return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  const hr = Math.round(ms / 3600e3);
+  return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
 }
 function midClip(s: string, n: number): string {
   if (s.length <= n) return s;
@@ -154,10 +155,12 @@ function badges(s: Session & { childCount?: number }): string {
   if (kids) out.push(`<span class="sub-toggle"><span class="caret" aria-hidden="true">▸</span>${esc(plural(kids, "subagent"))}</span>`);
   const st = s.stats;
   if (st.testsFailed !== undefined || st.testsPassed !== undefined) {
+    // The last test run, counted in tests so it does not read as failed tool calls (testsBadge in ui/index.html).
+    const title = esc("Last test run: " + fmtNum(st.testsPassed ?? 0) + " passed, " + fmtNum(st.testsFailed ?? 0) + " failed");
     out.push(
       (st.testsFailed ?? 0) > 0
-        ? `<span class="badge fail" title="${esc(fmtNum(st.testsPassed ?? 0) + " passed")}">${esc("✕ " + fmtNum(st.testsFailed!) + " failed")}</span>`
-        : `<span class="badge pass">${esc("✓ " + fmtNum(st.testsPassed ?? 0) + " passed")}</span>`,
+        ? `<span class="badge fail" title="${title}">${esc("✕ " + plural(st.testsFailed!, "test") + " failed")}</span>`
+        : `<span class="badge pass" title="${title}">${esc("✓ " + plural(st.testsPassed ?? 0, "test") + " passed")}</span>`,
     );
   }
   const fr = failedRequests(s);

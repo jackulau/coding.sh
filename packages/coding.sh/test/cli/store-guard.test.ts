@@ -8,13 +8,15 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
+import { cliCommand, quoteArg } from "../../src/cli/next-steps.ts";
 import { SOURCE_CLI } from "../_cli.ts";
+import { npmBins } from "./_npm-bins.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
 const VERSION = (JSON.parse(readFileSync(join(PKG, "package.json"), "utf8")) as { version: string }).version;
@@ -201,14 +203,42 @@ describe("a migration never strands another install", () => {
     assert.ok(r.stderr.includes(owner), "names the owner's path");
     assert.match(r.stderr, new RegExp(`v${OLD}\\b`));
     assert.match(r.stderr, new RegExp(`v${SQLITE_SCHEMA_VERSION}\\b`));
-    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
+    // PATH starts no coding.sh: the command names this install by its path.
+    const command = `node ${quoteArg(realpathSync(INSTALLED_CLI), {})} upgrade-store`;
+    assert.ok(r.stderr.includes(`\n    ${command}\n`), r.stderr);
     assert.equal(await schemaOf(index), OLD, "the store was not migrated");
 
     const j = run(INSTALLED_CLI, ["sessions", "--json"], home);
     const err = JSON.parse(j.stderr) as { reason: string; next: string[]; askUser?: boolean };
     assert.equal(err.reason, "store_owned");
-    assert.ok(err.next.some((n) => /(?:coding\.sh|codingsh) upgrade-store/.test(n)));
+    assert.equal(err.next[1], command);
     assert.equal(err.askUser, true, "an agent asks the user before stranding their other install");
+    assert.equal(await schemaOf(index), OLD);
+  });
+
+  it("the command runs the install that refused: its bin when PATH starts it, else the install by its path", async () => {
+    const { home, data } = tmpHome();
+    const index = join(data, "index.db");
+    await storeAt(index, OLD);
+    const owner = oldInstall("0.1.3");
+    ownedBy(data, owner);
+    const cli = realpathSync(INSTALLED_CLI);
+    const ownerBin = npmBins(owner);
+    const thisBin = npmBins(cli);
+    const node = dirname(process.execPath);
+    const named = (env: NodeJS.ProcessEnv): string | undefined => {
+      const r = run(INSTALLED_CLI, ["sessions", "--json"], home, env);
+      assert.equal(r.status, 1, r.stderr);
+      return (JSON.parse(r.stderr) as { next: string[] }).next[1];
+    };
+    // PowerShell and cmd set neither MSYSTEM nor SHELL (on Windows they run codingsh.cmd); Git
+    // Bash sets both (it runs npm's sh shim coding.sh).
+    for (const shell of [{}, { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }]) {
+      assert.equal(named({ ...shell, PATH: [ownerBin, thisBin, node].join(delimiter) }), `node ${quoteArg(cli, shell)} upgrade-store`, "PATH starts the owner's install");
+      assert.equal(named({ ...shell, PATH: [thisBin, ownerBin, node].join(delimiter) }), cliCommand(shell, ["upgrade-store"]), "PATH starts this install");
+    }
+    const t = run(INSTALLED_CLI, ["sessions"], home, { PATH: [thisBin, node].join(delimiter) });
+    assert.ok(t.stderr.includes(`\n    ${cliCommand({}, ["upgrade-store"])}\n`), t.stderr);
     assert.equal(await schemaOf(index), OLD);
   });
 
@@ -260,7 +290,7 @@ describe("a migration never strands another install", () => {
     ownedBy(data, oldInstall("0.1.2"));
     const r = run(CHECKOUT_CLI, ["sessions"], home, { CODING_SH_DEV_REAL_STORE: "1" });
     assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
+    assert.ok(r.stderr.includes(`\n    node ${quoteArg(realpathSync(CHECKOUT_CLI), {})} upgrade-store\n`), r.stderr);
     assert.equal(await schemaOf(index), OLD);
   });
 });

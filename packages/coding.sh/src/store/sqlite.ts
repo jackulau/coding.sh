@@ -1074,10 +1074,8 @@ export class SqliteIndexStore implements IndexStore {
       if (backup) rmSync(backup, { force: true });
       throw err;
     } finally {
-      const hints: string[] = [];
-      if (rewrote) hints.push("Run `coding.sh gc --compact` to give back the space the old layout used.");
-      if (backup) hints.push(`The index as it was is kept at ${backup}: \`coding.sh upgrade-store --restore\` puts it back, and it is yours to delete.`);
-      progress.end(ok, hints.join(" ") || undefined);
+      // UpgradeProgress.end words the hints: gc --compact, and the copy with the command that puts it back.
+      progress.end(ok, { compact: rewrote, backup });
     }
   }
 
