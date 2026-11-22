@@ -968,16 +968,23 @@ const derivedPrompts = new WeakMap<AgentEvent, number>();
 export const childSessionId = (traceId: string, spanId: string): string => `otel-sub-${traceId}-${spanId}`;
 
 const SPAN_TTFT_MS = ["ai.response.msToFirstChunk", "ai.stream.msToFirstChunk", "ttft_ms"];
-const SPAN_TTFT_S = ["gen_ai.response.time_to_first_chunk"]; // semconv: seconds
+/** The GenAI semconv server metric (seconds). OpenLIT sets it on its spans too, in seconds. */
+const SERVER_TTFT = "gen_ai.server.time_to_first_token";
+// In seconds. The semconv span attribute comes first, so a span that carries both is read by it.
+const SPAN_TTFT_S = ["gen_ai.response.time_to_first_chunk", SERVER_TTFT];
+/** Strands Agents' Python tracer, which sets SERVER_TTFT on its chat spans in milliseconds. */
+const STRANDS_SCOPE = "strands.telemetry.tracer";
 const FIRST_CHUNK_EVENT = /first[._ -]?(chunk|token)/i;
 
 /** Time to first token in ms: span attributes, else a streaming "first chunk" span event. */
-function ttftMs(span: OtelSpan): number | undefined {
+function ttftMs(span: OtelSpan, scope: string): number | undefined {
   const a = span.attributes;
   const ms = num(a, ...SPAN_TTFT_MS);
   if (ms !== undefined) return ms;
-  const s = num(a, ...SPAN_TTFT_S);
-  if (s !== undefined) return Math.round(s * 1e6) / 1e3;
+  for (const k of SPAN_TTFT_S) {
+    const s = num(a, k);
+    if (s !== undefined) return k === SERVER_TTFT && scope === STRANDS_SCOPE ? s : Math.round(s * 1e6) / 1e3;
+  }
   const ev = span.events.find((e) => FIRST_CHUNK_EVENT.test(e.name));
   if (!ev) return undefined;
   const evMs = num(ev.attributes, ...SPAN_TTFT_MS);
@@ -1216,7 +1223,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("inferenceGeo", hints.inferenceGeo)
       .set("operation", klass === "embedding" ? "embeddings" : (str(a, "gen_ai.operation.name") ?? "chat"))
       .set("name", span.name)
-      .set("ttftMs", ttftMs(span))
+      .set("ttftMs", ttftMs(span, c.scope.name))
       .set("stopReason", finishReason(a))
       .set("reasoningTokens", reasoningTokens(a))
       .set("reasoningEffort", str(a, "gen_ai.request.reasoning.level"))

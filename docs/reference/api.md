@@ -264,6 +264,15 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+A model call's time to first token (`ttftMs`) comes from the first of these on its span:
+
+- `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.
+- `gen_ai.response.time_to_first_chunk`, then `gen_ai.server.time_to_first_token`, in seconds.
+  Strands Agents' Python tracer (scope `strands.telemetry.tracer`) sends the second in
+  milliseconds, and it is read as milliseconds.
+- A span event named for the first chunk or token, such as `ai.stream.firstChunk`: one of the
+  millisecond attributes above on the event, else the event's time less the span's start.
+
 ```sh
 curl -sS -X POST "$CSH/v1/traces" \
   -H "Authorization: Bearer $INGEST_KEY" \

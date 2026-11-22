@@ -217,13 +217,13 @@ describe("OpenInference", () => {
 
 describe("llm.call timing", () => {
   const T0 = 1767225600000000000n;
-  const llmSpan = (attributes: Record<string, unknown>[], events: Record<string, unknown>[] = []) => ({
+  const llmSpan = (attributes: Record<string, unknown>[], events: Record<string, unknown>[] = [], scope = "t") => ({
     resourceSpans: [
       {
         resource: { attributes: [{ key: "service.name", value: { stringValue: "svc" } }] },
         scopeSpans: [
           {
-            scope: { name: "t" },
+            scope: { name: scope },
             spans: [
               {
                 traceId: "0102030405060708090a0b0c0d0e0f10",
@@ -262,6 +262,27 @@ describe("llm.call timing", () => {
     const session = buildSession([ev]);
     assert.equal(session.stats.latency?.ttftP50Ms, 420);
     assert.equal(session.stats.latency?.llmP50Ms, 1500);
+  });
+
+  // OpenLIT (Python and TypeScript) sets the semconv server metric's name on its chat spans, in seconds.
+  it("reads gen_ai.server.time_to_first_token in seconds", async () => {
+    const e = await call(llmSpan([{ key: "gen_ai.server.time_to_first_token", value: { doubleValue: 0.42 } }], [], "openlit.instrumentation.openai"));
+    assert.equal(e.payload.ttftMs, 420);
+    assert.equal(buildSession([e]).stats.latency?.ttftP50Ms, 420);
+  });
+
+  // Strands Agents' Python tracer sets the same name in milliseconds, from its timeToFirstByteMs.
+  it("reads gen_ai.server.time_to_first_token in milliseconds from Strands Agents' tracer", async () => {
+    const e = await call(llmSpan([{ key: "gen_ai.server.time_to_first_token", value: { intValue: "850" } }], [], "strands.telemetry.tracer"));
+    assert.equal(e.payload.ttftMs, 850);
+  });
+
+  it("reads gen_ai.response.time_to_first_chunk first when a span carries both", async () => {
+    const both = [
+      { key: "gen_ai.server.time_to_first_token", value: { intValue: "850" } },
+      { key: "gen_ai.response.time_to_first_chunk", value: { doubleValue: 0.84 } },
+    ];
+    assert.equal((await call(llmSpan(both, [], "strands.telemetry.tracer"))).payload.ttftMs, 840);
   });
 });
 
