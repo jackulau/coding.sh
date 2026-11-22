@@ -898,6 +898,88 @@ describe("coding.sh purge in llm-cache recordings and snapshot repos", () => {
   });
 });
 
+// Purge reads a packed snapshot through git. A pack sits 139 characters below the store's folder,
+// and without core.longpaths Git for Windows can't open a path of 260 characters or more: it
+// reported the pack's objects missing, and purge passed over them as holding nothing.
+describe("coding.sh purge in packed snapshots git can't open as they are", () => {
+  const SNAP = "packed-only-5203-correct-horse";
+  const LONG_PATHS = ["-c", "core.longpaths=true"];
+  let env: TmpEnv;
+  let saved: Record<string, string | undefined> = {};
+  let secrets = "";
+  let holding = "";
+  let gone = "";
+  let clean = "";
+
+  /** A repo with one untracked file, snapshotted, its snapshot packed: purge reads it through git. */
+  async function packed(name: string, notes: string): Promise<string> {
+    const dir = join(env.root, name);
+    mkdirSync(dir);
+    const init = spawnSync("git", [...LONG_PATHS, "init", "-q"], { cwd: dir, encoding: "utf8" });
+    assert.equal(init.status, 0, init.stderr);
+    writeFileSync(join(dir, "notes.txt"), notes);
+    const s = await snapshot(dir, { timeoutMs: 120_000 });
+    assert.ok(s?.snapshot && !s.partial, "the snapshot holds the untracked file");
+    const shadow = shadowRepoPath(dir);
+    const pack = spawnSync("git", [...LONG_PATHS, "--git-dir", shadow, "repack", "-a", "-d", "-l", "-q"], { encoding: "utf8" });
+    assert.equal(pack.status, 0, pack.stderr);
+    assert.ok(readdirSync(join(shadow, "objects", "pack")).some((f) => f.endsWith(".pack")), `${name}'s snapshot is packed`);
+    return shadow;
+  }
+
+  before(async () => {
+    env = tmpEnv();
+    saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
+    const gitconfig = join(env.root, "gitconfig");
+    writeFileSync(gitconfig, "[init]\n\tdefaultBranch = main\n");
+    process.env.GIT_CONFIG_GLOBAL = gitconfig;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    // A store folder of 140 characters puts each pack at 279. env.restore() puts CODING_SH_HOME back.
+    const home = join(env.root, "h".repeat(Math.max(1, 139 - env.root.length)));
+    process.env.CODING_SH_HOME = home;
+    await seed(home, { sessions: [session("s1")], events: [event("s1", 1, { payload: { text: "nothing to see" } })] });
+    secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SNAP}\n`);
+
+    holding = await packed("repo-a", `token ${SNAP}\n`);
+    gone = await packed("repo-b", `token ${SNAP}\n`);
+    // Its index still lists the objects, but git can't read them: the pack is gone.
+    const dir = join(gone, "objects", "pack");
+    for (const f of readdirSync(dir)) if (f.endsWith(".pack")) rmSync(join(dir, f));
+    clean = await packed("repo-c", "nothing to see\n");
+  });
+  after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    env.restore();
+  });
+
+  test("names a packed snapshot that holds the value, and one git can't read, under a long store path", () => {
+    const j = JSON.parse(ok(["purge", "--literal", secrets, "--dry-run", "--json"]).stdout);
+    const repos = (j.snapshotRepos ?? []) as { path: string; unreadable?: true }[];
+    const want = [{ path: holding }, { path: gone, unreadable: true }].sort((a, b) => (a.path < b.path ? -1 : 1));
+    assert.deepEqual(repos.map((s) => (s.unreadable ? { path: s.path, unreadable: s.unreadable } : { path: s.path })), want);
+    assert.ok(!repos.some((s) => s.path === clean), "a packed snapshot without the value is not named");
+
+    const text = ok(["purge", "--literal", secrets, "--dry-run"]);
+    assert.ok(text.stderr.includes(`couldn't read ${gone}`), text.stderr);
+    assert.match(text.stderr, /holds the value: purge does not rewrite snapshots/);
+    for (const f of forms(SNAP)) assert.ok(!(text.stdout + text.stderr).includes(f), "the value was printed");
+  });
+
+  test("exits 1 while a snapshot repo git can't read is left", () => {
+    rmSync(holding, { recursive: true, force: true });
+    const r = cli(["purge", "--literal", secrets]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok(r.stderr.includes(`couldn't read ${gone}`), r.stderr);
+    rmSync(gone, { recursive: true, force: true });
+    assert.match(ok(["purge", "--literal", secrets]).stderr, /No copies of the value in the store/);
+    assert.ok(existsSync(clean), "a snapshot repo without the value stays");
+  });
+});
+
 // A recording job holds its calls in memory and writes them when it ends (llmcache/proxy.ts): its
 // marker tells purge to wait, so the file it writes is scrubbed instead of landing after the purge.
 describe("coding.sh purge and recording jobs in progress", () => {

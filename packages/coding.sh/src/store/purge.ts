@@ -497,10 +497,11 @@ function looseObject(buf: Buffer): Buffer | "big" | undefined {
 
 /**
  * Reads `git cat-file --batch` output ("<oid> <type> <size>\n<content>\n" per object, or
- * "<oid> missing\n"): calls `visit` with each object's content, and `skip` for one over
- * MAX_FILE_BYTES, which it does not keep. Returns false, which stops git, once visit returns true.
+ * "<oid> missing\n"): calls `visit` with each object's content, `skip` for one over
+ * MAX_FILE_BYTES, which it does not keep, and `missing` for one git could not read. Returns false,
+ * which stops git, once visit returns true.
  */
-function catFileParser(visit: (buf: Buffer) => boolean, skip: () => void): (chunk: Buffer) => boolean {
+function catFileParser(visit: (buf: Buffer) => boolean, skip: () => void, missing: () => void): (chunk: Buffer) => boolean {
   let pending: Buffer = Buffer.alloc(0);
   let need = -1; // bytes left of the current object and its newline; -1 while reading a header
   let keep: Buffer[] | undefined;
@@ -513,7 +514,10 @@ function catFileParser(visit: (buf: Buffer) => boolean, skip: () => void): (chun
         const head = pending.subarray(0, nl).toString("latin1").split(" ");
         pending = pending.subarray(nl + 1);
         const size = Number(head[2]);
-        if (head.length < 3 || !Number.isSafeInteger(size) || size < 0) continue; // "<oid> missing"
+        if (head.length < 3 || !Number.isSafeInteger(size) || size < 0) {
+          missing(); // "<oid> missing"
+          continue;
+        }
         need = size + 1;
         if (size > MAX_FILE_BYTES) {
           skip();
@@ -536,10 +540,20 @@ function catFileParser(visit: (buf: Buffer) => boolean, skip: () => void): (chun
   };
 }
 
-/** Calls `visit` with each object of a pack, read through git (a pack stores deltas), until it returns true. */
+/**
+ * Without core.longpaths, Git for Windows can't open a path of 260 characters or more. A pack sits
+ * 139 characters below the store's folder, so under a long `CODING_SH_HOME` git would report every
+ * packed object missing. Other platforms ignore the key.
+ */
+const LONG_PATHS = ["-c", "core.longpaths=true"];
+
+/**
+ * Calls `visit` with each object of a pack, read through git (a pack stores deltas), until it
+ * returns true. Throws when git can't read an object the pack's index lists: it may hold a value.
+ */
 async function packObjects(repo: string, idx: string, visit: (buf: Buffer) => boolean, skip: () => void): Promise<boolean> {
   const env = { GIT_DIR: repo };
-  const listed = await runGit(["show-index"], { cwd: repo, env, input: readFileSync(idx) });
+  const listed = await runGit([...LONG_PATHS, "show-index"], { cwd: repo, env, input: readFileSync(idx) });
   const oids = listed.stdout
     .split("\n")
     .map((l) => l.split(" ")[1] ?? "")
@@ -547,16 +561,22 @@ async function packObjects(repo: string, idx: string, visit: (buf: Buffer) => bo
   if (!oids.length) return false;
   let hit = false;
   let error: unknown;
-  const parse = catFileParser((b) => {
-    try {
-      return (hit = visit(b));
-    } catch (e) {
-      error = e;
-      return true;
-    }
-  }, skip);
-  await runGit(["cat-file", "--batch"], { cwd: repo, env, input: oids.join("\n") + "\n", timeoutMs: 10 * 60_000, onStdout: parse });
+  let missing = 0;
+  const parse = catFileParser(
+    (b) => {
+      try {
+        return (hit = visit(b));
+      } catch (e) {
+        error = e;
+        return true;
+      }
+    },
+    skip,
+    () => missing++,
+  );
+  await runGit([...LONG_PATHS, "cat-file", "--batch"], { cwd: repo, env, input: oids.join("\n") + "\n", timeoutMs: 10 * 60_000, onStdout: parse });
   if (error) throw error;
+  if (missing && !hit) throw new Error(`git could not read ${missing} of the ${oids.length} objects ${relative(repo, idx)} lists`);
   return hit;
 }
 
