@@ -271,7 +271,8 @@ budget passes 80%.
 
 `coding.sh proxy --enforce-budget` answers 429, with a `Retry-After` header in seconds until the
 reset, to a call a budget over its limit applies to. The call never goes upstream. The body is the
-vendor's error shape and names the budget, its limit and its reset. It ignores `--where` budgets.
+vendor's error shape and names the budget, its limit and its reset. It ignores `--repo` and
+`--where` budgets.
 See
 [Log every model call with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#stop-calls-over-a-budget)
 for which budgets it can match.

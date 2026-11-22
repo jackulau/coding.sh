@@ -36,6 +36,9 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4320
 export OPENAI_BASE_URL=http://127.0.0.1:4320/v1
 ```
 
+In PowerShell, `codingsh proxy env` prints them as `$env:` lines, and
+`codingsh proxy env | Invoke-Expression` sets them.
+
 Run your app as usual. This script labels a GitHub issue. The `x-coding-sh-session` header puts
 every call it makes in one session:
 
@@ -181,7 +184,8 @@ over its limit applies to gets a 429 and never goes upstream. The body uses the 
 shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
 its limit, its estimated spend, when it resets and the command that shows the budgets, as the
 shell the proxy started in runs it (`codingsh budget status` in PowerShell or cmd).
-`Retry-After` gives the seconds until the reset.
+`Retry-After` gives the seconds until the reset. The 429 also carries `x-should-retry: false`, so
+the Anthropic and OpenAI SDKs raise it at once instead of retrying.
 
 Which budgets the proxy can match:
 
