@@ -57,15 +57,15 @@ describe("doctor and status: capture problems", () => {
     rmSync(sh);
     try {
       const r = run(["doctor", "--agent", "claude-code"]);
-      assert.ok(r.stderr.includes(`! Hook`) && r.stderr.includes(`missing at ${sh}`), r.stderr);
-      assert.match(r.stderr, /^! Claude Code\s+v2\.1\.319, hooked.*, but the hook it runs is missing/m);
+      assert.ok(r.stdout.includes(`! Hook`) && r.stdout.includes(`missing at ${sh}`), r.stdout);
+      assert.match(r.stdout, /^! Claude Code\s+v2\.1\.319, hooked.*, but the hook it runs is missing/m);
       const doc = JSON.parse(run(["doctor", "--agent", "claude-code", "--json"]).stdout) as Doc;
       assert.ok(doc.warnings.some((w) => w.check === "hook" && w.message === `The hook is missing at ${sh}`), JSON.stringify(doc.warnings));
       assert.ok(doc.warnings.some((w) => w.check === "agent" && w.agent === "claude-code"));
     } finally {
       assert.equal(run(["init", "--yes", "--agent", "claude-code"]).status, 0);
     }
-    assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^✓ Claude Code/m);
+    assert.match(run(["doctor", "--agent", "claude-code"]).stdout, /^✓ Claude Code/m);
   });
 
   test("a day file hooks can't append to, and write failures in errors.log, are Spool warnings", { skip: (!posix || root) && "needs file modes" }, () => {
@@ -75,8 +75,8 @@ describe("doctor and status: capture problems", () => {
     chmodSync(file, 0o400);
     try {
       const r = run(["doctor", "--agent", "claude-code"]);
-      assert.ok(r.stderr.includes(`spool/claude-code/${day}.jsonl not writable: EACCES`), r.stderr);
-      assert.doesNotMatch(r.stderr, /✓ Spool/);
+      assert.ok(r.stdout.includes(`spool/claude-code/${day}.jsonl not writable: EACCES`), r.stdout);
+      assert.doesNotMatch(r.stdout, /✓ Spool/);
     } finally {
       chmodSync(file, 0o600);
     }
@@ -92,7 +92,7 @@ describe("doctor and status: capture problems", () => {
     } finally {
       rmSync(join(env.dataHome, "spool", "errors.log"));
     }
-    assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^✓ Spool/m);
+    assert.match(run(["doctor", "--agent", "claude-code"]).stdout, /^✓ Spool/m);
   });
 
   test("a stored model call at 9,000 tok/s is a Stats warning naming its session; one at 120 tok/s is not, nor a fast model's at 2,200", async () => {
@@ -114,7 +114,7 @@ describe("doctor and status: capture problems", () => {
     const doc = JSON.parse(run(["doctor", "--agent", "claude-code", "--json"]).stdout) as Doc;
     const w = doc.warnings.filter((x) => x.check === "stats");
     assert.deepEqual(w.map((x) => [x.message, x.next]), [[`2 model calls past physical limits (over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s 2); most in fast`, `${nextStepBin(process.env)} show fast`]]);
-    assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^! Stats\s+2 model calls past physical limits/m);
+    assert.match(run(["doctor", "--agent", "claude-code"]).stdout, /^! Stats\s+2 model calls past physical limits/m);
   });
 
   test("status and doctor print the store URL with its password masked", () => {
@@ -128,7 +128,9 @@ describe("doctor and status: capture problems", () => {
     assert.ok(!(text.stdout + text.stderr).includes(PASSWORD));
     const doctor = run(["doctor", "--agent", "claude-code", "--json"], extra);
     assert.ok(!doctor.stdout.includes(PASSWORD), doctor.stdout);
-    assert.ok(!run(["doctor", "--agent", "claude-code"], extra).stderr.includes(PASSWORD));
+    const report = run(["doctor", "--agent", "claude-code"], extra);
+    assert.ok(report.stdout.includes("coding:***@"), report.stdout);
+    assert.ok(!(report.stdout + report.stderr).includes(PASSWORD));
   });
 
   test("status says how many spool files ingest has yet to read, as --json does", async () => {
