@@ -73,11 +73,12 @@ function fmtDuration(ms: number): string {
   if (tenths < 100) return (tenths / 10).toFixed(1) + "s";
   const s = Math.round(ms / 1000);
   if (s < 60) return s + "s";
-  const m = Math.floor(s / 60);
-  if (m < 60) return m + "m " + (s % 60) + "s";
-  const hr = Math.floor(m / 60);
-  if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
-  return hr + "h " + (m % 60) + "m";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  // Past an hour the whole value rounds to the minute first, past a day to the hour, so a carry moves up a unit (as cli/output.ts duration()).
+  const m = Math.round(ms / 60e3);
+  if (m < 1440) return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  const hr = Math.round(ms / 3600e3);
+  return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
 }
 function midClip(s: string, n: number): string {
   if (s.length <= n) return s;
