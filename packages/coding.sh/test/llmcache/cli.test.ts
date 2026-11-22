@@ -165,6 +165,31 @@ describe("exp run --record / --replay from the CLI", () => {
     assert.doesNotMatch(r.stderr, /case u1 /);
   });
 
+  it("--arm: each arm's own llm.upstream wins, with or without a positional spec", async () => {
+    const stubs = [await startStub(), await startStub()];
+    try {
+      const arm = (name: string, s: Stub) => {
+        const file = join(home, `${name}.json`);
+        writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(spec(name, "sys A"), "utf8")), llm: { upstream: { anthropic: s.url } } }));
+        return `${name}=${file}`;
+      };
+      const counts = () => [stub, ...stubs].map((s) => s.calls());
+      const delta = (from: number[]) => counts().map((n, i) => n - from[i]!);
+      // Call 1 replays, call 2 runs live: 4 live calls per arm, each to the arm's own upstream.
+      const replayed = ["--replay", recId, "--replay-until", "1"];
+      let from = counts();
+      const withSpec = await cli(["exp", "run", spec("armspec", "sys A"), "--arm", arm("a1", stubs[0]!), "--arm", arm("b1", stubs[1]!), ...replayed, "--json"]);
+      assert.equal(withSpec.status, 0, withSpec.stderr);
+      assert.deepEqual(delta(from), [0, 4, 4], "the positional spec's upstream got the calls");
+      from = counts();
+      const alone = await cli(["exp", "run", "--dataset", "ds", "--grader", '{"kind":"exact"}', "--arm", arm("a2", stubs[0]!), "--arm", arm("b2", stubs[1]!), ...replayed, "--json"]);
+      assert.equal(alone.status, 0, alone.stderr);
+      assert.deepEqual(delta(from), [0, 4, 4]);
+    } finally {
+      for (const s of stubs) await s.close();
+    }
+  });
+
   it("the spec's llm field records too, and flags fail fast with a reason", async () => {
     const r = await cli(["exp", "run", spec("specrec", "sys A", { record: true }), "--json"]);
     assert.equal(r.status, 0, r.stderr);

@@ -19,6 +19,7 @@ import { infraStopFor, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { planSequential, sequentialLook, sequentialOutcome, type LookResult, type SequentialOutcome } from "../stats/sequential.ts";
+import type { LlmCache, LlmUpstreams } from "../llmcache/proxy.ts";
 import { llmMetadata, openLlmCache, type LlmRunOpts } from "../llmcache/run.ts";
 import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
@@ -30,6 +31,8 @@ export interface AbArm {
   task: TaskSpec;
   /** SHA-256 of the checkpoint this arm runs (`exp run --weights ARM=<SHA256>`); stored as the arm's `metadata.weights`. */
   weights?: string;
+  /** X-11: the model API base URLs this arm's calls go to (its spec's `llm.upstream`); they win over `llm.upstream`. */
+  upstream?: Partial<LlmUpstreams>;
 }
 
 export interface StopEarlyOpts {
@@ -76,6 +79,19 @@ export interface RunAbOpts {
   onLook?: (look: LookResult) => void;
   /** X-11: both arms record, or both replay the same source at the same boundary (src/llmcache). */
   llm?: LlmRunOpts;
+}
+
+/** The llm cache each arm runs with: the arm's own upstream wins over the run's, and arms with the same upstreams share one proxy. */
+async function armCaches(llm: LlmRunOpts, arms: readonly [AbArm, AbArm]): Promise<[LlmCache, LlmCache]> {
+  const [a, b] = arms.map((arm): LlmRunOpts => (arm.upstream ? { ...llm, upstream: { ...llm.upstream, ...arm.upstream } } : llm));
+  const first = await openLlmCache(a!);
+  if (JSON.stringify(a!.upstream ?? {}) === JSON.stringify(b!.upstream ?? {})) return [first, first];
+  try {
+    return [first, await openLlmCache(b!)];
+  } catch (e) {
+    await first.close();
+    throw e;
+  }
 }
 
 export interface AbResult {
@@ -157,8 +173,8 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
     ...(opts.retry ? { retry: opts.retry } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
   })) as [TrialEnv, TrialEnv];
-  const cache = opts.llm ? await openLlmCache(opts.llm) : undefined;
-  if (cache) for (const e of envs) e.llm = cache;
+  const caches = opts.llm ? await armCaches(opts.llm, opts.arms) : undefined;
+  if (caches) envs.forEach((e, i) => (e.llm = caches[i]));
 
   const left = cases.map(() => 2 * trials); // case-trials still to finish, per case
   const finished: [CaseRun[], CaseRun[]] = [[], []];
@@ -201,7 +217,7 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
     opts.onProgress?.(run, j.arm, ++done, jobs.length);
     take();
     return run;
-  }).finally(() => cache?.close());
+  }).finally(() => Promise.all([...new Set(caches)].map((c) => c.close())));
 
   const keep = stopAt ?? cases.length;
   // Cancelled: some case-trial the result needs never ran (an early stop drops the rest on purpose).

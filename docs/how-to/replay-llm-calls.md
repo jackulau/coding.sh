@@ -104,7 +104,8 @@ recorded, and only 2xx replies are served from a recording.
 | `excludeTools` | false | Leaves the tool list out of the key. |
 | `excludeModel` | false | Leaves the model out of the key. |
 
-The flags win over the spec.
+The flags win over the spec. With `--arm`, an arm given as a whole spec can set its own `upstream`,
+which wins for that arm's calls, with or without a spec before the flags.
 
 ## What is stored
 

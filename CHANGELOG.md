@@ -210,6 +210,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, the exit flush also sends a batch that is waiting for its retry, and warns when it has to drop events. Before, a script that ended without `flush()` while the server was down or answered 503 exited with its events lost and no warning. [SDK](https://coding.sh/docs/sdk)
 - **Experiments.** A replay warns about each case-trial it leaves unscored and says why: the recording has none for it, or a live call failed, with the HTTP status or network error. Before, a failed live call was never named, so `exp run --replay --no-control` showed unscored runs with no reason. [Replay recorded model calls](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#3-read-the-result)
+- **Experiments.** `exp run --replay` with two `--arm` specs sends each arm's model calls to the `llm.upstream` its own spec names, with or without a positional spec. Before, only the positional spec's upstream was used. [Replay recorded model calls](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#set-it-in-the-spec)
 
 ## [0.1.7] - 2026-11-16
 
