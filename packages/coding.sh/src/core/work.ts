@@ -338,7 +338,7 @@ export interface RunFailure {
  * Every cause the item has, most urgent first. `run`, for a workflow run, gives
  * its failed agents: the failed cause comes from them instead of the primary.
  */
-export function workCauses(members: readonly Session[], primary: Session, now: number, run?: RunFailure): WorkCause[] {
+export function workCauses(members: readonly Session[], primary: Session, now: number, run?: RunFailure, landed = false): WorkCause[] {
   const out: WorkCause[] = [];
   const cause = (bucket: Bucket, s: Session, at: number, key: string | number, extra: Partial<WorkCause> = {}) =>
     out.push({ bucket, sessionId: s.id, at, fingerprint: `${bucket}:${s.id}:${key}`, ...extra });
@@ -369,7 +369,8 @@ export function workCauses(members: readonly Session[], primary: Session, now: n
   if (stopped) {
     const files = members.reduce((n, s) => n + (s.stats.filesChanged ?? 0), 0);
     const end = Math.max(...members.map(lastActivity));
-    if (files > 0) cause("review", primary, end, end);
+    // Work whose PRs all merged (`landed`, prsOfItem) was reviewed there: the checkout's diff is not this work's any more.
+    if (files > 0 && !landed) cause("review", primary, end, end);
   }
   return out;
 }
@@ -688,6 +689,57 @@ interface BuiltItem {
 const newerPr = (p: Pick<PullRequestRef, "state" | "at">, old: Pick<PullRequestRef, "state" | "at">): boolean =>
   p.state === "linked" && old.state !== "linked" ? false : old.state === "linked" && p.state !== "linked" ? true : p.at >= old.at;
 
+/** The newest state any session saw for each PR, by URL. */
+export type PrStates = ReadonlyMap<string, Pick<PullRequestRef, "state" | "at">>;
+
+/** The newest state every session in `sessions` saw for each PR URL (newerPr), so an item shows a merge another item's session ran. */
+export function storePrStates(sessions: readonly Pick<Session, "stats">[]): PrStates {
+  const out = new Map<string, Pick<PullRequestRef, "state" | "at">>();
+  for (const s of sessions) {
+    for (const p of s.stats.prs ?? []) {
+      if (!p.url) continue;
+      const old = out.get(p.url);
+      if (!old || newerPr(p, old)) out.set(p.url, { state: p.state, at: p.at });
+    }
+  }
+  return out;
+}
+
+/** An item's PRs (itemPrs), and whether every PR it opened, merged or closed has merged. */
+interface ItemPrs {
+  prs?: PullRequestRef[];
+  merged: boolean;
+}
+
+/**
+ * An item's pull requests, as itemPrs gives them, with what the rest of the store knows: a PR only
+ * linked (viewed, commented on) in another repo than the item's is left out, and each PR takes the
+ * newest state any stored session saw for its URL (`states`). `merged` is true when the item opened,
+ * merged or closed a PR, and every such PR has merged: the work landed. A PR it only viewed does not count.
+ */
+function prsOfItem(members: readonly Session[], primary: Session, states?: PrStates): ItemPrs {
+  const own = itemPrs(members);
+  if (!own) return { merged: false };
+  // The repos the item changed a PR in, and its checkout's folder name: a linked PR elsewhere is one it only read.
+  const acted = new Set(own.filter((p) => p.state !== "linked" && p.repo).map((p) => p.repo!.toLowerCase()));
+  const root = primary.repo?.main ?? primary.repo?.root;
+  const folder = root?.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop()?.toLowerCase();
+  const mine = (p: PullRequestRef): boolean => p.state !== "linked" || !p.repo || !folder || acted.has(p.repo.toLowerCase()) || p.repo.split("/").pop()!.toLowerCase() === folder;
+  const kept = own.filter(mine);
+  const changed = new Set(kept.filter((p) => p.state !== "linked"));
+  for (const p of kept) {
+    const g = p.url ? states?.get(p.url) : undefined;
+    if (g && g.state !== "linked" && newerPr(g, p)) {
+      p.state = g.state;
+      p.at = g.at;
+    }
+  }
+  kept.sort((a, b) => a.at - b.at || a.number - b.number);
+  const out: ItemPrs = { merged: changed.size > 0 && [...changed].every((p) => p.state === "merged") };
+  if (kept.length) out.prs = kept;
+  return out;
+}
+
 /**
  * An item's pull requests: its sessions' stats.prs, one per PR, with the newest state any of them saw.
  * A `linked` entry never replaces another state; one with no repo joins the one PR of its number that has one.
@@ -716,11 +768,11 @@ export function itemPrs(members: readonly Pick<Session, "stats">[]): PullRequest
 }
 
 /** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
-export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string): WorkItem {
-  return buildItem(raw, now, overlay, checkouts, isCheckout, shortId).item;
+export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string, prStates?: PrStates): WorkItem {
+  return buildItem(raw, now, overlay, checkouts, isCheckout, shortId, prStates).item;
 }
 
-function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string): BuiltItem {
+function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string, prStates?: PrStates): BuiltItem {
   const members = [...raw.members].sort((a, b) => a.startedAt - b.startedAt);
   const root = raw.workflow ? undefined : members.find((s) => s.id === raw.rootId);
   const primary = root ?? members[0]!;
@@ -751,7 +803,7 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts, isCheckout) ? primary.cwd : primary.repo.root;
   if (primary.repo?.branch) item.branch = primary.repo.branch;
   if (cost > 0) item.costUsd = roundUsd(cost);
-  const prs = itemPrs(members);
+  const { prs, merged } = prsOfItem(members, primary, prStates);
   if (prs) item.prs = prs;
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
   if (raw.workflow) {
@@ -761,7 +813,7 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   const ids = item.sessionIds;
   const byId = new Map(members.map((s) => [s.id, s]));
   const run: RunFailure | undefined = raw.workflow ? { failed: agents.filter((a) => a.state === "failed").map((a) => byId.get(a.sessionId)!), running: agents.some((a) => a.state === "running") } : undefined;
-  const causes = workCauses(members, primary, now, run);
+  const causes = workCauses(members, primary, now, run, merged);
   const isAcked = (c: WorkCause): boolean => !!overlay && ackedFingerprint(overlay, c.sessionId, c.fingerprint);
   const open = causes.filter((c) => !isAcked(c));
   const cause = open[0];
@@ -786,7 +838,8 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
     item.reason = `running, active ${short(now - item.lastActivity)} ago`;
     item.next = `nothing to do yet`;
   } else {
-    item.reason = `done ${short(now - item.lastActivity)} ago`;
+    const landed = merged ? (prs ?? []).filter((p) => p.state === "merged").map((p) => `#${p.number}`) : [];
+    item.reason = `done ${short(now - item.lastActivity)} ago${landed.length ? `, ${landed.length === 1 ? "PR" : "PRs"} ${landed.join(", ")} merged` : ""}`;
     item.next = "nothing to do";
   }
   if (item.hidden === "acked") item.next = "acknowledged: it comes back when something new happens";
@@ -849,7 +902,8 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const checkouts = rootCheckouts(sessions);
   // Every item is built, so an item outside the filter can still supersede one inside it.
   const raws = groupWorkItems(sessions);
-  const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout, opts.shortId));
+  const states = storePrStates(sessions);
+  const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout, opts.shortId, states));
   supersede(built);
   const all = built.filter((_, n) => keep(raws[n]!)).map((b) => b.item);
   all.sort(compare);

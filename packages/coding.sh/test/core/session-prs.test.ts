@@ -112,6 +112,40 @@ describe("WorkItem.prs", () => {
     assert.deepEqual(json.prs, [{ url: PR12, repo: "acme/widgets", number: 12, state: "merged", at: new Date(merger.stats.prs![0]!.at).toISOString() }]);
   });
 
+  test("a merge another item's session ran reaches the item that opened the PR, which leaves the review queue", () => {
+    const { events } = prSessions();
+    // The opener changed a file; the merger is a separate root (an orchestrator), not its child.
+    const opener = buildSession([...events.filter((e) => e.sessionId === "opener" && e.kind !== "session.end"), ev("opener", "file.change", { path: "src/parser.ts", op: "modify" }), ev("opener", "session.end", {})]);
+    const merger = buildSession(events.filter((e) => e.sessionId === "merger"));
+    const q = buildWorkQueue([opener, merger], { now: T0 + 3600e3, all: true });
+    const item = q.items.find((i) => i.rootId === "opener")!;
+    assert.deepEqual(item.prs?.map((p) => [p.url, p.state]), [[PR12, "merged"]]);
+    assert.equal(item.bucket, undefined);
+    assert.equal(item.hidden, "done");
+    assert.match(item.reason, /PR #12 merged/);
+    // Alone (the merge not stored), it is still open and waits for review.
+    const alone = buildWorkQueue([opener], { now: T0 + 3600e3, all: true }).items[0]!;
+    assert.deepEqual([alone.prs?.[0]?.state, alone.bucket], ["opened", "review"]);
+    // A PR the item only viewed that merged elsewhere does not settle the item's own review.
+    const viewer = buildSession([ev("view", "session.start", {}), ...bash("view", `gh pr view ${PR12}`, ""), ev("view", "file.change", { path: "a.ts", op: "modify" }), ev("view", "session.end", {})]);
+    const v = buildWorkQueue([viewer, merger], { now: T0 + 3600e3, all: true }).items.find((i) => i.rootId === "view")!;
+    assert.deepEqual([v.prs?.[0]?.state, v.bucket], ["merged", "review"]);
+  });
+
+  test("a PR only viewed in another repo than the item's is not the item's", () => {
+    const repo = { root: "/work/widgets", head: "" };
+    const s = buildSession([
+      ev("x", "session.start", {}, { repo, cwd: "/work/widgets" }),
+      ...bash("x", "gh pr view 63477 -R other/tool --json title", "{}"),
+      ...bash("x", "gh pr view 3 -R acme/widgets", ""),
+      ...bash("x", "gh pr merge 5 -R acme/lib", ""),
+      ev("x", "session.end", {}),
+    ]);
+    assert.equal(s.stats.prs?.length, 3);
+    const item = buildWorkQueue([s], { now: T0 + 3600e3, all: true }).items[0]!;
+    assert.deepEqual(item.prs?.map((p) => [p.repo, p.number]).sort(), [["acme/lib", 5], ["acme/widgets", 3]]);
+  });
+
   test("an item with no PR has no prs; one with no repo joins the PR of its number", () => {
     const plain = session("plain", bash("plain", "npm test", "ok"));
     assert.equal(itemPrs([plain]), undefined);
