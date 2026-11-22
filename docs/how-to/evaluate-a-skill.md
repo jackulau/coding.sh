@@ -185,9 +185,9 @@ stub model:
 
 ```text
 B (--description): pdf on claude-code, k=1
-  precision 80%  recall 100%  F1 0.89  accuracy 88%
+  precision 80%  recall 100% [51%–100%]  F1 0.89  accuracy 88%
   TP 4 FP 1 TN 3 FN 0
-  recall 100% [51%–100%] · false triggers 25% [5%–70%] (Wilson 95%, over 8 runs)
+  false triggers 25% [5%–70%] (intervals: Wilson 95%, over 8 runs)
   missed:
     should_not false trigger 1/1  "Explain in one line what a pdf is"
   expected routes: docx 1/1

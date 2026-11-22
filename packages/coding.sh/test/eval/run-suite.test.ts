@@ -16,6 +16,35 @@ describe("trialsFromRuns", () => {
       { pass: false, unknown: true, reason: "rate limited" },
     ]);
   });
+
+  it("says what failed: a setup step, a refused login read from the agent's output, an agent that could not start, redacted", () => {
+    const t = { id: "t1", name: "fix-add" } as EvalTask;
+    const agent = (a: Partial<RunResult["agent"]>): RunResult["agent"] => ({ exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "", ...a });
+    const run = (attempt: number, extra: Partial<RunResult>) => ({ id: `r${attempt}`, taskId: "t1", attempt, pass: false, verifierExit: 1, agent: agent({}), ...extra }) as RunResult;
+    const key = ["sk-ant-", "api03-", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
+    const [row] = trialsFromRuns(
+      [t],
+      [
+        run(1, { infra: "setup", verifierExit: null, error: `setup \`npm ci\` exited 1: \x1b[31mnpm ERR!\x1b[0m token ${key}\n` }),
+        run(2, { infra: "auth", agent: agent({ exitCode: 1, stderrTail: "Invalid API key · Please run /login\n" }) }),
+        run(3, { infra: "auth", agent: agent({ exitCode: 1, stdoutTail: `${JSON.stringify({ type: "result", is_error: true, result: "Not logged in · Please run /login" })}\n` }) }),
+        run(4, { agent: agent({ exitCode: 127, stderrTail: "\nspawn claude ENOENT" }) }),
+        run(5, { agent: agent({ exitCode: 1, stderrTail: "Error: --dangerously-skip-permissions cannot be used with root\nhint: run it as a normal user\n" }) }),
+        run(6, { agent: agent({ exitCode: null, timedOut: true }), error: "agent timed out" }),
+      ],
+    );
+    assert.deepEqual(
+      row!.trials.map((x) => [x.unknown ?? false, x.reason]),
+      [
+        [true, "setup `npm ci` exited 1: npm ERR! token [redacted:anthropic-key]"],
+        [true, "agent login failed: Invalid API key · Please run /login"],
+        [true, "agent login failed: Not logged in · Please run /login"],
+        [false, "agent exited 127: spawn claude ENOENT"],
+        [false, "agent exited 1: Error: --dangerously-skip-permissions cannot be used with root"],
+        [false, "agent timed out"],
+      ],
+    );
+  });
 });
 
 describe("caseLabel", () => {

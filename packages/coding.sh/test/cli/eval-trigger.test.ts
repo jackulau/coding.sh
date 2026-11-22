@@ -114,7 +114,8 @@ describe("eval trigger", () => {
     assert.ok(existsSync(out.file) && out.file.startsWith(join(home, ".coding.sh", "triggers", "pdf")), out.file);
     const text = cli(["eval", "trigger", "skills/pdf/SKILL.md", "--harness", "fake", "--yes", "--no-siblings"]);
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /precision 67% {2}recall 50% {2}F1 0\.57/);
+    assert.match(text.stdout, /precision 67% {2}recall 50% \[\d+%–\d+%\] {2}F1 0\.57/);
+    assert.equal(text.stdout.match(/recall/g)?.length, 1, "one recall line");
     assert.match(text.stderr + text.stdout, /no sibling skills/);
   });
 
@@ -145,6 +146,13 @@ describe("eval trigger", () => {
     const e2 = cli(["eval", "trigger", "skills/docx", "--yes"]);
     assert.equal(e2.status, 2);
     assert.match(e2.stderr, /No trigger spec at .*triggers\.toml/);
+    // A hint that runs when pasted, quoted for the user's shell; the draft goes where the run looks.
+    const draft = cliCommand(env, ["eval", "trigger", "skills/docx", "--draft"]);
+    assert.ok(e2.stderr.includes(`Did you mean ${draft}?`), `${draft}\n${e2.stderr}`);
+    const e3 = cli(["eval", "trigger", "skills/docx", "--spec", "docx triggers.toml", "--yes"]);
+    assert.equal(e3.status, 2);
+    const draftSpec = cliCommand(env, ["eval", "trigger", "skills/docx", "--spec", "docx triggers.toml", "--draft"]);
+    assert.ok(e3.stderr.includes(`Did you mean ${draftSpec}?`), `${draftSpec}\n${e3.stderr}`);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--fail-on", "regression", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--candidate", "skills/docx", "--description", "x", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--min-f1", "2", "--yes"]).status, 2);
@@ -156,6 +164,13 @@ describe("eval trigger", () => {
     const ask = cli(plan);
     assert.equal(ask.status, 2, ask.stdout + ask.stderr);
     assert.deepEqual((JSON.parse(ask.stderr.trim().split("\n").at(-1)!) as { next: string[] }).next, ["With their approval:", cliCommand(env, [...plan, "--yes"])]);
+    // Run as a suite, the command to approve is the eval run the user typed.
+    mkdirSync(join(root, "evals", "pdf"), { recursive: true });
+    writeFileSync(join(root, "evals", "pdf", "suite.json"), JSON.stringify({ name: "pdf", purpose: "regression", skill: "../../skills/pdf", triggers: "../../skills/pdf/triggers.toml" }));
+    const suitePlan = ["eval", "run", "pdf", "--harness", "fake", "--json"];
+    const suite = cli(suitePlan);
+    assert.equal(suite.status, 2, suite.stdout + suite.stderr);
+    assert.deepEqual((JSON.parse(suite.stderr.trim().split("\n").at(-1)!) as { next: string[] }).next, ["With their approval:", cliCommand(env, [...suitePlan, "--yes"])]);
     assert.equal(readdirSync(join(home, ".coding.sh", "triggers", "pdf")).length, 4, "no run, no new result file");
   });
 });

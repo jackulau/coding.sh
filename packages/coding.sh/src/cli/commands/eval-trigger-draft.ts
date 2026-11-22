@@ -13,6 +13,7 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { draftProvider } from "./eval-init.ts";
@@ -22,7 +23,9 @@ export async function evalTriggerDraft(c: CommandContext, current: SkillSource, 
   const file = resolve(c.cwd, str(flags.spec) ?? join(current.dir, "triggers.toml"));
   const dryRun = flags["dry-run"] === true;
   if (existsSync(file) && flags.force !== true && !dryRun) {
-    throw new UsageError(`${relative(c.cwd, file) || file} exists; pass --force to replace it, or --dry-run to print a draft`, { reason: "exists", askUser: true, suggestion: `coding.sh eval trigger ${target} --draft --dry-run` });
+    // What the user approves: the command as given, every flag kept, plus --force.
+    const replace = cliCommand(c.env, [...(c.argv ?? ["eval", "trigger", target, "--draft"]), "--force"]);
+    throw new UsageError(`${relative(c.cwd, file) || file} exists; pass --force to replace it, or --dry-run to print a draft`, { reason: "exists", askUser: true, suggestion: replace });
   }
   const n = positiveInt(flags.n, "n") ?? DRAFT_N;
   const since = str(flags.since) ? parseAge(str(flags.since)!, "since") : MINE_SINCE_MS;
@@ -61,7 +64,10 @@ export async function evalTriggerDraft(c: CommandContext, current: SkillSource, 
     else if (!traced) out.note(`No captured session ${repo === ALL_REPOS ? "" : `${repoFlag ? `under ${repo}` : "in this repo"} `}in the last ${Math.round(since / 86_400_000)} days loaded ${current.name} or a sibling skill, so every prompt is model-drafted${repo === ALL_REPOS ? "" : " (--repo all reads every repo's sessions)"}`);
     if (dryRun) return 0;
     out.ok(`Wrote ${relative(c.cwd, file) || file}: ${d.should.length} should and ${d.shouldNot.length} should_not prompts, ${traced} from captured sessions`);
-    out.next("Read and fix the prompts, then run them", `coding.sh eval trigger ${target} -k 3`);
+    const runArgs = [target];
+    const spec = str(flags.spec);
+    if (spec) runArgs.push("--spec", spec);
+    out.next("Read and fix the prompts, then run them", cliCommand(c.env, ["eval", "trigger", ...runArgs, "-k", "3"]));
     return 0;
   };
 

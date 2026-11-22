@@ -10,15 +10,17 @@
 // then runs one agent turn with two steps: a model call that asks for a tool,
 // the tool call, and a model call that answers. The provider matches
 // durable-harness 0.0.2: resource service.name and agent.framework.name
-// "durable-harness", tracer "eve.agent", AgentSpanIdGenerator.
+// "durable-harness", tracer "eve.agent", AgentSpanIdGenerator. npm runs
+// through coding.sh's portable spawn (core/spawn.ts), so its .cmd shim works
+// on Windows.
 //
 // --receiver <url> also tees the spans to a running coding.sh collector with
 // the documented snippet, a BatchSpanProcessor around an OTLPTraceExporter
 // (url like http://127.0.0.1:4318/v1/traces).
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { execFileSync } from "../../packages/coding.sh/src/core/spawn.ts";
 
 const args = process.argv.slice(2);
 const flag = (name) => {

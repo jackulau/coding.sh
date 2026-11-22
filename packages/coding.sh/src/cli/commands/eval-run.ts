@@ -197,10 +197,11 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   if (r.infraStop) infraStopNote(c, r.infraStop);
   else if (r.cancelled) out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const runs = latestPerSlot(r.results).runs;
-  const trials = trialsFromRuns(tasks, runs);
+  const redactor = captureRedactor(ctx.config, ctx.env);
+  const trials = trialsFromRuns(tasks, runs, redactor);
   const report = suiteReport(s.spec.name, s.spec.purpose, trials);
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
-  const failed = failedRuns(runs, captureRedactor(ctx.config, ctx.env));
+  const failed = failedRuns(runs, redactor);
   const captured = capturedFailuresLine(tasks, trials);
   return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(captured ? { extra: [captured] } : {}), ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
 }

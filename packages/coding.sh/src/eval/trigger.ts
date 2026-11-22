@@ -708,9 +708,11 @@ export function formatTrigger(r: TriggerReport): string {
   for (const [i, a] of r.arms.entries()) {
     const name = two ? `${i === 0 ? "A" : "B"} (${a.label})` : a.label;
     lines.push(`${name}: ${r.skill} on ${r.agent}, k=${r.k}`);
-    lines.push(`  precision ${pct(a.metrics.precision)}  recall ${pct(a.metrics.recall)}  F1 ${num2(a.metrics.f1)}  accuracy ${pct(a.metrics.accuracy)}`);
+    // Recall once, with its interval; weighted, the interval is about the unweighted rate, so that one is named.
+    const recall = pct(a.metrics.recall) === pct(a.recallCI.p) ? ci(a.recallCI) : `${pct(a.metrics.recall)} (unweighted ${ci(a.recallCI)})`;
+    lines.push(`  precision ${pct(a.metrics.precision)}  recall ${recall}  F1 ${num2(a.metrics.f1)}  accuracy ${pct(a.metrics.accuracy)}`);
     lines.push(`  ${counts(a.raw)}${a.weighted.tp + a.weighted.fp + a.weighted.tn + a.weighted.fn !== a.runs ? ` (weighted ${counts(a.weighted)})` : ""}`);
-    lines.push(`  recall ${ci(a.recallCI)} · false triggers ${ci(a.falseTriggerCI)} (Wilson 95%, over ${a.runs} runs)`);
+    lines.push(`  false triggers ${ci(a.falseTriggerCI)} (intervals: Wilson 95%, over ${a.runs} runs)`);
     if (a.errors) lines.push(`  ${a.errors} errored run${a.errors === 1 ? "" : "s"} left out: ${Object.entries(a.errorReasons).map(([w, n]) => `${w} ×${n}`).join(", ")}`);
     const misses = a.prompts.filter((p) => p.n && p.correct < 1);
     if (misses.length) {

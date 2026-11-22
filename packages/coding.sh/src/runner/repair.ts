@@ -32,7 +32,8 @@ export function repairMessage(names?: readonly string[]): string {
   return names?.length ? `Verification failed. Failing tests: ${names.join(", ")}` : "Verification failed.";
 }
 
-const PATTERNS: RegExp[] = [
+/** Lines that name a failing test, the name in the first group. A failed run's verifier output is shown from the first one (verifier-output.ts). */
+export const FAILING_TEST_LINES: readonly RegExp[] = [
   // pytest short summary: FAILED tests/test_x.py::test_y - AssertionError
   /^FAILED (\S+)/,
   // node:test TAP: not ok 3 - adds numbers
@@ -58,7 +59,7 @@ export function failingTestNames(output: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
-    for (const re of PATTERNS) {
+    for (const re of FAILING_TEST_LINES) {
       const m = re.exec(line);
       const name = m?.[1]?.trim();
       if (!name) continue;
