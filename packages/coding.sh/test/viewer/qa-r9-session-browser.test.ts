@@ -1,6 +1,7 @@
 // Viewer fixes from hands-on QA (round 9) on big sessions and small screens, in headless Chrome: a
 // link to another step of the session on screen moves there on the events the page loaded, with no
-// new download of them.
+// new download of them; the header's tool errors and tests badges and the step bar's failed steps
+// each say what they count, on a session where the counts differ.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -123,6 +124,22 @@ describe("round 9 viewer QA fixes on big sessions and small screens, in a browse
     await p.eval(`location.hash = '#/s/${OTHER}'`);
     await p.waitFor("document.querySelector('h1')?.textContent === 'List the files' && document.querySelectorAll('.st').length >= 3", "the other session");
     assert.ok((await eventRequests(p, OTHER)) >= 1, "the other session's events are loaded");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("the header's tool errors and tests badges and the step bar's failed steps each say what they count", async () => {
+    const p = await open("#/s/" + SID, "document.querySelector('.head-foot .badges') && document.querySelector('.fail-nav .lbl')?.textContent");
+    const badges: { text: string; title: string }[] = await p.eval("[...document.querySelectorAll('.head-foot .badges .badge')].map((b) => ({ text: b.textContent, title: b.title }))");
+    const badge = (re: RegExp) => badges.find((b) => re.test(b.text));
+    // Real failures only (core/failures.ts), naming the benign and interrupted calls it leaves out.
+    assert.deepEqual(badge(/tool error/), { text: "2 tool errors", title: "Tool calls that failed. Not counted: 1 benign failure (no match, a probe, files that differ) and 1 interrupted call" });
+    // The last test run, counted in tests: "1 failed" beside "2 tool errors" read as a failed tool call.
+    assert.deepEqual(badge(/test/), { text: "✕ 1 test failed", title: "Last test run: 3 passed, 1 failed" });
+    // Every step that failed: the two tool errors, the benign and the interrupted calls, and the test run.
+    const nav = await p.eval("(() => { const n = document.querySelector('.fail-nav'); return { text: n.querySelector('.lbl').textContent, label: n.getAttribute('aria-label'), title: n.title }; })()");
+    assert.equal(nav.text, "1 / 5 failed steps");
+    assert.equal(nav.label, "Failed steps");
+    assert.match(nav.title, /^Steps that failed: tool calls \(the benign and interrupted ones too\), model calls, test runs/);
     assert.deepEqual(p.errors, []);
   });
 });

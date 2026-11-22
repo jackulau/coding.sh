@@ -154,10 +154,12 @@ function badges(s: Session & { childCount?: number }): string {
   if (kids) out.push(`<span class="sub-toggle"><span class="caret" aria-hidden="true">▸</span>${esc(plural(kids, "subagent"))}</span>`);
   const st = s.stats;
   if (st.testsFailed !== undefined || st.testsPassed !== undefined) {
+    // The last test run, counted in tests so it does not read as failed tool calls (testsBadge in ui/index.html).
+    const title = esc("Last test run: " + fmtNum(st.testsPassed ?? 0) + " passed, " + fmtNum(st.testsFailed ?? 0) + " failed");
     out.push(
       (st.testsFailed ?? 0) > 0
-        ? `<span class="badge fail" title="${esc(fmtNum(st.testsPassed ?? 0) + " passed")}">${esc("✕ " + fmtNum(st.testsFailed!) + " failed")}</span>`
-        : `<span class="badge pass">${esc("✓ " + fmtNum(st.testsPassed ?? 0) + " passed")}</span>`,
+        ? `<span class="badge fail" title="${title}">${esc("✕ " + plural(st.testsFailed!, "test") + " failed")}</span>`
+        : `<span class="badge pass" title="${title}">${esc("✓ " + plural(st.testsPassed ?? 0, "test") + " passed")}</span>`,
     );
   }
   const fr = failedRequests(s);

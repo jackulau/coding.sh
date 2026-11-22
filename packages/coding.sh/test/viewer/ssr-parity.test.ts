@@ -116,6 +116,18 @@ test("server-drawn rows show what the script's rows show", () => {
   assert.ok(wt.includes('title="/work/demo"'), "with the main checkout as the cell's title");
 });
 
+test("a row's tests badge counts tests from the last run, on the server and in the script", () => {
+  const red = base({ id: "red", stats: { toolCalls: 5, toolErrors: 3, testsFailed: 1, testsPassed: 41 } });
+  const green = base({ id: "green", stats: { toolCalls: 5, testsPassed: 1 } });
+  const rows = renderSessionsMain([red, green], 2, Date.UTC(2026, 9, 20)).split('<a class="row"').slice(1);
+  // "1 failed" beside "3 tool errors" read as a count of tool calls; the badge says tests, from the last run.
+  assert.match(rows[0]!, /<span class="badge fail" title="Last test run: 41 passed, 1 failed">✕ 1 test failed<\/span>/);
+  assert.match(rows[1]!, /<span class="badge pass" title="Last test run: 1 passed, 0 failed">✓ 1 test passed<\/span>/);
+  const [fail, pass] = [page.testsBadge(red), page.testsBadge(green)];
+  assert.deepEqual([textOf(fail), fail.attrs.class, fail.attrs.title], ["✕ 1 test failed", "badge fail", "Last test run: 41 passed, 1 failed"]);
+  assert.deepEqual([textOf(pass), pass.attrs.class, pass.attrs.title], ["✓ 1 test passed", "badge pass", "Last test run: 1 passed, 0 failed"]);
+});
+
 
 test("a session whose model calls failed shows a marker in the row and the header", () => {
   const s = base({ id: "all-429", stats: { llmErrors: { count: 3693, statusCode: 429, error: "rate_limit" } } });

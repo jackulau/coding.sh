@@ -2906,11 +2906,18 @@ function testsTone(s) {
   if ((st.testsPassed || 0) > 0) return "pass";
   return "";
 }
+/** The last test run: "✕ 1 test failed" or "✓ 41 tests passed", so it does not read as a count of failed tool calls. */
 function testsBadge(s) {
   const st = s.stats || {};
   if (st.testsFailed === undefined && st.testsPassed === undefined) return null;
-  if ((st.testsFailed || 0) > 0) return h("span", { class: "badge fail", title: fmtNum(st.testsPassed || 0) + " passed" }, "✕ " + fmtNum(st.testsFailed) + " failed");
-  return h("span", { class: "badge pass" }, "✓ " + fmtNum(st.testsPassed || 0) + " passed");
+  const title = "Last test run: " + fmtNum(st.testsPassed || 0) + " passed, " + fmtNum(st.testsFailed || 0) + " failed";
+  if ((st.testsFailed || 0) > 0) return h("span", { class: "badge fail", title }, "✕ " + plural(st.testsFailed, "test") + " failed");
+  return h("span", { class: "badge pass", title }, "✓ " + plural(st.testsPassed || 0, "test") + " passed");
+}
+/** What the tool errors badge counts: tool calls that failed for real (core/failures.ts), not the benign or interrupted ones the step list marks failed too. */
+function toolErrorsTitle(st) {
+  const apart = [st.benignToolErrors ? plural(st.benignToolErrors, "benign failure") + " (no match, a probe, files that differ)" : "", st.interruptedToolCalls ? plural(st.interruptedToolCalls, "interrupted call") : ""].filter(Boolean);
+  return "Tool calls that failed" + (apart.length ? ". Not counted: " + apart.join(" and ") : "");
 }
 function flagBadges(flags) {
   return (flags || []).map((f) => h("span", { class: "badge flag", title: "Flag: " + f }, h("span", { class: "dot" }), f));
@@ -4860,7 +4867,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   const findInput = h("input", { class: "field", id: "find", type: "search", placeholder: "Find in steps", "aria-label": "Find in steps", autocomplete: "off", spellcheck: "false", maxlength: "200" });
   const findCount = h("span", { class: "meta count", "aria-live": "polite" });
   const onlyBox = h("input", { type: "checkbox", id: "find-only", name: "only", "aria-label": "Show only matching steps" });
-  const failNav = h("div", { class: "fail-nav", role: "group", "aria-label": "Failures" });
+  // Every step that failed, so more than the header's tool errors (real failures only) and tests (the last run).
+  const failNav = h("div", { class: "fail-nav", role: "group", "aria-label": "Failed steps", title: "Steps that failed: tool calls (the benign and interrupted ones too), model calls, test runs, subagents, workflow steps and error events" });
   const derailNav = h("div", { class: "fail-nav derail-nav", role: "group", "aria-label": "Derails" });
   const queryNav = h("div", { class: "fail-nav query-nav", role: "group", "aria-label": "Query matches", hidden: true });
   const wfBtn = h("button", { class: "btn btn-sm btn-ghost wf-btn", type: "button", "aria-pressed": String(tl.classList.contains("wf-on")), "aria-keyshortcuts": "w", title: "Timing bars (w)", onclick: () => toggleWf() }, "Timing");
@@ -4923,7 +4931,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     failNav.hidden = failIdx.length === 0;
     firstFailBtn.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
-    failLbl.textContent = (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failure");
+    failLbl.textContent = (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failed step");
     foldBtn.textContent = "Fold quiet";
     foldBtn.setAttribute("aria-pressed", String(!foldsOff));
     findCount.textContent = findQ ? (matches.length ? (Math.max(0, matches.indexOf(activeItem)) + 1) + "/" + matches.length : "0") : "";
@@ -4964,9 +4972,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const el = h("div", { class: "st turn fold" + (x.from === 0 ? " first" : "") + (t.fails ? " is-fail" : ""), role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": "false", "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => { activeItem = x.from; ctx.openFold(x.key); selectRow(rowOf[x.from]); } },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, h("span", { class: "tw" }, "Prompt "), String(meta[x.from].prompt)),
-      // Length, tool calls and errors first, so a narrow row cuts the words, not the counts.
+      // Length, tool calls and failed steps first, so a narrow row cuts the words, not the counts.
       h("span", { class: "lbl" }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", { class: "dot tone-" + meta[x.from].v.tone, "aria-hidden": "true" }), h("span", { class: "arg" }, promptLine(it) || "Prompt"),
-        h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "error")), " · "] : null, w.words)),
+        h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "failed step")), " · "] : null, w.words)),
       h("span", { class: "d" }, h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))), h("span", { class: "wf" }));
     el.style.transform = "translateY(" + r * ROW + "px)";
     return el;
@@ -5170,7 +5178,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       swap(pane,
         h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded turn")),
         h("h2", { class: "pane-title" }, "Prompt " + meta[x.from].prompt + ": " + (promptLine(it) || "(no text)")),
-        h("p", { class: "note" }, [w.words, plural(w.tools, "tool call"), plural(t.fails, "error"), t.dur > 0 ? fmtDuration(t.dur) : ""].filter(Boolean).join(", ") + ". Press Enter or click to expand."),
+        h("p", { class: "note" }, [w.words, plural(w.tools, "tool call"), plural(t.fails, "failed step"), t.dur > 0 ? fmtDuration(t.dur) : ""].filter(Boolean).join(", ") + ". Press Enter or click to expand."),
         h("ul", { class: "fold-list" }, Array.from({ length: Math.min(60, x.to - x.from) }, (_, k) => {
           const m = meta[x.from + k];
           return h("li", null, h("span", { class: "dot tone-" + m.v.tone }), h("span", { class: "truncate" }, m.v.label), h("span", { class: "meta" }, m.v.meta));
@@ -5218,8 +5226,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const w = turnWords(t.from, t.to);
       const text = plural(work, "step") + (w.tools ? " · " + w.words : "") + (t.fails ? " · " : "");
       line = h("button", { class: "chat-work", type: "button", title: "Show this turn in Steps",
-        "aria-label": text + (t.fails ? plural(t.fails, "error") : "") + ". Show this turn in Steps", onclick: () => toSteps(t.from) },
-        h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", null, text, t.fails ? h("span", { class: "err" }, plural(t.fails, "error")) : null));
+        "aria-label": text + (t.fails ? plural(t.fails, "failed step") : "") + ". Show this turn in Steps", onclick: () => toSteps(t.from) },
+        h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", null, text, t.fails ? h("span", { class: "err" }, plural(t.fails, "failed step")) : null));
     }
     return h("section", { class: "chat-turn", "aria-label": t.prompt ? "Prompt " + meta[t.from].prompt : "Before the first prompt" },
       t.prompt ? chatMsg(t.from) : null, line, replies);
@@ -5455,7 +5463,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (!current(seq)) return;
     renderTools();
     if (!hasMore) {
-      announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : ""));
+      announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failed step") : ""));
       loadOutline();
     }
     followLink(true);
@@ -5960,7 +5968,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   // A link ending in ?step=N opens the replay at that step.
   if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
-  announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
+  announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failed step") : "") + (hasMore ? ", more events available" : ""));
 
   // A hash change within this session (a pasted step link, the run tree's link here, back and forward) moves
   // in place on what is loaded. A step still streaming in (loadRest) is selected when it arrives, unless
@@ -6112,7 +6120,7 @@ function sessionHeader(s, labels, rel) {
         api_
           ? [h("span", { class: "badge" }, plural(st.latency.llmCalls, "request")), failedRequests ? h("span", { class: "badge fail" }, plural(failedRequests, "failed request")) : null]
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
-            st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
+            st.toolErrors ? h("span", { class: "badge fail", title: toolErrorsTitle(st) }, plural(st.toolErrors, "tool error")) : null],
         !api_ && st.llmErrors && st.llmErrors.count ? h("span", { class: "badge fail", title: st.llmErrors.error ? "First failure: " + st.llmErrors.error : undefined }, plural(st.llmErrors.count, "model error") + (typeof st.llmErrors.statusCode === "number" ? " (" + st.llmErrors.statusCode + ")" : "")) : null,
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
         st.weightEdits && st.weightEdits.events ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
