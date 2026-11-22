@@ -16,6 +16,7 @@ import {
   stringifyJsonLike,
 } from "../../adapters/_shared/files.ts";
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
+import { editJsonc } from "../../adapters/_shared/jsonc.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
@@ -42,6 +43,17 @@ export function statuslineCommand(platform: NodeJS.Platform = process.platform):
 }
 // Recognises a status line as ours: coding.sh, codingsh or codingsh.cmd, or a bundle path.
 const OURS = /coding\.?sh(?:\.cmd)?\s+statusline|statusline\.mjs/;
+
+/**
+ * settings.json rewritten to hold `next`, changing only the members that differ (editJsonc), so
+ * its indent and one-line arrays stay. A file whose every line ends in CRLF keeps CRLF: editJsonc
+ * writes new lines as LF. A missing or empty file gets a fresh document.
+ */
+function settingsText(before: string | undefined, next: Record<string, unknown>): string {
+  if (before === undefined || before.trim() === "") return stringifyJsonLike(next, before);
+  if (!before.includes("\r\n") || /(?:^|[^\r])\n/.test(before)) return editJsonc(before, next);
+  return editJsonc(before.replace(/\r\n/g, "\n"), next).replace(/\n/g, "\r\n");
+}
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action === "install") return install(c);
@@ -277,7 +289,7 @@ async function install(c: CommandContext): Promise<number> {
       next: ["Replace it (the old one is restored on uninstall):", cliCommand(env, ["statusline", "install", "--force"])],
     });
   }
-  const after = stringifyJsonLike({ ...cfg, statusLine: { type: "command", command: statuslineCommand(), padding: 0 } }, before);
+  const after = settingsText(before, { ...cfg, statusLine: { type: "command", command: statuslineCommand(), padding: 0 } });
   if (before !== undefined && JSON.stringify(parseJsonObject(file, after)) === JSON.stringify(cfg)) {
     out.data({ outcome: "unchanged", path: file });
     out.note("coding.sh status line is already installed");
@@ -379,10 +391,10 @@ function stripChange(file: string, text: string, cfg: Record<string, unknown>, e
   delete rest.statusLine;
   const rec = installRecord(recordKey(file), env);
   const previous = typeof rec?.restore === "string" ? previousStatusLine(file, rec.restore) : undefined;
-  if (previous !== undefined) return planEdit(file, text, stringifyJsonLike({ ...cfg, statusLine: previous }, text), "restore the status line coding.sh replaced");
+  if (previous !== undefined) return planEdit(file, text, settingsText(text, { ...cfg, statusLine: previous }), "restore the status line coding.sh replaced");
   const createdByUs = rec?.restore === null;
   const empty = Object.keys(rest).length === 0 && createdByUs;
-  return planEdit(file, text, empty ? undefined : stringifyJsonLike(rest, text), "remove coding.sh status line");
+  return planEdit(file, text, empty ? undefined : settingsText(text, rest), "remove coding.sh status line");
 }
 
 /** The statusLine in the restore point's bytes, when it held one that is not ours. */

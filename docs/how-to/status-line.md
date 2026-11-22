@@ -20,6 +20,9 @@ This writes a `statusLine` block into your Claude Code `settings.json`:
 "statusLine": { "type": "command", "command": "coding.sh statusline", "padding": 0 }
 ```
 
+The rest of the file stays as it was: its indent, its line ends (CRLF too) and its one-line
+arrays.
+
 On Windows the command is `codingsh.cmd statusline`. Claude Code runs it through Git Bash, or
 through PowerShell when Git Bash is not installed, and PowerShell can't run `coding.sh`, the sh
 script npm installs; `codingsh.cmd` runs in both. In PowerShell or cmd, run
