@@ -251,7 +251,9 @@ repo. A session counts in the period it started in.
 
 `budget status` shows spend, limit, percent and when the period resets; `--json` adds `over`. Setting the same period and scope again changes the
 limit. `budget list` and `budget rm <id>` manage them. They are kept in `budgets.json` in the data
-folder.
+folder. A budget whose spend can't be read, such as a stored `--where` query that no longer parses,
+shows `-` and a warning with the reason, and `--json` gives its `error` in place of the spend. The
+others still report, and `budget status` exits 1.
 
 ### A budget for one user, model or project
 
