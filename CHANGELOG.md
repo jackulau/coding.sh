@@ -209,6 +209,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** Without `CODING_SH_URL`, the TypeScript SDK's `observe()` and `observeFetch()` pass each call through untouched, as the docs say. Before, `observe()` still added `stream_options` to OpenAI chat streams, and `observeFetch()` still read every request and response body, so `flush()` waited on open streams. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, the exit flush also sends a batch that is waiting for its retry, and warns when it has to drop events. Before, a script that ended without `flush()` while the server was down or answered 503 exited with its events lost and no warning. [SDK](https://coding.sh/docs/sdk)
+- **Privacy.** When a sink header uses `${TEAM_KEY}` and that variable is not set, the error says to set `TEAM_KEY` or change that sink header in the config. Before, it pointed at the `[store]` section. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#errors-exit-1))
 
 ## [0.1.7] - 2026-11-16
 

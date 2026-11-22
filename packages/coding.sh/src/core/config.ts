@@ -22,6 +22,18 @@ export class ConfigError extends Error {
   }
 }
 
+/** A `${NAME}` in the config whose variable is not set. */
+export class ConfigEnvError extends ConfigError {
+  readonly variable: string;
+  /** The key that references it, such as `sinks[0].headers.Authorization`. */
+  readonly where: string;
+  constructor(variable: string, where: string, file?: string) {
+    super(`${where} references \${${variable}}, which is not set in the environment`, file);
+    this.variable = variable;
+    this.where = where;
+  }
+}
+
 export interface LoadConfigOptions {
   env?: NodeJS.ProcessEnv;
   /** Directory to search upward for a per-repo `.coding.sh/config.toml`. */
@@ -219,7 +231,7 @@ export function expandStoreUrl(url: string, env: NodeJS.ProcessEnv = process.env
 export function interpolateEnv(s: string, env: NodeJS.ProcessEnv, where: string, file?: string): string {
   return s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name: string) => {
     const v = env[name];
-    if (v === undefined) throw new ConfigError(`${where} references \${${name}}, which is not set in the environment`, file);
+    if (v === undefined) throw new ConfigEnvError(name, where, file);
     return v;
   });
 }
