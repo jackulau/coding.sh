@@ -5582,6 +5582,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   async function enterReplay(n) {
     if (!rp.on) {
+      // A late paint from a held j or k would change the URL while the replay loads; the load below takes that for a link.
+      cancelStep();
       rp.on = true;
       view.classList.add("replaying");
       rpBtn.setAttribute("aria-pressed", "true");
@@ -5594,9 +5596,12 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     }
     if (!rp.index) {
       swap(pane, h("div", { class: "pane-top" }, h("p", { class: "meta", "aria-busy": "true" }, "Loading the replay…")));
+      // A link may change the URL while the replay loads, and the load can still end before that hash
+      // change is handled. The URL is then the link's: the late load keeps the steps and leaves the rest to it.
+      const from = location.hash;
       let index;
       try { index = await api(replayPath, null, true); } catch (e) {
-        if (!current(seq) || !rp.on) return;
+        if (!current(seq) || !rp.on || location.hash !== from) return;
         exitReplay();
         toast("Could not load the replay: " + e.message);
         return;
@@ -5605,6 +5610,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       rp.index = index;
       rpScrub.max = String(Math.max(1, index.steps.length));
       renderMarks();
+      if (location.hash !== from) return;
     }
     const total = rpSteps().length;
     if (!total) {
@@ -5679,7 +5685,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (rp.n >= steps.length) { rpPause(); announce("Replay finished"); return; }
     const gap = Math.max(0, steps[rp.n].ts - steps[rp.n - 1].ts);
     const wait = Math.max(RP_MIN_MS, Math.min(RP_CAP_MS, gap)) / rp.speed;
-    rp.timer = setTimeout(() => { if (current(seq) && rp.playing) rpGo(rp.n + 1); }, wait);
+    // A link may change the URL before the next step is due, and the step can still come before the
+    // hash change is handled. The URL is then the link's: the late step leaves it alone.
+    const from = location.hash;
+    rp.timer = setTimeout(() => { if (current(seq) && rp.playing && location.hash === from) rpGo(rp.n + 1); }, wait);
   }
   /** Fetch what the pane shows for rp.n. While one request runs, only the newest wish waits behind it. */
   async function rpFetch(force) {
@@ -5979,8 +5988,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
 
   // A hash change within this session (a pasted step link, the run tree's link here, back and forward) moves
   // in place on what is loaded. A step still streaming in (loadRest) is selected when it arrives, unless
-  // the selection moved since. False opens the session again: a switch between Steps and Chat, or a step
-  // a running session may have written since the last tick.
+  // the selection or the URL moved since. False opens the session again: a switch between Steps and Chat,
+  // or a step a running session may have written since the last tick.
   let pendingLink = null;
   function go(linkId, query) {
     if (!current(seq)) return false;
@@ -5997,7 +6006,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (step) { enterReplay(step); return true; }
     if (rp.on) exitReplay();
     if (missing && hasMore) {
-      pendingLink = { id: linkId, from: items[activeItem].id };
+      pendingLink = { id: linkId, from: items[activeItem].id, hash: location.hash };
       loadRest();
       return true;
     }
@@ -6007,7 +6016,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   function followLink(done) {
     if (!pendingLink) return;
-    if (items[activeItem].id !== pendingLink.from) { pendingLink = null; return; }
+    // A step picked since, or a newer link whose hash change waits behind this page: landing would undo it.
+    if (items[activeItem].id !== pendingLink.from || location.hash !== pendingLink.hash) { pendingLink = null; return; }
     if (!byEvent.has(pendingLink.id) && !done) return;
     const linkId = pendingLink.id;
     pendingLink = null;
