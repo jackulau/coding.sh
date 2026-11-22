@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { UsageError } from "../../src/cli/args.ts";
 import { requireConsent } from "../../src/cli/common.ts";
-import { ASK_USER, CliError, Output } from "../../src/cli/output.ts";
+import { AGENT_ENV, ASK_USER, CliError, Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 
 const SRC = fileURLToPath(new URL("../../src/", import.meta.url));
@@ -77,11 +77,11 @@ describe("destructive suggestions carry askUser", () => {
   });
 });
 
-/** An Output whose stderr is captured. */
-function capture(json: boolean): { out: Output; err: () => string } {
+/** An Output whose stderr is captured; `tty` puts a person at a terminal (stdin and stderr are TTYs). */
+function capture(json: boolean, tty = false, env: NodeJS.ProcessEnv = {}): { out: Output; err: () => string } {
   let buf = "";
-  const sink = { write: (s: string) => ((buf += s), true), isTTY: false } as unknown as NodeJS.WriteStream;
-  const out = new Output({ json, env: { NO_COLOR: "1" }, platform: "linux", stdout: sink, stderr: sink, stdin: { isTTY: false } as NodeJS.ReadStream });
+  const sink = { write: (s: string) => ((buf += s), true), isTTY: tty } as unknown as NodeJS.WriteStream;
+  const out = new Output({ json, env: { NO_COLOR: "1", ...env }, platform: "linux", stdout: sink, stderr: sink, stdin: { isTTY: tty } as NodeJS.ReadStream });
   return { out, err: () => buf };
 }
 
@@ -112,6 +112,43 @@ describe("Output.error", () => {
     typo.out.error(new UsageError("Unknown option --sinse", { suggestion: "--since" }));
     assert.match(typo.err(), /Did you mean --since\?/);
     assert.ok(!typo.err().includes(ASK_USER));
+  });
+
+  it("text at a terminal: the person is the user, so the line for an agent is left out and the step prints as is", () => {
+    const a = capture(false, true);
+    assert.equal(a.out.interactive, true);
+    a.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+    assert.ok(!a.err().includes(ASK_USER), a.err());
+    assert.match(a.err(), /^✗ x exists\n {4}Overwrite it:\n {4}coding\.sh x --force\n$/);
+    const u = capture(false, true);
+    u.out.error(new UsageError("Run 2 agent sessions needs confirmation", { suggestion: "coding.sh eval run s --yes", askUser: true }));
+    assert.ok(!u.err().includes(ASK_USER), u.err());
+    assert.doesNotMatch(u.err(), /With their approval|Did you mean/);
+    assert.match(u.err(), /^✗ Run 2 agent sessions needs confirmation\n {4}coding\.sh eval run s --yes\n$/);
+    // CI at a terminal is no person: the line stays.
+    const ci = capture(false, true, { CI: "1" });
+    assert.equal(ci.out.interactive, false);
+    ci.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+    assert.ok(ci.err().includes(ASK_USER), ci.err());
+  });
+
+  it("text at a terminal an agent runs (its env names it): the lines for the agent stay", () => {
+    for (const k of AGENT_ENV) {
+      const a = capture(false, true, { [k]: "1" });
+      assert.equal(a.out.interactive, true, k);
+      assert.equal(a.out.forAgent, true, k);
+      a.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+      assert.equal(a.err(), `✗ x exists\n    ${ASK_USER}\n    Overwrite it:\n    coding.sh x --force\n`, k);
+      const u = capture(false, true, { [k]: "1" });
+      u.out.error(new UsageError("Run 2 agent sessions needs confirmation", { suggestion: "coding.sh eval run s --yes", askUser: true }));
+      assert.ok(u.err().includes(ASK_USER), `${k}: ${u.err()}`);
+      assert.match(u.err(), /\n {4}With their approval: coding\.sh eval run s --yes\n$/, k);
+    }
+    // Set but empty names no agent: the person at the terminal is the user.
+    const empty = capture(false, true, { AI_AGENT: "" });
+    assert.equal(empty.out.forAgent, false);
+    empty.out.error(new CliError("x exists", { askUser: true, next: ["Overwrite it:", "coding.sh x --force"] }));
+    assert.ok(!empty.err().includes(ASK_USER), empty.err());
   });
 });
 
