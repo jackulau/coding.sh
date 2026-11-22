@@ -651,7 +651,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "b", desc: "The call to compare it with (default: compare a with the call before it in its session)" },
     ],
     examples: ["coding.sh diff-calls 9f1c2e4a7b3d", "coding.sh diff-calls 'latest#3' 'latest#4'", "coding.sh diff-calls 9f1c2e 4b7d1a --json"],
-    notes: ["Compares model, settings, tool definitions, the system prompt (line by line) and the message history, in the order the prompt cache reads them. Needs calls logged by coding.sh proxy; in capture mode metadata it compares hashes only."],
+    notes: ["Compares model, settings, tool definitions, the system prompt (line by line) and the message history, in the order the prompt cache reads them. Needs calls logged by coding.sh proxy; in capture mode metadata it compares hashes only.", "Name the earlier call first: the Cache and Why rows read b as a later call in a's conversation. It warns when b ran before a, or when the two calls are from different sessions."],
     load: () => import("./commands/diff-calls.ts"),
   },
   {
