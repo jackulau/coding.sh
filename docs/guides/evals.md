@@ -1171,6 +1171,8 @@ just now  case:refund-03  helpfulness  4      human   alice
 
 `score add` prints the score id. By default there is one score per target, name, source and
 person, so scoring the same thing again replaces it, and the same value again changes nothing.
+`--id` names the score instead: the same `--id` again replaces that score whatever its target and
+name, and `score add` says which score it replaced (`replaced` in `--json`).
 A stored score keeps its type. Without a config, the type comes from how the value looks, so a
 value that reads as another type (`1,5` over a number) is refused (exit 2, or HTTP 400) unless you
 pass `--type`. An event must be in the store to be scored, and the score goes on the event's own

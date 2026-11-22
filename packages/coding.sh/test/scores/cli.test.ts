@@ -136,6 +136,23 @@ describe("coding.sh score", () => {
     ok(["score", "add", "sess-bbbb2222", "outcome", "true"]);
     assert.match(ok(["export", "labels"]).stdout, /"sessionId":"sess-bbbb2222","criterion":"outcome","value":"pass"/);
   });
+
+  test("add: --id again on another target or name replaces the score it held, and says which", () => {
+    ok(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
+    const moved = ok(["score", "add", "sess-bbbb2222", "tone", "neutral", "--id", "pick-1"]);
+    assert.equal(moved.stdout, "pick-1\n");
+    assert.match(moved.stderr, /Scored tone = neutral \(categorical\) on session sess-bbbb2222/);
+    assert.match(moved.stderr, /--id pick-1 held helpfulness = 2 on session sess-aaaa1111; that score is replaced/);
+    assert.deepEqual((json(["score", "list", "--name", "helpfulness"]).items as Score[]).map((s) => s.value), [4], "the score left its old target");
+    const back = json(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
+    assert.deepEqual([back.replaced?.name, back.replaced?.target, back.replaced?.targetId, back.replaced?.value], ["tone", "session", "sess-bbbb2222", "neutral"]);
+    // The same target and name again is an update: nothing else is replaced.
+    const update = json(["score", "add", "sess-aaaa1111", "helpfulness", "3", "--id", "pick-1"]);
+    assert.deepEqual([update.created, update.changed, update.replaced], [false, true, undefined]);
+    const again = ok(["score", "add", "sess-aaaa1111", "helpfulness", "1", "--id", "pick-1"]);
+    assert.match(again.stderr, /Updated helpfulness = 1/);
+    assert.doesNotMatch(again.stderr, /replaced/);
+  });
 });
 
 describe("MCP score tools", () => {

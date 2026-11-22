@@ -337,6 +337,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `init` waits up to 15 s, not 5 s, for `opencode --version` when it picks which OpenCode plugin to write, as `doctor` does, and `doctor` waits as long for `gemini --version`. Before, on a busy machine init could write the 2.x plugin for OpenCode 1.x and remove the 1.x one. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-init))
 - **CLI.** When `~/.coding.sh/bin/cli-path` names another install that is still there, `doctor` names `coding.sh upgrade-store`, which asks before it moves the hooks, instead of `update --refresh-bin`, which leaves them alone. With a store plugin, `upgrade-store` now moves the hooks too. Before, it said there was nothing to do. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Evals.** `coding.sh monitor list` shows what a `--judge` monitor spent today and its `--max-usd-day` cap to four places under a dollar, such as ($0.0005/$0.0001 today), where a spend under a cent showed as $0.00. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
+- **Evals.** `coding.sh score add --id` with an id that held a score on another target or name says which score it replaced, and `--json` gives it as `replaced`. Before, it printed "Updated" for a score the target never had. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#scores))
 
 ## [0.1.7] - 2026-11-16
 
