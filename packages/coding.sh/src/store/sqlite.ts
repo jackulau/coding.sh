@@ -820,7 +820,8 @@ export interface SqliteIndexOptions {
   /** Open read-only (no migrations). */
   readOnly?: boolean;
   /**
-   * Runs before pending migrations (schema `from` → `to`, 0 for a new file);
+   * Runs before pending migrations (schema `from` → `to`, 0 for a new file), under the
+   * write lock and before the backup copy, with the schema and writer read there;
    * throws to refuse them and leave the file as it is (core/store-guard.ts: another
    * install owns the store, or this build is not newer than `writer`, its last one).
    */
@@ -1040,8 +1041,7 @@ export class SqliteIndexStore implements IndexStore {
     this.db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     const current = this.schemaVersion();
     if (current === SQLITE_SCHEMA_VERSION) return this.stampWriter();
-    // core/store-guard.ts: this store's schema is another install's to change, so leave it as it is.
-    this.opts.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION, this.lastWriter());
+    // The owner is judged under the write lock, in lockForUpgrade (beforeMigrate).
     // Progress is for big stores only. The highest rowid bounds the count from the b-tree's edge
     // (no scan); a store that may be big is then counted, since rowids have gaps where events were deleted.
     const most = current === 0 ? 0 : (num((this.db.prepare("SELECT max(rowid) AS n FROM events").get() as Row).n) ?? 0);
@@ -1096,6 +1096,10 @@ export class SqliteIndexStore implements IndexStore {
       await this.beginUpgrade(report);
       try {
         const from = this.schemaVersion();
+        // core/store-guard.ts judges the owner here, on the schema and writer read under the lock
+        // and before the copy: a store another process finished upgrading meanwhile needs no
+        // judgment, and a refusal (the catch below) rolls back with no copy made and the lock free.
+        if (from < SQLITE_SCHEMA_VERSION) this.opts.beforeMigrate?.(from, SQLITE_SCHEMA_VERSION, this.lastWriter());
         if (from < SQLITE_SCHEMA_VERSION && !begun) {
           begun = true;
           progress.begin();

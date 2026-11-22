@@ -194,7 +194,7 @@ Purge looks in each of these places:
 | Session titles and stats, labels, eval docs, settings | Replaces the value with `[redacted:purged]`. |
 | Blobs | Rewrites them under a new hash, and every reference follows. |
 | Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
-| Recorded model calls (`llm-cache/`) | Rewrites each recording that holds the value, keeping its replay keys, so it still replays. Deletes a torn recording or a leftover temp file that holds it. |
+| Recorded model calls (`llm-cache/`) | Waits for jobs still recording, then rewrites each recording that holds the value, keeping its replay keys. Deletes a torn or temp file holding it. |
 | Snapshots (`repos/`) | Names each snapshot repo that holds the value, and exits 1 until you delete it. It does not rewrite snapshots. |
 | `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |
@@ -204,9 +204,9 @@ works on the SQLite store only. Rotate the secret as well: purge does not touch 
 transcripts, your shell history or git, and it does not rewrite the snapshots in `repos/`.
 
 :::more When purge exits 1
-- **Another process holds a file open.** The viewer, `serve`, a `sqlite3` shell or a backup keeps
-  old bytes until it closes. Purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS`) and names
-  the file. Close it and purge again.
+- **A file is open, or a job is recording.** The viewer, `serve`, `sqlite3` or a backup keeps
+  old bytes until it closes. Purge waits (`CODING_SH_PURGE_WAIT_MS`), then names the file or job.
+  Purge again once it ends.
 - **A backup can't be deleted.** Purge names it. Delete it by hand.
 - **A snapshot repo holds the value.** Sessions and eval tasks name a snapshot by its commit id,
   which a rewrite would change, so purge names the folder under `repos/`. Delete it and purge

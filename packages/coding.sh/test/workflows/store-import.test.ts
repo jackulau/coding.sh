@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { importClaudeWorkflows } from "../../src/workflows/import.ts";
 import { WorkflowStore } from "../../src/workflows/store.ts";
 import { workflowStats } from "../../src/workflows/metrics.ts";
-import type { WorkflowRun } from "../../src/workflows/types.ts";
+import type { WorkflowNode, WorkflowRun } from "../../src/workflows/types.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 import { AGENTS, RESUMED, RUN, RUN_OUTPUT, SCRIPT, SID, writeClaudeWorkflowFixture } from "./_fixtures.ts";
 
@@ -42,6 +42,24 @@ describe("WorkflowStore", () => {
     assert.equal(await store.getRun("missing"), undefined);
     // The index keeps summaries only.
     assert.equal((await store.listRuns())[0]!.stats.perAgent, undefined);
+  });
+
+  it("redacts node outputs and the run output before it stores them, and keeps the script as it is", async () => {
+    const token = ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join("");
+    const store = new WorkflowStore(join(root, "s-redact"));
+    const node = (): WorkflowNode => ({ id: "n1", runId: "r-red", kind: "agent", name: "a", startedAt: 1000, endedAt: 2000, status: "ok" });
+    const script = `// GITHUB_TOKEN is read from the env\nphase('A')`;
+    await store.putRun(mkRun("r-red"), [node()], { outputs: { n1: { log: `pushed with ${token}` } }, runOutput: `done: ${token}`, script });
+    const got = (await store.getRun("r-red"))!;
+    assert.deepEqual(await store.getValue(got.nodes[0]!.output!), { log: "pushed with [redacted:github-token]" });
+    assert.equal(await store.getValue(got.run.output!), "done: [redacted:github-token]");
+    assert.equal(await store.getText(got.run.script!), script, "the script is stored byte for byte, for replay");
+    for await (const ref of store.blobs.list()) assert.ok(!(await store.blobs.getText(ref))?.includes(token), "no raw token in a workflow blob");
+    // dropOutputs (an imported run in metadata mode) keeps neither.
+    await store.putRun(mkRun("r-meta"), [node()], { outputs: { n1: "x" }, runOutput: "y", dropOutputs: true });
+    const meta = (await store.getRun("r-meta"))!;
+    assert.equal(meta.nodes[0]!.output, undefined);
+    assert.equal(meta.run.output, undefined);
   });
 
   it("stores experiments", async () => {

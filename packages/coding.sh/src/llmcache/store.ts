@@ -2,7 +2,13 @@
 //   <dir>/<expId>/<sha256(caseId)[0:16]>-t<trial>.jsonl.gz
 // Each line is one call's response (LlmEntry). Request headers, and so API
 // keys, are never stored; the body is redacted before it is written.
+//
+// A job that is recording leaves a marker beside its recording until it ends:
+//   <dir>/<expId>/<sha256(caseId)[0:16]>-t<trial>.<pid>-<rand>.recording.lock
+// holding {pid, startedAt}. Its entries live in memory until then, so purge
+// waits for live markers (and deletes the ones whose process is gone).
 import { createHash } from "node:crypto";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rmdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -94,6 +100,75 @@ export async function writeRecording(file: string, entries: readonly LlmEntry[])
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, body);
   await rename(tmp, file);
+}
+
+const MARKER = /\.(\d+)-[0-9a-z]+\.recording\.lock$/;
+
+/** Marks a recording as in progress: writes its marker and returns the marker's path. */
+export function markRecording(recording: string, startedAt = Date.now()): string {
+  const marker = `${recording.replace(/\.jsonl\.gz$/, "")}.${process.pid}-${Math.random().toString(36).slice(2, 10) || "0"}.recording.lock`;
+  mkdirSync(dirname(marker), { recursive: true });
+  writeFileSync(marker, JSON.stringify({ pid: process.pid, startedAt }));
+  return marker;
+}
+
+/** Removes a marker written by markRecording. */
+export function unmarkRecording(marker: string): void {
+  rmSync(marker, { force: true });
+}
+
+export interface RecordingMarker {
+  path: string;
+  /** The experiment the job records. */
+  expId: string;
+  pid: number;
+  startedAt?: number;
+}
+
+/** The markers of recordings in progress under `dir`, live or left by a process that is gone. */
+export function recordingMarkers(dir: string): RecordingMarker[] {
+  const out: RecordingMarker[] = [];
+  let exps: string[] = [];
+  try {
+    exps = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return out;
+  }
+  for (const expId of exps) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(join(dir, expId));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const m = MARKER.exec(name);
+      if (!m) continue;
+      const path = join(dir, expId, name);
+      let startedAt: number | undefined;
+      try {
+        const v = JSON.parse(readFileSync(path, "utf8")) as { startedAt?: unknown };
+        if (typeof v.startedAt === "number") startedAt = v.startedAt;
+      } catch {
+        // torn or gone: the name still carries the pid
+      }
+      const marker: RecordingMarker = { path, expId, pid: Number(m[1]) };
+      if (startedAt !== undefined) marker.startedAt = startedAt;
+      out.push(marker);
+    }
+  }
+  return out;
+}
+
+/** Whether the process that wrote a marker is still running (EPERM: it is, under another user). */
+export function markerLive(m: Pick<RecordingMarker, "pid">): boolean {
+  if (!(m.pid > 0)) return false;
+  try {
+    process.kill(m.pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /** The bytes of an entry's body. */

@@ -5,6 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { median } from "../../stats/index.ts";
+import { loadConfig } from "../../core/config.ts";
 import { profileCache } from "../../core/ingest.ts";
 import { claudeWorkflowDriver } from "../../workflows/drivers/claude-workflow.ts";
 import { commandDriver } from "../../workflows/drivers/command.ts";
@@ -685,6 +686,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   else out.note(`${plural(jobs, "run")}; no past runs of ${workflow} to estimate cost from`);
   await confirmCost(c, `Run ${plural(jobs, "workflow run")}`, est?.total, `coding.sh workflows run ${shellQuote(workflow)} … --yes`);
   const driver = driverFor(c, driverKind);
+  if (loadConfig({ env: c.env }).capture.mode === "metadata") out.warn(`capture.mode is "metadata", but workflow runs keep what their agents return, redacted, so they can be scored`);
   // Durable: each finished run is checkpointed; --resume continues an interrupted experiment.
   const config = jobConfig({
     workflow,
@@ -904,7 +906,9 @@ async function replay(c: CommandContext): Promise<number> {
   if (baseScript === undefined) throw new CliError(`Run ${id} has no captured script`, { reason: "missing_script", next: ["Pass the script the run used:", `coding.sh workflows replay ${shellQuote(id)} --script ${shellQuote(scriptFlag)} --base-script <path>`] });
   const args = str(c.flags.args) !== undefined ? await jsonArg(str(c.flags.args)!, "--args") : undefined;
   const dryRun = c.flags["dry-run"] === true;
-  const opts = { base, baseScript, script, editedScript, driver: driverFor(c, "claude"), store, dryRun, ...(args !== undefined ? { args } : {}) };
+  const config = loadConfig({ env: c.env });
+  if (!dryRun && config.capture.mode === "metadata") out.warn(`capture.mode is "metadata", but workflow runs keep what their agents return, redacted, so they can be scored`);
+  const opts = { base, baseScript, script, editedScript, driver: driverFor(c, "claude"), store, dryRun, redactor: captureRedactor(config, c.env), ...(args !== undefined ? { args } : {}) };
   const predicted = await replayWorkflow({ ...opts, dryRun: true });
   let res = predicted;
   if (!dryRun) {

@@ -165,7 +165,9 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
         for (const k of ["variant", "experimentId", "caseId", "attempt"] as const) if (prev.run[k] !== undefined) (tree.run as unknown as Record<string, unknown>)[k] = prev.run[k];
         tree.run.tags = [...new Set([...prev.run.tags, ...tree.run.tags])];
       }
-      await o.store.putRun(tree.run, tree.nodes, { outputs: tree.outputs, runOutput: tree.runOutput, ...(loaded.sources.script !== undefined ? { script: loaded.sources.script } : {}) });
+      // An imported run is passive capture, like a session: its outputs take the profile's redaction, and metadata mode keeps none.
+      const capture = o.profile ? { redactor: o.profile.redactor, dropOutputs: o.profile.config.capture.mode === "metadata" } : {};
+      await o.store.putRun(tree.run, tree.nodes, { outputs: tree.outputs, runOutput: tree.runOutput, ...capture, ...(loaded.sources.script !== undefined ? { script: loaded.sources.script } : {}) });
       res.imported.push(tree.run);
       if (tree.run.resumedFrom) resumed.push(tree);
     } catch (e) {

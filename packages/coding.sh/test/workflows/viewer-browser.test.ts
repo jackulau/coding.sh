@@ -27,6 +27,9 @@ describe("workflow pages in a browser", { skip: chrome ? false : "no Chrome/Chro
     const store = new WorkflowStore(join(root, "workflows"));
     const fx = ganttRunFixture();
     await store.putRun(fx.run, fx.nodes);
+    // The same run, failed, with an error that holds markup.
+    const bad = ganttRunFixture();
+    await store.putRun({ ...bad.run, id: "wf_fail01", status: "failed", error: "<b>boom</b> exited 1" }, bad.nodes.map((n) => ({ ...n, runId: "wf_fail01" })));
     v = await startViewer({ index: new FakeIndex(), blobs: new FakeBlobs(), port: 0, workflows: store, env: { HOME: root, CODING_SH_HOME: join(root, ".coding.sh") }, updateStatus: async () => ({ disabled: "test" }) as any });
     browser = await launchBrowser(chrome!);
   });
@@ -49,9 +52,20 @@ describe("workflow pages in a browser", { skip: chrome ? false : "no Chrome/Chro
 
   test("the list links each run to its timeline", async () => {
     const p = await open("#/workflows", "document.querySelector('.wfg-list tbody tr')");
-    assert.equal(await p.eval("document.querySelectorAll('.wfg-list tbody tr').length"), 1);
-    assert.equal(await p.eval("document.querySelector('.wfg-list tbody a').getAttribute('href')"), "#/workflows/wf_view01");
+    assert.equal(await p.eval("document.querySelectorAll('.wfg-list tbody tr').length"), 2);
+    assert.deepEqual(await p.eval("[...document.querySelectorAll('.wfg-list tbody a')].map((a) => a.getAttribute('href')).sort()"), ["#/workflows/wf_fail01", "#/workflows/wf_view01"]);
     assert.deepEqual(p.errors, []);
+  });
+
+  test("a failed run shows its error as text; a run with no error shows none", async () => {
+    const p = await open("#/workflows/wf_fail01", "document.querySelector('.wfg-bar')");
+    assert.equal(await p.eval("document.querySelectorAll('.wfg-grid > .alert').length"), 1);
+    assert.equal(await p.eval("document.querySelector('.wfg-grid > .alert').textContent"), "Run error<b>boom</b> exited 1");
+    // The markup in the error is text, not an element.
+    assert.equal(await p.eval("[...document.querySelectorAll('.wfg-grid > .alert b')].map((b) => b.textContent).join('|')"), "Run error");
+    assert.deepEqual(p.errors, []);
+    const ok = await open("#/workflows/wf_view01", "document.querySelector('.wfg-bar')");
+    assert.equal(await ok.eval("document.querySelectorAll('.wfg-grid .alert').length"), 0);
   });
 
   test("a run: bars by phase, critical path, barrier idle, session links, strip and tables", async () => {

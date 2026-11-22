@@ -15,6 +15,7 @@
 import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dataHome } from "../core/paths.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import { FsBlobStore } from "../store/fs-blobs.ts";
 import type { BlobRef } from "../schema/index.ts";
 import type { WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "./types.ts";
@@ -86,13 +87,21 @@ export class WorkflowStore {
   }
 
   /** Stores return values as blobs (setting node.output / run.output), then the run document. */
-  async putRun(run: WorkflowRun, nodes: WorkflowNode[], extra: { outputs?: Record<string, unknown>; runOutput?: unknown; script?: string } = {}): Promise<void> {
+  /**
+   * Stores a run. Node outputs and the run's output are what its agents returned, so they go
+   * through `redactor` (default: the built-in rules; callers pass the capture profile's) first.
+   * `dropOutputs` (capture.mode "metadata" on an imported run) stores neither. The script is the
+   * workflow's own code, which replay re-runs and diffs, so it is stored as it is.
+   */
+  async putRun(run: WorkflowRun, nodes: WorkflowNode[], extra: { outputs?: Record<string, unknown>; runOutput?: unknown; script?: string; redactor?: Redactor; dropOutputs?: boolean } = {}): Promise<void> {
     await mkdir(join(this.root, "runs"), { recursive: true });
+    const redactor = extra.redactor ?? createRedactor();
+    const keep = extra.dropOutputs !== true;
     for (const node of nodes) {
-      const v = extra.outputs?.[node.id];
-      if (v !== undefined) node.output = await this.putValue(v);
+      const v = keep ? extra.outputs?.[node.id] : undefined;
+      if (v !== undefined) node.output = await this.putValue(redactor.value(v));
     }
-    if (extra.runOutput !== undefined && extra.runOutput !== null) run.output = await this.putValue(extra.runOutput);
+    if (keep && extra.runOutput !== undefined && extra.runOutput !== null) run.output = await this.putValue(redactor.value(extra.runOutput));
     if (extra.script !== undefined) run.script = await this.blobs.put(extra.script, { contentType: "text/javascript" });
     const file = `${enc(run.id)}.json`;
     await writeAtomic(join(this.root, "runs", file), JSON.stringify({ run, nodes }));

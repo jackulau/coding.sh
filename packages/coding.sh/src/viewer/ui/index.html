@@ -640,6 +640,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .wf-legend i.wf-resume { position: static; width: 2px; height: 10px; margin: 0; }
 /* Workflow run (#/workflows/:id): rows per phase, critical path outlined, barrier idle shaded amber. */
 .wfg-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+.wfg-grid > .alert { grid-column: 1 / -1; }
 @media (min-width: 1100px) { .wfg-grid { grid-template-columns: minmax(0, 1fr) 25rem; } }
 .wfg-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.6rem; padding: 0.8rem var(--gutter) 0.9rem; min-width: 0; }
 .wfg-bar-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; }
@@ -8531,7 +8532,8 @@ async function showWorkflow(seq, id) {
   for (const [m, label] of [["timeline", "Timeline"], ["table", "Table"]]) seg.append(h("button", { type: "button", "data-mode": m, "aria-pressed": "false", onclick: () => setMode(m) }, label));
   setMode(mode);
   const mainPanel = h("section", { class: "panel wfg-main", "aria-label": "Agents by phase" }, h("div", { class: "wfg-bar-head" }, facts, rows ? seg : null), body);
-  swap(slot, h("div", { class: "wfg-grid" }, mainPanel, h("aside", { class: "wfg-side" }, workflowPhaseTable(st), workflowMetricsTable(st, g))));
+  const err = run.error ? h("div", { class: "alert", role: "note" }, h("b", null, "Run error"), h("span", { class: "run-error" }, String(run.error))) : null;
+  swap(slot, h("div", { class: "wfg-grid" }, err, mainPanel, h("aside", { class: "wfg-side" }, workflowPhaseTable(st), workflowMetricsTable(st, g))));
   announce("Workflow run " + (oneLine(run.name) || run.id) + ": " + plural(rows, "agent"));
 }
 

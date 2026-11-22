@@ -30,6 +30,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { constants as zlibConstants, gunzipSync, gzipSync, inflateSync } from "node:zlib";
 import { run as runGit } from "../core/git.ts";
 import type { BlobStore } from "../core/types.ts";
+import { markerLive, recordingMarkers } from "../llmcache/store.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { errorText, searchableText } from "./common.ts";
 import { loadSqlite, searchIndexOk } from "./sqlite.ts";
@@ -79,6 +80,12 @@ export interface PurgeResult {
   recordingsDeleted?: number;
   /** Files in the llm cache that hold a value but could not be rewritten or deleted, as paths. Absent when none. */
   recordingsKept?: string[];
+  /**
+   * Recording jobs still running when purge read the llm cache (after waiting up to waitMs; a dry
+   * run does not wait). Their calls are held in memory and written when the job ends, past this
+   * purge. Absent when none.
+   */
+  recordingsLive?: { experiment: string; pid: number; startedAt?: number }[];
   /** Snapshot repos that hold a value, or could not be read. Purge does not change them. Absent when none. */
   snapshotRepos?: SnapshotRepo[];
   /** Raw files, recordings and snapshot objects over MAX_FILE_BYTES, left alone. Absent when none. */
@@ -387,6 +394,28 @@ function replaceFile(file: string, data: Uint8Array, st: Stats): void {
       // the error that matters is the first one
     }
     throw e;
+  }
+}
+
+/**
+ * Waits up to `waitMs` for the recording jobs under `dir` to end (llmcache/store.ts
+ * markRecording), and returns the ones still running. A marker whose process is gone is deleted
+ * (a dry run only skips it). A dry run does not wait.
+ */
+async function waitForRecordings(dir: string | undefined, waitMs: number, dry: boolean): Promise<NonNullable<PurgeResult["recordingsLive"]>> {
+  if (!dir || !existsSync(dir)) return [];
+  const until = Date.now() + (dry ? 0 : waitMs);
+  for (;;) {
+    const live: NonNullable<PurgeResult["recordingsLive"]> = [];
+    for (const m of recordingMarkers(dir)) {
+      if (markerLive(m)) {
+        const job: (typeof live)[number] = { experiment: m.expId, pid: m.pid };
+        if (m.startedAt !== undefined) job.startedAt = m.startedAt;
+        live.push(job);
+      } else if (!dry) rmSync(m.path, { force: true });
+    }
+    if (!live.length || Date.now() >= until) return live;
+    await new Promise((r) => setTimeout(r, Math.min(100, Math.max(1, until - Date.now()))));
   }
 }
 
@@ -769,7 +798,10 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
     const raw = rawFiles(o.fileDirs);
     for (const f of raw.files) if (maskFile(f, scrub, dry)) result.files++;
     skipped += raw.skipped;
-    // ---- recordings of model calls (exp run --record or --replay).
+    // ---- recordings of model calls (exp run --record or --replay). A job still recording holds its
+    // calls in memory and writes them when it ends: wait for it first, so its file is scrubbed here.
+    const live = await waitForRecordings(o.llmCache, o.waitMs ?? 5000, dry);
+    if (live.length) result.recordingsLive = live;
     skipped += purgeLlmCache(o.llmCache, scrub, dry, result);
     if (skipped) result.filesSkipped = skipped;
 
