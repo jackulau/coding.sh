@@ -179,8 +179,9 @@ coding.sh proxy --enforce-budget
 With `--enforce-budget`, a model call that a [budget](https://coding.sh/docs/cost#set-a-budget)
 over its limit applies to gets a 429 and never goes upstream. The body uses the vendor's error
 shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
-its limit, its estimated spend and when it resets. `Retry-After` gives the seconds until the
-reset.
+its limit, its estimated spend, when it resets and the command that shows the budgets, as the
+shell the proxy started in runs it (`codingsh budget status` in PowerShell or cmd).
+`Retry-After` gives the seconds until the reset.
 
 Which budgets the proxy can match:
 

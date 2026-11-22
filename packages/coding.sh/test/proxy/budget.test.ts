@@ -41,11 +41,11 @@ async function upstream(): Promise<Upstream> {
   return up;
 }
 
-async function proxy(up: Upstream, load?: (now: number) => Promise<BudgetStatus[]>, extra: { errors?: Error[]; now?: () => number } = {}): Promise<ProxyServer> {
+async function proxy(up: Upstream, load?: (now: number) => Promise<BudgetStatus[]>, extra: { errors?: Error[]; now?: () => number; statusCommand?: string } = {}): Promise<ProxyServer> {
   const p = await startProxy({
     port: 0,
     upstreams: { anthropic: up.url, openai: up.url },
-    budget: load ? budgetGuard({ load, now: extra.now, onError: (e) => extra.errors?.push(e) }) : undefined,
+    budget: load ? budgetGuard({ load, now: extra.now, onError: (e) => extra.errors?.push(e), statusCommand: extra.statusCommand }) : undefined,
     onError: (e) => extra.errors?.push(e),
   });
   open.push(p);
@@ -96,6 +96,16 @@ describe("proxy budget guard", () => {
     assert.match(body.error.message, /\$12\.00 spent of \$10\.00/);
     assert.equal(r.headers["x-should-retry"], "false");
     assert.equal(up.seen.length, 0);
+  });
+
+  test("the message names the command the guard was given to see the budgets, else coding.sh budget status", async () => {
+    const up = await upstream();
+    for (const [statusCommand, named] of [["codingsh budget status", "codingsh budget status"], [undefined, "coding.sh budget status"]] as const) {
+      const p = await proxy(up, async (now) => [over(budget(), 2, now)], { statusCommand });
+      const r = await call(p.url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+      assert.equal(r.status, 429);
+      assert.ok(JSON.parse(r.body.toString()).error.message.endsWith(`. See ${named}.`), r.body.toString());
+    }
   });
 
   test("amounts under $1 keep 4 decimals, so a cent-sized budget does not read $0.00 of $0.00", async () => {
@@ -235,6 +245,27 @@ describe("coding.sh proxy --enforce-budget (CLI)", () => {
     assert.equal(ok.status, 200);
     assert.equal(up.seen.length, 1);
     plain.live.child.kill();
+  });
+
+  test("the 429 names budget status as the proxy's shell runs it: codingsh in PowerShell or cmd, coding.sh in Git Bash", async () => {
+    // tmpHome sets no SHELL or MSYSTEM: on Windows that is PowerShell or cmd, where only codingsh runs.
+    const bin = process.platform === "win32" ? "codingsh" : "coding.sh";
+    for (const [extra, named] of [[{}, bin], [{ MSYSTEM: "MINGW64" }, "coding.sh"]] as const) {
+      const up = await upstream();
+      const h = tmpHome({ CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_UPDATE_CHECK: "1", ...extra });
+      const index = await SqliteIndexStore.open(join(h.env.CODING_SH_HOME!, "index.db"));
+      await index.migrate();
+      await index.upsertSession(mkSession("s1", Date.now() - 60_000, { stats: { usage: { inputTokens: 1, outputTokens: 1, costUsd: 1.4, estimatedCostUsd: 1.4 } } }));
+      await index.close();
+      assert.equal(runSync(["budget", "set", "day", "1"], h.env).status, 0);
+      const live = runLive(["proxy", "--port", "0", "--anthropic-upstream", up.url, "--enforce-budget"], h.env);
+      const url = await live.waitFor(/http:\/\/127\.0\.0\.1:\d+/);
+      await live.waitFor(/Enforcing budgets/);
+      const r = await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+      assert.equal(r.status, 429, r.body.toString());
+      assert.ok(JSON.parse(r.body.toString()).error.message.endsWith(`. See ${named} budget status.`), `${JSON.stringify(extra)}: ${r.body.toString()}`);
+      live.child.kill();
+    }
   });
 
   test("never reads a --where budget: one whose query no longer parses is not named, and the day budget over its limit blocks", async () => {

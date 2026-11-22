@@ -18,6 +18,8 @@ export interface BudgetBlock {
   status: BudgetStatus;
   /** Whole seconds until the period resets (Retry-After). */
   retryAfter: number;
+  /** The command the 429 names to see the budgets, as the shell the proxy started in runs it. */
+  statusCommand?: string;
 }
 
 export interface BudgetGuard {
@@ -45,6 +47,8 @@ export function budgetGuard(o: {
    * error), or a read that failed as a whole. Called once a read, not once a call.
    */
   onError?: (err: Error) => void;
+  /** The command the 429 names to see the budgets (cliCommand from the proxy's environment); else `coding.sh budget status`. */
+  statusCommand?: string;
   refreshMs?: number;
   now?: () => number;
 }): BudgetGuard {
@@ -94,7 +98,10 @@ export function budgetGuard(o: {
         // Of several budgets over their limit, name the one that resets last: the call waits for it.
         if (!worst || s.resetsAt > worst.resetsAt) worst = s;
       }
-      return worst ? { status: worst, retryAfter: Math.max(1, Math.ceil((worst.resetsAt - t) / 1000)) } : undefined;
+      if (!worst) return undefined;
+      const block: BudgetBlock = { status: worst, retryAfter: Math.max(1, Math.ceil((worst.resetsAt - t) / 1000)) };
+      if (o.statusCommand) block.statusCommand = o.statusCommand;
+      return block;
     },
   };
 }
@@ -103,7 +110,8 @@ export function budgetGuard(o: {
 const money = (n: number): string => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 
 /**
- * The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset.
+ * The 429 the client gets: its vendor's error shape, naming the budget, its limit, its reset and
+ * the command that shows the budgets (the block's statusCommand, else `coding.sh budget status`).
  * `x-should-retry: false` stops the Anthropic and OpenAI SDKs retrying it: the Anthropic one would
  * otherwise sleep the whole Retry-After, until the period resets, before the caller saw the error.
  */
@@ -112,7 +120,7 @@ export function budgetResponse(route: Route, block: BudgetBlock): { status: 429;
   const b = s.budget;
   const scope = b.agent ? ` for ${b.agent}` : "";
   const resets = new Date(s.resetsAt).toISOString();
-  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: ${money(s.spendUsd)} spent of ${money(b.limitUsd)} (estimated). It resets at ${resets}. See coding.sh budget status.`;
+  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: ${money(s.spendUsd)} spent of ${money(b.limitUsd)} (estimated). It resets at ${resets}. See ${block.statusCommand ?? "coding.sh budget status"}.`;
   // JSON.stringify leaves out an agent that is undefined.
   const budget = { id: b.id, period: b.period, agent: b.agent || undefined, limitUsd: b.limitUsd, spendUsd: s.spendUsd, resetsAt: resets };
   const body =

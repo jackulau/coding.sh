@@ -88,7 +88,7 @@ async function start(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     // budgets.json is read with the spend, so a budget set while the proxy runs applies within 30 s.
     // Only the spend of a budget a call can match is read: a --repo or --where one never blocks.
-    const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env).filter(enforceable), now), onError: (e) => out.warn(e.message) }) : undefined;
+    const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env).filter(enforceable), now), onError: (e) => out.warn(e.message), statusCommand: cliCommand(c.env, ["budget", "status"]) }) : undefined;
     let proxy;
     try {
       proxy = await startLocalProxy({
