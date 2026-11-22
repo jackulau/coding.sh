@@ -113,6 +113,11 @@ describe("compare: iterate on a comparison", () => {
     assert.equal(out.report.baseline.runs + out.report.candidate.runs, 7, "the infra-failed run is left out");
     assert.equal(runsLog().length, 7);
     clearLog();
+    // Without --yes it asks first, and the command it names keeps every flag given.
+    const ask = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "-c", "1"]);
+    assert.equal(ask.status, 2, ask.stdout + ask.stderr);
+    assert.match(ask.stderr, new RegExp(`With their approval: coding\\.?sh compare base --without \\.claude/skills/pdf --experiment ${first} --retry-errors -c 1 --yes\\n`), ask.stderr);
+    assert.equal(runsLog().length, 0, "asking runs nothing");
     const retry = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "--yes", "--json"]);
     const again = json<Out>(retry);
     assert.equal(again.experimentId, first);

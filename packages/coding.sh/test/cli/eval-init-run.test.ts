@@ -223,7 +223,9 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
       JSON.stringify({ kind: "llm-checklist", name: "scope", provider: "mock", items: [{ id: "asks", question: "Did it ask which team?", critical: true, check: { name: "output-matches", args: { pattern: "which team", flags: "i" } } }] }),
     );
 
-    assert.match(cli(["eval", "run", "scope"]).stderr, /needs confirmation from the user\n.*The user must approve this first/);
+    const ask = cli(["eval", "run", "scope", "--harness", "skilled"]).stderr;
+    assert.match(ask, /needs confirmation from the user\n.*The user must approve this first/);
+    assert.match(ask, /With their approval: coding\.?sh eval run scope --harness skilled --yes\n/, ask);
     const good = cli(["eval", "run", "scope", "--harness", "skilled", "--yes", "--json"]);
     assert.equal(good.status, 0, good.stdout + good.stderr);
     const doc = JSON.parse(good.stdout) as { kind: string; experimentId: string; harness: { name: string }; unverified: string[]; report: { ok: boolean; passed: number; trials: number; passHatK: number } };

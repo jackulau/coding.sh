@@ -150,6 +150,13 @@ describe("eval trigger", () => {
     const consent = cli(["eval", "trigger", "skills/pdf", "--harness", "fake"]);
     assert.equal(consent.status, 2);
     assert.match(consent.stderr, /Run 8 agent sessions \(1 arm x 8 prompts x 1\) needs confirmation/);
+    assert.match(consent.stderr, /With their approval: coding\.?sh eval trigger skills\/pdf --harness fake --yes\n/, "the rerun keeps every flag given");
+    // Run as a suite, the command to approve is the eval run the user typed.
+    mkdirSync(join(root, "evals", "pdf"), { recursive: true });
+    writeFileSync(join(root, "evals", "pdf", "suite.json"), JSON.stringify({ name: "pdf", purpose: "regression", skill: "../../skills/pdf", triggers: "../../skills/pdf/triggers.toml" }));
+    const suite = cli(["eval", "run", "pdf", "--harness", "fake"]);
+    assert.equal(suite.status, 2, suite.stdout + suite.stderr);
+    assert.match(suite.stderr, /With their approval: coding\.?sh eval run pdf --harness fake --yes\n/, suite.stderr);
     assert.equal(readdirSync(join(home, ".coding.sh", "triggers", "pdf")).length, 4, "no run, no new result file");
   });
 });

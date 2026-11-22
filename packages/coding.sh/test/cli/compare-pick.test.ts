@@ -156,11 +156,12 @@ describe("compare --pick and --budget", () => {
     assert.deepEqual(runsLog(), []);
   });
 
-  it("the consent prompt names the dollar estimate", (t) => {
+  it("the consent prompt names the dollar estimate, and the rerun command keeps every flag", (t) => {
     if (!gitBin) return t.skip("needs git");
     const r = cli(["compare", "base", "other", "--tag", "pick", "--budget", "0.5", "--cost-per-run", "0.1"]);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /Run 4 agent sessions \(2 tasks x 2 arms x 1, about \$0\.40\) needs confirmation/);
+    assert.match(r.stderr, /coding\.?sh compare base other --tag pick --budget 0\.5 --cost-per-run 0\.1 --yes\n/, r.stderr);
     assert.deepEqual(runsLog(), []);
   });
 
