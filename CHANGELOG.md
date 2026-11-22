@@ -47,6 +47,7 @@ grouped by area, with links to the docs for the details.
 - **Work.** A T3 Code thread that waits on an approval or a question is blocked on you in `coding.sh work`, with the prompt or question, whichever agent the thread runs. The wait comes from T3's store and clears when T3 resolves the request. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#waiting-state)
 - **Sessions.** `coding.sh views save <name> --where <query>` keeps a query under a name, and `views list` and `views rm` manage them. `sessions --view <name>` lists its sessions, ANDed with `--where` when both are given; the MCP `sessions_list` tool takes `view`, and the viewer API serves `/api/views`. [Query](https://coding.sh/docs/query#saved-views)
 - **Viewer.** Comment on a session or one step in `coding.sh ui`: each comment is a text score named `comment`, shown as text with its author and time, and `coding.sh show` prints them under their step (`comments` in `--json`). The session list's Views menu applies and deletes saved views, and Save view keeps the current filter. [Explore](https://coding.sh/docs/explore#open-the-viewer)
+- **Viewer.** On the Work page a workflow run shows each phase's agents by state, with its agents grouped by phase and each phase's cost. A superseded failure links the session that superseded it. Work and the session list say how old the index is, as a warning when stale. Worktree sessions show their main checkout's repo. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 
 ### Changed
 

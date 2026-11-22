@@ -139,13 +139,17 @@ token for this run of `ui`; the viewer needs it.
 - **The list.** The bar above it takes the same query as `--where` and keeps it in the URL to share.
   Save view saves it as a [saved view](https://coding.sh/docs/query#saved-views); Views applies or
   deletes one.
+- **The list's header.** The index's age, as a warning when it is stale. The repo column names a
+  worktree session by its main checkout.
 - **The sidebar.** Counts per agent, model, repo, flag and tool. Click a value to add it to the
   query, Alt-click to exclude it.
 - **A session.** The timeline shows every event, with a ⚑ where the run went off the rails.
   [Comment](https://coding.sh/docs/api/read/search#post-apiscores) adds a note to it or one step. A running
   session gets new events every 4 seconds.
 - **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
-  with sessions linked. Ack and Snooze write the CLI's `work.json`.
+  with linked sessions and index age. A workflow run shows its agents by phase and state,
+  with phase costs; a superseded failure links its replacement. Ack and Snooze write
+  `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's

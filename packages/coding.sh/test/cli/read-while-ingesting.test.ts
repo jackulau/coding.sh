@@ -201,7 +201,8 @@ describe("reads during ingest", () => {
       }
       assert.equal(items.length, 5);
       const st = await api("/api/ingest");
-      assert.deepEqual(Object.keys(st).sort(), ["captureSetUp", "filesPending", "importing", "ingesting", "lastIngestAt"]);
+      // `index` dates the index by this home's last finished ingest (ingest-last.json), as `coding.sh status` does.
+      assert.deepEqual(Object.keys(st).sort(), ["captureSetUp", "filesPending", "importing", "index", "ingesting", "lastIngestAt"]);
       assert.equal(st.importing, false);
       // init's background history import holds the import lock: the viewer says it is importing.
       const lock = await acquireLock(paths(h.env).importLock, { waitMs: 0 });

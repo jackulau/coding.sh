@@ -1984,6 +1984,7 @@ Progress of the local spool ingest, for the viewer's "Indexing N files…" pill.
 - `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down.
 - `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first.
 - Under `coding.sh ui`, `importing` is `true` while past sessions are being imported (the background import `coding.sh init` starts when its 8 seconds run out). The pill and the empty session list then say "Importing past sessions…".
+- Under `coding.sh ui` on its own home, `index` gives the age of the last finished ingest: `updatedAt`, `text` (`index updated 4m ago`), and `stale: true` when it is 15 minutes old and no ingest runs.
 
 `coding.sh serve` ingests events as they arrive, so it always answers:
 
