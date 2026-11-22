@@ -3,7 +3,7 @@
 // CODING_SH_HOME and CODEX_HOME; no Codex trust state is written.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fakeBin, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
@@ -189,6 +189,48 @@ describe("doctor: an OpenCode plugin OpenCode will not run", () => {
     assert.match(r.stderr, /^✓ OpenCode\s+v2\.3\.2, hooked/m);
     assert.doesNotMatch(r.stderr, /stale/);
     assert.equal(r.stdout, "ok\n");
+  });
+});
+
+describe("doctor: an OpenCode plugin OpenCode still runs that differs from this CLI's", () => {
+  let env: TmpEnv;
+  let cwd: string;
+  let hook: string;
+  const run = (args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" }, encoding: "utf8", timeout: 60_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  before(() => {
+    env = tmpEnv();
+    cwd = join(env.home, "elsewhere");
+    mkdirSync(cwd, { recursive: true });
+    hook = join(env.root, "dist", "hook.mjs");
+    writeFile(hook, "// hook\n");
+  });
+  after(() => env.restore());
+
+  // An edited plugin still runs the hook, so OpenCode may be capturing. Before, doctor said it was
+  // not, and the last line counted it with the agents that capture nothing.
+  test("an edited plugin: may not be capturing, and the last line counts it as stale hooks", () => {
+    fakeBin(env, "opencode", "1.19.5");
+    assert.equal(run(["init", "--yes", "--agent", "opencode", "--no-mcp", "--no-import"]).status, 0);
+    const plugin = pluginPath({ scope: "user" }, 1);
+    writeFile(plugin, `${readFileSync(plugin, "utf8")}// edited by hand\n`);
+    const note = `${plugin} is stale (differs from the plugin this CLI writes)`;
+    const r = run(["doctor", "--agent", "opencode"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^! OpenCode\s+v1\.19\.5, hooked but stale, no events yet$/m);
+    assert.ok(r.stderr.includes(`\n  ${note}\n`), r.stderr);
+    assert.equal(r.stdout, "1 agent with stale hooks\n");
+    const doc = JSON.parse(run(["doctor", "--agent", "opencode", "--json"]).stdout) as Doc;
+    assert.deepEqual(
+      doc.warnings.filter((w) => w.agent === "opencode").map((w) => [w.message, w.blockers, w.next]),
+      [["OpenCode may not be capturing: hooked but stale", [note], cliCommand(process.env, ["init", "--agent", "opencode"])]],
+    );
+    // Next to an agent with no hooks, the last line counts each.
+    fakeBin(env, "codex", "codex-cli 0.166.0");
+    assert.equal(run(["doctor", "--agent", "opencode", "--agent", "codex"]).stdout, "1 agent not capturing, 1 with stale hooks\n");
   });
 });
 
