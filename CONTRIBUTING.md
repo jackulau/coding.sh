@@ -72,9 +72,10 @@ Docs index: [docs/README.md](docs/README.md). Start with [docs/design/architectu
 - **Docs claim only what the code does.** If you add or change a command, update its help in
   `src/cli/registry.ts`, the README and `CHANGELOG.md`. Add the changelog line with
   `node scripts/changelog/add.mjs --section <S> --area <A> --text <T> --link <docs path[#id]>`:
-  it refuses a line over 60 words, a glyph outside the site font's CORE subset, a duplicate, and
-  a link to a missing doc or heading. `--check` runs the same checks over the unreleased lines,
-  and `npm run changelog:test` runs its tests.
+  it refuses a line over 60 words, a character the site font has outside its CORE subset (the page
+  would load a -rest font file for it), a duplicate, and a link to a missing doc or heading.
+  `--check` runs the same checks over the unreleased lines, and `npm run changelog:test` runs its
+  tests; `npm run gate` runs both.
 
 ## Lint and git hooks
 

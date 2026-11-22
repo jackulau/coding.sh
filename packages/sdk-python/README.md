@@ -52,7 +52,8 @@ with coding_sh.trace("support-reply", session_id=conversation_id, user_id=user.i
   `span("tool", ...)` records the call's arguments as input and its return value as output.
 - `span("step", name)` records a generic step.
 - Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread
-  pool starts untraced unless you run it with `contextvars.copy_context().run`.
+  pool starts untraced unless you run it in a copy of the context, one per task:
+  `pool.submit(contextvars.copy_context().run, fn, *args)`.
 
 ## LLM gateways
 
@@ -73,9 +74,12 @@ client = coding_sh.observe(OpenAI(base_url="https://gateway.ai.cloudflare.com/v1
 ## Delivery
 
 One daemon thread sends batches (up to 500 events or 4 MiB, gzip) to `POST /v1/ingest`. It retries
-429, 5xx and network errors (honoring `Retry-After`, else 1, 2, 4 ... s, at most 5 attempts) with
-stable event ids, so retries never duplicate. 400/401/403 drop the batch with one warning. A full
-queue drops new events and counts them. An `atexit` flush is bounded to 2 s.
+429, 5xx and network errors, at most 5 attempts, with stable event ids, so retries never duplicate.
+Before a retry it waits as long as `Retry-After` says (seconds or a date, at most 60 s), otherwise
+1, 2, 4 ... s up to 30 s.
+
+400/401/403 drop the batch with one warning. A full queue drops new events and counts them. An
+`atexit` flush is bounded to 2 s.
 
 ```python
 coding_sh.flush(timeout=5)     # e.g. at the end of a script, a job or a serverless handler
@@ -90,7 +94,7 @@ is optional; arguments override env vars.
 
 | Env | Meaning |
 |---|---|
-| `CODING_SH_URL` | Server base URL. Unset = SDK off. |
+| `CODING_SH_URL` | Server base URL. A URL that ends in `/v1/ingest` or `/v1/traces` works too. Unset = SDK off. |
 | `CODING_SH_INGEST_KEY` | `csh_ik_...` ingest key. It decides the project. |
 | `CODING_SH_SERVICE` (or `OTEL_SERVICE_NAME`) | Service name; becomes the session's agent id. |
 | `CODING_SH_CAPTURE_MODE` | `full` (default) or `metadata` (no message text or tool I/O). |

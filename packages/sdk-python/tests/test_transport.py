@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import calendar
+import email.utils
 import gzip
 import json
 import socket
+import threading
 import time
 import unittest
+from typing import List, Optional
 
 import support  # noqa: F401  (sets up sys.path and a temp HOME)
 from support import KEY, IngestServer, collect, start_sdk
@@ -19,6 +23,43 @@ def _free_port() -> int:
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+class _RecordedWaits(threading.Event):
+    """Stands in for the sender's halt event: records each retry wait and returns at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.waits: List[Optional[float]] = []
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        self.waits.append(timeout)
+        return self.is_set()
+
+
+class RetryAfterTest(unittest.TestCase):
+    """Retry-After is read as in the TS SDK (retryAfterMs in packages/sdk/src/transport.ts)."""
+
+    DATE = "Sun, 06 Nov 1994 08:49:37 GMT"
+    AT = float(calendar.timegm((1994, 11, 6, 8, 49, 37)))
+
+    def test_seconds_are_waited_up_to_60(self) -> None:
+        for v, want in (("0", 0.0), ("5", 5.0), (" 1.5 ", 1.5), ("60", 60.0), ("61", 60.0), ("1e3", 60.0)):
+            with self.subTest(v=v):
+                self.assertEqual(_client._parse_retry_after(v), want)
+
+    def test_a_date_is_waited_until_it_passes_up_to_60_s(self) -> None:
+        # The three HTTP date forms; asctime has no zone and is read as GMT.
+        for date in (self.DATE, "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994"):
+            with self.subTest(date=date):
+                self.assertEqual(_client._parse_retry_after(date, now=self.AT - 10), 10.0)
+                self.assertEqual(_client._parse_retry_after(date, now=self.AT - 3600), 60.0)
+                self.assertEqual(_client._parse_retry_after(date, now=self.AT + 10), 0.0)
+
+    def test_a_value_that_is_neither_falls_back_to_backoff(self) -> None:
+        for v in (None, "", "soon", "Infinity", "NaN", "-30", "Sun, 99 Foo 1994 08:49:37 GMT"):
+            with self.subTest(v=v):
+                self.assertIsNone(_client._parse_retry_after(v))
 
 
 class TransportTest(unittest.TestCase):
@@ -60,6 +101,13 @@ class TransportTest(unittest.TestCase):
         collect(self.server)
         self.assertEqual(self.server.requests[0]["path"], "/v1/ingest")
 
+    def test_url_ending_in_v1_traces_sends_to_v1_ingest(self) -> None:
+        # The OTLP address of the same server, as the TS SDK takes it.
+        start_sdk(self.server, url=self.server.url + "/v1/traces")
+        self._span()
+        collect(self.server)
+        self.assertEqual([r["path"] for r in self.server.requests], ["/v1/ingest"])
+
     def test_no_url_means_no_op(self) -> None:
         coding_sh.init(url=None, key=KEY)
         self.assertFalse(_trace.enabled())
@@ -93,6 +141,33 @@ class TransportTest(unittest.TestCase):
         t0 = time.monotonic()
         collect(self.server)
         self.assertGreaterEqual(time.monotonic() - t0, 0.9)
+
+    def _record_waits(self) -> _RecordedWaits:
+        rec = _RecordedWaits()
+        _trace._get()._halt = rec
+        return rec
+
+    def test_retry_after_seconds_and_dates_are_waited_up_to_60_s(self) -> None:
+        soon = email.utils.formatdate(time.time() + 30, usegmt=True)
+        later = email.utils.formatdate(time.time() + 3600, usegmt=True)
+        self.server.plan = [(503, {"Retry-After": "45"}, {}), (429, {"Retry-After": "120"}, {}), (503, {"Retry-After": soon}, {}), (503, {"Retry-After": later}, {})]
+        start_sdk(self.server)
+        rec = self._record_waits()
+        self._span()
+        self.assertEqual(len(collect(self.server)), 5)
+        self.assertEqual(len(self.server.requests), 5)
+        self.assertEqual(rec.waits[:2], [45.0, 60.0])
+        self.assertTrue(25.0 <= (rec.waits[2] or 0) <= 30.0, rec.waits)
+        self.assertEqual(rec.waits[3:], [60.0])
+
+    def test_retry_after_in_the_past_retries_at_once_and_one_that_cannot_be_read_backs_off(self) -> None:
+        self.server.plan = [(503, {"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}, {}), (503, {"Retry-After": "soon"}, {}), (503, {"Retry-After": "Infinity"}, {})]
+        start_sdk(self.server)
+        rec = self._record_waits()
+        self._span()
+        self.assertEqual(len(collect(self.server)), 5)
+        b = _client.Transport.backoff_base_s
+        self.assertEqual(rec.waits, [0.0, 2 * b, 4 * b])
 
     def test_gives_up_after_five_attempts(self) -> None:
         self.server.plan = [(500, {}, {})] * 5
@@ -185,6 +260,19 @@ class TransportTest(unittest.TestCase):
         self._span()
         self.assertFalse(coding_sh.flush(0.1))
         self.assertTrue(coding_sh.flush(5))
+
+    def test_bare_flush_waits_at_most_5_s(self) -> None:
+        # The quick start ends a script with a bare flush(). A server that is slow or
+        # down must not hold the script for the sender's whole retry schedule.
+        self.server.delay = 8.0
+        start_sdk(self.server)
+        self._span()
+        start = time.monotonic()
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            ok = coding_sh.flush()
+        self.assertFalse(ok)
+        self.assertLess(time.monotonic() - start, 7.0)
+        self.assertIn("flush() gave up after 5 s", "\n".join(logs.output))
 
     def test_env_configuration(self) -> None:
         import os
