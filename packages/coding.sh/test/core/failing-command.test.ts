@@ -93,10 +93,31 @@ describe("failureRecords on compound commands", () => {
         ["tool.end", { tool: "Bash", toolUseId: "2", ok: false, output: "Exit code 1\nsomething went wrong" }],
       ]),
     );
+    // The unclear one is keyed on its exit status: the output's text never makes an id.
     assert.deepEqual(recs.map((r) => [r.key, r.label]), [
       ["cmd:cargo build", "cargo build"],
-      ["compound:something went wrong", COMPOUND],
+      ["compound:exit 1", COMPOUND],
     ]);
+  });
+
+  it("keys a PowerShell launcher line on the program, never the launcher or a pipeline cmdlet", () => {
+    const recs = failureRecords(
+      session("a", [
+        ["tool.start", { tool: "Bash", toolUseId: "1", input: { command: 'powershell -NoProfile -Command "npm test | Select-Object -Last 20"' } }],
+        ["tool.end", { tool: "Bash", toolUseId: "1", ok: false, output: "Exit code 1\n# tests 4\n# fail 2" }],
+      ]),
+    );
+    assert.deepEqual(recs.map((r) => r.key), ["cmd:npm test"]);
+  });
+
+  it("parses a PowerShell tool's command as PowerShell: `Get-ChildItem x | Out-String` is keyed on Get-ChildItem", () => {
+    const recs = failureRecords(
+      session("a", [
+        ["tool.start", { tool: "PowerShell", toolUseId: "1", input: { command: "Get-ChildItem x | Out-String" } }],
+        ["tool.end", { tool: "PowerShell", toolUseId: "1", ok: false, output: "Get-ChildItem : Cannot find path 'C:\\work\\demo\\x' because it does not exist.\nAt line:1 char:1" }],
+      ]),
+    );
+    assert.deepEqual(recs.map((r) => [r.key, r.sample]), [["cmd:Get-ChildItem", "Get-ChildItem : Cannot find path 'C:\\work\\demo\\x' because it does not exist."]]);
   });
 
   it("files a Codex code-mode failure once, under the inner command, never under the exec wrapper's script", () => {
@@ -180,5 +201,34 @@ describe("the sample under a failing part's heading", () => {
     const same = [a, c].map((ev) => buildSession(ev));
     const both = rankIssues(same, new Map([[same[0]!.id, recs[0]!], [same[1]!.id, failureRecords(c)]])).find((i) => i.id === "fails:cmd:which")!;
     assert.equal(both.title, "`which` fails the same way in several sessions");
+  });
+});
+
+describe("PowerShell", () => {
+  const parts = (cmd: string, shell?: "powershell") => shellParts(cmd, shell).map((p) => [p.prog, p.last]);
+
+  it("splits statements on ; and pipelines on |, and drops the launcher", () => {
+    assert.deepEqual(parts('powershell -NoProfile -Command "npm test | Select-Object -Last 20"'), [["npm", true], ["Select-Object", false]]);
+    assert.deepEqual(parts("Set-Location C:\\work\\demo; npm run build; git status", "powershell"), [["Set-Location", true], ["npm", true], ["git", true]]);
+    // An assignment runs what it assigns; a value statement (`$out`, a script block's `$_`) runs nothing.
+    assert.deepEqual(parts("$out = dotnet build 2>&1; $out | Out-String", "powershell").map(([p]) => p), ["dotnet", "Out-String"]);
+    assert.deepEqual(parts("rg -n x src | ForEach-Object { $_ }", "powershell"), [["rg", true], ["ForEach-Object", false]]);
+  });
+
+  it("applies PowerShell quoting: single quotes are literal, the backtick escapes", () => {
+    assert.deepEqual(parts("Write-Output 'a; b | c'; git log", "powershell").map(([p]) => p), ["Write-Output", "git"]);
+    assert.deepEqual(parts('Write-Output "a`"; b"; git log', "powershell").map(([p]) => p), ["Write-Output", "git"]);
+    assert.deepEqual(parts("Write-Output 'it''s; done'; npm test", "powershell").map(([p]) => p), ["Write-Output", "npm"]);
+    // Without PowerShell rules the backtick and the doubled quote would split these lines in the wrong place.
+    assert.deepEqual(parts("echo `| x; npm test", "powershell").map(([p]) => p), ["echo", "npm"]);
+  });
+
+  it("never files a failure under the launcher or a pipeline cmdlet", () => {
+    const ps = (cmd: string, output: string) => failingPart(cmd, { output, shell: "powershell" })?.prog;
+    assert.equal(failingPart('powershell -NoProfile -Command "npm test | Select-Object -Last 20"', { output: "Exit code 1\n# fail 2" })?.prog, "npm");
+    assert.equal(ps("Get-ChildItem x | Out-String", "Get-ChildItem : Cannot find path 'C:\\work\\demo\\x' because it does not exist."), "Get-ChildItem");
+    assert.equal(ps("Get-ChildItem x | Out-String", "Cannot find path 'C:\\work\\demo\\x' because it does not exist."), "Get-ChildItem");
+    for (const cmdlet of ["Where-Object { $_ }", "ForEach-Object { $_ }", "Sort-Object", "Select-Object -First 1"]) assert.equal(ps(`rg -n x src | ${cmdlet}`, "Exit code 1"), "rg");
+    assert.equal(ps("foo-tool --x | Select-Object -First 3", "foo-tool : The term 'foo-tool' is not recognized as the name of a cmdlet"), "foo-tool");
   });
 });

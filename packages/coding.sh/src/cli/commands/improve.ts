@@ -13,7 +13,7 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
-import { abCommand, findChanges, findIssues, isHeadless, modelProvider, NEEDS_MODEL, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
+import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, shellQuote, str, withContext } from "../common.ts";
@@ -57,11 +57,12 @@ const repoName = (repo: string) => repo.split(/[\\/]/).filter(Boolean).pop() || 
 // From a worktree, the repo it belongs to.
 const where = (o: Opts) => (o.repo ? repoName(o.place?.repo ?? o.repo) : "every repo");
 
-/** scopeSessions, where a repo with worktrees counts the sessions of all of them (matchesPlace). */
-async function sessionsOf(index: Context["index"], o: Opts, scope: ImproveScope): Promise<Session[]> {
-  if (!o.place) return scopeSessions(index, scope);
+/** readScope, where a repo with worktrees counts the sessions of all of them (matchesPlace). */
+async function sessionsOf(index: Context["index"], o: Opts, scope: ImproveScope): Promise<ReadScope> {
+  if (!o.place) return readScope(index, scope);
   const { repo: _repo, ...wide } = scope;
-  return (await scopeSessions(index, wide)).filter((s) => matchesPlace(s, o.place!));
+  const place = o.place;
+  return readScope(index, wide, { match: (s: Session) => matchesPlace(s, place) });
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -148,18 +149,17 @@ async function report(c: CommandContext): Promise<number> {
   const o = await options(c, "14d", 5);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}), headless: true };
-    const all = await sessionsOf(ctx.index, o, scope);
-    const sessions = o.headless ? all : all.filter((s) => !isHeadless(s));
-    const headlessLeftOut = all.length - sessions.length;
+    const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless };
+    const { sessions, notRead, headlessLeftOut } = await sessionsOf(ctx.index, o, scope);
+    const children = sessions.filter((s) => s.parent).length;
     const testCommand = await testCommandOf(o.root);
     const issues = await findIssues(ctx.index, sessions, { ...(o.root ? { repoRoot: o.root } : {}), ...(testCommand ? { testCommand } : {}) });
-    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) }) : [];
+    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     if (out.json) {
       out.data({
-        scope: { repo: o.place?.repo ?? o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, ...(headlessLeftOut ? { headlessLeftOut } : {}) },
+        scope: { repo: o.place?.repo ?? o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, subagents: children || undefined, notRead: notRead || undefined, headlessLeftOut: headlessLeftOut || undefined },
         issues: top.map((i, k) => issueJson(i, k + 1, provider)),
         more: Math.max(0, issues.length - top.length),
         changes: changes.map(changeJson),
@@ -177,9 +177,10 @@ async function report(c: CommandContext): Promise<number> {
     }
     const byAgent = new Map<string, number>();
     for (const s of sessions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
-    out.print(`${plural(sessions.length, "session")} in ${where(o)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})${leftOut}`);
+    out.print(`${plural(sessions.length, "session")} in ${where(o)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")}${children ? `; ${children} of them subagents or delegates` : ""})${leftOut}`);
+    if (notRead) out.print(out.style(notReadLine(sessions.length, notRead), "yellow"));
     out.print("");
-    if (!top.length) out.print("Nothing to fix: no failure flags, no command failing the same way in two sessions, and no costly cache breaks.");
+    if (!top.length) out.print("Nothing to fix: no failure flags, no command or tool failing in two sessions, and no costly cache breaks.");
     else out.print(out.style("Fix first", "bold"));
     top.forEach((i, k) => {
       const n = k + 1;
@@ -225,7 +226,7 @@ async function fix(c: CommandContext): Promise<number> {
   const root = o.root;
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
-    const sessions = await sessionsOf(ctx.index, o, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
+    const { sessions } = await sessionsOf(ctx.index, o, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless });
     const testCommand = await testCommandOf(root);
     const issues = await findIssues(ctx.index, sessions, { repoRoot: root, ...(testCommand ? { testCommand } : {}) });
     const n = /^\d+$/.test(ref) ? Number(ref) : issues.findIndex((i) => i.id === ref) + 1;
@@ -306,7 +307,7 @@ async function check(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
-      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) }), backlog };
+      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }), backlog };
     };
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");

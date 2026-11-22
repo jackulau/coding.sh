@@ -5,10 +5,13 @@
 // findings (src/refine/severity.ts), so the order never depends on a model:
 //
 //   flags     every diagnosed failure flag (src/refine/findings.ts)
-//   failures  one command or tool failing the same way in two or more
+//   failures  one command or tool failing in two or more
 //             sessions: a broken `npm test`, a missing script, an Edit that
 //             never matches. A compound line counts against the part that
-//             failed (core/failing-command.ts). A test command that already failed before the
+//             failed (core/failing-command.ts; PowerShell read as
+//             PowerShell). A tool or a compound line no part of which is
+//             singled out is keyed on its error class, never on the
+//             output's text (errorClass). A test command that already failed before the
 //             agent changed anything is a defect of the setup (factor 40);
 //             any other repeat is waste (25, or 40 from 6 failures up).
 //   cost      prompt-cache breaks (Session.stats.cacheBreaks): the extra
@@ -22,7 +25,7 @@ import { commandOf } from "../core/sessions.ts";
 import { flagFindings } from "../refine/findings.ts";
 import { natureScore, signalSeverity, type SeverityLevel } from "../refine/severity.ts";
 import { extractTestCommand } from "../eval/task.ts";
-import { exitCodeOf, failingPart, isPlumbing, partOutput } from "../core/failing-command.ts";
+import { exitCodeOf, failingPart, isPlumbing, isPowerShellTool, partOutput, shellParts, type Shell, type ShellPart } from "../core/failing-command.ts";
 
 /** The decision-point kinds `exp ab --behavior` replays (src/eval/decision.ts). */
 export type Behavior = "unverified-claim" | "done-while-failing" | "unchanged-retry";
@@ -80,7 +83,7 @@ export interface CacheCause {
 
 /** One failed command or tool call in a session. */
 export interface FailureRecord {
-  /** Grouping key: the failing part's head (`cmd:npm test`), a compound command and its error (`compound:…`), or the tool and its error. */
+  /** Grouping key: the failing part's head (`cmd:npm test`), a compound command and its error class (`compound:not found`), or the tool and its error class (`tool:Edit:no match`). Never output text. */
   key: string;
   /** What to show: the command or tool. */
   label: string;
@@ -215,6 +218,37 @@ const outputText = (e: AgentEvent): string | undefined => {
   return undefined;
 };
 
+/** Fixed error classes, most specific first: what an issue id may say about an error. */
+const ERROR_CLASSES: readonly (readonly [RegExp, string])[] = [
+  [/command not found|is not recognized as (?:the name of a cmdlet|an internal or external command)|CommandNotFoundException|^\S+: not found$/im, "command not found"],
+  [/ERR_MODULE_NOT_FOUND|Cannot find module|ModuleNotFoundError|No module named/i, "module not found"],
+  [/missing script/i, "missing script"],
+  [/string to replace not found|old_string (?:was )?not found|found \d+ matches of the string|no match/i, "no match"],
+  [/has not been read|read it first|must read the file/i, "not read"],
+  [/modified since (?:it was )?(?:last )?read|has been modified since/i, "file changed"],
+  [/EACCES|EPERM|permission denied|access (?:to the path .* )?is denied|UnauthorizedAccess/i, "permission denied"],
+  [/ENOENT|no such file or directory|cannot find path|does not exist|ItemNotFoundException|PathNotFound|file not found/i, "not found"],
+  [/ETIMEDOUT|timed out|\btimeout\b/i, "timeout"],
+  [/ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|could not resolve host|getaddrinfo/i, "network"],
+  [/SyntaxError|syntax error|ParserError|unexpected token|unexpected EOF while looking for matching/i, "syntax error"],
+];
+
+/**
+ * The class of an error: a fixed name (`not found`, `no match`), a compiler
+ * code (`TS2307`), or the error's type name (`TypeError`). Undefined when the
+ * output shows none. Ids are built from this, never from the output's text.
+ */
+export function errorClass(raw: string | undefined): string | undefined {
+  const text = withoutExitLine(raw) ?? "";
+  for (const [re, name] of ERROR_CLASSES) if (re.test(text)) return name;
+  const code = /\berror (TS\d{4,5})\b/.exec(text)?.[1] ?? /\berror\[(E\d{4})\]/.exec(text)?.[1] ?? /\b(ERR_[A-Z0-9_]{3,40})\b/.exec(text)?.[1];
+  if (code) return code;
+  return /\b([A-Z][A-Za-z]{0,30}(?:Error|Exception))\b/.exec(text)?.[1];
+}
+
+/** A PowerShell part's words, its program by base name (`Get-ChildItem x`); a POSIX part's words as written. */
+const partText = (p: ShellPart): string => (p.ps && p.prog ? [p.prog, ...p.argv.slice(1)] : p.argv).join(" ");
+
 /** What improve calls a failed shell line whose failing part the evidence doesn't single out. */
 export const COMPOUND = "compound command";
 
@@ -231,11 +265,22 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
   let edited = false;
   let lastCmd: { cmd: string; id?: string; output?: string } | undefined;
   // A test command in `cmd` that the failing part is, with the cd prefix extractTestCommand keeps.
-  const testLabel = (cmd: string, part: string): string | undefined => {
-    const t = extractTestCommand(part, repoRoot);
-    if (!t) return undefined;
+  // A PowerShell part is read on its own: extractTestCommand reads POSIX lines.
+  const testLabel = (cmd: string, part: ShellPart): string | undefined => {
+    const t = extractTestCommand(partText(part), repoRoot);
+    if (!t || part.ps) return t;
     const full = extractTestCommand(cmd, repoRoot);
     return full?.endsWith(t) ? full : t;
+  };
+  // The test command `cmd` runs: for a PowerShell line, the first part that is one.
+  const testOf = (cmd: string, shell: Shell): string | undefined => {
+    const parts = shellParts(cmd, shell);
+    if (!parts.some((p) => p.ps)) return extractTestCommand(cmd, repoRoot);
+    for (const p of parts) {
+      const t = isPlumbing(p.prog) ? undefined : extractTestCommand(partText(p), repoRoot);
+      if (t) return t;
+    }
+    return undefined;
   };
   const sampleOf = (text: string | undefined) => {
     const l = firstErrorLine(text);
@@ -273,17 +318,24 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
       if (cmd) lastCmd = { cmd, ...(id ? { id } : {}), ...(text ? { output: text } : {}) };
       if (p.ok !== false) continue;
       if (cmd) {
+        // A PowerShell tool runs PowerShell; a shell tool may launch it (`powershell -Command …`), which shellParts sees.
+        const shell: Shell = isPowerShellTool(tool) ? "powershell" : "sh";
+        const exit = exitCodeOf(p.exitCode, text);
         // A test command whose run reported failures failed; otherwise find the part that did.
-        const tests = id && failedTests.has(id) ? extractTestCommand(cmd, repoRoot) : undefined;
-        const part = tests ? undefined : failingPart(cmd, { output: text ?? "", ...(exitCodeOf(p.exitCode, text) !== undefined ? { exitCode: exitCodeOf(p.exitCode, text)! } : {}) });
-        const partText = part?.argv.join(" ");
-        const label = tests ?? (partText ? (testLabel(cmd, partText) ?? commandHead(partText)) : undefined);
+        const tests = id && failedTests.has(id) ? testOf(cmd, shell) : undefined;
+        const part = tests ? undefined : failingPart(cmd, { output: text ?? "", shell, ...(exit !== undefined ? { exitCode: exit } : {}) });
+        const label = tests ?? (part ? (testLabel(cmd, part) ?? commandHead(partText(part))) : undefined);
         // The sample is the failing part's own output: another part's error is not this one's.
-        if (label) out.push({ key: `cmd:${label}`, label, ...sampleOf(part ? partOutput(cmd, part, text) : text), tests: false, beforeEdits: !edited });
-        else out.push({ key: `compound:${errorKey(text)}`, label: COMPOUND, ...sampleOf(text), tests: false, beforeEdits: !edited });
+        if (label) out.push({ key: `cmd:${label}`, label, ...sampleOf(part ? partOutput(cmd, part, text, shell) : text), tests: false, beforeEdits: !edited });
+        else {
+          // No part singled out: keyed on the error's class, or the exit status, never on the output's text.
+          const cls = errorClass(text);
+          const key = cls ? `compound:${cls}` : exit !== undefined ? `compound:exit ${exit}` : "compound";
+          out.push({ key, label: COMPOUND, ...sampleOf(text), tests: false, beforeEdits: !edited });
+        }
       } else {
-        const k = errorKey(text);
-        out.push({ key: `tool:${tool}:${k}`, label: tool, ...sampleOf(text), tests: false, beforeEdits: !edited });
+        const cls = errorClass(text);
+        out.push({ key: cls ? `tool:${tool}:${cls}` : `tool:${tool}`, label: tool, ...sampleOf(text), tests: false, beforeEdits: !edited });
       }
       continue;
     }
@@ -291,10 +343,13 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
       const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
       const started = id ? commandOf(starts.get(id)?.payload.input) : undefined;
       const src = started ?? lastCmd?.cmd;
+      const startTool = id ? starts.get(id)?.payload.tool : undefined;
+      const shell: Shell = isPowerShellTool(typeof startTool === "string" ? startTool : undefined) ? "powershell" : "sh";
       const output = !id || lastCmd?.id === id ? lastCmd?.output : undefined;
-      const part = src && !extractTestCommand(src, repoRoot) ? failingPart(src, { output: output ?? "" }) : undefined;
+      const test = src ? testOf(src, shell) : undefined;
+      const part = src && !test ? failingPart(src, { output: output ?? "", shell }) : undefined;
       // A test summary in what plumbing printed (`cat test.log`, `sleep 60 && tail out.log`) is not a test run.
-      const label = src ? (extractTestCommand(src, repoRoot) ?? (part && !isPlumbing(part.prog) ? commandHead(part.argv.join(" ")) : undefined)) : undefined;
+      const label = test ?? (part && !isPlumbing(part.prog) ? commandHead(partText(part)) : undefined);
       if (!label) continue;
       // A failing test run that the tool call already reported as an error is one failure, not two.
       const key = `cmd:${label}`;
@@ -303,7 +358,7 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
         prev.tests = true;
         continue;
       }
-      out.push({ key, label, ...sampleOf(src && part ? partOutput(src, part, output) : output), tests: true, beforeEdits: !edited });
+      out.push({ key, label, ...sampleOf(src && part ? partOutput(src, part, output, shell) : output), tests: true, beforeEdits: !edited });
     }
   }
   return out;
