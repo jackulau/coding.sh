@@ -30,6 +30,9 @@ statistics. Zero runtime dependencies. Node 22.16 or newer.
 npx coding.sh      # try it: finds your agents, shows one plan, asks once (Y/n)
 ```
 
+On Windows, run `npx -p coding.sh codingsh` where this page says `npx coding.sh`. In PowerShell and
+cmd, type `codingsh` for an installed `coding.sh`.
+
 Run `npx coding.sh` again to open the viewer. To keep it, install it globally:
 
 ```sh
