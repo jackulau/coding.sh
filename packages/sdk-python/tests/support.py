@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import atexit
 import gzip
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -20,8 +22,11 @@ SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-# Tests never see a real home or a real coding.sh config.
+# Tests never see a real home or a real coding.sh config. The temp home is removed when the run
+# ends, also when a test fails: unittest exits through SystemExit, which runs atexit. Registered
+# before the SDK is imported, so it runs after the SDK's own atexit flush.
 _tmp_home = tempfile.mkdtemp(prefix="coding-sh-py-test-")
+atexit.register(shutil.rmtree, _tmp_home, ignore_errors=True)
 os.environ["HOME"] = _tmp_home
 os.environ["CODING_SH_HOME"] = os.path.join(_tmp_home, ".coding.sh")
 for _k in ("CODING_SH_URL", "CODING_SH_INGEST_KEY", "CODING_SH_SERVICE", "CODING_SH_DISABLED", "CODING_SH_CAPTURE_MODE", "OTEL_SERVICE_NAME"):

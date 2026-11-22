@@ -468,7 +468,7 @@ export function pyOptionDefaults(params: string[]): Map<string, OptionInfo> {
 
 /** Env vars the SDK core reads (config.ts, _client.py). The generator fails on one missing here. */
 const ENV: { name: string; desc: string }[] = [
-  { name: "CODING_SH_URL", desc: "Base URL of your coding.sh server, e.g. `http://127.0.0.1:4318`. Unset: the SDK does nothing." },
+  { name: "CODING_SH_URL", desc: "Base URL of your coding.sh server, e.g. `http://127.0.0.1:4318`. A URL that ends in `/v1/ingest` or `/v1/traces` works too: the SDK drops that ending. Unset: the SDK does nothing." },
   { name: "CODING_SH_INGEST_KEY", desc: "Ingest key (`csh_ik_...`), sent as a Bearer token. The key decides the project. Optional on a loopback server with no keys." },
   { name: "CODING_SH_SERVICE", desc: "Service name. The server turns it into the session's agent id, e.g. `support-agent`." },
   { name: "OTEL_SERVICE_NAME", desc: "Used as the service name when `CODING_SH_SERVICE` is unset." },
