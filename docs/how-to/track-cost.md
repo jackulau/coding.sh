@@ -249,9 +249,9 @@ Spend is the estimated cost of the sessions that started in the current period, 
 included: the same total as `coding.sh usage` over that window, filtered by the budget's agent and
 repo. A session counts in the period it started in.
 
-`budget status` shows spend, limit, percent and when the period resets; `--json` adds `over`. Setting the same period and scope again changes the
-limit. `budget list` and `budget rm <id>` manage them. They are kept in `budgets.json` in the data
-folder.
+`budget status` shows spend, limit, percent and next reset, or `-` and a warning for a budget it
+can't read (exit code 1). Setting the same period and scope again changes the limit. `budget list`
+and `budget rm <id>` manage `budgets.json` in the data folder.
 
 ### A budget for one user, model or project
 

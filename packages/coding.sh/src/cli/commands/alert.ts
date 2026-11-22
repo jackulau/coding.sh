@@ -9,7 +9,7 @@ import { paths } from "../../core/paths.ts";
 import { LockBusyError } from "../../core/lock.ts";
 import { type AlertResult, payloadOf, recordDelivery, runAlertChecks } from "../../alerts/check.ts";
 import { parseMeasure } from "../../alerts/measure.ts";
-import { deliver, type DeliverOptions, SIGNATURE_HEADER, targetText } from "../../alerts/notify.ts";
+import { deliver, type DeliverOptions, SIGNING_NOTES, targetText } from "../../alerts/notify.ts";
 import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
 import { UsageError } from "../args.ts";
 import { autoIngest, num, readIngest, str, whereFlag, withContext } from "../common.ts";
@@ -130,7 +130,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
   out.ok(`Added alert ${name}: ${measure} ${side} ${valueText(measure, over)}${warn !== undefined ? ` (warning ${side} ${valueText(measure, warn)})` : ""} in the last ${window}${by ? " per agent" : ""}, to ${targetText(notify)}`);
   if (def.secret) {
     out.print(`Signing secret (shown once): ${def.secret}`);
-    out.note(`Each POST carries ${SIGNATURE_HEADER}: sha256=<HMAC-SHA256 of the body, keyed with this secret>.`);
+    for (const n of SIGNING_NOTES) out.note(n);
   }
   out.next("Send a test notification", `coding.sh alert test ${name}`);
   return 0;

@@ -82,9 +82,22 @@ function validDef(d: unknown): d is MonitorDef {
   return false;
 }
 
-/** A definition without its secret: what list and add print. */
+/** An --http URL as list and errors show it: without its query string or fragment, which may hold a token. */
+export function shownUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return url.replace(/[?#][\s\S]*$/, "");
+  }
+}
+
+/** A definition as list and add print it: without its secret, and an --http URL without its query string. */
 export function publicMonitor(m: MonitorDef): MonitorDef {
   const { secret: _secret, ...rest } = m;
+  if (rest.url !== undefined) rest.url = shownUrl(rest.url);
   return rest;
 }
 
