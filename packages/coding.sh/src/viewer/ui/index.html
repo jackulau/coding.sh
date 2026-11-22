@@ -907,6 +907,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .kpi.fail b { color: var(--fail-ink); }
 .kpi.pass b { color: var(--pass-ink); }
 .alert { display: grid; gap: 0.25rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-sm); background: var(--fail-wash); color: var(--fail-ink); font-size: 13px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fail) 25%, transparent); overflow-wrap: anywhere; }
+/* A run error is the agent's stderr: its line breaks stay, as the CLI prints them. */
+.alert .run-error { white-space: pre-wrap; }
 .alert.warn { background: var(--warn-wash); color: var(--warn-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 25%, transparent); }
 .alert.note { background: none; color: var(--text-2); box-shadow: inset 2px 0 0 var(--warn); border-radius: 0; padding: 0.15rem 0 0.15rem 0.85rem; }
 .todo { list-style: none; margin: 0; padding: 0.5rem 0.75rem; display: grid; gap: 0.3rem; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--line); background: var(--surface); }
@@ -3565,6 +3567,18 @@ function withoutKeyClauses(s, key) {
   return s;
 }
 
+/**
+ * The count of a picked value the facet counts leave out: the list's own total when that value is
+ * the query's one clause on its key (a facet counts over the query without that key's clauses, so
+ * adding back the one clause gives the query). This is how a host app picked as agent:t3code reads
+ * the number of sessions it drove, while the Agent counts name the agent that ran. Else null.
+ */
+function pickedCount(terms, key, v, stats) {
+  if (typeof stats.sessions !== "number" || terms.some((t) => t.op === "OR")) return null;
+  const own = terms.filter((t) => t.key === key);
+  return own.length === 1 && !own[0].neg && own[0].op === ":" && own[0].values.length === 1 && own[0].values[0] === v ? stats.sessions : null;
+}
+
 function facetPanel(view) {
   const facets = list.facets || {};
   const terms = whereTerms(list.where);
@@ -3572,7 +3586,7 @@ function facetPanel(view) {
   const group = ([key, label, display]) => {
     const rows = (facets[key] || []).map((f) => [f.value, f.count]);
     // A picked value always stays listed, even when it is not among the top counts.
-    for (const t of terms) if (t.key === key && t.op === ":") for (const v of t.values) if (v && !v.includes("*") && !rows.some(([x]) => x === v)) rows.unshift([v, null]);
+    for (const t of terms) if (t.key === key && t.op === ":") for (const v of t.values) if (v && !v.includes("*") && !rows.some(([x]) => x === v)) rows.unshift([v, pickedCount(terms, key, v, s)]);
     if (rows.length === 0) return null;
     const collapsed = list.collapsed.has(key);
     const open = list.showAll.has(key);
@@ -4219,6 +4233,16 @@ function relPath(text) {
   if (!pathBase || typeof text !== "string") return text;
   return text.split(pathBase + "/").join("");
 }
+/** The text find searches in a tool call's result: its output and its error, as loaded (a row's output may be clipped). */
+function endText(end) {
+  const p = (end && end.payload) || {};
+  const str = (x) => typeof x === "string" ? x : x && typeof x === "object" ? (JSON.stringify(x) || "").slice(0, 4000) : "";
+  return str(p.output) + " " + str(p.error);
+}
+/** Find's text as one quoted query term: a phrase the event search matches word by word, never a key, a negation or a wildcard. */
+function findTextTerm(q) {
+  return '"' + String(q).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\*/g, "\\*") + '"';
+}
 function pickInput(input) {
   if (!input || typeof input !== "object") return typeof input === "string" ? input : "";
   for (const k of INPUT_KEYS) if (typeof input[k] === "string" && input[k]) return input[k];
@@ -4679,7 +4703,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
         edit: it.type === "file.change" || (it.type === "tool" && EDIT_TOOLS.has(tool)),
         test: it.type === "test.result",
         api: it.type === "llm.call",
-        text: (v.label + " " + (it.type === "tool" ? pickInput(((it.start || {}).payload || {}).input) : "")).toLowerCase(),
+        text: (v.label + " " + (it.type === "tool" ? pickInput(((it.start || {}).payload || {}).input) + " " + endText(it.end) : "")).toLowerCase(),
         turnId: ev && ev.turnId,
         prompt: prompts,
       };
@@ -4701,6 +4725,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const seen = new Set();
     for (const eid of queryIds) { const i = idxOf.get(byEvent.get(eid)); if (i !== undefined) seen.add(i); }
     queryIdx = [...seen].sort((a, b) => a - b);
+    if (findHits.ids.length) { const hit = new Set(); for (const eid of findHits.ids) { const i = idxOf.get(byEvent.get(eid)); if (i !== undefined) hit.add(i); } findHits.idx = hit; }
   }
   function markOutline() {
     const idxOf = new Map(items.map((it, i) => [it, i]));
@@ -4747,6 +4772,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   let findQ = "";
   let matchOnly = false;
   let matches = [];
+  // The steps that match find, for each row's highlight (null without a find).
+  let matchOf = null;
+  // Find's matches the server's event search adds (text a row has not loaded: a long output, a tool's full input): item indexes, for find text q.
+  let findHits = { q: "", ids: [], idx: new Set() };
   ROW = rowHeight();
   // rows: item index (>= 0) or a fold object { key, from, to }.
   let rows = [];
@@ -4756,8 +4785,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const out = [];
     const q = findQ;
     matches = [];
-    if (q) for (let i = 0; i < items.length; i++) if (meta[i].text.includes(q)) matches.push(i);
+    const hits = q && findHits.q === q ? findHits.idx : null;
+    if (q) for (let i = 0; i < items.length; i++) if (meta[i].text.includes(q) || (hits && hits.has(i))) matches.push(i);
     const matchSet = q ? new Set(matches) : null;
+    matchOf = matchSet;
     if (q && matchOnly) {
       for (const i of matches) out.push(i);
     } else if (q || foldsOff) {
@@ -4949,7 +4980,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const v = m.v;
     const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "") + (m.nested ? " nested" : "") + (v.childFailed ? " child-fail" : "")
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
-      + (findQ && m.text.includes(findQ) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
+      + (matchOf && matchOf.has(x) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
     const chip = m.phase || m.day ? h("span", { class: "phase-chip", title: m.phase ? "Phase " + m.phase.n + ": " + m.phase.label : "" },
       [m.day ? new Date(m.day.ts).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "", m.phase ? m.phase.label : ""].filter(Boolean).join(" · ")) : null;
     const flag = m.derail ? h("span", { class: "derail-flag", title: m.derail.map((d) => d.flag + ": " + d.detail).join("\n") }, "⚑ " + m.derail.map((d) => d.flag).join(", ")) : null;
@@ -5301,8 +5332,32 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       rebuildRows();
       if (findQ && matches.length) selectItem(matches.find((i) => i >= activeItem) ?? matches[0], true);
       announce(findQ ? plural(matches.length, "matching step") : "Find cleared");
+      if (findQ) searchSteps(findQ);
     }, 120);
   });
+  /** Item indexes of the events with these ids. */
+  function itemsOf(ids) {
+    const idxOf = new Map(items.map((it, i) => [it, i]));
+    const out = new Set();
+    for (const eid of ids) { const i = idxOf.get(byEvent.get(eid)); if (i !== undefined) out.add(i); }
+    return out;
+  }
+  // The rows carry a tool's output clipped, so find also asks the event search (/api/events, as the
+  // Events tab does) for this session's events whose text holds q: prompts, replies, tool calls and errors.
+  let findSeq = 0;
+  function searchSteps(q) {
+    const n = ++findSeq;
+    const where = addClause(findTextTerm(q), "id:" + quoteValue(session.id));
+    api("/api/events" + qs({ where, limit: 200 }), null, true).then((b) => {
+      if (!current(seq) || n !== findSeq || findQ !== q) return;
+      const ids = (b.items || []).map((e) => e.id);
+      findHits = { q, ids, idx: itemsOf(ids) };
+      const before = matches.length;
+      rebuildRows();
+      if (!before && matches.length) selectItem(matches.find((i) => i >= activeItem) ?? matches[0], true);
+      if (matches.length !== before) announce(plural(matches.length, "matching step"));
+    }, () => { /* a query the search can't run (symbols only), or a store without an event index: the loaded text still matches */ });
+  }
   findInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); jumpMatch(e.shiftKey ? -1 : 1); }
     else if (e.key === "Escape") { e.preventDefault(); if (findInput.value) { findInput.value = ""; findInput.dispatchEvent(new Event("input")); } else tl.focus(); }
@@ -9518,15 +9573,20 @@ function loadIngest() {
         ingestState.index = st.index && typeof st.index.text === "string" ? st.index : null;
         for (const el of document.querySelectorAll(".index-age.live")) indexAgeEl(el);
         // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
-        const on = (!!st.ingesting && n >= 20) || ingestState.importing;
+        // After an upgrade the background ingest folds the stored sessions again: until it is done, some show the older build's stats.
+        const refold = st.refolding === true;
+        const on = (!!st.ingesting && n >= 20) || ingestState.importing || refold;
         if (on && ingestState.importing) {
           swap(pill, h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Importing past sessions…"));
           pill.title = "Past sessions are being imported in the background. The list shows what is imported so far.";
+        } else if (on && !(st.ingesting && n >= 20)) {
+          swap(pill, h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Rebuilding stats…"));
+          pill.title = "coding.sh is folding your sessions again after an upgrade. Sessions it has not reached yet show the stats and flags of the older version.";
         } else if (on) {
           swap(pill, h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Indexing " + fmtNum(n) + (n === 1 ? " file…" : " files…")));
           pill.title = "Captured sessions are being indexed in the background. The list shows what is indexed so far.";
         }
-        if (on !== was) announce(on ? "Indexing captured sessions" : "Indexing done");
+        if (on !== was) announce(on ? (refold && !ingestState.importing && !(st.ingesting && n >= 20) ? "Rebuilding session stats" : "Indexing captured sessions") : "Indexing done");
         pill.hidden = !on;
         was = on;
       }

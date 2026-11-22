@@ -425,7 +425,7 @@ drift as the file changes.
 | quiet folding | Six or more successful reads, searches and model calls in a row inside one turn keep their first two steps and the last; the rest fold into one row with per-tool counts. Edits and failures end a run. `z` turns folding off and on, saved as `csh-fold`. | index.html:3821, 4297–4335, 4818 |
 | failures | `]` and `[` move between failing steps and wrap at the ends. `F` and the "First failure" button go to the first one. A session with a failure opens on its first failure; one without opens on its first prompt. | index.html:4099, 4342, 4761–4776 |
 | minimap | A strip beside the list marks each turn start, failure and derail; a click jumps there. It is hidden when every row fits. | index.html:4558–4592 |
-| find | `/` matches loaded steps by label and tool input; `n` and `N` move between matches, and "Only matches" hides the rest. | index.html:4297–4301, 4827–4841 |
+| find | `/` matches loaded steps by label, tool input, output and error, and asks `/api/events` for this session's steps whose full output matches (the newest 200); `n` and `N` move between matches, and "Only matches" hides the rest. | index.html:4297–4301, 4827–4841 |
 | deep links | `#/s/<id>/<event>` selects a step and opens any fold around it. `?view=chat` or `?view=steps` picks the view, `?where=` makes `n` and `N` step through the query's matches (the newest 200), and `?step=` opens replay. | index.html:2129–2149, 2673, 4635–4645 |
 | timing bars | `w` shows a bar per step on its own turn's time scale. | index.html:4497–4507, 4811 |
 | Chat view | `v` shows every prompt and reply in full (up to 400 lines each), with one button per turn that goes back to its steps. There `}` and `{` move between prompts and `j` and `k` between messages. | index.html:4682–4760 |
@@ -452,7 +452,7 @@ events API still pages by offset (viewer/server.ts:682–689), and MCP still nam
 - Compaction divider. `context.compact` is an ordinary muted "Context compacted" step (index.html:4042), not a
   full-width divider with tokens before and after.
 - Context-fill track per turn. Not built.
-- Whole-session find. Find covers loaded steps only; nothing searches the server.
+- Whole-session find. Find covers loaded steps, plus the steps the server's event search matches in this session (at most 200).
 - Judge scores on a step. Not shown. The pass and fail labels (`p`, `f`) are on the session. Comments (text scores
   named `comment`) show on the session and under each step.
 - Column chooser in the session list. Not built. Saved views are: Views and Save view beside the list's title.
