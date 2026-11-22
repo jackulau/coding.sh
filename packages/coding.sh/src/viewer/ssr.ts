@@ -73,16 +73,23 @@ function fmtDuration(ms: number): string {
   if (tenths < 100) return (tenths / 10).toFixed(1) + "s";
   const s = Math.round(ms / 1000);
   if (s < 60) return s + "s";
-  const m = Math.floor(s / 60);
-  if (m < 60) return m + "m " + (s % 60) + "s";
-  const hr = Math.floor(m / 60);
-  if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
-  return hr + "h " + (m % 60) + "m";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  // Past an hour the whole value rounds to the minute first, past a day to the hour, so a carry moves up a unit (as cli/output.ts duration()).
+  const m = Math.round(ms / 60e3);
+  if (m < 1440) return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  const hr = Math.round(ms / 3600e3);
+  return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
 }
 function midClip(s: string, n: number): string {
   if (s.length <= n) return s;
   const tail = Math.ceil((n - 1) * 0.4);
   return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
+}
+/** The names of the host apps that drive agents (Session.host), as viaHost() in ui/index.html has them. */
+const HOST_NAMES: Record<string, string | undefined> = { t3code: "T3 Code" };
+/** " via T3 Code" for a session a host app drove (Session.host), else "". */
+function viaHost(s: Session): string {
+  return s.host ? " via " + (HOST_NAMES[s.host] || s.host) : "";
 }
 /** The repo column's text: the last path segment of the repo's main checkout (a worktree's too), else its root, else the working directory. */
 function repoLabel(s: Session): string {
@@ -154,10 +161,12 @@ function badges(s: Session & { childCount?: number }): string {
   if (kids) out.push(`<span class="sub-toggle"><span class="caret" aria-hidden="true">▸</span>${esc(plural(kids, "subagent"))}</span>`);
   const st = s.stats;
   if (st.testsFailed !== undefined || st.testsPassed !== undefined) {
+    // The last test run, counted in tests so it does not read as failed tool calls (testsBadge in ui/index.html).
+    const title = esc("Last test run: " + fmtNum(st.testsPassed ?? 0) + " passed, " + fmtNum(st.testsFailed ?? 0) + " failed");
     out.push(
       (st.testsFailed ?? 0) > 0
-        ? `<span class="badge fail" title="${esc(fmtNum(st.testsPassed ?? 0) + " passed")}">${esc("✕ " + fmtNum(st.testsFailed!) + " failed")}</span>`
-        : `<span class="badge pass">${esc("✓ " + fmtNum(st.testsPassed ?? 0) + " passed")}</span>`,
+        ? `<span class="badge fail" title="${title}">${esc("✕ " + plural(st.testsFailed!, "test") + " failed")}</span>`
+        : `<span class="badge pass" title="${title}">${esc("✓ " + plural(st.testsPassed ?? 0, "test") + " passed")}</span>`,
     );
   }
   const fr = failedRequests(s);
@@ -176,6 +185,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
   const rows = items.map((s) => {
     const title = oneLine(s.title) || "Untitled session";
     const agent = s.parent?.type ?? s.agent;
+    const host = viaHost(s);
     const repo = repoLabel(s);
     const u = s.stats.usage;
     const tokens = u ? (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0) : 0;
@@ -189,7 +199,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
       `<span class="dot ${tone ? "tone-" + tone : act.failed || fr ? "tone-fail ring" : "tone-muted"}" aria-hidden="true"></span>`,
       `<div class="row-main"><span class="row-title truncate" title="${esc(title)}">${esc(title)}</span>${badges(s)}</div>`,
       `<div class="row-cells">`,
-      `<span class="cell agent-cell"><span>${esc(agent)}</span>${s.model ? `<span class="sub"> ${esc(midClip(s.model, 22))}</span>` : ""}</span>`,
+      `<span class="cell agent-cell" title="${esc([s.agent + host, s.model].filter(Boolean).join(" · "))}"><span>${esc(agent)}${host ? `<span class="host">${esc(host)}</span>` : ""}</span>${s.model ? `<span class="sub"> ${esc(midClip(s.model, 22))}</span>` : ""}</span>`,
       `<span class="cell muted repo-cell${repo ? "" : " is-none"}"${dir ? ` title="${esc(dir)}"` : ""}>${esc(repo || "—")}</span>`,
       `<span class="cell act-cell">${esc(act.text)}${act.failed ? `<span class="err"><span class="sep"> · </span>${esc(act.failed)}</span>` : ""}</span>`,
       `<span class="cell num muted tok-cell">${tokens ? esc(fmtCompact(tokens) + " tok") : ""}</span>`,

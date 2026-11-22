@@ -264,6 +264,15 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+A model call's time to first token (`ttftMs`) comes from the first of these on its span:
+
+- `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.
+- `gen_ai.response.time_to_first_chunk`, then `gen_ai.server.time_to_first_token`, in seconds.
+  Strands Agents' Python tracer (scope `strands.telemetry.tracer`) sends the second in
+  milliseconds, and it is read as milliseconds.
+- A span event named for the first chunk or token, such as `ai.stream.firstChunk`: one of the
+  millisecond attributes above on the event, else the event's time less the span's start.
+
 ```sh
 curl -sS -X POST "$CSH/v1/traces" \
   -H "Authorization: Bearer $INGEST_KEY" \
@@ -1901,9 +1910,11 @@ to 500 or a malformed `framework` gets 400.
 
 One run, as `coding.sh workflows show <run> --json` prints it: `run` (the list fields plus `stats`
 and, when set, `concurrencyCap`) and `nodes` (every node but subagent, tool and LLM nodes, as
-`show` without `--tree`). `/api/workflows/{id}/gantt` answers the timeline `workflows show --gantt
---json` prints: `phases` with one row per node (`start`, `end`, `status`, `critical`), and
-`concurrency` over time.
+`show` without `--tree`). The CLI's `run` also has `output`, what the run returned; this endpoint
+leaves it out.
+
+`/api/workflows/{id}/gantt` answers the timeline `workflows show --gantt --json` prints: `phases`
+with one row per node (`start`, `end`, `status`, `critical`), and `concurrency` over time.
 
 ```sh
 curl -sS "$CSH/api/workflows/wf_45d472ff-246/gantt" -H "Authorization: Bearer $READ_KEY"

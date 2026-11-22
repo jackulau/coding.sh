@@ -14,6 +14,7 @@ import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/ca
 import type { CacheBreakCause, CacheIdleKind, CostByTokenType } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
+import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, agentsWithoutSessions, autoIngest, rejectAgentTypos, emptyStateNext, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
 import { Output, bytes, duration, plural, usd } from "../output.ts";
@@ -133,11 +134,17 @@ export async function run(c: CommandContext): Promise<number> {
   const since = sinceWhen.ms;
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
   const agents = agentsFlag(c);
-  const { agent, where } = agentScope(agents, whereFlag(c));
+  const userWhere = whereFlag(c);
+  const { agent, where } = agentScope(agents, userWhere);
   // --repo reads a path or a repo name as sessions --repo and a repo budget do.
   const repo = str(c.flags.repo);
   if (repo !== undefined && !repo.trim()) throw new UsageError("--repo needs a path or a repo name", { reason: "invalid_argument" });
   const place = repo !== undefined ? parsePlace(repo, c.cwd, userHome(c.env)) : undefined;
+  // Nothing matched: an --agent or flag: value typed wrong is named, as `sessions` does.
+  const rejectTypos = async (index: Parameters<typeof rejectAgentTypos>[0]) => {
+    await rejectAgentTypos(index, agents);
+    await rejectFlagTypos(index, undefined, userWhere);
+  };
   const window = timeWindow({ since: sinceWhen }, where);
   const baseline = c.flags.baseline === true;
   if (baseline && by !== "agent" && by !== "agent-model") throw new UsageError("--baseline compares agents: use it with --by agent or --by agent-model", { reason: "invalid_argument" });
@@ -152,7 +159,7 @@ export async function run(c: CommandContext): Promise<number> {
       if (place) scan.place = place;
       if (where) scan.query = where;
       const r = await attributedUsage(ctx.index, scan, by as AttributedGroup, limit, cap, pricesFor(ctx.config.pricing)).catch((e) => Promise.reject(queryCliError(e)));
-      if (!r.groups.length) await rejectAgentTypos(ctx.index, agents);
+      if (!r.groups.length) await rejectTypos(ctx.index);
       if (out.json) {
         const data: Record<string, unknown> = { ...r, window: { ...r.window, ...windowJson(window) } };
         if (repriced) data.repriced = { events: repriced.events, sessions: repriced.sessions };
@@ -179,7 +186,7 @@ export async function run(c: CommandContext): Promise<number> {
       notes?: string[];
       unpricedModels?: Record<string, number>;
     };
-    if (!r.groups.length) await rejectAgentTypos(ctx.index, agents);
+    if (!r.groups.length) await rejectTypos(ctx.index);
     if (out.json) {
       out.data({ ...r, window: { ...r.window, ...windowJson(window) }, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
       return 0;

@@ -26,7 +26,8 @@ Every command accepts these.
   `{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}`.
   `next` holds up to two lines: the step, then the command to run. The reasons are listed in [Troubleshooting](../troubleshooting.md).
   When that step deletes or overwrites data, cannot be undone, or spends money, the error also has `askUser: true`
-  and the text says the user must approve it first. An agent that reads such an error asks the user instead of running the step.
+  and the text says the user must approve it first, unless a person runs the command at a terminal ([Troubleshooting](../troubleshooting.md#errors-by-reason)).
+  An agent that reads such an error asks the user instead of running the step.
 - Exit codes: `0` success, `1` error, `2` usage error (unknown option, bad value, missing `--yes`), `130` canceled.
 - Commands that change agent config or start paid runs ask first. In scripts and CI, pass `--yes`; an agent passes it only once the user approves.
 
@@ -2436,7 +2437,7 @@ coding.sh review create <QUEUE> [options]
 | `--where <QUERY>` |  | The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
 | `--config <NAME>` |  | The score config every item is scored with (coding.sh score configs); it must exist. |
 | `--sample <N>` |  | Pick N of the matching sessions at random (default: all of them) |
-| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it. |
+| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only the key with that name sees it, while the CLI sees every item. |
 
 ```sh
 coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20

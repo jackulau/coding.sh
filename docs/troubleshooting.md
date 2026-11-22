@@ -31,6 +31,9 @@ coding.sh doctor --json   # the same as one JSON document
 1 agent not capturing
 ```
 
+The rows and the last line go to stdout, and the next steps to stderr, so
+`coding.sh doctor > doctor.txt` saves every row.
+
 A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
 show up, work down this list:
 
@@ -180,7 +183,14 @@ a second:
 ```text
 coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v11. This runs once.
 coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
-coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
+coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
+```
+
+A smaller store upgrades without progress. When a person runs the command at a terminal, one dim
+line then names the copy of the index it kept (not with `--json`, and not when stderr is piped):
+
+```text
+coding.sh: index upgraded to schema v11. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
 ```
 
 - **Another command waits.** A command that opens the index while another process upgrades it
@@ -254,8 +264,13 @@ stderr:
 ```
 
 When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
-`--force`, `purge`, a rollback), the message says it needs your approval, and the JSON has
-`askUser: true`. An AI agent that hits such an error asks you before it runs `next`.
+`--force`, `purge`, a rollback), the JSON has `askUser: true`. An AI agent that hits such an error
+asks you before it runs `next`.
+
+The message says it needs your approval when an agent may be reading: without a terminal, or when
+a variable that agents set is present (`CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`). At a terminal with none of them set, you approve the step yourself, so the
+message leaves that out.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
@@ -268,11 +283,11 @@ The command line was wrong. Nothing ran.
 | `unknown_command` | `Unknown command "workflows frob"` | `coding.sh --help` lists commands, and `coding.sh <command> --help` its actions. Typos get a suggestion. |
 | `missing_command` | `Missing command for coding.sh dataset. Choose one of: add, import, list` | Add the action. |
 | `unknown_action` | `Unknown workflows action "…"` | `coding.sh workflows --help` |
-| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. |
+| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. In PowerShell or cmd, after a value with a space, the message also says how to write a double quote inside a value: Windows PowerShell 5.1 splits the value at one. |
 | `missing_value` | `--since needs a value <WHEN>` | Give the option a value. |
 | `invalid_value` | `Invalid value for capture.mode: capture.mode must be one of "full", "metadata", got "loud"` (config set) | Use one of the values the message lists. |
 | `bad_flag` | `--facets: can't count foo; use agent, model, …` (sessions) | Use a value the message lists. |
-| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. |
+| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. In PowerShell or cmd the message also says how to write a double quote inside a value, as for `unknown_option`. |
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error, such as `--by must be one of agent, model, …, got "foo"` | Read the message. |
@@ -280,6 +295,7 @@ The command line was wrong. Nothing ran.
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
+| `unknown_flag` | `Unknown session flag "no-verificaton"` / `Did you mean --flag no-verification?` (sessions, export, search, usage) | Use the flag it names, or one from [Flags and derails](https://coding.sh/docs/query#flags-and-derails). |
 | `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](https://coding.sh/docs/config), or a `--where` key from [Query language](https://coding.sh/docs/query#filter-with---where). To search for the word itself, quote it. |
 | `bad_value` | `--where: cost: must be a USD amount like 0.5, got "abc" at character 6` | Use a value the key takes; the message gives one. Durations need a unit (`duration>10m`). |
 | `unterminated_quote`, `unbalanced_parens` | `--where: missing ')' at character 23` | Close the quote or parenthesis the caret points at. |

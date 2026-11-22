@@ -34,6 +34,7 @@ import { gateHeadline } from "../../stats/gate.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, gateFlags, jsonArg, list, num, readIngest, str } from "../common.ts";
 import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
+import { cliCommand } from "../next-steps.ts";
 import { infraKinds, infraKindsText } from "../../jobs/retry.ts";
 import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
 import { CliError, plural } from "../output.ts";
@@ -617,7 +618,8 @@ function summaryLines(o: Outcome, mined: DecisionDataset): string[] {
   return lines.slice(0, 4);
 }
 
-function caseLines(title: string, ids: readonly string[], cases: ReadonlyMap<string, Case>): string[] {
+/** The first three cases, each with the command that shows its session (cliCommand: as the user's shell runs it). */
+function caseLines(title: string, ids: readonly string[], cases: ReadonlyMap<string, Case>, env: NodeJS.ProcessEnv): string[] {
   if (!ids.length) return [];
   const out = [title];
   for (const id of ids.slice(0, 3)) {
@@ -626,15 +628,15 @@ function caseLines(title: string, ids: readonly string[], cases: ReadonlyMap<str
     const what = typeof m.behavior === "string" ? m.behavior : "case";
     const t = typeof m.title === "string" && m.title ? ` "${m.title.length > 60 ? `${m.title.slice(0, 59)}…` : m.title}"` : "";
     const sess = c ? caseSession(c) : undefined;
-    out.push(`  ${what}${t}${sess ? `  coding.sh show ${sess}` : ""}`);
+    out.push(`  ${what}${t}${sess ? `  ${cliCommand(env, ["show", sess])}` : ""}`);
   }
   if (ids.length > 3) out.push(`  … ${ids.length - 3} more`);
   return out;
 }
 
 /** One line for the report when B deletes, rewords or relaxes protected lines. */
-function protectedHeadline(g: ProtectCheck, gated: boolean): string {
-  return `Protected: B deletes, rewords or relaxes ${plural(g.rejections.length, "protected line")}${gated ? "; --gate fails" : ""} (coding.sh refine check lists them)`;
+function protectedHeadline(g: ProtectCheck, gated: boolean, env: NodeJS.ProcessEnv): string {
+  return `Protected: B deletes, rewords or relaxes ${plural(g.rejections.length, "protected line")}${gated ? "; --gate fails" : ""} (${cliCommand(env, ["refine", "check"])} lists them)`;
 }
 
 /** Before any model call: each protected-line problem, and how to allow it on purpose. */
@@ -957,12 +959,12 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     }
     out.print(`A: ${armA.label}   B: ${armB.label}   model: ${model}${isCliProvider(setup.provider) ? ` (${setup.provider})` : ""}`);
     for (const l of summaryLines(r, mined)) out.print(l);
-    if (!guard.ok) out.print(protectedHeadline(guard, c.flags.gate === true));
-    const more = [...caseLines("Fixed (A failed, B passed):", r.fixed, caseMap), ...caseLines("Broke (A passed, B failed):", r.broke, caseMap)];
+    if (!guard.ok) out.print(protectedHeadline(guard, c.flags.gate === true, c.env));
+    const more = [...caseLines("Fixed (A failed, B passed):", r.fixed, caseMap, c.env), ...caseLines("Broke (A passed, B failed):", r.broke, caseMap, c.env)];
     if (more.length) out.print("");
     for (const l of more) out.print(l);
     out.print("");
-    out.print(`Full comparison: coding.sh exp compare ${r.ab.a.id} ${r.ab.b.id}`);
+    out.print(`Full comparison: ${cliCommand(c.env, ["exp", "compare", r.ab.a.id, r.ab.b.id])}`);
   };
 
   const first = await runOnce(armA, armB, false);

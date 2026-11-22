@@ -551,7 +551,7 @@ export async function run(c: CommandContext): Promise<number> {
     out.print(out.style(oneLine(clean(s.title ?? s.id), 100), "bold"));
     const rows: [string, string][] = [
       ["Session", s.id],
-      ["Agent", [s.agent, s.agentVersion, s.model].filter(Boolean).join("  ")],
+      ["Agent", [s.agent, s.agentVersion, s.host && `via ${s.host}`, s.model].filter(Boolean).join("  ")],
       ["Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : (s.cwd ?? "-")],
       ["Started", startedText(s.startedAt)],
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
