@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
 import { isLoopbackHost } from "../../otel/receiver.ts";
 import { budgetStatuses, readBudgets } from "../../budget/index.ts";
-import { budgetGuard } from "../../proxy/budget.ts";
+import { budgetGuard, enforceable } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
 import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
@@ -85,7 +85,8 @@ async function start(c: CommandContext): Promise<number> {
   }
   return withContext(c, async (ctx) => {
     // budgets.json is read with the spend, so a budget set while the proxy runs applies within 30 s.
-    const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env), now) }) : undefined;
+    // Only the spend of a budget a call can match is read: a --repo or --where one never blocks.
+    const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env).filter(enforceable), now), onError: (e) => out.warn(e.message) }) : undefined;
     let proxy;
     try {
       proxy = await startLocalProxy({

@@ -146,7 +146,7 @@ async function tools(c: CommandContext): Promise<number> {
   const sinceFlag = str(c.flags.since) ?? "30d";
   const since = parseSince(sinceFlag);
   const changedOnly = c.flags.changed === true;
-  const { readToolPins, toolDrift, writeToolPins, MAX_TOOL_BLOBS } = await import("../../proxy/tool-drift.ts");
+  const { readToolPins, toolDrift, toolKey, writeToolPins, MAX_TOOL_BLOBS } = await import("../../proxy/tool-drift.ts");
   let pins;
   try {
     pins = readToolPins(c.env);
@@ -161,10 +161,12 @@ async function tools(c: CommandContext): Promise<number> {
     if (d.blobsMissing) notes.push(`${plural(d.blobsMissing, "tools array")} no longer stored (removed by gc)`);
     if (d.callsWithoutTools) notes.push(`${plural(d.callsWithoutTools, "proxy call")} sent tools without storing them (capture mode metadata), so ${d.callsWithoutTools === 1 ? "it is" : "they are"} not counted`);
     if (sub === "pin") {
-      const written = d.tools.length ? writeToolPins(d.tools, c.env) : pins;
-      // A removed tool is not pinned: writeToolPins drops its pin.
+      const now = Date.now();
+      const written = d.tools.length ? writeToolPins(d.tools, c.env, now) : pins;
+      // writeToolPins drops the pin of a removed tool, and skips a tool with no
+      // pin that no call offered since the last pin: neither counts as pinned.
       const dropped = d.tools.filter((t) => t.changed === "removed").length;
-      const pinned = d.tools.length - dropped;
+      const pinned = d.tools.filter((t) => written[toolKey(t)]?.at === now).length;
       if (out.json) {
         const doc: Record<string, unknown> = { outcome: d.tools.length ? "pinned" : "unchanged", pinned, pins: Object.keys(written).length, since: new Date(since).toISOString() };
         if (dropped) doc.dropped = dropped;
