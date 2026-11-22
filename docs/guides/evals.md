@@ -1180,7 +1180,8 @@ session. An experiment is not a target: `score add exp:<id>` is refused (exit 2)
 runs (`run:<id>`) or cases instead.
 `coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
 ([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
-tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
+tools. They take a session as the CLI does: its id, a unique prefix of 4 or more characters, or
+`latest`, the session `coding.sh score add latest` scores. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
 SQLite store; the Postgres and ClickHouse stores answer 501 for now.
 
 ### Monitors
