@@ -1,7 +1,8 @@
 // Viewer fixes from hands-on QA (round 9) on big sessions and small screens, in headless Chrome: a
 // link to another step of the session on screen moves there on the events the page loaded, with no
 // new download of them; the header's tool errors and tests badges and the step bar's failed steps
-// each say what they count, on a session where the counts differ.
+// each say what they count, on a session where the counts differ; on a phone the Steps button
+// brings the selected step below the sticky top bar (and below the replay bar while replaying).
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -29,10 +30,12 @@ function maker(sessionId: string) {
 /** Two real tool failures, a benign one (no match), an interrupted call and a failing test run, then quiet reads. */
 function events(): AgentEvent[] {
   const ev = maker(SID);
+  // Long enough that the page scrolls well past the step list on a phone.
+  const output = Array.from({ length: 80 }, (_, i) => `test ${i + 1} ... ${i === 41 ? "not ok" : "ok"}`).join("\n");
   const out = [
     ev("user.message", { text: "Run the tests and fix what fails" }, 0),
     ev("tool.start", { tool: "Bash", toolUseId: "t1", input: { command: "npm test" } }, 1000),
-    ev("tool.end", { tool: "Bash", toolUseId: "t1", ok: false, error: "exit code 1" }, 4000),
+    ev("tool.end", { tool: "Bash", toolUseId: "t1", ok: false, error: "exit code 1", output }, 4000),
     ev("test.result", { runner: "node", passed: 3, failed: 1 }, 4100),
     ev("tool.start", { tool: "Grep", toolUseId: "t2", input: { pattern: "parseConfig", path: "src" } }, 5000),
     ev("tool.end", { tool: "Grep", toolUseId: "t2", ok: false, error: "No matches found" }, 5100),
@@ -93,10 +96,16 @@ describe("round 9 viewer QA fixes on big sessions and small screens, in a browse
     await v?.close();
   });
 
-  async function open(hash: string, wait: string): Promise<Page> {
+  async function open(hash: string, wait: string, phone = false): Promise<Page> {
     await page?.close();
     page = await browser.newPage();
-    await page.viewport(1280, 900);
+    if (phone) {
+      await page.viewport(390, 844, true);
+      // Instant scrolls (smoothScroll() reads this), so a position read after a click is where it ends.
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    } else {
+      await page.viewport(1280, 900);
+    }
     await page.goto(v.url + hash);
     await page.waitFor(wait, "the page");
     return page;
@@ -140,6 +149,28 @@ describe("round 9 viewer QA fixes on big sessions and small screens, in a browse
     assert.equal(nav.text, "1 / 5 failed steps");
     assert.equal(nav.label, "Failed steps");
     assert.match(nav.title, /^Steps that failed: tool calls \(the benign and interrupted ones too\), model calls, test runs/);
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("at 390x844 the Steps button brings the selected step below the sticky top bar, and below the replay bar in a replay", async () => {
+    const p = await open("#/s/" + SID, `document.querySelectorAll('.st').length > 3 && ${paneItem(FIRST_FAIL)}`, true);
+    const where = (under: string) =>
+      p.eval(`(() => { const row = document.querySelector('.st[aria-selected="true"]').getBoundingClientRect(); const bar = document.querySelector(${JSON.stringify(under)}).getBoundingClientRect(); return { row: row.top, bar: bar.bottom, list: document.querySelector('.timeline').getBoundingClientRect().top, label: document.querySelector('.st[aria-selected="true"]').textContent }; })()`);
+    const steps = () => p.eval("[...document.querySelectorAll('.to-steps')].find((b) => b.offsetParent).click()");
+    // Tap the second row: the page scrolls down to its detail, as on a phone.
+    await p.eval("document.querySelectorAll('.st')[1].click()");
+    await p.waitFor("document.querySelector('#event-pane').getBoundingClientRect().top < 200", "the step's detail in view");
+    await steps();
+    const m = await where(".topbar");
+    assert.ok(m.row >= m.bar, `the selected step (${m.label}) starts at ${m.row}px, under the top bar that ends at ${m.bar}px`);
+    assert.ok(Math.abs(m.list - m.bar) <= 1, `the step list starts at ${m.list}px, right below the top bar (${m.bar}px)`);
+    // In a replay the replay bar sticks under the top bar; the list comes up below both.
+    await p.eval(`location.hash = '#/s/${SID}?step=2'`);
+    await p.waitFor("document.querySelector('.rp-bar') && !document.querySelector('.rp-bar').hidden && document.querySelector('.st[aria-selected=\"true\"]')", "the replay at step 2");
+    await p.eval("scrollTo(0, document.documentElement.scrollHeight)");
+    await steps();
+    const r = await where(".rp-bar");
+    assert.ok(r.row >= r.bar, `in the replay the selected step (${r.label}) starts at ${r.row}px, under the replay bar that ends at ${r.bar}px`);
     assert.deepEqual(p.errors, []);
   });
 });

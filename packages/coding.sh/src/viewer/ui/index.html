@@ -987,7 +987,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .hintbar { display: none; }
   .chat { flex: none; overflow: visible; }
   .tl { flex: none; height: 62vh; }
-  .timeline { box-shadow: inset 0 -1px 0 var(--line); }
+  /* The Steps button brings the list up to the top bar, not under it (and in replay under the replay bar: backToSteps). */
+  .timeline { box-shadow: inset 0 -1px 0 var(--line); scroll-margin-top: var(--top); }
   .to-steps { display: inline-flex; }
   /* A tapped step's detail can scroll up to fill the screen, however short it is. */
   .pane { min-height: calc(100svh - var(--top)); overflow: visible; }
@@ -4634,7 +4635,12 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     childById: new Map(kids.map((c) => [c.id, c])),
     childBySubagent: new Map(kids.filter((c) => c.parent && c.parent.subagentId).map((c) => [c.parent.subagentId, c])),
     childByEvent: new Map(kids.filter((c) => c.parent && c.parent.eventId).map((c) => [c.parent.eventId, c])),
-    backToSteps: () => { tl.focus({ preventScroll: true }); timeline.scrollIntoView({ block: "start", behavior: smoothScroll() }); },
+    // The list comes up below the sticky top bar (its scroll margin), and in replay below the replay bar stuck under that.
+    backToSteps: () => {
+      tl.focus({ preventScroll: true });
+      timeline.style.scrollMarginTop = rp.on ? "calc(var(--top) + " + rpBar.offsetHeight + "px)" : "";
+      timeline.scrollIntoView({ block: "start", behavior: smoothScroll() });
+    },
     raw: false,
     openFold: (key) => { openFold(key); rebuildRows(); },
     comments: commentStore(session.id),
