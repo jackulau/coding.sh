@@ -59,6 +59,8 @@ interface SuiteOutcome {
   exitCode?: number;
   /** More lines under the report. */
   extra?: string[];
+  /** Case suites: lines of the cases file left out for repeating an earlier line's input and expected answer. */
+  duplicates?: { dropped: string; kept: string }[];
 }
 
 export async function evalRun(c: CommandContext): Promise<number> {
@@ -133,7 +135,9 @@ function metaLine(o: SuiteOutcome): string[] {
 }
 
 function outcomeJson(o: SuiteOutcome): Record<string, unknown> {
-  return { suite: o.suite, kind: o.kind, dir: o.dir, ...(o.experimentId ? { experimentId: o.experimentId } : {}), ...(o.harness ? { harness: o.harness } : {}), ...(o.unverified?.length ? { unverified: o.unverified } : {}), report: o.report, ...(o.failedRuns?.length ? { failedRuns: o.failedRuns } : {}) };
+  const doc: Record<string, unknown> = { suite: o.suite, kind: o.kind, dir: o.dir, ...(o.experimentId ? { experimentId: o.experimentId } : {}), ...(o.harness ? { harness: o.harness } : {}), ...(o.unverified?.length ? { unverified: o.unverified } : {}), report: o.report, ...(o.failedRuns?.length ? { failedRuns: o.failedRuns } : {}) };
+  if (o.duplicates?.length) doc.duplicates = o.duplicates;
+  return doc;
 }
 
 /** The harness the suite runs: a stored bundle, else a snapshot of the project's setup for the agent (content-addressed, so a rerun reuses it). */
@@ -264,7 +268,18 @@ async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, tri
   if (result.infraStop) infraStopNote(c, result.infraStop);
   else if (result.status === "cancelled") out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromExperiment(cases, result), "case");
-  return { suite: s.spec.name, kind: "cases", dir: s.dir, report, experimentId: result.id };
+  const outcome: SuiteOutcome = { suite: s.spec.name, kind: "cases", dir: s.dir, report, experimentId: result.id };
+  // A line with the same input and expected answer as an earlier one ran as that case: say which, as `dataset import` does.
+  if (ds.duplicates.length) {
+    outcome.duplicates = ds.duplicates;
+    outcome.extra = [duplicatesLine(ds.duplicates)];
+  }
+  return outcome;
+}
+
+function duplicatesLine(d: readonly { dropped: string; kept: string }[]): string {
+  const each = d.slice(0, 5).map((x) => (x.dropped === x.kept ? `a second ${x.kept}` : `${x.dropped} repeats ${x.kept}`));
+  return `${plural(d.length, "line")} left out: ${each.join(", ")}${d.length > 5 ? ", …" : ""} (same input and expected answer)`;
 }
 
 async function runTriggers(c: CommandContext, s: LoadedSuite, k: number): Promise<SuiteOutcome> {

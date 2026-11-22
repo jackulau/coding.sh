@@ -127,6 +127,25 @@ describe("eval init + eval run: cases", () => {
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.match(run.stdout, /one trial per case/);
   });
+
+  // A line with the same input and expected answer as an earlier one runs as that case. The run
+  // said nothing, so a suite of 10 lines reported 9 cases with no word on which one went.
+  it("names the lines it leaves out because they repeat an earlier one", () => {
+    const dir = join(proj, "evals", "dup");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "suite.json"), JSON.stringify({ name: "dup", purpose: "capability", trials: 1, cases: "cases.jsonl", task: { kind: "command", command: "node triage.mjs" }, graders: [{ kind: "exact", name: "exact" }] }));
+    writeFileSync(
+      join(dir, "cases.jsonl"),
+      ['{"id":"twice","input":"I was charged twice","expected":"billing"}', '{"id":"crash","input":"The app crashes on start","expected":"bug"}', '{"id":"twice-again","input":"I was charged twice","expected":"billing"}'].join("\n") + "\n",
+    );
+    const run = cli(["eval", "run", "dup"]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /2 cases · 1 trial each/);
+    assert.match(run.stdout, /1 line left out: twice-again repeats twice \(same input and expected answer\)/);
+    const json = cli(["eval", "run", "dup", "--json"]);
+    assert.equal(json.status, 0, json.stderr);
+    assert.deepEqual((JSON.parse(json.stdout) as { duplicates?: unknown }).duplicates, [{ dropped: "twice-again", kept: "twice" }]);
+  });
 });
 
 describe("eval init + eval run: skill", () => {

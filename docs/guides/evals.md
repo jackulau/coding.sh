@@ -105,9 +105,10 @@ coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'
 coding.sh eval run triage
 ```
 
-`cases.jsonl` holds one `{"input": …, "expected": …}` per line. The command gets each input as JSON
-on stdin and prints its answer; `--url` posts it to an HTTP endpoint instead. No cases yet? Describe
-the app and have a model draft some:
+`cases.jsonl` holds one `{"input": …, "expected": …}` per line. A line with the same input and
+expected answer as an earlier one is left out, and `eval run` names it (`duplicates` in `--json`).
+The command gets each input as JSON on stdin and prints its answer; `--url` posts it to an HTTP
+endpoint instead. No cases yet? Describe the app and have a model draft some:
 
 ```sh
 coding.sh eval init triage --describe 'Labels a support ticket billing, bug or other' \
