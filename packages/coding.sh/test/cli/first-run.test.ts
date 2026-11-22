@@ -9,6 +9,7 @@ import { shortPath } from "../../src/cli/changes.ts";
 import { resolveSession } from "../../src/cli/common.ts";
 import { run as init } from "../../src/cli/commands/init.ts";
 import { startedText } from "../../src/cli/commands/show.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { ago, CliError, localTime, Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import type { Context } from "../../src/core/context.ts";
@@ -40,7 +41,7 @@ interface Captured {
   error?: unknown;
 }
 
-async function runInit(flags: Record<string, string | boolean | string[]>, opts: { interactive?: boolean; cwd?: string } = {}): Promise<Captured> {
+async function runInit(flags: Record<string, string | boolean | string[]>, opts: { interactive?: boolean; cwd?: string; argv?: string[] } = {}): Promise<Captured> {
   const cap: Captured = { stdout: "", stderr: "" };
   const env = { ...process.env, NO_COLOR: "1", CI: "" };
   const out = new Output({
@@ -55,6 +56,7 @@ async function runInit(flags: Record<string, string | boolean | string[]>, opts:
     return false; // answer "n": nothing is written
   };
   const c: CommandContext = { flags: { mcp: false, ...flags }, positionals: [], rest: [], out, env, cwd: opts.cwd ?? t.home, debug: false, signal: new AbortController().signal };
+  if (opts.argv) c.argv = opts.argv;
   try {
     cap.code = await init(c);
   } catch (e) {
@@ -83,6 +85,19 @@ describe("init --dry-run prints a short per-agent plan", () => {
 
     const d = await runInit({ agent: ["claude-code"], "dry-run": true, diff: true });
     assert.match(d.stdout, /^ {4}\+ {4}"SessionStart": \[$/m, "--diff adds the edits");
+  });
+
+  test("names the command that applies the plan: the one given, flags included, without --dry-run and --diff", async () => {
+    const argv = ["init", "--agent", "claude-code", "--no-mcp", "--no-import", "--dry-run", "--diff"];
+    const r = await runInit({ agent: ["claude-code"], import: false, "dry-run": true, diff: true }, { argv });
+    assert.equal(r.code, 0, String(r.error ?? r.stderr));
+    assert.ok(r.stderr.endsWith(`Dry run: nothing written.\n\n  Apply the plan:\n    ${cliCommand(process.env, ["init", "--agent", "claude-code", "--no-mcp", "--no-import"])}\n`), r.stderr);
+
+    // Set up already: nothing to apply, no command.
+    assert.equal((await runInit({ agent: ["claude-code"], import: false, yes: true })).code, 0);
+    const again = await runInit({ agent: ["claude-code"], import: false, "dry-run": true }, { argv: ["init", "--agent", "claude-code", "--no-mcp", "--no-import", "--dry-run"] });
+    assert.match(again.stderr, /Nothing to change/);
+    assert.doesNotMatch(again.stderr, /Apply the plan/);
   });
 
   test("project scope shows files relative to the project", async () => {

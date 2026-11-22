@@ -1,5 +1,5 @@
-// How init, uninstall and update name the CLI in the commands they print, so the user's shell can
-// run them as printed.
+// How commands name the CLI in the commands they print, so the user's shell can run them as
+// printed.
 import { shellQuote } from "./args.ts";
 import type { CommandContext } from "./types.ts";
 
@@ -24,11 +24,40 @@ export function nextStepBin(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = 
 }
 
 /**
+ * One argument of a printed command, quoted so the user's shell passes it on
+ * unchanged. sh gets shellQuote. PowerShell and cmd (windowsShell) get it bare
+ * when both pass it on as is, else in double quotes, which both strip and cmd
+ * needs (it keeps single quotes). `--` is quoted: PowerShell drops the first
+ * bare one given to a script, and npm's codingsh.ps1 is one. So are `--%`,
+ * PowerShell's stop-parsing token, and `-x:y`, `a,b` and `@x`, which
+ * PowerShell splits or splats. An argument with `$`, a
+ * backtick or a double quote has no form both shells keep: PowerShell expands
+ * or splits it inside double quotes, so it gets PowerShell's single quotes.
+ */
+export function quoteArg(s: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  if (!windowsShell(env, platform)) return shellQuote(s);
+  if (/^[\w%+=:./\\-][\w%+=:./\\@-]*$/.test(s) && s !== "--" && s !== "--%" && !(/^-[^-]/.test(s) && s.includes(":"))) return s;
+  // Node reads `\"` as a quote, so backslashes before the closing quote are doubled.
+  if (!/["$`\u201C\u201D\u201E]/.test(s)) return `"${s.replace(/\\+$/, "$&$&")}"`;
+  return `'${s.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
+}
+
+/** A command to print: nextStepBin, then each argument quoted for the user's shell (quoteArg). */
+export function cliCommand(env: NodeJS.ProcessEnv, args: readonly string[], platform: NodeJS.Platform = process.platform): string {
+  return [nextStepBin(env, platform), ...args.map((a) => quoteArg(a, env, platform))].join(" ");
+}
+
+/** `run -- <what>`, the wrapper command, as the user's shell runs it. `what` is printed as given (a placeholder or an agent id). */
+export function runCommand(env: NodeJS.ProcessEnv, what: string, platform: NodeJS.Platform = process.platform): string {
+  return `${cliCommand(env, ["run", "--"], platform)} ${what}`;
+}
+
+/**
  * The rerun a consent prompt names: the command line as the user gave it, with
  * --yes added, so it does what they approved, every flag included (--agent,
  * --no-mcp, --remote…). Run in-process with no command line, `fallback` stands
  * in for it.
  */
-export function rerunWithYes(c: Pick<CommandContext, "argv" | "env">, fallback: readonly string[]): string {
-  return [nextStepBin(c.env), ...(c.argv ?? fallback).map(shellQuote), "--yes"].join(" ");
+export function rerunWithYes(c: Pick<CommandContext, "argv" | "env">, fallback: readonly string[], platform: NodeJS.Platform = process.platform): string {
+  return cliCommand(c.env, [...(c.argv ?? fallback), "--yes"], platform);
 }

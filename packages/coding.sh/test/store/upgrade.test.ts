@@ -12,6 +12,7 @@ import { after, describe, it } from "node:test";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { backupIndex, backupPath, BackupSpaceError, listBackups, parseWriter, restoreBackup, StoreNewerError, undonePath, WRITER_KEY, type BackupIo, type StoreWriter } from "../../src/store/upgrade.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-upgrade-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -222,10 +223,17 @@ describe("a store a newer coding.sh migrated", () => {
         e.writer?.version === "9.9.9" &&
         /written by coding\.sh 9\.9\.9/.test(e.message) &&
         /safe in the spool/.test(e.message) &&
-        /coding\.sh update/.test(e.message),
+        e.message.endsWith(`: ${nextStepBin(process.env)} update`),
     );
     assert.equal(existsSync(backupPath(file, SQLITE_SCHEMA_VERSION + 1)), false);
     rmSync(file); // Windows: fails if the refused open left the file open
+  });
+
+  it("names the update command as the user's shell runs it", () => {
+    // Under npx the command is the npx one, on every OS; in PowerShell and cmd it is codingsh.
+    const npx = { npm_command: "exec" };
+    assert.ok(new StoreNewerError({ path: "index.db", schema: 3, known: 2, env: npx }).message.endsWith(`indexes them: ${nextStepBin(npx)} update`));
+    assert.ok(new StoreNewerError({ path: "index.db", schema: 3, known: 2, env: {} }).message.endsWith(`indexes them: ${nextStepBin({})} update`));
   });
 });
 

@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseHookCommand } from "../../adapters/_shared/hooks.ts";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
+import { sourceSummary } from "../../conformance/sources.ts";
 import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
@@ -25,7 +26,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
-import { nextStepBin, rerunWithYes } from "../next-steps.ts";
+import { cliCommand, nextStepBin, rerunWithYes, runCommand } from "../next-steps.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -170,7 +171,7 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
   if (pl.proxyUnsupported) out.push({ text: `init --proxy can't route this agent; point it at the variables from ${nextStepBin(env)} proxy env`, fatal: false });
   if (!pl.installed) {
     // A wrapper-only agent (tier C) or a store-read one has no hooks to fire.
-    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with ${nextStepBin(env)} run -- ${pl.adapter.id} once it is` : "its hooks fire once it is";
+    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with ${runCommand(env, pl.adapter.id)} once it is` : "its hooks fire once it is";
     out.push({ text: `${pl.adapter.displayName} is not installed on this machine; ${later}`, fatal: false });
   }
   if (pl.otherScope) {
@@ -203,7 +204,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
     const rows = rowsOf(pl);
     for (const r of rows) emit(file(r));
-    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with ${nextStepBin(env)} run -- ${pl.adapter.id}` : "    already set up");
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with ${runCommand(env, pl.adapter.id)}` : "    already set up");
     for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
   }
   if (own.length) {
@@ -286,6 +287,30 @@ export interface ImportOutcome {
 }
 
 /**
+ * Whether an agent keeps past sessions on this machine for init to import. The files its backfill
+ * reads answer for most (names and sizes only). When none turn up there, the backfill itself runs
+ * to its first source file or event, so history kept elsewhere (a database OpenCode set aside)
+ * still counts. Read-only: nothing is stored and no store is opened.
+ */
+export async function hasHistory(a: Pick<Adapter, "id" | "backfill">, env: NodeJS.ProcessEnv): Promise<boolean> {
+  if (!a.backfill) return false;
+  if ((sourceSummary(a.id, { env })?.files ?? 0) > 0) return true;
+  const { hashOnlyContext } = await import("../../conformance/index.ts");
+  let found = false;
+  const changed = async (): Promise<boolean> => {
+    found = true;
+    throw new Error("found a source file"); // ends the walk at the first one
+  };
+  try {
+    for await (const _ of a.backfill(hashOnlyContext(), { changed })) return true;
+  } catch {
+    // A source file, or a backfill that failed: the import reports what it finds.
+    return true;
+  }
+  return found;
+}
+
+/**
  * Imports the past sessions of `agents` (adapter.backfill), stopping at the time budget and
  * starting `ingest --background --backfill` for the rest. Undefined when there is nothing to
  * import from or the store is not this machine's.
@@ -335,12 +360,19 @@ function reportImport(out: Output, r: ImportOutcome, bin: string): void {
   for (const e of r.errors.slice(0, 3)) out.note(e);
 }
 
+/** A dry run's command line without --dry-run and --diff: the run that applies its plan. */
+function applyArgv(argv: readonly string[]): string[] {
+  return argv.filter((a) => !/^--(no-)?(dry-run|diff)(=|$)/.test(a));
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   // How the user's shell runs this CLI, for every command init names.
   const bin = nextStepBin(env);
   const named = list(c.flags.agent);
   const scope = (str(c.flags.scope) ?? "user") as "user" | "project";
+  // The command line the commands init names start from. Run in-process with none, the scope stands in for it.
+  const given = c.argv ?? (scope === "project" ? ["init", "--scope", "project"] : ["init"]);
   const dryRun = c.flags["dry-run"] === true;
   // MCP servers are registered per user; project scope stays hooks-only.
   const withMcp = c.flags.mcp !== false && scope === "user";
@@ -406,7 +438,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (plans.length === 0 && !remote) {
     throw new CliError(named.length ? "None of the named agents can be installed" : "No supported agents found on this machine", {
       reason: "no_agents",
-      next: [`Wrap any agent: ${bin} run -- <agent command>`, "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
+      next: [`Wrap any agent: ${runCommand(env, "<agent command>")}`, "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
     });
   }
 
@@ -427,8 +459,10 @@ export async function run(c: CommandContext): Promise<number> {
   const pending = plans.filter((pl) => agentChanges(pl).length);
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
   const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error || pl.proxy?.error);
-  // Past sessions to import once set up: every planned agent that keeps its own history.
-  const importFrom = c.flags.import === false ? [] : plans.map((pl) => pl.adapter).filter((a) => a.backfill);
+  // Past sessions to import once set up: from every planned agent with some on this machine.
+  const candidates = c.flags.import === false ? [] : plans.map((pl) => pl.adapter);
+  const withHistory = await Promise.all(candidates.map((a) => hasHistory(a, env)));
+  const importFrom = candidates.filter((_, i) => withHistory[i]);
 
   if (dryRun) {
     if (out.json) {
@@ -452,7 +486,11 @@ export async function run(c: CommandContext): Promise<number> {
         for (const pl of plans) printChanges(out, agentChanges(pl), pl.adapter.id);
       }
       if (own.length + total === 0) out.ok("Nothing to change");
-      else out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
+      else {
+        out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
+        // The same command, flags included, minus the dry run.
+        out.next("Apply the plan", cliCommand(env, applyArgv(given)));
+      }
     }
     return failed ? 1 : 0;
   }
@@ -461,7 +499,7 @@ export async function run(c: CommandContext): Promise<number> {
   renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err", importFrom);
 
   if (total) {
-    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, rerunWithYes(c, scope === "project" ? ["init", "--scope", "project"] : ["init"]), {
+    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, rerunWithYes(c, given), {
       defaultYes: true,
     });
   }
@@ -553,7 +591,7 @@ export async function run(c: CommandContext): Promise<number> {
   const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);
   if (hookedNow.length) out.note(firstSessionNote(hookedNow));
   if (remote) {
-    if (!plans.length) out.warn(`No supported agents found on this machine; apps and \`${bin} run -- <cmd>\` still send`);
+    if (!plans.length) out.warn(`No supported agents found on this machine; apps and \`${runCommand(env, "<cmd>")}\` still send`);
     out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
     out.note(`Team viewer: ${out.style(remote.url, "cyan", "err")}`);
   }

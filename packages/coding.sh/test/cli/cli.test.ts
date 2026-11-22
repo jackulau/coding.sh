@@ -74,6 +74,9 @@ function tmpHome(): Home {
 
 /** The CLI as the commands it runs name it: tmpHome sets no MSYSTEM or SHELL, so on Windows that is PowerShell or cmd. */
 const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+/** `run --` as printed there: PowerShell drops a bare `--` given to codingsh.ps1, so it is quoted. */
+const RUN = process.platform === "win32" ? `${BIN} run "--"` : `${BIN} run --`;
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function cli(h: Home, args: string[], extra: NodeJS.ProcessEnv = {}, input?: string): SpawnSyncReturns<string> {
   const env: Record<string, string> = {};
@@ -1156,7 +1159,7 @@ describe("cli QA regressions", () => {
     // Dogfood: "! Any command  installed, not hooked" read as a problem, and the
     // next step said `coding.sh init --agent wrapper`, which installs nothing.
     const r = cli(tmpHome(), ["doctor"]);
-    assert.match(r.stderr, /^✓ Any command\s+no hooks needed; capture with coding\.sh run -- <cmd>, no runs yet$/m);
+    assert.match(r.stderr, new RegExp(`^✓ Any command\\s+no hooks needed; capture with ${esc(RUN)} <cmd>, no runs yet$`, "m"));
     assert.doesNotMatch(r.stderr, /Any command \(co/);
     assert.doesNotMatch(r.stderr, /--agent wrapper/);
   });
@@ -1172,7 +1175,7 @@ describe("cli QA regressions", () => {
     await index.close();
     const doc = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown; foldErrors?: unknown } };
     assert.deepEqual([doc.store.missingRows, doc.store.foldErrors], [{ count: 2, byAgent: { codex: 2 } }, 0]);
-    assert.match(cli(h, ["doctor"]).stderr, /^! Sessions\s+2 sessions have events but no session row \(codex 2\); run coding\.sh ingest$/m);
+    assert.match(cli(h, ["doctor"]).stderr, new RegExp(`^! Sessions\\s+2 sessions have events but no session row \\(codex 2\\); run ${esc(BIN)} ingest$`, "m"));
     // The repair command it names folds them, and doctor then says nothing about it.
     assert.equal(cli(h, ["ingest"]).status, 0);
     const after = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown } };
@@ -1311,11 +1314,10 @@ describe("doctor on a dogfood machine", () => {
     assert.ok(!existsSync(join(h.data, "bin", "hook.mjs")));
 
     const r = run(proj, ["doctor", "--agent", "claude-code"]);
-    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(r.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooks in ${esc(file)} \\(project\\) run ${esc(otherHook)}, not this home's hook, `, "m"));
     assert.doesNotMatch(r.stderr, /✓ Claude Code/);
-    assert.match(r.stderr, /^! Hook\s+missing at .*hook\.(?:mjs|sh); run coding\.sh init$/m);
-    assert.match(r.stderr, /coding\.sh init --agent claude-code/);
+    assert.match(r.stderr, new RegExp(`^! Hook\\s+missing at .*hook\\.(?:mjs|sh); run ${esc(BIN)} init$`, "m"));
+    assert.match(r.stderr, new RegExp(`${esc(BIN)} init --agent claude-code`));
     const doc = parseJson(run(proj, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hookFiles: unknown[] }[] };
     assert.deepEqual(doc.agents.find((x) => x.id === "claude-code")!.hookFiles, [{ file, scope: "project", hook: otherHook, current: false }]);
 
@@ -1340,7 +1342,7 @@ describe("doctor on a dogfood machine", () => {
     // Events alone are not capture (EZ-2): the row says they arrive, stays a warning and names the fix.
     assert.match(r.stderr, /^! Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
     assert.doesNotMatch(r.stderr, /not hooked/);
-    assert.match(r.stderr, /Capture the agents without hooks:\n\s+coding\.sh init --agent claude-code/);
+    assert.match(r.stderr, new RegExp(`Capture the agents without hooks:\\n\\s+${esc(BIN)} init --agent claude-code`));
     assert.equal(r.stdout, "1 agent not capturing\n");
   });
 
@@ -1354,8 +1356,8 @@ describe("doctor on a dogfood machine", () => {
     writeFileSync(join(binDir, "hook.sh"), readFileSync(new URL("../../src/spool/hook.sh", import.meta.url), "utf8"));
     writeFileSync(join(binDir, "cli-path"), CLI + "\n");
     const r = run(h.home, ["doctor"]);
-    assert.match(r.stderr, /^! Hook\s+.*hook\.mjs is stale \(differs from the hook this CLI ships\); run coding\.sh update --refresh-bin$/m);
-    assert.doesNotMatch(r.stderr, /stale.*coding\.sh init/);
+    assert.match(r.stderr, new RegExp(`^! Hook\\s+.*hook\\.mjs is stale \\(differs from the hook this CLI ships\\); run ${esc(BIN)} update --refresh-bin$`, "m"));
+    assert.doesNotMatch(r.stderr, /stale.*coding\.?sh init/);
 
     // `npm i -g` of a newer version: the hook's session-end ingest runs the new CLI.
     assert.equal(run(h.home, ["ingest", "--background"]).status, 0);
