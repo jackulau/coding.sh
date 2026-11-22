@@ -1827,7 +1827,7 @@ does, a path-scoped rule only after the agent touched a matching file, a skill o
 opened (listed is not enough). Exposure comes from each run's captured trace. Per task, Δ is B's
 pass rate minus A's. An addition is KEEP when some task improved (G > 0), no task dropped by more
 than τ = 0.34 (D, one run in three), no task A solved on every run lost one, B won at least 2 runs
-net (k·N ≥ m, whole runs, so a one-run win doesn't count) and the item fired. When only the drop or
+net (k·N ≥ m, whole runs, so a one-run win doesn't count). When only the drop or
 the solved-task rule fails it is RECHECK with the command to re-run those tasks; a drop again kills
 it. Otherwise KILL with the failed gates. A removal is REJECT when it costs 2 runs net, drops a task
 by more than τ, or a task the item's arm solved every time loses a run; UNMEASURED ("keep") when the
