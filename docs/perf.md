@@ -138,7 +138,8 @@ npx coding.sh exp metrics \
   --pairs 11 --warmup 1
 ```
 
-Pass any paths with `--page`. A run of 11 pairs takes about 50 minutes for 4 pages. In this repo,
+On Windows, run `npx -p coding.sh codingsh` where the block says `npx coding.sh`. Pass any paths
+with `--page`. A run of 11 pairs takes about 50 minutes for 4 pages. In this repo,
 `node scripts/perf/ab.mjs --base <old dist> --cand apps/site/dist` does the same for our pages.
 See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B itself.
 
