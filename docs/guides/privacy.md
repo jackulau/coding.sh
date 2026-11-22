@@ -36,6 +36,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
 | `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
 | `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
+| `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with your `[capture]` rules. See [Replay recorded model calls](../how-to/replay-llm-calls.md#what-is-stored). |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
 | `star.json` | When you first ran coding.sh and when the one-time GitHub star prompt was shown, dismissed or clicked. Four timestamps, no network call. |

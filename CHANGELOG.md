@@ -210,6 +210,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, the exit flush also sends a batch that is waiting for its retry, and warns when it has to drop events. Before, a script that ended without `flush()` while the server was down or answered 503 exited with its events lost and no warning. [SDK](https://coding.sh/docs/sdk)
 - **Privacy.** When a sink header uses `${TEAM_KEY}` and that variable is not set, the error says to set `TEAM_KEY` or change that sink header in the config. Before, it pointed at the `[store]` section. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#errors-exit-1))
+- **Privacy.** Model replies that `exp run --record` and `--replay` store in `llm-cache/` are redacted with your `[capture]` rules, `redactPatterns` included. Before, only the built-in `secrets` rules ran. Recordings made before still replay. In metadata mode the run prints one line saying it stores the replies. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#what-is-stored))
 
 ## [0.1.7] - 2026-11-16
 

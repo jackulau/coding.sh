@@ -113,8 +113,14 @@ records too, so it can be the source of the next replay. `coding.sh gc` keeps th
 dropping the least recently used recordings first.
 
 - Request headers are never stored, so API keys and OAuth tokens are not written.
-- Response bodies go through the secret redactor, and the job's own credentials are replaced with
-  `[redacted:api-key]` if a reply echoes them. A replay serves the redacted text.
+- Response bodies go through your redaction rules, `redact` and `redactPatterns` under
+  `[capture]`, and the job's own credentials are replaced with `[redacted:api-key]` if a reply
+  echoes them. A replay serves the redacted text.
+- A replay matches a call by its request as those rules leave it. A recording made with the
+  built-in `secrets` rules alone still replays after you add rules. If you change your own rules
+  between a recording and its replay, a call whose text the change touches runs live.
+- In metadata mode (`[capture] mode = "metadata"`), a run with `--record` or `--replay` still
+  stores the replies, since you asked for a recording, and prints a line that says so.
 - The stored task spec drops environment variables whose names look like secrets (`KEY`, `TOKEN`,
   `SECRET`, …).
 
