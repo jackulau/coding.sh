@@ -152,7 +152,12 @@ paid.
 | `coding.sh run -- <cmd>` | None, except Aider's token and cost lines in eval runs |
 :::
 
-When prices change, estimates refresh on their own. To recompute them now:
+When prices change, estimates refresh on their own, in the background ingest that starts at the
+next session end, read or viewer start. Until it finishes, sessions show their old estimates. With
+`CODING_SH_NO_AUTO_INGEST=1`, or on a store other than the home's `index.db`, the first command
+that opens the index refreshes them before it answers
+([Troubleshooting](https://coding.sh/docs/troubleshooting#the-first-command-after-an-upgrade-is-slow)).
+To recompute them now:
 
 ```sh
 coding.sh usage --since 7d --reprice
