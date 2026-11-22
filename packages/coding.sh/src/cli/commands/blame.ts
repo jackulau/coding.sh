@@ -3,6 +3,7 @@
 import { resolve } from "node:path";
 import { blameFile, parseBlameTarget } from "../../attribution/blame.ts";
 import { shortSessionId, str, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { attributionCliError, report } from "./attribution.ts";
@@ -13,7 +14,7 @@ export async function run(c: CommandContext): Promise<number> {
   try {
     target = parseBlameTarget(c.positionals[0]!);
   } catch (e) {
-    throw attributionCliError(e, "blame");
+    throw attributionCliError(e, "blame", c.env);
   }
   return withContext(c, async (ctx) => {
     const r = await report(c, ctx, {}, "blame");
@@ -21,7 +22,7 @@ export async function run(c: CommandContext): Promise<number> {
     try {
       b = await blameFile(ctx, { cwd: resolve(c.cwd, str(c.flags.repo) ?? "."), path: resolve(c.cwd, target.path), ...(target.lines ? { lines: target.lines } : {}), report: r });
     } catch (e) {
-      throw attributionCliError(e, "blame");
+      throw attributionCliError(e, "blame", c.env);
     }
     if (out.json) {
       out.data({ root: b.root, rev: b.rev, path: b.path, unattributed: b.unattributed, sessions: b.sessions.map((s) => ({ ...s, startedAt: new Date(s.startedAt).toISOString() })), lines: b.rows });
@@ -43,7 +44,7 @@ export async function run(c: CommandContext): Promise<number> {
         ["SESSION", "AGENT", "MODEL", "LINES"],
         b.sessions.map((s) => [s.id, s.agent, s.model ?? "-", String(s.lines)]),
       );
-      out.next("Open the session that wrote the most of it", `coding.sh show ${b.sessions[0]!.id}`);
+      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", b.sessions[0]!.id]));
     }
     return 0;
   });

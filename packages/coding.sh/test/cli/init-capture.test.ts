@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:f
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fakeBin, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
-import { nextStepBin } from "../../src/cli/next-steps.ts";
+import { nextStepBin, runCommand } from "../../src/cli/next-steps.ts";
 import { CLI } from "../query/_seed.ts";
 
 describe("init: failures, the dry-run plan, agents without hooks", () => {
@@ -17,8 +17,11 @@ describe("init: failures, the dry-run plan, agents without hooks", () => {
     const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" }, encoding: "utf8", timeout: 120_000 });
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };
   };
-  // The CLI as init names it in the shell running these tests: codingsh in PowerShell or cmd.
-  const bin = nextStepBin(process.env).replaceAll(".", "\\.");
+  // The CLI as init names it in the shell running these tests: codingsh in PowerShell or cmd,
+  // with run's -- quoted there.
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const bin = esc(nextStepBin(process.env));
+  const runAider = esc(runCommand(process.env, "aider"));
 
   before(() => {
     env = tmpEnv();
@@ -88,9 +91,9 @@ describe("init: failures, the dry-run plan, agents without hooks", () => {
   test("Aider needs no hooks: init says how to capture it, not that it is already set up", () => {
     const r = run(["init", "--yes", "--agent", "aider", "--no-import"]);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, new RegExp(`no hooks needed; capture with ${bin} run -- aider`));
+    assert.match(r.stderr, new RegExp(`no hooks needed; capture with ${runAider}`));
     assert.doesNotMatch(r.stderr, /already set up/i);
-    assert.match(run(["init", "--dry-run", "--agent", "aider", "--no-import"]).stdout, new RegExp(`no hooks needed; capture with ${bin} run -- aider`));
+    assert.match(run(["init", "--dry-run", "--agent", "aider", "--no-import"]).stdout, new RegExp(`no hooks needed; capture with ${runAider}`));
   });
 
   test("Aider not installed: the note says how to capture it, not that hooks fire", () => {
@@ -98,7 +101,7 @@ describe("init: failures, the dry-run plan, agents without hooks", () => {
     for (const f of readdirSync(dir)) if (f.startsWith("aider")) rmSync(join(dir, f));
     try {
       const out = run(["init", "--dry-run", "--agent", "aider", "--no-import"]).stdout;
-      assert.match(out, new RegExp(`Aider is not installed on this machine; capture it with ${bin} run -- aider once it is`));
+      assert.match(out, new RegExp(`Aider is not installed on this machine; capture it with ${runAider} once it is`));
       assert.doesNotMatch(out, /hooks fire/);
     } finally {
       fakeBin(env, "aider", "aider 0.86.1");

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { which } from "../../src/adapters/_shared/detect.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { fencePackageScope, pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
@@ -224,6 +225,11 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     );
 
     assert.match(cli(["eval", "run", "scope"]).stderr, /needs confirmation from the user\n.*The user must approve this first/);
+    // The step it names keeps every flag given: approved, it runs the harness the user named.
+    const asked = ["eval", "run", "scope", "--harness", "skilled", "--json"];
+    const ask = cli(asked);
+    assert.equal(ask.status, 2, ask.stdout + ask.stderr);
+    assert.deepEqual((JSON.parse(ask.stderr.trim().split("\n").at(-1)!) as { next: string[] }).next, ["With their approval:", cliCommand(env, [...asked, "--yes"])]);
     const good = cli(["eval", "run", "scope", "--harness", "skilled", "--yes", "--json"]);
     assert.equal(good.status, 0, good.stdout + good.stderr);
     const doc = JSON.parse(good.stdout) as { kind: string; experimentId: string; harness: { name: string }; unverified: string[]; report: { ok: boolean; passed: number; trials: number; passHatK: number } };

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { validateAgentTrace } from "../../src/attribution/export.ts";
 import { openContext } from "../../src/core/context.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { isolate, removeTmp, tmp } from "../capture/_helpers.ts";
 import { buildFixture, type Fixture } from "./_fixture.ts";
 import { CLI } from "../_cli.ts";
@@ -105,5 +106,25 @@ describe("coding.sh attribution / blame", () => {
     assert.match(outside.stderr, /"reason":"not_a_repo"/);
     const fmt = run("attribution", "export", "--format", "csv");
     assert.equal(fmt.status, 2);
+  });
+
+  test("the next steps name the CLI as the user's shell runs it", () => {
+    // Under npx (npm_command=exec) they name the npx command, on every OS.
+    const npxEnv = { ...env, npm_command: "exec" };
+    const npx = nextStepBin(npxEnv);
+    const cli = (cwd: string, ...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: npxEnv, encoding: "utf8", cwd });
+    const next = (r: { stderr: string }) => (JSON.parse(r.stderr) as { next: string[] }).next;
+    const outside = cli(tmp("csh-not-repo-"), "attribution", "--json");
+    assert.equal(outside.status, 1, outside.stderr);
+    assert.deepEqual(next(outside), ["Run it inside a git repository, or pass one:", `${npx} attribution --repo <dir>`]);
+    const url = cli(fx.root, "attribution", "export", "--viewer-url", "ftp://x", "--json");
+    assert.equal(url.status, 2, url.stderr);
+    assert.deepEqual(next(url), ["Did you mean:", `${npx} attribution export --viewer-url http://127.0.0.1:4319`]);
+    const list = cli(fx.root, "attribution");
+    assert.equal(list.status, 0, list.stderr);
+    assert.ok(list.stderr.includes(`${npx} blame <path>`), list.stderr);
+    const blame = cli(fx.root, "blame", "src/util.ts");
+    assert.equal(blame.status, 0, blame.stderr);
+    assert.ok(blame.stderr.includes(`${npx} show s2-codex`), blame.stderr);
   });
 });

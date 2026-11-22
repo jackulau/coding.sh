@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { version } from "../cli/meta.ts";
+import { nextStepBin } from "../cli/next-steps.ts";
 import { paths } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
 import { refreshUpdateCache, type RefreshArgs, type UpdateCache } from "./refresh.ts";
@@ -181,9 +182,9 @@ export interface NoticeOptions extends ScheduleOptions {
   command?: string;
 }
 
-/** The notice text, e.g. "Update available 0.1.0 → 0.2.0 · run: coding.sh update". */
-export function noticeText(current: string, latest: string): string {
-  return `Update available ${current} → ${latest} · run: ${UPDATE_COMMAND}`;
+/** The notice text, e.g. "Update available 0.1.0 → 0.2.0 · run: coding.sh update". notice() passes the command as the user's shell runs it. */
+export function noticeText(current: string, latest: string, command = UPDATE_COMMAND): string {
+  return `Update available ${current} → ${latest} · run: ${command}`;
 }
 
 /**
@@ -206,7 +207,8 @@ export function notice(env: NodeJS.ProcessEnv, out: NoticeOutput, opts: NoticeOp
       const last = cache.notified;
       const recent = last !== undefined && last.version === latest && now - last.at < NOTICE_INTERVAL_MS && last.at <= now;
       if (!recent) {
-        const text = noticeText(current, latest);
+        // codingsh in PowerShell and cmd, the npx command under npx (cli/next-steps.ts).
+        const text = noticeText(current, latest, `${nextStepBin(env)} update`);
         stderr.write((out.style ? out.style(text, "faint", "err") : text) + "\n");
         // Written before the refresh child starts, so its copy keeps this record.
         writeCache(env, { ...cache, notified: { version: latest, at: now } });

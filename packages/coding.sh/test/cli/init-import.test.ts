@@ -6,14 +6,17 @@ import { cpSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { run as ingest } from "../../src/cli/commands/ingest.ts";
-import { run as init } from "../../src/cli/commands/init.ts";
+import { hasHistory, run as init } from "../../src/cli/commands/init.ts";
 import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
+import { sourceSummary } from "../../src/conformance/sources.ts";
 import { openContext } from "../../src/core/context.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
+import type { Adapter } from "../../src/core/types.ts";
 import { FIXTURES, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
+import { loadDb } from "../conformance/_cases.ts";
 
 let t: TmpEnv;
 beforeEach(() => {
@@ -138,6 +141,49 @@ describe("init imports past sessions", () => {
     const after = await stored();
     assert.ok(after.length > before, `background import added sessions (${before} → ${after.length})`);
     assert.ok(after.some((x) => x.agent === "claude-code") && after.some((x) => x.agent === "codex"));
+  });
+
+  test("the question and the plan name only the agents with past sessions here", async () => {
+    // Without a terminal, init's question is in its error, after the plan.
+    const asked = async (agent: string[]) => {
+      const r = await runInit({ agent, yes: false });
+      const e = r.error as { reason?: string; message: string };
+      assert.equal(e?.reason, "confirmation_required", String(r.error ?? r.stderr));
+      return { question: e.message, plan: r.stderr };
+    };
+    // Claude Code keeps transcripts here; Cursor keeps none.
+    const both = await asked(["claude-code", "cursor"]);
+    assert.equal(both.question, "Set up coding.sh for 2 agents (2 config files, backed up first) and import past sessions needs confirmation from the user");
+    assert.match(both.plan, /then import past sessions from Claude Code \(--no-import skips\)/);
+    const none = await asked(["cursor"]);
+    assert.equal(none.question, "Set up coding.sh for 1 agent (1 config file, backed up first) needs confirmation from the user");
+    assert.doesNotMatch(none.plan, /past sessions/);
+    const j = await runInit({ agent: ["cursor"], "dry-run": true }, true);
+    assert.equal((JSON.parse(j.stdout) as { import: unknown }).import, null);
+  });
+
+  test("history outside the files the import usually reads still counts: a database OpenCode set aside", async () => {
+    process.env.XDG_DATA_HOME = join(t.root, "xdgdata");
+    loadDb(join(FIXTURES, "opencode", "real", "opencode.db.json"), join(process.env.XDG_DATA_HOME, "opencode", "opencode.db.schema-mismatch-1787452268462"));
+    assert.equal(sourceSummary("opencode")?.files, 0);
+    const r = await runInit({ agent: ["opencode"], "dry-run": true });
+    assert.equal(r.code, 0, String(r.error ?? r.stderr));
+    assert.match(r.stdout, /^ {2}then import past sessions from OpenCode \(--no-import skips\)$/m);
+  });
+
+  test("a backfill that fails counts as history, so the import can report the error", async () => {
+    // No known source files for "x": the backfill decides.
+    const agent = (backfill: Adapter["backfill"]) => ({ id: "x", backfill });
+    assert.equal(
+      await hasHistory(
+        agent(async function* () {
+          throw new Error("unreadable");
+        }),
+        process.env,
+      ),
+      true,
+    );
+    assert.equal(await hasHistory(agent(async function* () {}), process.env), false);
   });
 
   test("an import already running: init leaves the history to it", async () => {
