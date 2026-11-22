@@ -11,18 +11,30 @@
 // (AI SDK 7 passes trace.setSpan(...) contexts) or from the span made active
 // by startActiveSpan (AI SDK ≤ 6).
 //
-// Sessions: spans get `session.id` from aiSdkTracer({ sessionId }), else from
-// the surrounding withSession()/trace() session, so the call lands in that
-// session; otherwise each AI SDK call is its own session (its trace).
+// Sessions and turns: inside trace(), an AI SDK call is a step of the trace's
+// one turn, as the SDK's own model calls are. Its outermost span, which has no
+// OTel parent, becomes a child of the current trace() or step span. Spans get
+// `session.id` from aiSdkTracer({ sessionId }), else from the surrounding
+// trace()/withSession() session. Outside trace(), each AI SDK call is a turn of
+// that session, or else its own session (its trace). A call that names a
+// session other than the trace's (aiSdkTracer({ sessionId }), a session
+// attribute) stays a turn of that session.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { config, enqueue } from "./client.ts";
-import { currentSessionId } from "./context.ts";
+import { currentSessionId, currentSpan } from "./context.ts";
 import { isObj, newSpanId, newTraceId, nowMs } from "./util.ts";
 
 /** @opentelemetry/api's context key for the active span (createContextKey uses Symbol.for). */
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
 
 const SESSION_ATTRS = ["gen_ai.conversation.id", "session.id", "ai.telemetry.metadata.sessionId", "ai.telemetry.metadata.session_id", "conversation.id"];
+
+/**
+ * Set on a span whose parent is a trace() or step span. The SDK sends those as
+ * events, never as spans, so the server does not wait for the parent and
+ * keeps the span a step of the trace's turn (src/otel/map.ts in coding.sh).
+ */
+const SDK_PARENT_ATTR = "coding_sh.sdk_parent";
 
 /** Attributes holding prompt/response text or tool I/O, dropped in metadata capture mode. */
 const CONTENT_ATTR = /^(ai\.prompt|ai\.response\.(text|object|toolCalls|reasoning)|ai\.toolCall\.(args|result|input|output)|ai\.values?|ai\.embeddings?$|gen_ai\.(input|output)\.messages|gen_ai\.system_instructions|gen_ai\.tool\.call\.(arguments|result)|gen_ai\.(prompt|completion))/;
@@ -52,7 +64,7 @@ interface ContextLike {
 }
 
 export interface AiSdkTracerOptions {
-  /** Session for every span this tracer makes (overrides withSession/trace). */
+  /** Session for every span this tracer makes (overrides withSession/trace). A call made inside a trace() of another session is a turn of this one. */
   sessionId?: string;
 }
 
@@ -188,6 +200,16 @@ class SdkSpan {
   }
 }
 
+/** The session a span's start attributes name (AI SDK 6 metadata.sessionId and the like), if any. */
+function namedSession(attrs: Attributes | undefined): string | undefined {
+  if (!isObj(attrs)) return undefined;
+  for (const k of SESSION_ATTRS) {
+    const v = attrs[k];
+    if (v !== undefined && v !== null && v !== "") return String(v);
+  }
+  return undefined;
+}
+
 /** spanContext() of the span stored in an OTel context, if any. */
 function parentFrom(ctx: unknown): SpanContext | undefined {
   try {
@@ -207,14 +229,28 @@ export interface AiSdkTracer {
   startActiveSpan<F extends (span: SdkSpan) => unknown>(name: string, options: SpanOptionsLike, context: unknown, fn: F): ReturnType<F>;
 }
 
-/** An OpenTelemetry Tracer-shaped object that sends AI SDK spans to coding.sh. */
+/**
+ * An OpenTelemetry Tracer-shaped object that sends AI SDK spans to coding.sh. Inside trace(),
+ * each AI SDK call is a step of the trace's one turn. Outside it, each call is a turn of the
+ * withSession() session, or a session of its own.
+ */
 export function aiSdkTracer(opts: AiSdkTracerOptions = {}): AiSdkTracer {
   const active = new AsyncLocalStorage<SdkSpan>();
 
   const startSpan = (name: string, options: SpanOptionsLike = {}, context?: unknown): SdkSpan => {
-    const parent = options?.root ? undefined : (parentFrom(context) ?? active.getStore()?.spanContext());
+    let attrs = options?.attributes;
+    let parent = options?.root ? undefined : (parentFrom(context) ?? active.getStore()?.spanContext());
+    if (!parent && !options?.root) {
+      // The outermost span of a call inside trace(): a child of the trace's current span, unless the call names another session.
+      const t = currentSpan();
+      const named = opts.sessionId ?? namedSession(attrs);
+      if (t && (named === undefined || named === t.sessionId)) {
+        parent = { traceId: t.traceId, spanId: t.spanId, traceFlags: 1 };
+        attrs = { ...attrs, [SDK_PARENT_ATTR]: true };
+      }
+    }
     const sessionId = opts.sessionId ?? currentSessionId();
-    return new SdkSpan(String(name), parent?.traceId ?? newTraceId(), parent?.spanId, Number(options?.kind ?? 0), options?.attributes, options?.startTime, sessionId);
+    return new SdkSpan(String(name), parent?.traceId ?? newTraceId(), parent?.spanId, Number(options?.kind ?? 0), attrs, options?.startTime, sessionId);
   };
 
   return {

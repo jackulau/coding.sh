@@ -5,6 +5,7 @@
 // minimal stand-in for serve's native ingest: price and put the events, rebuild each touched session with
 // the same buildSession() serve uses. Prints {"otlp": url, "ingest": url} on the first stdout line.
 //   GET /session?id=<id>  -> the stored Session JSON (404 when missing)
+//   GET /events?id=<id>   -> the stored events of that session
 //   POST /v1/ingest       -> {v, service, events}, gzip allowed
 // Stops on stdin EOF.
 import { createServer } from "node:http";
@@ -29,6 +30,9 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/session") {
       const s = await store.getSession(url.searchParams.get("id") ?? "");
       return s ? send(200, s) : send(404, { error: "not found" });
+    }
+    if (req.method === "GET" && url.pathname === "/events") {
+      return send(200, await store.listEvents(url.searchParams.get("id") ?? ""));
     }
     if (req.method === "POST" && url.pathname === "/v1/ingest") {
       const chunks: Buffer[] = [];

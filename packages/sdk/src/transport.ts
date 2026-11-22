@@ -40,13 +40,51 @@ const unref = (t: Timer): Timer => {
   return t;
 };
 
-/** Seconds (or an HTTP date) from a Retry-After header, as milliseconds. */
-export function retryAfterMs(v: string | null): number | undefined {
+const MAX_RETRY_AFTER_MS = 2 * MAX_BACKOFF_MS;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH = `(?<mon>${MONTHS.join("|")})`;
+const DAY = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)";
+const TIME = "(?<h>[0-9]{2}):(?<mi>[0-9]{2}):(?<s>[0-9]{2})";
+/** A whole field value. Spaces and tabs around it are not part of it (RFC 9110 section 5.5). */
+const field = (p: string) => new RegExp(`^[ \\t]*${p}[ \\t]*$`);
+const DELAY_SECONDS = field("(?<n>[0-9]+)");
+/** The three HTTP-date forms of RFC 9110 section 5.6.7. All are in GMT, and case matters. */
+const HTTP_DATES = [
+  field(`${DAY}, (?<d>[0-9]{2}) ${MONTH} (?<y>[0-9]{4}) ${TIME} GMT`), // Sun, 06 Nov 1994 08:49:37 GMT
+  field(`(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, (?<d>[0-9]{2})-${MONTH}-(?<yy>[0-9]{2}) ${TIME} GMT`), // Sunday, 06-Nov-94 08:49:37 GMT
+  field(`${DAY} ${MONTH} (?<d>[0-9]{2}| [0-9]) ${TIME} (?<y>[0-9]{4})`), // Sun Nov  6 08:49:37 1994
+];
+
+/** An HTTP date as epoch milliseconds, or undefined for anything else. `now` places a two-digit year. */
+function httpDateMs(v: string, now: number): number | undefined {
+  const g = HTTP_DATES.map((re) => re.exec(v)?.groups).find((groups) => groups !== undefined);
+  if (!g) return undefined;
+  let y = Number(g.y);
+  if (g.yy !== undefined) {
+    // The latest year ending in those two digits that is at most 50 years ahead (RFC 9110).
+    const latest = new Date(now).getUTCFullYear() + 50;
+    y = latest - ((latest - Number(g.yy)) % 100);
+  }
+  const mon = MONTHS.indexOf(g.mon!);
+  const [d, h, mi, s] = [g.d, g.h, g.mi, g.s].map(Number) as [number, number, number, number];
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mon]!;
+  if (d < 1 || d > days || h > 23 || mi > 59 || s > 60) return undefined; // second 60 is a leap second
+  // Any date before 1970 has passed. Date.UTC would read a year below 100 as 19xx.
+  return y < 1970 ? 0 : Date.UTC(y, mon, d, h, mi, s);
+}
+
+/**
+ * Milliseconds to wait for a Retry-After value (RFC 9110 section 10.2.3): whole seconds, or an
+ * HTTP date (0 once it has passed), at most 60 s. Undefined for anything else, so the sender backs
+ * off. The Python SDK reads it the same way (test/fixtures/retry-after.json).
+ */
+export function retryAfterMs(v: string | null, now = Date.now()): number | undefined {
   if (!v) return undefined;
-  const s = Number(v.trim());
-  if (Number.isFinite(s) && s >= 0) return Math.min(s * 1000, 2 * MAX_BACKOFF_MS);
-  const at = Date.parse(v);
-  return Number.isFinite(at) ? Math.min(Math.max(0, at - Date.now()), 2 * MAX_BACKOFF_MS) : undefined;
+  const n = DELAY_SECONDS.exec(v)?.groups?.n;
+  if (n !== undefined) return Math.min(Number(n) * 1000, MAX_RETRY_AFTER_MS);
+  const at = httpDateMs(v, now);
+  return at === undefined ? undefined : Math.min(Math.max(0, at - now), MAX_RETRY_AFTER_MS);
 }
 
 async function gzip(body: string): Promise<Uint8Array | undefined> {
