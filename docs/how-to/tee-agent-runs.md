@@ -8,7 +8,7 @@ usage and cost. Vercel Agent Runs keeps getting its copy.
 ## 1. Start the receiver
 
 ```sh
-npx coding.sh collector
+npx coding.sh collector   # Windows: npx -p coding.sh codingsh collector
 ```
 
 It listens on `127.0.0.1:4318` and takes OTLP over HTTP, as JSON or protobuf.
@@ -83,8 +83,8 @@ If you call `createAgentRun()` yourself, add the same processor to the tracer pr
 ## 3. Read the sessions
 
 ```sh
-npx coding.sh sessions
-npx coding.sh ui
+npx coding.sh sessions   # Windows: npx -p coding.sh codingsh sessions
+npx coding.sh ui         # Windows: npx -p coding.sh codingsh ui
 ```
 
 Each Agent Runs run (`agent.run.id`) is one session:

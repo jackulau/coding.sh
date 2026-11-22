@@ -7,7 +7,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fakeBin, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
-import { nextStepBin, runCommand } from "../../src/cli/next-steps.ts";
+import { pluginPath } from "../../src/adapters/opencode.ts";
+import { cliCommand, nextStepBin, runCommand } from "../../src/cli/next-steps.ts";
 import { CLI, seed, session } from "../query/_seed.ts";
 
 interface Warning {
@@ -130,5 +131,107 @@ describe("doctor: an agent that cannot capture", () => {
     } finally {
       writeFile(config, 'model = "gpt-5"\n\n[features]\nhooks = false\n');
     }
+  });
+});
+
+describe("doctor: an OpenCode plugin OpenCode will not run", () => {
+  let env: TmpEnv;
+  let cwd: string;
+  let hook: string;
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1", ...extra }, encoding: "utf8", timeout: 60_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const setup = ["init", "--yes", "--agent", "opencode", "--no-mcp", "--no-import"];
+
+  before(() => {
+    env = tmpEnv();
+    cwd = join(env.home, "elsewhere");
+    mkdirSync(cwd, { recursive: true });
+    hook = join(env.root, "dist", "hook.mjs");
+    writeFile(hook, "// hook\n");
+  });
+  after(() => env.restore());
+
+  test("set up under OpenCode 1, run under OpenCode 2: a warning naming the command that rewrites the plugin, in Git Bash and PowerShell", () => {
+    // OpenCode 1.x loads plugin/coding-sh.js, 2.x plugins/coding-sh.js; neither runs the other's.
+    fakeBin(env, "opencode", "1.19.5");
+    const init = run(setup);
+    assert.equal(init.status, 0, init.stderr);
+    fakeBin(env, "opencode", "opencode v2.3.2");
+    const note = `${pluginPath({ scope: "user" }, 1)} is stale: OpenCode 2.3.2 will not run a plugin written for OpenCode 1.x`;
+    for (const shell of [{ MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }, { MSYSTEM: undefined, SHELL: undefined }]) {
+      const fix = cliCommand({ ...process.env, ...shell }, ["init", "--agent", "opencode"]);
+      const r = run(["doctor", "--agent", "opencode"], shell);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /^! OpenCode\s+v2\.3\.2, hooked but stale, no events yet$/m);
+      assert.ok(r.stderr.includes(`\n  ${note}\n`), r.stderr);
+      assert.match(r.stderr, new RegExp(`Rewrite the stale hooks:\\n\\s+${esc(fix)}\\n`));
+      assert.equal(r.stdout, "1 agent not capturing\n");
+      const doc = JSON.parse(run(["doctor", "--agent", "opencode", "--json"], shell).stdout) as Doc;
+      assert.deepEqual(doc.agents.find((a) => a.id === "opencode")!.blockers, [note]);
+      assert.deepEqual(
+        doc.warnings.filter((w) => w.agent === "opencode").map((w) => [w.message, w.blockers, w.next]),
+        [["OpenCode is not capturing: hooked but stale", [note], fix]],
+      );
+    }
+    // init's plan writes the plugin for OpenCode 2 and removes the stale one, so it lists no blocker.
+    interface Plan { agents: { id: string; changes: { path: string; action: string }[]; warnings: string[]; blockers: string[] }[] }
+    const plan = JSON.parse(run([...setup, "--dry-run", "--json"]).stdout) as Plan;
+    const oc = plan.agents.find((a) => a.id === "opencode")!;
+    assert.deepEqual(oc.changes.map((ch) => [ch.path, ch.action]), [[pluginPath({ scope: "user" }, 2), "create"], [pluginPath({ scope: "user" }, 1), "delete"]]);
+    assert.deepEqual([oc.warnings, oc.blockers], [[], []]);
+    assert.doesNotMatch(run([...setup, "--dry-run"]).stdout, /stale/);
+    // The command it names puts it right.
+    assert.equal(run(setup).status, 0);
+    const r = run(["doctor", "--agent", "opencode"]);
+    assert.match(r.stderr, /^✓ OpenCode\s+v2\.3\.2, hooked/m);
+    assert.doesNotMatch(r.stderr, /stale/);
+    assert.equal(r.stdout, "ok\n");
+  });
+});
+
+describe("doctor: no agent detected", () => {
+  let env: TmpEnv;
+  let cwd: string;
+  let hook: string;
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1", ...extra }, encoding: "utf8", timeout: 60_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  before(() => {
+    env = tmpEnv();
+    cwd = join(env.home, "elsewhere");
+    mkdirSync(cwd, { recursive: true });
+    hook = join(env.root, "dist", "hook.mjs");
+    writeFile(hook, "// hook\n");
+    // A PATH with no agent on it.
+    const bin = join(env.root, "bin");
+    mkdirSync(bin, { recursive: true });
+    process.env.PATH = bin;
+  });
+  after(() => env.restore());
+
+  test("says so and names the wrapper command, in Git Bash, in PowerShell and in --json", () => {
+    // The "Any command" row is always there, so a check for no rows at all never fired.
+    for (const shell of [{ MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }, { MSYSTEM: undefined, SHELL: undefined }]) {
+      const cmd = runCommand({ ...process.env, ...shell }, "<cmd>");
+      const r = run(["doctor"], shell);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /^✓ Any command\s+no hooks needed; /m);
+      assert.match(r.stderr, new RegExp(`^! Agents\\s+none detected; capture any agent with ${esc(cmd)}$`, "m"));
+      const doc = JSON.parse(run(["doctor", "--json"], shell).stdout) as Doc;
+      assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id), ["wrapper"]);
+      assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), [{ check: "agents", message: "No agent detected", next: cmd }]);
+    }
+    // An agent on PATH: no such warning.
+    fakeBin(env, "opencode", "1.19.5");
+    const doc = JSON.parse(run(["doctor", "--json"]).stdout) as Doc;
+    assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id).sort(), ["opencode", "wrapper"]);
+    assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), []);
+    assert.doesNotMatch(run(["doctor"]).stderr, /none detected/);
   });
 });
