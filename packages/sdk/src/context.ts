@@ -259,6 +259,12 @@ function handle(s: SpanState): TraceHandle {
   return { traceId: s.trace.traceId, spanId: s.spanId, sessionId: s.trace.sessionId };
 }
 
+/** The trace() or step span open here, if any: aiSdkTracer() puts AI SDK spans that have no parent under it. */
+export function currentSpan(): TraceHandle | undefined {
+  const s = als.getStore()?.span;
+  return s ? handle(s) : undefined;
+}
+
 export interface SpanOptions {
   /** Tool arguments (tool spans) or step input. */
   input?: unknown;

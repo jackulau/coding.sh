@@ -53,6 +53,18 @@ class ExitTest(unittest.TestCase):
         self.assertEqual(p.stdout, "app output\n")
         self.assertLess(elapsed, 5.0)
 
+    def test_a_flush_at_exit_that_runs_out_of_time_says_so_once(self) -> None:
+        # The app never calls flush(), so the warning names the flush at exit. It used to say flush().
+        self.server.delay = 8.0
+        p, _ = self._run()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr.count("coding.sh"), 1, p.stderr)
+        self.assertIn(
+            "coding.sh: the flush at exit gave up after 2 s with 3 events not sent (the server did not answer); dropping them\n",
+            p.stderr,
+        )
+        self.assertNotIn("flush()", p.stderr)
+
 
 DEAD_SCRIPT = textwrap.dedent(
     """
