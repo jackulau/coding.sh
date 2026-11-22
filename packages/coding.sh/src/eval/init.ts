@@ -29,7 +29,7 @@ import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
-import { draftTaskFromSession, exportTaskDir, NoInstructionError, type DraftedTask } from "./task.ts";
+import { draftTaskFromSession, exportTaskDir, guessSetup, NoInstructionError, type DraftedTask } from "./task.ts";
 import { referenceTestEdits } from "./test-edits.ts";
 import { runVerifier, taskWorlds, validateTask } from "./validate.ts";
 import { findSessions } from "../query/run.ts";
@@ -341,6 +341,13 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     for (let i = 2; used.has(d); i++) d = `${slug(task.name).slice(0, 44)}-${i}`;
     // Names are unique in the suite: a repeat takes its directory name.
     if (tasks.some((t) => t.task.name === task.name)) task = { ...task, name: d };
+    // Every trial runs the setup. An install with no lockfile pins nothing, so trials could get
+    // different versions: leave that guess out, before validation would run it.
+    const unpinned = task.meta.setupSource === "guessed" ? task.setup.filter((cmd) => UNPINNED_SETUP.has(cmd)) : [];
+    if (unpinned.length) {
+      const setup = task.setup.filter((cmd) => !UNPINNED_SETUP.has(cmd));
+      task = { ...task, setup, meta: { ...task.meta, setupSource: setup.length ? "guessed" : "none", notes: [...task.meta.notes, `setup ${unpinned.join(" && ")} left out: package.json has no lockfile`] } };
+    }
     // A failed session's diff is what the agent got wrong: a near miss the
     // verifier must fail, not the reference solution it must pass. With
     // validation, the verifier decides: a diff that passes it is a reference.
@@ -377,6 +384,8 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     agents.set(ran, (agents.get(ran) ?? 0) + 1);
     if (!task.verifier.command) notes.push(`${d}: no verifier; set "verifier.command" in tasks/${d}/task.json to a command that passes only when the task is solved`);
     else if (task.meta.verifierSource !== "given") notes.push(`${d}: verifier guessed (${task.verifier.command}); make sure it covers this task only`);
+    const setup = setupNote(task, d, unpinned);
+    if (setup) notes.push(setup);
   }
   if (!tasks.length) throw new InitError(`couldn't draft a task from any of ${sessions.length} session(s): ${notes.join("; ")}`);
   if (o.validate) notes.unshift(`${validated} of ${tasks.length} task(s) validated: the verifier fails the start, passes the session's end state and fails the near misses`);
@@ -412,8 +421,23 @@ async function endStatePasses(task: EvalTask, deps: InitDeps): Promise<boolean |
   }
 }
 
+/** What the draft guesses as setup for a package.json with no lockfile: an install that pins no versions. */
+const UNPINNED_SETUP = new Set(guessSetup({ files: new Set(["package.json"]) }));
+
+/** What every trial of task `d` runs before the agent starts, and where to change it. */
+function setupNote(task: DraftedTask, d: string, unpinned: readonly string[]): string | undefined {
+  const where = `"setup" in tasks/${d}/task.json`;
+  if (!task.setup.length) return unpinned.length ? `${d}: no setup: package.json has no lockfile to pin an install; if the verifier needs packages, add a command to ${where} (every trial runs it before the agent starts)` : undefined;
+  if (task.meta.setupSource !== "guessed") return undefined;
+  // The draft's note names the files: "setup guessed from package-lock.json: npm ci".
+  const m = /^setup guessed from (.+?): (.+)$/.exec(task.meta.notes.find((n) => n.startsWith("setup guessed from ")) ?? "");
+  const from = m && m[2] === task.setup.join(" && ") ? ` (guessed from ${m[1]})` : "";
+  const left = unpinned.length ? `; ${unpinned.join(" && ")} is left out, since package.json has no lockfile` : "";
+  return `${d}: every trial runs setup \`${task.setup.join(" && ")}\`${from} in its own copy of the repo before the agent starts; to change it, edit ${where} ([] runs none)${left}`;
+}
+
 /** `s` as one shell word, for a command a hint prints. */
-const shellWord = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+const shellWord =(s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 
 /** The first check a validation failed, in words. */
 function validationGap(r: { noopFails: boolean; referencePasses: { passed: number; of: number }; nearMissesFail: { failed: number; of: number }; leakage: string[] }): string {

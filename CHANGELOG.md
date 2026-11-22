@@ -210,6 +210,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, the exit flush also sends a batch that is waiting for its retry, and warns when it has to drop events. Before, a script that ended without `flush()` while the server was down or answered 503 exited with its events lost and no warning. [SDK](https://coding.sh/docs/sdk)
 - **Evals.** `latest` skips sessions that eval, compare and experiment trials made, so `eval new latest` after `eval run` picks your own session, not a trial. A session with a run id counts only when there is no other. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#read-one-session))
+- **Evals.** `eval init` prints the setup every trial runs, where it was guessed from, and how to change it. A `package.json` with no lockfile gets no guessed `npm install`, since that install pins no versions. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
 
 ## [0.1.7] - 2026-11-16
 

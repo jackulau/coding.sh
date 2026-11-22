@@ -31,6 +31,12 @@ not write or that you changed since (a `reference.patch` you added, a prompt you
 them; `--force-all` deletes those too. `evals/<name>/.eval-init.json` records what `eval init`
 wrote.
 
+Each task's setup is guessed from the files at the root of the repo, such as `npm ci` from
+`package-lock.json`, and `eval init` prints it. A `package.json` with no lockfile gets no install,
+since an install from it pins no versions. Every trial runs the setup in its own copy of the repo
+before the agent starts, so no trial sees what another installed. To change it, edit `"setup"` in
+`tasks/<task>/task.json` (`[]` runs none).
+
 The session failed, so its diff is not a correct answer. It is saved as a near miss
 (`near-misses/001.patch`) that the verifier must fail. Add a correct fix as `reference.patch` in
 the task dir, load it with `coding.sh eval import evals/failures/tasks/<task>`, and `coding.sh eval
