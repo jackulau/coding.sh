@@ -22,7 +22,7 @@ import type { GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, requireConsent, str, withContext, readIngest } from "../common.ts";
-import { cliCommand, nextStepBin, windowsShell } from "../next-steps.ts";
+import { cliCommand, nextStepBin, rerunWithYes, windowsShell } from "../next-steps.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -578,7 +578,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       }
       let installed: { replaced: boolean; changed: boolean } | undefined;
       if (c.flags["install-cron"] === true) {
-        await requireConsent(c, `Add a daily ${def.name} run to your crontab?`, `coding.sh bench schedule ${def.name} --install-cron --yes`);
+        await requireConsent(c, `Add a daily ${def.name} run to your crontab?`, rerunWithYes(c, ["bench", "schedule", def.name, "--install-cron"]));
         await mkdir(join(benchHome(env), def.name), { recursive: true });
         installed = installCron(systemCrontab(env), line, def.name);
       }
