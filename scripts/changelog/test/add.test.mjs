@@ -92,6 +92,15 @@ test("each rule refuses with exit 1, one reason, and leaves the file byte-identi
   assert.equal(run(r, "--section", "Fixed", "--area", "Area", "--text", words(58), "--link", "guides/explore.md").status, 0);
 });
 
+test("a character the site font has outside CORE is refused; one it lacks, drawn by a system font, is not", () => {
+  const r = root();
+  const res = run(r, "--section", "Fixed", "--area", "A", "--text", "A café line.", "--link", "guides/explore.md");
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /U\+00E9/);
+  assert.equal(run(r, "--section", "Fixed", "--area", "A", "--text", "The κ statistic.", "--link", "guides/explore.md").status, 0, "kappa is not in the site font, so no -rest file loads for it");
+  assert.match(run(r, "--help").stdout, /no character the site font has outside its CORE subset/);
+});
+
 test("a fenced ## line is not a heading", () => {
   const r = root();
   assert.match(run(r, "--section", "Fixed", "--area", "A", "--text", "t", "--link", "guides/explore.md#not-a-heading").stderr, /no heading/);

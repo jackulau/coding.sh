@@ -332,7 +332,8 @@ const USAGE = `Usage:
   node scripts/changelog/add.mjs --check [--file CHANGELOG.md]
 
 --section is one of ${SECTIONS.join(", ")}. The line is "- **A.** T ([docs](link))", at most
-${MAX_WORDS} words, in the CORE font subset, with a link to a doc under docs/ whose #fragment is one of its headings.
+${MAX_WORDS} words, with no character the site font has outside its CORE subset (the page would load a
+-rest font file for it), and with a link to a doc under docs/ whose #fragment is one of its headings.
 --check runs the same checks over every line of the unreleased version.`;
 
 function parseArgs(argv) {
