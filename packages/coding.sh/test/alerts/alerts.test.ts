@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageError } from "../../src/cli/args.ts";
 import * as alertCmd from "../../src/cli/commands/alert.ts";
+import { commandHelp } from "../../src/cli/main.ts";
+import { findCommand } from "../../src/cli/registry.ts";
 import { classify, recordDelivery, runAlertChecks } from "../../src/alerts/check.ts";
 import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
 import { deliver, signatureHeaders, signBody, stderrLine } from "../../src/alerts/notify.ts";
@@ -481,6 +483,31 @@ describe("alert parts", () => {
     assert.equal(parseMeasure("tokens"), undefined);
     assert.deepEqual(parseMeasure("score:helpful"), { kind: "score", name: "helpful" });
     assert.equal(parseMeasure("score: "), undefined);
+  });
+
+  // On Windows cmd.exe runs a command target, and notify-send is not there.
+  it("an empty --notify command: gives an example that runs where the CLI runs", () => {
+    const usage = (platform: NodeJS.Platform) => {
+      try {
+        alertCmd.parseTarget("command: ", platform);
+      } catch (e) {
+        assert.ok(e instanceof UsageError);
+        return e.message;
+      }
+      assert.fail("no usage error");
+    };
+    assert.equal(usage("win32"), '--notify command: needs a command, e.g. command:"node C:\\alerts\\notify.mjs"');
+    assert.equal(usage("linux"), '--notify command: needs a command, e.g. command:"notify-send coding.sh"');
+    assert.equal(usage("darwin"), usage("linux"));
+  });
+
+  it("alert add --help shows a command target for Windows beside the notify-send one", () => {
+    const alert = findCommand("alert")!;
+    const help = commandHelp(alert, alert.actions!.find((a) => a.name === "add"), { heading: (s) => s, bold: (s) => s, faint: (s) => s });
+    const examples = help.slice(help.indexOf("\nExamples\n")).split("\n");
+    const at = (re: RegExp) => examples.findIndex((l) => re.test(l));
+    assert.ok(at(/--notify command:"notify-send coding\.sh"$/) > 0, help);
+    assert.equal(at(/--notify "command:node C:\\alerts\\notify\.mjs"$/), at(/notify-send/) + 1, help);
   });
 
   it("disables a target on the 5th failure in a row and resets on a success", () => {

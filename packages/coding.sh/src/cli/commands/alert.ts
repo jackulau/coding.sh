@@ -50,7 +50,10 @@ export function thresholdText(a: { measure: string; direction?: "under" }, v: nu
 
 const MEASURES_TEXT = "failure-rate, cost, sessions, flag:<FLAG> or score:<NAME>";
 
-function parseTarget(raw: string): AlertTarget {
+/** A command target that runs where the CLI runs: on Windows cmd.exe runs it, so no notify-send. */
+const commandExample = (platform: NodeJS.Platform): string => (platform === "win32" ? 'command:"node C:\\alerts\\notify.mjs"' : 'command:"notify-send coding.sh"');
+
+export function parseTarget(raw: string, platform: NodeJS.Platform = process.platform): AlertTarget {
   if (raw.startsWith("webhook:")) {
     const url = raw.slice("webhook:".length).trim();
     let u: URL;
@@ -64,7 +67,7 @@ function parseTarget(raw: string): AlertTarget {
   }
   if (raw.startsWith("command:")) {
     const command = raw.slice("command:".length).trim();
-    if (!command) throw new UsageError("--notify command: needs a command, e.g. command:\"notify-send coding.sh\"", { reason: "invalid_value" });
+    if (!command) throw new UsageError(`--notify command: needs a command, e.g. ${commandExample(platform)}`, { reason: "invalid_value" });
     return { kind: "command", command };
   }
   throw new UsageError(`--notify must be webhook:<URL> or command:"<CMD>", got ${JSON.stringify(raw)}`, { reason: "invalid_value" });

@@ -944,6 +944,7 @@ coding.sh alert add <NAME> [options]
 ```sh
 coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
 coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
+coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify "command:node C:\alerts\notify.mjs"
 coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
 coding.sh alert add helpful --measure score:helpful --under 0.5 --window 1d --notify webhook:https://example.com/hook
 ```
