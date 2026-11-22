@@ -206,6 +206,16 @@ describe("work and work show agree on one item", () => {
     assert.equal(row.filesChanged, show.json.filesChanged);
   });
 
+  test("work show splits the main session's own files-changed count, the one show reports, from the item's", async () => {
+    const show = await runCmd(work, sb, { action: "show", positionals: ["multi"], json: true });
+    assert.deepEqual([show.json.filesChanged, show.json.sessionFilesChanged, show.json.sessionId], [3, 2, "multi"]);
+    const text = await runCmd(work, sb, { action: "show", positionals: ["multi"] });
+    assert.match(text.stdout, /Files +3 files changed across 2 sessions; the main session changed 2/);
+    // One session: one number, no split.
+    const one = await runCmd(work, sb, { action: "show", positionals: ["waits"], json: true });
+    assert.equal(one.json.sessionFilesChanged, undefined);
+  });
+
   test("one instant reads the same in Why and Started, and a wait under a minute reads in seconds", async () => {
     const r = await runCmd(work, sb, { action: "show", positionals: ["multi"] });
     assert.equal(r.error, undefined, r.error?.stack);

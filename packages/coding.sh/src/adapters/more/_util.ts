@@ -26,7 +26,7 @@ import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, res
 import { resolveWriteTarget } from "../_shared/files.ts";
 import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
 import { skillFieldsOf } from "../_shared/tools.ts";
-import { parseTestOutput, type TestSummary } from "../_shared/heuristics.ts";
+import { parseTestOutput, runsTests, type TestSummary } from "../_shared/heuristics.ts";
 import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 import { isolatedHome } from "../_shared/overlay.ts";
@@ -526,12 +526,12 @@ export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | un
 
 /**
  * Test summary for a finished shell tool call, only when the command runs tests
- * or checks. The command vouches for the output, so mocha and go summaries count
+ * or checks (runsTests: a stage of it does, so `tail ci.log` gives none). The command vouches for the output, so mocha and go summaries count
  * after a check command too (`npm run check`, `make verify`).
  */
 export function testResultFor(input: unknown, output: string | undefined): TestSummary | undefined {
   const cmd = commandOf(input);
-  if (!isVerifyCommand(cmd)) return undefined;
+  if (!runsTests(cmd)) return undefined;
   return parseTestOutput(output, cmd, true);
 }
 

@@ -58,17 +58,32 @@ one in 5% needs 32. Until then it stays in its place with its fix.
 
 :::more What improve leaves out
 - Sessions older than 14 days, and sessions in other repos. `--since 30d` and `--repo all` widen it.
-- Subagents, and eval and benchmark runs.
+- Eval and benchmark runs. Subagents and delegates are read with the session that started them,
+  even when they ran headless.
 - Headless sessions (`claude -p`, an Agent SDK, `codex exec`): mostly scripts and judges nobody
   watched. The first line counts them, and `--headless` includes them.
+- Sessions past the newest 2000 in scope. The report says how many older sessions it did not
+  read; a shorter `--since` reads them all.
 - In a compound line such as `cat Cargo.toml && cargo build`, the part that failed is the one
-  counted. When nothing singles out a part, the issue says "A compound command".
+  counted.
+- No part failed when the shell could not parse the line (`syntax error`, `unexpected EOF`).
+- A removal that a safety check denied is the removal's failure, not the next part's. A stored
+  command cut short (ending in `…`) is filed under a part only when the error names it.
+- When nothing singles out a part, the issue says "A compound command", grouped by the error's
+  class (`not found`, `TS2322`, `TypeError`) or exit status. An issue id never holds the output's
+  words.
 - The error line under a command comes from that command's own output: the line that names it,
   or all of the output when the other parts are setup steps such as `cd`.
+- Otherwise the error line is the first one left after the lines that name another part are
+  removed.
 - When no line can be tied to the command, the issue shows no error line. The title says "fails
-  the same way" only when every failure shows the same error, and "fails in several sessions"
-  otherwise.
-- A command run as `powershell.exe -Command <cmd>` or `pwsh -c <cmd>` is counted under `<cmd>`.
+  the same way" only when every failure shows an error line and they all match, and "fails in
+  several sessions" otherwise.
+- A command run by a PowerShell tool, or by `powershell -Command <cmd>` or `pwsh -c <cmd>`, is
+  read as PowerShell: statements split on `;` and pipelines on `|`, single quotes are literal and
+  the backtick escapes.
+- `npm test | Select-Object -Last 20` is counted under `npm test`, never under the launcher or a
+  pipeline cmdlet such as `Select-Object` or `Out-String`.
 - A Codex code-mode `exec` call only runs other tool calls, so its failures count once, under
   the calls it ran.
 :::

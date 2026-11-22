@@ -272,15 +272,18 @@ async function install(c: CommandContext): Promise<number> {
   }
   const after = stringifyJsonLike({ ...cfg, statusLine: { type: "command", command: STATUSLINE_COMMAND, padding: 0 } }, before);
   if (before !== undefined && JSON.stringify(parseJsonObject(file, after)) === JSON.stringify(cfg)) {
+    out.data({ outcome: "unchanged", path: file });
     out.note("coding.sh status line is already installed");
     return 0;
   }
   const change = planEdit(file, before, after, "install coding.sh status line");
   if (!change) {
+    out.data({ outcome: "unchanged", path: file });
     out.note("coding.sh status line is already installed");
     return 0;
   }
   if (c.flags["dry-run"]) {
+    out.data({ outcome: "planned", action: "install", path: file });
     out.print(`Would write statusLine into ${file}`);
     return 0;
   }
@@ -296,6 +299,7 @@ async function install(c: CommandContext): Promise<number> {
       recordInstall(CLAUDE_AGENT, recordKey(ch.path), ch.after ?? "", env, Date.now(), oursAlready && known === undefined ? undefined : restore);
     },
   });
+  out.data({ outcome: "installed", path: file });
   out.print(`Installed the coding.sh status line into ${file}`);
   out.note("Claude Code shows it on the next turn. Remove it with: coding.sh statusline uninstall");
   return 0;
@@ -306,12 +310,14 @@ async function uninstall(c: CommandContext): Promise<number> {
   const file = userSettings(c);
   const text = readTextIfExists(file);
   if (text === undefined) {
+    out.data({ outcome: "unchanged", path: file });
     out.note("No Claude Code settings.json; nothing to remove");
     return 0;
   }
   const cfg = parseJsonObject(file, text);
   const existing = currentCommand(cfg);
   if (existing === undefined || !OURS.test(existing)) {
+    out.data({ outcome: "unchanged", path: file });
     out.note("No coding.sh status line found");
     return 0;
   }
@@ -340,14 +346,17 @@ async function uninstall(c: CommandContext): Promise<number> {
     change = stripChange(file, text, cfg, env);
   }
   if (!change) {
+    out.data({ outcome: "unchanged", path: file });
     out.note("No coding.sh status line found");
     return 0;
   }
   if (c.flags["dry-run"]) {
+    out.data({ outcome: "planned", action: "uninstall", path: file });
     out.print(`Would remove the statusLine from ${file}`);
     return 0;
   }
   await applyChanges([change], { agent: CLAUDE_AGENT, dryRun: false, env, onApplied: (ch) => forgetInstall(recordKey(ch.path), env) });
+  out.data({ outcome: "removed", path: file });
   out.print(`Removed the coding.sh status line from ${file}`);
   return 0;
 }

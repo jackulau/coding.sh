@@ -10,7 +10,7 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
 import { ADAPTERS } from "../../src/adapters/index.ts";
-import { backfillT3, t3code, turnUsage } from "../../src/adapters/t3code.ts";
+import { backfillT3, providerAgent, t3code, turnUsage } from "../../src/adapters/t3code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, childLinker, ingest, recomputeSession } from "../../src/core/ingest.ts";
 import { repoResolver } from "../../src/core/repo-state.ts";
@@ -931,5 +931,47 @@ describe("T3 store copies", () => {
     } finally {
       rmSync(wal, { recursive: true, force: true });
     }
+  });
+});
+
+describe("T3 provider instances", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("maps an instance id to the agent whose driver kind it starts with, else keeps it", () => {
+    const cases: [string, string][] = [
+      ["claudeAgent", "claude-code"], ["codex", "codex"], ["claudeHub", "claude-code"], ["ClaudeWork", "claude-code"], ["codex-personal", "codex"],
+      ["cursorTeam", "cursor"], ["opencode_2", "opencode"], ["piLocal", "pi"], ["grok", "grok"], ["muse", "muse"], ["toString", "toString"],
+    ];
+    for (const [id, agent] of cases) assert.equal(providerAgent(id), agent, id);
+  });
+
+  it("a v2 thread whose driver is an instance id (claudeHub) is a Claude Code session, with its prompt", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-hub", { provider: "claudeHub", title: "Add sum", created: T(0) });
+    providerThread(db, "pt-hub", "thr-hub", "claudeHub", "hub-session-not-on-disk", 1);
+    db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES ('m-hub', 'thr-hub', NULL, 'node-1', 'user', 0, ?, ?, ?)").run(T(1), T(1), J({ text: "add a sum function" }));
+    db.close();
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    const s = await index.getSession("hub-session-not-on-disk");
+    assert.equal(s?.agent, "t3code");
+    assert.equal(s?.provider, "claude-code");
+    assert.equal((await index.listEvents("hub-session-not-on-disk", { kinds: ["user.message"] })).length, 1);
   });
 });

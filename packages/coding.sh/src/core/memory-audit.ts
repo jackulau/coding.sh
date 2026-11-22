@@ -45,6 +45,8 @@ export interface MemorySession {
   /** The session its counts go to: a subagent counts as its root session, with its own directory and events. */
   rootId?: string;
   agent: string;
+  /** The agent a host app ran (Session.provider: Claude Code under T3 Code): its rules apply, not the host's. */
+  provider?: string;
   cwd?: string;
   repoRoot?: string;
   startedAt: number;
@@ -108,6 +110,8 @@ const SHELL_READERS = new Set(["cat", "head", "tail", "sed", "less", "more", "nl
 const HOME_DIR = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)(?=\/|$)/;
 
 const slash = (p: string) => p.replace(/\\/g, "/");
+/** The agent whose loading rules a session follows: the one a host app ran, else its own. */
+const ranAs = (s: MemorySession): string => s.provider ?? s.agent;
 
 /** What kind of memory or instruction file a path is, if any. */
 export function memoryKind(path: string): MemoryKind | undefined {
@@ -356,7 +360,7 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     const t = touch(k, s.rootId ?? s.id);
     if (what === "loaded") {
       t.loaded = true;
-      if (s.agent === "claude-code") loadImports(k, s, false);
+      if (ranAs(s) === "claude-code") loadImports(k, s, false);
     } else if (what === "read") {
       t.read = true;
       t.lastRead = Math.max(t.lastRead ?? 0, ts);
@@ -373,7 +377,7 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     if (f.since !== undefined && s.startedAt < f.since) return;
     const t = touch(k, s.rootId ?? s.id);
     if (!t.loaded) t.loaded = t.loadedAtStart = true;
-    if (s.agent === "claude-code") loadImports(k, s, true);
+    if (ranAs(s) === "claude-code") loadImports(k, s, true);
   };
   // Claude Code loads what a loaded memory file imports with `@path`, and their imports, up to IMPORT_HOPS deep.
   const loadImports = (from: string, s: MemorySession, atStart: boolean) => {
@@ -403,8 +407,9 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
 
   for (const s of sessions) {
     const cwd = s.cwd ? slash(s.cwd) : undefined;
-    if (cwd && (s.agent === "claude-code" || s.agent === "codex")) {
-      if (s.agent === "claude-code") {
+    const agent = ranAs(s);
+    if (cwd && (agent === "claude-code" || agent === "codex")) {
+      if (agent === "claude-code") {
         startLoad(`${claudeDir}/CLAUDE.md`, s);
         for (const f of files) if (f.key.startsWith(`${claudeDir}/rules/`)) startLoad(f.key, s);
         for (const k of skillsIn(`${claudeDir}/skills`)) startLoad(k, s);

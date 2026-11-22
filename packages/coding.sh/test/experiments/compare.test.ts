@@ -382,10 +382,10 @@ describe("compare: Bayesian posterior at small n (EM-6)", () => {
 
 describe("compare: attrition (EM-4)", () => {
   it("classifies infra errors", () => {
-    for (const m of ["node agent.mjs: timed out after 120000 ms", "https://x/: HTTP 503: busy", "https://x/: HTTP 429: slow down", "./a: could not start: ENOENT", "fetch failed", "killed by SIGKILL"]) {
+    for (const m of ["connect ETIMEDOUT 10.0.0.1:443", "https://x/: HTTP 503: busy", "https://x/: HTTP 429: slow down", "./a: could not start: ENOENT", "fetch failed", "killed by SIGKILL"]) {
       assert.ok(isInfraError(m), m);
     }
-    for (const m of ["./a: exited 3: agent crashed", "stdout is not JSON: hi", "TypeError: x is undefined", "https://x/: HTTP 404: nope"]) assert.ok(!isInfraError(m), m);
+    for (const m of ["./a: exited 3: agent crashed", "stdout is not JSON: hi", "TypeError: x is undefined", "https://x/: HTTP 404: nope", "node agent.mjs: timed out after 120000 ms"]) assert.ok(!isInfraError(m), m);
   });
 
   it("flags one arm losing many more trials, split into infra and agent errors", async () => {
@@ -396,7 +396,7 @@ describe("compare: attrition (EM-4)", () => {
       dataset: ds,
       task: (input) => {
         const i = ids.indexOf(String(input));
-        if (i < 6) throw new Error("timed out after 1000 ms");
+        if (i < 6) throw new Error("./agent: could not start: spawn ENOENT");
         if (i < 9) throw new Error(`exited 3: crash ${k++}`);
         return input;
       },

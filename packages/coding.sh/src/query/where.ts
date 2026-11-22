@@ -115,6 +115,8 @@ export interface KeyDef {
   unit?: Unit;
   /** Text keys: equals (default) or contains (case-insensitive substring). */
   match?: "exact" | "contains";
+  /** Text keys: the one spelling stored values have, applied to each typed value (repo: windowsSpelling). */
+  spell?: (raw: string) => string;
   /** Time keys: since = at or after, until = before. */
   bound?: "since" | "until";
   doc: string;
@@ -203,6 +205,17 @@ export function worktreeRepo(p: string | undefined): WorktreeRepo | undefined {
   return undefined;
 }
 
+/**
+ * A Windows path in the spelling stored repo roots have: an upper-case drive letter and
+ * backslashes (c:/w/demo is C:\w\demo). Anything else comes back as is. core/git.ts repoPath
+ * adds the long name (it reads the disk; this file reads nothing), so this is the part of the
+ * one spelling a typed `repo:` value can get without the disk.
+ */
+export function windowsSpelling(p: string): string {
+  if (!/^[a-zA-Z]:(?:[\\/]|$)/.test(p)) return p;
+  return p[0]!.toUpperCase() + p.slice(1).replace(/\//g, "\\");
+}
+
 /** What repoGroup reads: a session's repo state and cwd. */
 type RepoPlace = { repo?: { root: string; main?: string } | undefined; cwd?: string | undefined };
 
@@ -274,6 +287,7 @@ const KEY_LIST: KeyDef[] = [
     type: "text",
     doc: "Repo root path, or its name (else the working directory's name; tmp for the macOS temp dir). A worktree's sessions match its main repo's path and name too",
     example: "repo:coding-sh",
+    spell: windowsSpelling,
     sql: ["s.repo_root", sqlGroupPath(SQL_DIR, SQL_MAIN), sqlRepoName(SQL_DIR), sqlGroupName(SQL_DIR, SQL_MAIN)],
     get: (s) => [s.repo?.root, groupPath(s), repoName(s.repo?.root ?? s.cwd), repoGroup(s).name],
     facet: { sql: sqlGroupName(SQL_DIR, SQL_MAIN), get: (s) => [repoGroup(s).name] },
@@ -611,7 +625,9 @@ function editDistance(a: string, b: string): number {
 }
 
 function resolveValue(def: KeyDef, op: Op, part: Part, now: number, tzOffsetMin?: number): Value {
-  const { text, quoted, at } = part;
+  const { quoted, at } = part;
+  // Same length, so the wildcard offsets in part.wild still hold.
+  const text = def.spell ? def.spell(part.text) : part.text;
   const v: Value = { raw: text, quoted, kind: "eq" };
   const bad = (why: string, next: string[] = [`e.g. ${def.example}`]) => new QueryError(`${def.name}: ${why}`, at, { reason: "bad_value", next });
   if (text === "") throw bad("needs a value");

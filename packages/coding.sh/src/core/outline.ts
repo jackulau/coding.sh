@@ -8,6 +8,7 @@
 // A fold over time-sorted events; `coding.sh show`, the viewer, MCP and ingest share it.
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
 import { failureState, foldFailure, type ToolFailure } from "./failures.ts";
+import { phasePromptTitle } from "./sessions.ts";
 
 /** A gap this long between two events of the main agent opens a new phase. */
 export const IDLE_PHASE_MS = 30 * 60_000;
@@ -135,7 +136,9 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?:
   p.to = i + 1;
   if (e.kind === "user.message") {
     p.prompts++;
-    if (p.title === undefined && typeof e.payload.text === "string" && e.payload.text.trim()) p.title = e.payload.text.replace(/\s+/g, " ").trim().slice(0, 120);
+    // Titled by its first real prompt: not a harness notice or a prompt that is only frame lines.
+    const title = p.title === undefined && typeof e.payload.text === "string" ? phasePromptTitle(e.payload.text) : undefined;
+    if (title !== undefined) p.title = title;
   } else if (e.kind === "tool.start" && e.payload.wrapper !== true) p.toolCalls++;
   else if (e.kind === "tool.end" && e.payload.ok === false && e.payload.wrapper !== true && (!failure || failure.cls === "real")) p.toolErrors++;
   else if (e.kind === "file.change" && typeof e.payload.path === "string" && !files.has(e.payload.path)) {

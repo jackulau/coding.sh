@@ -9,10 +9,13 @@ import { after, before, describe, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import * as work from "../../src/cli/commands/work.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
+import { recordLastIngest } from "../../src/core/ingest-health.ts";
+import { FLAGS } from "../../src/core/sessions.ts";
+import type { Session } from "../../src/core/types.ts";
 import { workItemId } from "../../src/core/work.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/server.ts";
-import { runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
+import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 import { FakeBlobs } from "./fakes.ts";
 import { workSessions } from "./_work.ts";
 
@@ -209,5 +212,90 @@ describe("viewer /api/work", () => {
     assert.equal(await serve({}), 404);
     assert.equal(await serve({ work: true, project: "p" }), 404);
     assert.equal(await serve({ work: true }), 200);
+  });
+});
+
+describe("viewer /api/work: workflow runs, superseded failures and the index's age", () => {
+  const MIN = 60e3;
+  const now = Date.now();
+  let sb: Sandbox;
+  let index: SqliteIndexStore;
+  let v: Viewer;
+  let bare: Viewer;
+  type Extra = NonNullable<Parameters<typeof mkSession>[2]>;
+  const sess = (id: string, startAgo: number, extra: Extra = {}): Session => mkSession(id, now - startAgo, { cwd: "/work/demo", ...extra });
+  const failing = { flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } } as Extra["stats"] };
+  const agent = (id: string, phase: string, startAgo: number, extra: Extra = {}): Session =>
+    sess(`lead:sub:${id}`, startAgo, { ...extra, parent: { sessionId: "lead", subagentId: id, workflowId: "run-a", workflowName: "round", phase, label: `${phase}:${id}` } });
+  const repo = { root: "/work/web", head: "", branch: "main" } as Extra["repo"];
+
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      sess("lead", 180 * MIN, { title: "run the round", endedAt: now - 60 * MIN }),
+      agent("b1", "build", 170 * MIN, { stats: { usage: { estimatedCostUsd: 0.5 } } as Extra["stats"] }),
+      agent("b2", "build", 169 * MIN, { ...failing, stats: { ...failing.stats, usage: { estimatedCostUsd: 0.25 } } as Extra["stats"] }),
+      { ...agent("v1", "review", 120 * MIN), endedAt: undefined },
+      sess("failed", 150 * MIN, { ...failing, cwd: "/work/web", repo, title: "deploy the site" }),
+      sess("passed", 100 * MIN, { cwd: "/work/web", repo, title: "deploy the site again" }),
+    ]);
+    const home = sb.env.CODING_SH_HOME!;
+    index = await SqliteIndexStore.open(join(home, "index.db"));
+    await index.migrate();
+    // The last ingest finished 40 minutes ago, past the 15-minute stall threshold: the index is old.
+    recordLastIngest(home, "test", now - 40 * MIN);
+    const base = { index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any };
+    v = await startViewer({ ...base, indexHome: home });
+    bare = await startViewer({ ...base });
+  });
+  after(async () => {
+    await v?.close();
+    await bare?.close();
+    await index?.close();
+    sb?.cleanup();
+  });
+
+  test("a run item carries its phases, and its agents by phase", async () => {
+    const got = (await req(v.port, "/api/work?all=1", { token: v.token })).json();
+    const run = got.items.find((i: { workflow?: { id: string } }) => i.workflow?.id === "run-a");
+    assert.ok(run, JSON.stringify(got.items.map((i: { id: string }) => i.id)));
+    assert.deepEqual(run.workflow.phases.map((p: Record<string, unknown>) => [p.name, p.running, p.failed, p.done, p.costUsd]), [["build", 0, 1, 1, 0.75], ["review", 1, 0, 0, undefined]]);
+    const agents = got.workflowAgents[run.id];
+    assert.deepEqual(agents.map((a: Record<string, unknown>) => [a.sessionId, a.phase, a.state]), [["lead:sub:b1", "build", "done"], ["lead:sub:b2", "build", "failed"], ["lead:sub:v1", "review", "running"]]);
+    assert.equal(agents[0].label, "build:b1");
+    assert.ok(agents.every((a: Record<string, unknown>) => !("startedAt" in a)));
+    assert.deepEqual(Object.keys(got.workflowAgents), [run.id], "only run items have agents");
+  });
+
+  test("a superseded failure names the item that superseded it, with that item's session", async () => {
+    const got = (await req(v.port, "/api/work", { token: v.token })).json();
+    const failed = got.items.find((i: { sessionId: string }) => i.sessionId === "failed");
+    assert.equal(failed.supersededBy, workItemId("passed"));
+    // The item that superseded it ended with no failure, so it is hidden as done; the page still links it.
+    assert.ok(!got.items.some((i: { id: string }) => i.id === failed.supersededBy));
+    assert.deepEqual(got.sessionOf, { [workItemId("passed")]: "passed" });
+  });
+
+  test("carries the index's age in the CLI's words, and judges an old index's queue as of its last ingest", async () => {
+    const got = (await req(v.port, "/api/work", { token: v.token })).json();
+    assert.deepEqual(got.index, { updatedAt: new Date(now - 40 * MIN).toISOString(), stale: true, text: "index updated 40m ago: waits and stalls are as of then; run coding.sh ingest" });
+    assert.equal(got.now, got.index.updatedAt, "the reasons' ages count from the last ingest, as coding.sh work counts them");
+    const ingest = (await req(v.port, "/api/ingest", { token: v.token })).json();
+    assert.deepEqual(ingest.index, { ...got.index, text: "index updated 40m ago; run coding.sh ingest" });
+    recordLastIngest(sb.env.CODING_SH_HOME!, "test", Date.now() - 4 * MIN);
+    try {
+      const fresh = (await req(v.port, "/api/work", { token: v.token })).json();
+      assert.equal(fresh.index.stale, undefined);
+      assert.equal(fresh.index.text, "index updated 4m ago");
+      assert.notEqual(fresh.now, fresh.index.updatedAt);
+    } finally {
+      recordLastIngest(sb.env.CODING_SH_HOME!, "test", now - 40 * MIN);
+    }
+  });
+
+  test("a viewer that names no index home (a --store, or coding.sh serve) sends no age", async () => {
+    const got = (await req(bare.port, "/api/work", { token: bare.token })).json();
+    assert.equal("index" in got, false);
+    assert.equal("index" in (await req(bare.port, "/api/ingest", { token: bare.token })).json(), false);
   });
 });

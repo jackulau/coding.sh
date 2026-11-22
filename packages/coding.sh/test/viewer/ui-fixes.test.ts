@@ -38,8 +38,10 @@ test("an Explore range names the year when it crosses one or spans a year", () =
   assert.equal(f.fmtDayRange(local(2026, 1, 1), local(2026, 12, 31)), "Jan 1 – Dec 31");
 });
 
-test("the repo column names a session as the repo facet does: root, else working directory", () => {
+test("the repo column names a session as the repo facet does: main checkout, else root, else working directory", () => {
   assert.equal(f.repoLabel({ repo: { root: "/work/demo" }, cwd: "/elsewhere" }), "demo");
+  // A worktree session (an agent's checkout under the repo) is named by its main checkout.
+  assert.equal(f.repoLabel({ repo: { root: "/work/demo/.claude/worktrees/agent-a1", main: "/work/demo" }, cwd: "/work/demo/.claude/worktrees/agent-a1" }), "demo");
   assert.equal(f.repoLabel({ cwd: "/home/user/notes" }), "notes");
   assert.equal(f.repoLabel({ cwd: "C:\\work\\app" }), "app");
   assert.equal(f.repoLabel({ cwd: "/var/folders/ab/cd/T" }), "tmp");

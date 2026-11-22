@@ -10,7 +10,7 @@ import { buildSession } from "../../src/core/sessions.ts";
 import type { Session } from "../../src/core/types.ts";
 import type { ChangeEffect, Verdict } from "../../src/improve/changes.ts";
 import type { Issue } from "../../src/improve/issues.ts";
-import { findIssues, isHeadless, markQuiet, removalStep, scopeSessions } from "../../src/improve/report.ts";
+import { findIssues, isHeadless, markQuiet, MAX_SESSIONS, notReadLine, readScope, removalStep, scopeSessions } from "../../src/improve/report.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
 
@@ -43,6 +43,45 @@ describe("improve report", () => {
     assert.doesNotMatch(shown, /sk-ant-api03-Zq8/, "a key the capture missed is redacted too");
     assert.equal(fail.examples[0]!.title, "Email [redacted:email] when the deploy is done");
     assert.match(fail.sample!, /permission denied for \[redacted:email\]/);
+  });
+
+  it("reads subagents and delegates: a failure that happens only in children is an issue", async () => {
+    const index = new MemoryIndexStore();
+    for (let k = 0; k < 2; k++) {
+      const parent = `p${k}`;
+      await putSession(index, sessionEvents(parent, { cwd: CWD, startedAt: T0 + k * 3600_000 }, [["session.start", {}], ["user.message", { text: "Build it" }], ["assistant.message", { text: "Delegating." }], ["turn.end", {}]]));
+      const child = `${parent}-sub`;
+      await putSession(
+        index,
+        sessionEvents(child, { cwd: CWD, startedAt: T0 + k * 3600_000 + 60_000 }, [
+          // A delegate launched headless by its parent is in scope with it.
+          ["session.start", { parentSessionId: parent, subagentType: "general-purpose", launch: "exec" }],
+          ["tool.start", { tool: "Bash", toolUseId: `${child}-1`, input: { command: "cargo build" } }],
+          ["tool.end", { tool: "Bash", toolUseId: `${child}-1`, ok: false, output: "error[E0425]: cannot find value `x` in this scope" }],
+          ["assistant.message", { text: "The build fails." }],
+          ["turn.end", {}],
+        ]),
+      );
+    }
+    const scope = await readScope(index, { since: 0 });
+    assert.deepEqual(scope.sessions.map((s) => s.id).sort(), ["p0", "p0-sub", "p1", "p1-sub"]);
+    assert.equal(scope.notRead, 0);
+    const issues = await findIssues(index, scope.sessions);
+    assert.ok(issues.some((i) => i.id === "fails:cmd:cargo build"), JSON.stringify(issues.map((i) => i.id)));
+    // Another repo's scope has neither the parents nor their children.
+    const other = await readScope(index, { since: 0, repo: "/work/other" });
+    assert.deepEqual(other.sessions, []);
+  });
+
+  it("reads the newest sessions up to the cap and says how many it did not read", async () => {
+    const index = new MemoryIndexStore();
+    for (let k = 0; k < 5; k++) await putSession(index, sessionEvents(`s${k}`, { cwd: CWD, startedAt: T0 + k * 3600_000 }, [["session.start", {}], ["user.message", { text: "hi" }], ["turn.end", {}]]));
+    const capped = await readScope(index, { since: 0 }, { max: 3 });
+    assert.deepEqual(capped.sessions.map((s) => s.id), ["s4", "s3", "s2"]);
+    assert.equal(capped.notRead, 2);
+    assert.equal(notReadLine(capped.sessions.length, capped.notRead), "Read the newest 3 sessions in scope; 2 older sessions not read. A shorter --since reads them all.");
+    assert.equal(notReadLine(5, 0), "");
+    assert.equal(MAX_SESSIONS, 2000);
   });
 
   it("leaves headless sessions (claude -p, codex exec) out unless asked", async () => {

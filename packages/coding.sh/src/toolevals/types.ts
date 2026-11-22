@@ -384,6 +384,10 @@ export interface ToolArmSummary {
   cuts?: { outputCuts: number; toolResults: number; outputCutRate: number | null; brokenJsonCuts: number };
   /** Pass rate per task kind; only when a trial's task had a kind. */
   kinds?: Partial<Record<CaseKind, KindSummary>>;
+  /** Failed trials with no task error whose metrics show no invalid call, failed call or retry; absent at 0 or when no trial has metrics. */
+  silentFailures?: number;
+  /** Target calls summed over the trials with a known outcome, divided by passes; null with no pass, absent when no trial has metrics. */
+  targetCallsPerSuccess?: number | null;
 }
 
 export interface ToolTaskOutcome {

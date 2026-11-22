@@ -25,7 +25,8 @@ export interface World {
 const dirs: string[] = [];
 
 export function makeWorld(): World {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-mcp-")));
+  // The native real path: long names for a temp dir's 8.3 short ones (RUNNER~1 on CI), as stored repo roots have.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "csh-mcp-")));
   dirs.push(root);
   return worldAt(root);
 }

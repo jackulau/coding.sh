@@ -99,6 +99,7 @@ describe("handshake (legacy era)", () => {
       "status",
       "subagents",
       "usage",
+      "work",
     ]);
     for (const t of tools) {
       assert.ok(t.title, `${t.name} title`);
@@ -430,8 +431,8 @@ describe("tools", () => {
     assert.match(await callError("harness_compare", { experiment: "exp_none" }), /No harness A\/B experiment "exp_none"/);
   });
 
-  it("status carries the work queue in place of a work tool", async () => {
-    assert.equal(tools.some((t) => t.name === "work"), false);
+  it("status carries the top of the work queue, and the work tool the rest", async () => {
+    assert.equal(tools.some((t) => t.name === "work"), true);
     const q = (await call("status")).work as Record<string, unknown>;
     assert.deepEqual({ ...q, items: undefined }, { blocked: 0, failed: 0, stalled: 0, turn: 0, review: 1, needYou: 0, items: undefined });
     const items = q.items as Record<string, unknown>[];
@@ -559,7 +560,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 26);
+      assert.equal((await client.listTools()).length, 27);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

@@ -40,13 +40,15 @@ export async function run(c: CommandContext): Promise<number> {
       const fork = viewerForks({ index: ctx.index, blobs: ctx.blobs, env: c.env, prices: pricesFor(ctx.config.pricing), upstreams: proxySettings(c.env).upstreams });
       // The LLM-call playground: a call edited and sent again with this machine's key, saved to the same datasets.
       const playground = viewerPlayground({ env: c.env, datasets: experiments, prices: pricesFor(ctx.config.pricing) });
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, star: { env: c.env }, replayBaseline, fork, playground });
+      // The index's age (Work page, session list) comes from this home's last ingest; a --store is read as is, with no age.
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, star: { env: c.env }, replayBaseline, fork, playground, indexHome: ctx.storeOverridden ? undefined : ctx.paths.root });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });
       throw e;
     }
     // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
+    // With CODING_SH_NO_AUTO_INGEST=1 no worker starts: the viewer shows what is indexed.
     if (!ctx.storeOverridden) ingest = startBackgroundIngest({ env: c.env, cwd: c.cwd, onError: (m) => out.warn(`Background ingest failed: ${m}`) });
     if (out.json) out.data({ url: viewer.url, port: viewer.port });
     // Piped: the URL alone on stdout for scripts. In a terminal the note below already shows it.
