@@ -217,9 +217,10 @@ task_f0367ea84cbb87ed
 
 This session already had a task from `eval init`, so `eval new` updated it and kept its id and
 name. With a `--name` that task does not have, `eval new` drafts a second task and leaves the first,
-with its reference patch and validation, as it was. `latest` names a session too. It skips the
-sessions that eval, compare and experiment trials made, so after `eval run` it is still your own
-session.
+with its reference patch and validation, as it was.
+
+`latest` names a session too. It skips the sessions that eval, compare and experiment trials made,
+so after `eval run` it is still your own session.
 
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.

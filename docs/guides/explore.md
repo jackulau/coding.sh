@@ -109,9 +109,9 @@ The header sums up the run. Below it, each event in order, with the time since t
 session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
 with work in it; eval, compare and experiment trials count only when there is nothing else.
 
-A failed model call shows its status and error on its `llm` line, and the Model errors row counts
-them. When the source records model calls only (the proxy, or an SDK call outside `trace()`), the
-Turns row says so instead of counting 0 tool calls.
+A failed model call shows its status and error on its `llm` line; the Model errors row counts
+them. When a source records only model calls (the proxy, or an SDK call outside `trace()`), the
+Turns row says "tool calls not recorded".
 
 ## Search every session
 
@@ -127,9 +127,8 @@ SESSION                                              KIND      WHEN     MATCH
 ```
 
 Search covers prompts, replies, tool input and output, error events, failed model calls, tool
-errors and the error a session ended with. Every word must match within one event. When a call
-inside a Codex code-mode cell matches, search lists the call, not the cell.
-Open a hit with `coding.sh show <session>`.
+errors and the error a session ended with. Every word must match within one event. Open a hit with
+`coding.sh show <session>`.
 
 ## Open the viewer
 
