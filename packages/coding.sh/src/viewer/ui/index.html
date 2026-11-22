@@ -2307,6 +2307,9 @@ document.addEventListener("visibilitychange", refreshTimes);
 
 let navSeq = 0;
 let cleanup = null;
+// The session page on screen, once loaded: { ids, go }. A hash change to the same session calls go(eventId, query),
+// which moves there in place and returns true, or returns false to open the session again.
+let openSession = null;
 // The active view's keyboard actions, by KEYMAP id. Set by each view.
 let viewKeys = { scope: "sessions", actions: {} };
 function setView(node, focus, keys) {
@@ -2335,9 +2338,12 @@ function showCurrentTab() {
   else if (r.right > n.right) nav.scrollLeft += r.right - n.right + 8;
 }
 function route() {
-  const seq = ++navSeq;
-  clearAnnouncement();
   const { parts, query, hasQuery } = parseHash();
+  // A link to another step of the session on screen keeps the events it loaded (a long session's are megabytes).
+  if (parts[0] === "s" && parts[1] && openSession && openSession.ids.includes(parts[1]) && openSession.go(parts[2] || "", query)) return;
+  const seq = ++navSeq;
+  openSession = null;
+  clearAnnouncement();
   const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" || parts[0] === "review" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -4584,14 +4590,20 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   // pages, and the id keeps it from showing twice.
   let served = allEvents.length;
   const loadedIds = new Set(allEvents.map((e) => e.id));
-  async function fetchMore(quiet, limit) {
-    const body = expandRows(await api(eventsPath + qs({ limit: limit || EVENTS_PAGE, offset: served, rows: 1 }), null, quiet), clippedIds);
-    served += body.items.length;
-    const fresh = body.items.filter((e) => !loadedIds.has(e.id));
-    for (const e of fresh) loadedIds.add(e.id);
-    allEvents = allEvents.concat(fresh);
-    hasMore = body.hasMore && body.items.length > 0;
-    return fresh.length;
+  // One page at a time (the Load button, the rest streaming in, the live tail): each reads from where the last stopped.
+  let fetching = Promise.resolve();
+  function fetchMore(quiet, limit) {
+    const page = fetching.then(async () => {
+      const body = expandRows(await api(eventsPath + qs({ limit: limit || EVENTS_PAGE, offset: served, rows: 1 }), null, quiet), clippedIds);
+      served += body.items.length;
+      const fresh = body.items.filter((e) => !loadedIds.has(e.id));
+      for (const e of fresh) loadedIds.add(e.id);
+      allEvents = allEvents.concat(fresh);
+      hasMore = body.hasMore && body.items.length > 0;
+      return fresh.length;
+    });
+    fetching = page.catch(() => {});
+    return page;
   }
   // Where it went off the rails (session.stats.derails, then /outline) and its phases
   // (resumes, compactions, idle gaps) and days, marked on the steps they start at.
@@ -5436,6 +5448,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
         await fetchMore(true, EVENTS_BG_PAGE);
         if (!current(seq)) return;
         refresh();
+        followLink(false);
       }
     } catch { /* the Load button stays for a retry */ }
     loadingRest = false;
@@ -5445,6 +5458,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : ""));
       loadOutline();
     }
+    followLink(true);
   }
   let outlineAt = 0;
   async function loadOutline() {
@@ -5476,14 +5490,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
 
   // The query this session was opened from: its matching events here (the newest 200), for n and N.
-  if (where) {
-    api("/api/events" + qs({ where: addClause(where, "id:" + quoteValue(session.id)), limit: 200 }), null, true).then((b) => {
-      if (!current(seq)) return;
+  function loadQuery() {
+    const asked = where;
+    if (!asked) return;
+    api("/api/events" + qs({ where: addClause(asked, "id:" + quoteValue(session.id)), limit: 200 }), null, true).then((b) => {
+      if (!current(seq) || where !== asked) return;
       queryIds = (b.items || []).map((e) => e.id);
       markQuery();
       renderTools();
     }, () => { /* the matches are a convenience; the session still shows */ });
   }
+  loadQuery();
 
   // ---- replay: the session as numbered steps (/replay), played back with the
   // files the agent touched as of each step. The step list follows along.
@@ -5929,23 +5946,69 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   ctx.comments.load();
   // A link to a step opens its turn; a session with a failure opens on its first failure; a clean
   // one opens on its first prompt (a folded turn stays folded), not on "Session starts".
-  const linked = eventId && byEvent.has(eventId);
-  const atFail = !linked && failIdx.length > 0;
-  if (linked) selectItem(activeItem, true);
-  else if (atFail) { selectItem(failIdx[0], true); if (viaList) tl.focus({ preventScroll: true }); }
-  else selectRow(turnIdx.length ? rowOf[turnIdx[0]] : 0);
-  if (!linked && !atFail) tl.scrollTop = 0, renderWindow(true);
+  function land(linkId) {
+    const linked = linkId && byEvent.has(linkId);
+    const atFail = !linked && failIdx.length > 0;
+    if (linked) selectItem(items.indexOf(byEvent.get(linkId)), true);
+    else if (atFail) selectItem(failIdx[0], true);
+    else selectRow(turnIdx.length ? rowOf[turnIdx[0]] : 0);
+    if (!linked && !atFail) tl.scrollTop = 0, renderWindow(true);
+    if (chatOn) showChat(!linked && !atFail);
+    return atFail;
+  }
+  if (land(eventId) && viaList) tl.focus({ preventScroll: true });
   // A link ending in ?step=N opens the replay at that step.
-  if (chatOn) showChat(!linked && !atFail);
   if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
+
+  // A hash change within this session (a pasted step link, the run tree's link here, back and forward) moves
+  // in place on what is loaded. A step still streaming in (loadRest) is selected when it arrives, unless
+  // the selection moved since. False opens the session again: a switch between Steps and Chat, or a step
+  // a running session may have written since the last tick.
+  let pendingLink = null;
+  function go(linkId, query) {
+    if (!current(seq)) return false;
+    const step = /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0;
+    const asView = query.get("view") || "";
+    const wantChat = !step && (asView === "chat" || (asView !== "steps" && prefs.get("chat", false)));
+    if (wantChat !== chatOn) return false;
+    const missing = !step && linkId && !byEvent.has(linkId);
+    if (missing && !hasMore && live) return false;
+    cancelStep();
+    pendingLink = null;
+    const linkWhere = (query.get("where") || "").trim().slice(0, WHERE_MAX);
+    if (linkWhere !== where) { where = linkWhere; queryIds = []; markQuery(); renderTools(); loadQuery(); }
+    if (step) { enterReplay(step); return true; }
+    if (rp.on) exitReplay();
+    if (missing && hasMore) {
+      pendingLink = { id: linkId, from: items[activeItem].id };
+      loadRest();
+      return true;
+    }
+    land(linkId);
+    announceStep();
+    return true;
+  }
+  function followLink(done) {
+    if (!pendingLink) return;
+    if (items[activeItem].id !== pendingLink.from) { pendingLink = null; return; }
+    if (!byEvent.has(pendingLink.id) && !done) return;
+    const linkId = pendingLink.id;
+    pendingLink = null;
+    land(linkId);
+    announceStep();
+  }
+  function announceStep() {
+    announce("Step " + fmtNum(activeItem + 1) + " of " + fmtNum(items.length) + ": " + meta[activeItem].v.label);
+  }
   const onResize = () => {
     if (rowHeight() !== ROW) { ROW = rowHeight(); rebuildRows(); return; }
     renderWindow(true); renderMap();
   };
   window.addEventListener("resize", onResize);
-  cleanup = () => { clearInterval(tailTimer); clearTimeout(rp.timer); cancelStep(); rp.playing = false; rp.on = false; window.removeEventListener("resize", onResize); };
+  openSession = { ids: [id, session.id], go };
+  cleanup = () => { openSession = null; clearInterval(tailTimer); clearTimeout(rp.timer); cancelStep(); rp.playing = false; rp.on = false; window.removeEventListener("resize", onResize); };
 }
 
 function latencyText(lat) {
