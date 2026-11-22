@@ -13,9 +13,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { ASK_USER } from "../../src/cli/output.ts";
+import { appendLedger, type ProposeEntry } from "../../src/refine/ledger.ts";
 import { claimSession, putSession, retrySession } from "../helpers-decision.ts";
 import { CLI } from "../_cli.ts";
 
@@ -312,6 +314,39 @@ describe("cli refine loop", () => {
     assert.equal(err.reason, "missing_key");
     assert.equal(err.message, "refine asks a model to write the edit: set ANTHROPIC_API_KEY");
     assert.ok(err.next.some((n: string) => /^(?:coding\.sh|codingsh) improve$/.test(n)), err.next.join("\n"));
+  });
+
+  it("a command inside a hint or a log line runs in the user's shell", async () => {
+    const e = await setup("hints", { claims: 0 });
+    writeFileSync(join(e.repo, "bad.json"), "not json");
+    writeFileSync(join(e.repo, "shape.json"), JSON.stringify({ findings: [{ label: "x" }] }));
+    mkdirSync(join(e.repo, "drafts", "dir"));
+    writeFileSync(join(e.repo, "drafts", "dir", "AGENTS.md"), `${BASE}more\n`);
+    // A candidate as `refine distill` records it, for `refine log` to list.
+    const ledger = (JSON.parse((await cli(e, ["refine", "log", "--json"])).stdout) as { ledger: string }).ledger;
+    const id = "r_0123456789";
+    const entry: ProposeEntry = { op: "propose", id, at: "2026-01-02T00:00:00.000Z", proposer: "distill", files: [{ path: ".claude/skills/verify-first/SKILL.md", sha: "0".repeat(64) }], verdict: "proposed", reasons: [], provenance: { corpusEpisodes: 30, failures: 12, passRate: 0.6, source: "exp_big", leftOut: [], draw: 0, distiller: "claude", durationMs: 1 } };
+    appendLedger(dirname(ledger), entry);
+
+    // This env has no MSYSTEM and no SHELL: PowerShell or cmd on Windows, where the bin is
+    // codingsh. Git Bash sets MSYSTEM (coding.sh), and npx has a form of its own.
+    if (process.platform === "win32") assert.equal(cliCommand(e.env, ["refine", "test", id]), `codingsh refine test ${id}`);
+    for (const env of [e.env, { ...e.env, MSYSTEM: "MINGW64" }, { ...e.env, npm_command: "exec" }]) {
+      const as = { ...e, env };
+      const mine = cliCommand(env, ["refine", "mine", "--json"]);
+      const bad = await cli(as, ["refine", "propose", "--mined", "bad.json", "--dry-run"]);
+      assert.equal(bad.status, 2, bad.stderr);
+      assert.ok(bad.stderr.includes(`--mined bad.json: not JSON; pass the output of ${mine}`), bad.stderr);
+      const shape = await cli(as, ["refine", "propose", "--mined", "shape.json", "--dry-run"]);
+      assert.equal(shape.status, 2, shape.stderr);
+      assert.ok(shape.stderr.includes(`--mined shape.json holds no findings; pass the output of ${mine}`), shape.stderr);
+      const dir = await cli(as, ["refine", "test", "./drafts/dir", "--dry-run"]);
+      assert.equal(dir.status, 2, dir.stderr);
+      assert.ok(dir.stderr.includes(`pass the edited file itself, e.g. ${cliCommand(env, ["refine", "test", "./drafts/AGENTS.md"])}`), dir.stderr);
+      const log = await cli(as, ["refine", "log"]);
+      assert.equal(log.status, 0, log.stderr);
+      assert.ok(log.stdout.includes(`Distilled ${id} .claude/skills/verify-first/SKILL.md from 30 episodes (2026-01-02): proposed; test it with ${cliCommand(env, ["refine", "test", id])}\n`), log.stdout);
+    }
   });
 
   it("run loops over --candidate files, applies keeps and stops when they run out", async () => {

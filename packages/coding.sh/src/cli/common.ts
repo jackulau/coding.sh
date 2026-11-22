@@ -10,7 +10,7 @@ import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
 import { runningCli } from "../mcp/launch.ts";
-import { StoreOwnerError, StoreVersionError, UPGRADE_STORE } from "../core/store-guard.ts";
+import { StoreOwnerError, StoreVersionError, upgradeStoreCommand } from "../core/store-guard.ts";
 import { spoolSize } from "../core/ingest-health.ts";
 import { paths } from "../core/paths.ts";
 import { listBackups, StoreNewerError } from "../store/upgrade.ts";
@@ -18,7 +18,6 @@ import { version } from "./meta.ts";
 import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { suggest, UsageError, type FlagValue } from "./args.ts";
-import { cliCommand } from "./next-steps.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
@@ -64,22 +63,22 @@ function configStoreKey(e: ConfigError): boolean {
   return /^(\[store\]|store\b)/.test(msg);
 }
 
-/** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */
+/** Pending migrations of a store another install owns: the user decides on `upgrade-store` (e.command runs this install). */
 export function storeOwnedError(e: StoreOwnerError): CliError {
   return new CliError(e.detail, {
     reason: "store_owned",
     askUser: true,
-    next: ["Migrate it for this install (hooks then run this one):", UPGRADE_STORE],
+    next: ["Migrate it for this install (hooks then run this one):", e.command],
     data: { path: e.path, from: e.from, to: e.to, version: e.version, owner: e.owner, ownerVersion: e.ownerVersion ?? null },
   });
 }
 
-/** Pending migrations this build is not the one to run on its own: the user decides on `coding.sh upgrade-store`. */
+/** Pending migrations this build is not the one to run on its own: the user decides on `upgrade-store` (e.command runs this build). */
 export function storeVersionError(e: StoreVersionError): CliError {
   return new CliError(e.detail, {
     reason: "store_version",
     askUser: true,
-    next: ["Migrate it with this build (a copy of the index is kept, and --restore puts it back):", UPGRADE_STORE],
+    next: ["Migrate it with this build (a copy of the index is kept, and --restore puts it back):", e.command],
     data: { path: e.path, from: e.from, to: e.to, version: e.version, writer: e.writer ?? null },
   });
 }
@@ -95,8 +94,8 @@ export function storeNewerError(e: StoreNewerError, env: NodeJS.ProcessEnv): Cli
   const waiting = spool.files ? `${plural(spool.files, "capture file")} wait${spool.files === 1 ? "s" : ""} in the spool (${p.spool})` : `new captures wait in the spool (${p.spool})`;
   // The index from before the migration, when this coding.sh can open it.
   const backup = listBackups(e.path).find((b) => b.schema <= e.known);
-  // Inside the message, not a next line Output names for the shell: name the CLI here (cliCommand).
-  const restore = backup ? ` To go back instead, ${cliCommand(env, ["upgrade-store", "--restore"])} puts back the index from before the migration (v${backup.schema}).` : "";
+  // Inside the message, not a next line Output names for the shell: name the CLI here, as a command that runs this install.
+  const restore = backup ? ` To go back instead, ${upgradeStoreCommand(["--restore"], { env })} puts back the index from before the migration (v${backup.schema}).` : "";
   return new CliError(`${e.path} uses index schema v${e.schema}${by}, but this coding.sh ${version()} only knows up to v${e.known}. Your captures are safe: ${waiting} and ${spool.files === 1 ? "is" : "are"} indexed once a coding.sh that knows v${e.schema} runs.${restore}`, {
     reason: "store_newer",
     next: [`Install ${e.writer ? `coding.sh ${e.writer.version} or newer` : `a coding.sh that knows index schema v${e.schema}`}:`, "coding.sh update"],

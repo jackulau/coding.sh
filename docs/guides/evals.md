@@ -1155,7 +1155,7 @@ a human boolean score, so `judge calibrate` reads human boolean scores as labels
 exports them.
 
 A config fixes a score name's type and allowed values. A value outside them is refused (exit 2,
-or HTTP 400):
+or HTTP 400). Here `refund-03` is the id of a case in one of your datasets:
 
 ```sh
 coding.sh score config helpfulness --type numeric --min 0 --max 5
@@ -1171,14 +1171,18 @@ just now  case:refund-03  helpfulness  4      human   alice
 
 `score add` prints the score id. By default there is one score per target, name, source and
 person, so scoring the same thing again replaces it, and the same value again changes nothing.
+`--id` names the score instead: the same `--id` again replaces that score whatever its target and
+name, and `score add` says which score it replaced (`replaced` in `--json`).
 A stored score keeps its type. Without a config, the type comes from how the value looks, so a
 value that reads as another type (`1,5` over a number) is refused (exit 2, or HTTP 400) unless you
 pass `--type`. An event must be in the store to be scored, and the score goes on the event's own
-session. An experiment is not a target: `score add exp:<id>` is refused (exit 2), so score its
+session. `score add` also refuses a case id that no dataset has and a run that is not stored
+(exit 1). An experiment is not a target: `score add exp:<id>` is refused (exit 2), so score its
 runs (`run:<id>`) or cases instead.
 `coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
 ([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
-tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
+tools. They take a session as the CLI does: its id, a unique prefix of 4 or more characters, or
+`latest`, the session `coding.sh score add latest` scores. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
 SQLite store; the Postgres and ClickHouse stores answer 501 for now.
 
 ### Monitors
@@ -1187,6 +1191,9 @@ A monitor scores each new session once, after `coding.sh ingest`, in the viewer 
 serve`. It scores with exactly one of a judge rubric (`--judge`), a command (`--run`) or an HTTP
 service (`--http`); two of them, or none, is refused (exit 2). Its scores have source `monitor` and
 the monitor's name. All flags are in the [CLI reference](../reference/cli.md#codingsh-monitor-add).
+The hook does not run monitors, so a session it captures waits for one of those. `coding.sh monitor
+run` scores the sessions that ended in the last day now, and `monitor run --watch` ingests and
+scores new sessions every 10 s until Ctrl-C.
 
 ```sh
 coding.sh monitor add helpful --judge rubric.md --provider gemini
@@ -1290,8 +1297,15 @@ without `--base-url`. `"provider":"claude-code"` and `"provider":"codex"` judge 
 ChatGPT subscription instead, through the agent's CLI.
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
+It counts the human labels named after the judge's criterion: the grader's `criterion`, else its
+`name`, or `--criterion`. The viewer's Pass and Fail labels are named `outcome`, so
+`--criterion outcome` reads them. When no label on the experiment's cases has that name,
+`judge calibrate` and `judge sample` name the labels those cases have.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
+A run that finds no held-out case with both a label and a verdict measures nothing: it leaves a
+stored calibration that was measured on labels in place (`--json` prints `"outcome": "kept"` and
+that calibration).
 
 A calibrated judge can still cost more human labels than it saves. Its corrected pass rate is only
 as precise as the labels behind its sensitivity s and false-pass rate α, and when s − α (the
@@ -1411,8 +1425,11 @@ human-audited pass rate 0.71 [0.63, 0.79] (42/50 of plan labelled; worst case ±
   between 0.62 and 0.78 if the unlabelled picks all fail or all pass
 ```
 
-Until every pick is labelled, it also prints those bounds and a warning. A plan drawn for another
-experiment, grader, split or seed is refused. `--json` carries `calibration.audited`.
+Until every pick is labelled, it also prints those bounds and a warning. It reads the labels named
+after the criterion the plan was drawn for, unless `--criterion` names another. A plan drawn for
+another experiment, grader, split or seed is refused. `judge sample --out` ends with the calibrate
+command for its plan, with `--split` when the plan is not from `test`. `--json` carries
+`calibration.audited`.
 
 ### Checklists and trace checks
 
@@ -1658,8 +1675,9 @@ coding.sh judge slop --list-rules
 
 It prints the score and one line per finding, with the rule, path and line. `--rules`,
 `--exclude`, `--max-errors` and `--max-warnings` work as in the spec, and `--json` prints the
-findings. It exits 0 on pass, 1 on fail, and 2 when there is nothing to grade (a session whose
-agent does not record diffs, an experiment with no stored runs). For an experiment it fails when
+findings. It exits 0 on pass and 1 on fail. It also exits 1 when there is nothing to grade (a
+session whose agent does not record diffs, an experiment with no stored runs), and 2 on a usage
+error, such as a `--diff` file that is not a unified diff. For an experiment it fails when
 any run fails, and per arm it prints the runs that pass, the findings, findings per 100 added
 lines and the mean score. A session's diffs are graded edit by edit, so a line one edit adds and
 a later edit removes still counts.

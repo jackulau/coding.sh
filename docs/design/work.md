@@ -234,7 +234,8 @@ session ids and joined per item, so an item keeps them when its root falls out o
 An ack covers one cause: its fingerprint is the bucket, the session and the wait's tool call id or
 time, so acknowledging one prompt does not hide the next. Acking the top cause shows the next one.
 A snooze is stored on the item's main session and on the session behind its cause, with the bucket
-the item was in. It ends at its time, or sooner when the item moves to a more urgent bucket. The
+the item was in. It ends at its time, or sooner when the item moves to a more urgent bucket. A
+blocked item has none, so its snooze runs to the end, even if the item waits on you again. The
 file is written to a temp file and renamed. A missing or corrupt file reads as empty. Each write
 drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 
@@ -270,9 +271,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   files (or `coding.sh work show <id>` for more than three) instead of a `git diff` that comes back
   empty; `work`, `work --json` and the MCP `work` tool read the shown review items' files to say
   the same.
-  The id is an item id or the id of any session in the item. A session outside the window is
-  still found by its id. An unknown id exits 1.
-- `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
+  The id is an item id or the id of any session in the item. An item id may be cut to a prefix of
+  4 characters or more that only one item in the window starts with; a prefix that several
+  share exits 1 and lists them. A session outside the window is still found by its id. An
+  unknown id exits 1.
+- `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>` take the ids `work show`
+  takes. A bad duration exits 2.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
   that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with

@@ -23,6 +23,8 @@ interface Doc {
   warnings: Warning[];
   agents: { id: string; installed: boolean; hooked: boolean; blockers: string[] }[];
 }
+// The report is on stdout and ends with the verdict; the next steps are on stderr.
+const verdict = (stdout: string) => stdout.trimEnd().split("\n").at(-1);
 
 describe("doctor: an agent that cannot capture", () => {
   let env: TmpEnv;
@@ -58,18 +60,35 @@ describe("doctor: an agent that cannot capture", () => {
   test("the row is a warning with the blocker, the file and line to change, and no closing ok", () => {
     const r = run(["doctor"]);
     assert.equal(r.status, 0, r.stderr);
-    const row = r.stderr.split("\n").find((l) => l.includes("Codex CLI"));
-    assert.ok(row, r.stderr);
+    const row = r.stdout.split("\n").find((l) => l.includes("Codex CLI"));
+    assert.ok(row, r.stdout);
     assert.match(row, /^! Codex CLI\s+v0\.166\.0, events arriving, hook not in user config, last event \d+s ago$/);
-    assert.doesNotMatch(r.stderr, /✓ Codex CLI/);
-    assert.match(r.stderr, /hooks are disabled in config\.toml/);
-    assert.ok(r.stderr.includes(`${config}:4`), `names the file and line: ${r.stderr}`);
+    assert.doesNotMatch(r.stdout, /✓ Codex CLI/);
+    assert.match(r.stdout, /hooks are disabled in config\.toml/);
+    assert.ok(r.stdout.includes(`${config}:4`), `names the file and line: ${r.stdout}`);
     assert.match(r.stderr, new RegExp(`${esc(bin)} init --agent codex`));
     // Host apps found on this machine (T3 Code) can add to the count; with --agent it is exact.
-    const last = r.stdout.trimEnd().split("\n").at(-1)!;
+    const last = verdict(r.stdout)!;
     assert.notEqual(last, "ok");
     assert.match(last, /^\d+ agents? not capturing$/);
-    assert.equal(run(["doctor", "--agent", "codex"]).stdout, "1 agent not capturing\n");
+    assert.equal(verdict(run(["doctor", "--agent", "codex"]).stdout), "1 agent not capturing");
+  });
+
+  test("the report is on stdout, so a pipe or a file keeps every row; the next steps stay on stderr", () => {
+    // Before, every row and note went to stderr: `doctor > doctor.txt` kept only the last line.
+    const r = run(["doctor", "--agent", "codex"]);
+    assert.equal(r.status, 0, r.stderr);
+    const lines = r.stdout.trimEnd().split("\n");
+    const at = lines.findIndex((l) => l.startsWith("! Codex CLI "));
+    assert.ok(at >= 0, r.stdout);
+    // The blocker note follows its row.
+    assert.match(lines[at + 1]!, /^ {2}.*hooks are disabled in config\.toml/);
+    for (const label of ["Hook", "Spool", "Store", "Receiver", "Proxy", "AI Gateway"]) {
+      assert.ok(lines.some((l) => new RegExp(`^[✓!✗ ] ${label} `).test(l)), `${label} row on stdout: ${r.stdout}`);
+    }
+    assert.equal(lines.at(-1), "1 agent not capturing");
+    // stderr holds only the progress line (plain, as stderr is not a TTY) and the next step.
+    assert.equal(r.stderr, `  Checking agents…\n\n  Capture the agents without hooks:\n    ${cliCommand(process.env, ["init", "--agent", "codex"])}\n`);
   });
 
   test("--json lists it under warnings; ok and the exit code stay about the spool and the store", () => {
@@ -96,10 +115,10 @@ describe("doctor: an agent that cannot capture", () => {
     const npx = process.platform === "win32" ? "npx -p coding.sh codingsh" : "npx coding.sh";
     const r = run(["doctor"], { npm_command: "exec" });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, new RegExp(`capture with ${esc(runCommand(npxEnv, "<cmd>"))}, `));
+    assert.match(r.stdout, new RegExp(`capture with ${esc(runCommand(npxEnv, "<cmd>"))}, `));
     assert.match(r.stderr, new RegExp(`Capture the agents without hooks:\\n\\s+${esc(npx)} init --agent codex`));
-    assert.match(r.stderr, new RegExp(`route agents through it with ${esc(npx)} init --proxy`));
-    assert.doesNotMatch(r.stderr, /(?<!npx |-p )coding\.sh (?:collector|doctor|ingest|init|proxy|run|show|uninstall|update)\b/);
+    assert.match(r.stdout, new RegExp(`route agents through it with ${esc(npx)} init --proxy`));
+    assert.doesNotMatch(r.stdout + r.stderr, /(?<!npx |-p )coding\.sh (?:collector|doctor|ingest|init|proxy|run|show|uninstall|update)\b/);
     const doc = JSON.parse(run(["doctor", "--json"], { npm_command: "exec" }).stdout) as Doc;
     assert.equal(doc.warnings.find((x) => x.agent === "codex")!.next, `${npx} init --agent codex`);
     // A conformance flag without --conformance: the suggestion is a command too.
@@ -119,15 +138,15 @@ describe("doctor: an agent that cannot capture", () => {
       const init = run(["init", "--yes", "--agent", "claude-code"]);
       assert.equal(init.status, 0, init.stderr);
       const r = run(["doctor", "--agent", "claude-code"]);
-      assert.match(r.stderr, /^✓ Claude Code\s+v2\.1\.319, hooked in /m);
-      assert.equal(r.stdout.trimEnd().split("\n").at(-1), "ok");
+      assert.match(r.stdout, /^✓ Claude Code\s+v2\.1\.319, hooked in /m);
+      assert.equal(verdict(r.stdout), "ok");
       const doc = JSON.parse(run(["doctor", "--agent", "claude-code", "--json"]).stdout) as Doc;
       assert.deepEqual(doc.warnings.filter((w) => w.check === "agent"), []);
       // Codex without the blocker is still a warning: events alone are not capture.
       const c = run(["doctor", "--agent", "codex"]);
-      assert.match(c.stderr, /^! Codex CLI\s+v0\.166\.0, events arriving, hook not in user config, /m);
-      assert.doesNotMatch(c.stderr, /hooks are disabled/);
-      assert.equal(c.stdout.trimEnd().split("\n").at(-1), "1 agent not capturing");
+      assert.match(c.stdout, /^! Codex CLI\s+v0\.166\.0, events arriving, hook not in user config, /m);
+      assert.doesNotMatch(c.stdout, /hooks are disabled/);
+      assert.equal(verdict(c.stdout), "1 agent not capturing");
     } finally {
       writeFile(config, 'model = "gpt-5"\n\n[features]\nhooks = false\n');
     }
@@ -165,10 +184,10 @@ describe("doctor: an OpenCode plugin OpenCode will not run", () => {
       const fix = cliCommand({ ...process.env, ...shell }, ["init", "--agent", "opencode"]);
       const r = run(["doctor", "--agent", "opencode"], shell);
       assert.equal(r.status, 0, r.stderr);
-      assert.match(r.stderr, /^! OpenCode\s+v2\.3\.2, hooked but stale, no events yet$/m);
-      assert.ok(r.stderr.includes(`\n  ${note}\n`), r.stderr);
+      assert.match(r.stdout, /^! OpenCode\s+v2\.3\.2, hooked but stale, no events yet$/m);
+      assert.ok(r.stdout.includes(`\n  ${note}\n`), r.stdout);
       assert.match(r.stderr, new RegExp(`Rewrite the stale hooks:\\n\\s+${esc(fix)}\\n`));
-      assert.equal(r.stdout, "1 agent not capturing\n");
+      assert.equal(verdict(r.stdout), "1 agent not capturing");
       const doc = JSON.parse(run(["doctor", "--agent", "opencode", "--json"], shell).stdout) as Doc;
       assert.deepEqual(doc.agents.find((a) => a.id === "opencode")!.blockers, [note]);
       assert.deepEqual(
@@ -186,9 +205,9 @@ describe("doctor: an OpenCode plugin OpenCode will not run", () => {
     // The command it names puts it right.
     assert.equal(run(setup).status, 0);
     const r = run(["doctor", "--agent", "opencode"]);
-    assert.match(r.stderr, /^✓ OpenCode\s+v2\.3\.2, hooked/m);
-    assert.doesNotMatch(r.stderr, /stale/);
-    assert.equal(r.stdout, "ok\n");
+    assert.match(r.stdout, /^✓ OpenCode\s+v2\.3\.2, hooked/m);
+    assert.doesNotMatch(r.stdout + r.stderr, /stale/);
+    assert.equal(verdict(r.stdout), "ok");
   });
 });
 
@@ -220,9 +239,9 @@ describe("doctor: an OpenCode plugin OpenCode still runs that differs from this 
     const note = `${plugin} is stale (differs from the plugin this CLI writes)`;
     const r = run(["doctor", "--agent", "opencode"]);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^! OpenCode\s+v1\.19\.5, hooked but stale, no events yet$/m);
-    assert.ok(r.stderr.includes(`\n  ${note}\n`), r.stderr);
-    assert.equal(r.stdout, "1 agent with stale hooks\n");
+    assert.match(r.stdout, /^! OpenCode\s+v1\.19\.5, hooked but stale, no events yet$/m);
+    assert.ok(r.stdout.includes(`\n  ${note}\n`), r.stdout);
+    assert.equal(verdict(r.stdout), "1 agent with stale hooks");
     const doc = JSON.parse(run(["doctor", "--agent", "opencode", "--json"]).stdout) as Doc;
     assert.deepEqual(
       doc.warnings.filter((w) => w.agent === "opencode").map((w) => [w.message, w.blockers, w.next]),
@@ -230,7 +249,7 @@ describe("doctor: an OpenCode plugin OpenCode still runs that differs from this 
     );
     // Next to an agent with no hooks, the last line counts each.
     fakeBin(env, "codex", "codex-cli 0.166.0");
-    assert.equal(run(["doctor", "--agent", "opencode", "--agent", "codex"]).stdout, "1 agent not capturing, 1 with stale hooks\n");
+    assert.equal(verdict(run(["doctor", "--agent", "opencode", "--agent", "codex"]).stdout), "1 agent not capturing, 1 with stale hooks");
   });
 });
 
@@ -263,8 +282,8 @@ describe("doctor: no agent detected", () => {
       const cmd = runCommand({ ...process.env, ...shell }, "<cmd>");
       const r = run(["doctor"], shell);
       assert.equal(r.status, 0, r.stderr);
-      assert.match(r.stderr, /^✓ Any command\s+no hooks needed; /m);
-      assert.match(r.stderr, new RegExp(`^! Agents\\s+none detected; capture any agent with ${esc(cmd)}$`, "m"));
+      assert.match(r.stdout, /^✓ Any command\s+no hooks needed; /m);
+      assert.match(r.stdout, new RegExp(`^! Agents\\s+none detected; capture any agent with ${esc(cmd)}$`, "m"));
       const doc = JSON.parse(run(["doctor", "--json"], shell).stdout) as Doc;
       assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id), ["wrapper"]);
       assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), [{ check: "agents", message: "No agent detected", next: cmd }]);
@@ -274,6 +293,6 @@ describe("doctor: no agent detected", () => {
     const doc = JSON.parse(run(["doctor", "--json"]).stdout) as Doc;
     assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id).sort(), ["opencode", "wrapper"]);
     assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), []);
-    assert.doesNotMatch(run(["doctor"]).stderr, /none detected/);
+    assert.doesNotMatch(run(["doctor"]).stdout, /none detected/);
   });
 });
