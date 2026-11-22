@@ -1514,7 +1514,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2)" },
           { name: "config", type: "string", value: "<NAME>", desc: "The score config every item is scored with (coding.sh score configs); it must exist" },
           { name: "sample", type: "number", value: "<N>", desc: "Pick N of the matching sessions at random (default: all of them)" },
-          { name: "assign", type: "string", value: "<NAME>", desc: "Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it" },
+          { name: "assign", type: "string", value: "<NAME>", desc: "Every item is for this person or serve read key name: on serve, only the key with that name sees it, while the CLI sees every item" },
         ],
         examples: ["coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20", "coding.sh review create week --where 'since:7d' --config helpfulness --assign alice"],
       },
