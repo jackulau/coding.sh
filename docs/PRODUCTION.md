@@ -269,8 +269,9 @@ its first trace, with the flags it has then. They start at 0
 when serve starts. Past 500 label sets a counter puts new label values under `other`.
 
 **Alerts.** The writer runs the same check as `coding.sh alert check` every minute, on the alerts in
-`alerts.json` in the data folder (`CODING_SH_HOME`), and logs each change of state. A
-`--role viewer` replica and a standby run none.
+`alerts.json` in the data folder (`CODING_SH_HOME`), and logs each change of state. The first check
+comes a minute after serve starts. A `--role viewer` replica and a standby run none.
+[Alerts](how-to/alerts.md) shows how to add one and verify its webhook.
 
 **Logs.** One JSON line per event. Store URLs pass through `redactUrl` (`src/sinks/post.ts`).
 There is one summary line per minute (events in/out, throttled, queue depth).
