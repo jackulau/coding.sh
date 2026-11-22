@@ -7,8 +7,9 @@
 // The app gets the very same Response; the SDK reads a clone (a tee() of the
 // body), so streaming bodies are observed as they arrive without being held.
 // Calls made by a client wrapped with observe() are skipped here, so wrapping
-// both never records a call twice.
-import { track } from "./client.ts";
+// both never records a call twice. While the SDK is off, nothing is read or
+// cloned: the call goes straight to the wrapped fetch.
+import { isEnabled, track } from "./client.ts";
 import { currentCtx, type LlmCall, recordLlm } from "./context.ts";
 import { requestInfo, resultFor, type Shape, streamAcc } from "./providers.ts";
 import { errorMessage, isObj, nowMs, str } from "./util.ts";
@@ -166,6 +167,7 @@ export function observeFetch(f?: Fetch): Fetch {
   const inner = f ?? globalThis.fetch;
   if ((inner as unknown as Record<symbol, unknown>)[OBSERVED]) return inner;
   const observed = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    if (!isEnabled()) return inner(input, init);
     const ctx = currentCtx();
     let shape: Shape | undefined;
     let url: string | undefined;

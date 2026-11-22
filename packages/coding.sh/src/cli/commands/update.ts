@@ -16,6 +16,7 @@ import { runningCli } from "../../mcp/launch.ts";
 import { shellQuote } from "../common.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
+import { nextStepBin, windowsShell } from "../next-steps.ts";
 import { CliError, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { checkForUpdate, RELEASES_URL, type CheckOptions, type UpdateCache } from "../../update/index.ts";
@@ -107,8 +108,16 @@ export function npmInstall(args: string[], opts: { quiet: boolean; signal: Abort
   });
 }
 
+/**
+ * How to reinstall the latest release. The installer line is sh: PowerShell and
+ * cmd (windowsShell) have no sh, and PowerShell's `curl` is Invoke-WebRequest.
+ */
+export function reinstallCommand(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  return windowsShell(env, platform) ? "npm install -g coding.sh" : INSTALL_SCRIPT;
+}
+
 /** The error for a failed check, with a next step that matches why it failed. */
-export function checkFailed(cache: UpdateCache, current: string): CliError {
+export function checkFailed(cache: UpdateCache, current: string, env: NodeJS.ProcessEnv = process.env): CliError {
   const data = { current, releases: RELEASES_URL };
   // Set by refreshUpdateCache; undefined for an older cache file or an unexpected local error.
   const kind = cache.errorKind;
@@ -118,7 +127,7 @@ export function checkFailed(cache: UpdateCache, current: string): CliError {
   }
   return new CliError(`Couldn't check for updates${cache.error ? `: ${clean(cache.error)}` : ""}`, {
     reason: "update_check_failed",
-    next: [kind === "network" || kind === undefined ? "Check your connection, or reinstall the latest release:" : "Try again later, or reinstall the latest release:", INSTALL_SCRIPT],
+    next: [kind === "network" || kind === undefined ? "Check your connection, or reinstall the latest release:" : "Try again later, or reinstall the latest release:", reinstallCommand(env)],
     data,
   });
 }
@@ -129,11 +138,13 @@ export async function run(c: CommandContext): Promise<number> {
 
 export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<number> {
   const { out } = c;
+  // How the user's shell runs this CLI, for the commands update names.
+  const cli = nextStepBin(c.env);
   if (c.flags["refresh-bin"] === true) {
     // Run by the previous version right after it installed this one (or by hand after `npm i -g`).
     const bin = await refreshHookBin(c.env);
     if (out.json) out.data({ bin, hook: paths(c.env).hook });
-    else if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style("coding.sh init", "cyan", "err")} to set up capture`);
+    else if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style(`${cli} init`, "cyan", "err")} to set up capture`);
     else out.ok(bin === "refreshed" ? `Refreshed ${paths(c.env).bin}` : `${paths(c.env).bin} is current`);
     return 0;
   }
@@ -148,7 +159,7 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
 
   const latest = cache.latest;
   // A failed refresh keeps the previous result in the cache; only a check from this run counts.
-  if (!latest || cache.error) throw checkFailed(cache, current);
+  if (!latest || cache.error) throw checkFailed(cache, current, c.env);
 
   const url = cache.url ?? RELEASES_URL;
   const available = isNewer(latest, current);
@@ -174,7 +185,7 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
   if (!spec || !command) {
     throw new CliError(`coding.sh ${latest} is out, but the release has no installable package`, {
       reason: "no_install_target",
-      next: ["Reinstall with the installer:", INSTALL_SCRIPT],
+      next: ["Reinstall the latest release:", reinstallCommand(c.env)],
       data: base,
     });
   }
@@ -183,11 +194,11 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
     if (out.json) out.data({ status: "available", dryRun, ...base });
     else if (dryRun) {
       out.print(command);
-      out.note(`Dry run: nothing installed. Run the command above, or ${out.style("coding.sh update", "cyan", "err")}.`);
+      out.note(`Dry run: nothing installed. Run the command above, or ${out.style(`${cli} update`, "cyan", "err")}.`);
     } else {
       out.print(latest);
       out.warn(`coding.sh ${latest} is available`);
-      out.next("Install it", "coding.sh update");
+      out.next("Install it", `${cli} update`);
     }
     return 0;
   }
@@ -223,7 +234,7 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
     out.ok(`Updated coding.sh ${current} → ${latest}`);
     if (refreshed.status === "failed") {
       out.warn(`Couldn't refresh the hook in ${paths(c.env).bin}${refreshed.error ? `: ${refreshed.error}` : ""}`);
-      out.next("Refresh it", "coding.sh init");
+      out.next("Refresh it", `${cli} init`);
     }
   }
   return 0;

@@ -1,5 +1,6 @@
 // A process whose explicit flush() gave up on a server that is down exits at once: no second
-// bounded flush at exit and no retry timer keeping it alive.
+// bounded flush at exit and no retry timer keeping it alive. Without an explicit flush, the exit
+// flush sends what is queued or waiting to retry, and says what it dropped.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
@@ -110,4 +111,43 @@ test("with no explicit flush, the exit flush still sends what is queued", async 
   await new Promise<void>((res) => server.close(() => res()));
   assert.equal(r.code, 0, r.stderr);
   assert.ok(got.length >= 1, "the queued events were sent at exit");
+});
+
+/**
+ * An app that records a trace, keeps working (the interval) until the SDK's first attempt to send
+ * it has an answer, and ends without flush(). The batch has left the queue by then and waits for
+ * its retry.
+ */
+const endsAfterFirstAttempt = `import { init, trace } from ${JSON.stringify(src)};
+const work = setInterval(() => {}, 1000);
+init({ flushIntervalMs: 10, fetch: async (url, opts) => { try { return await fetch(url, opts); } finally { clearInterval(work); } } });
+trace("t", () => 1);`;
+
+test("with no explicit flush, the exit flush retries a batch the server answered 503", async () => {
+  const { createServer: http } = await import("node:http");
+  const statuses: number[] = [];
+  const server = http((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const status = statuses.length ? 200 : 503;
+      statuses.push(status);
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end("{}");
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  const r = await run(endsAfterFirstAttempt, { CODING_SH_URL: `http://127.0.0.1:${port}` });
+  await new Promise<void>((res) => server.close(() => res()));
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(statuses, [503, 200], "the batch was sent again at exit");
+  assert.equal(r.stderr, "");
+});
+
+test("with no explicit flush and the server down, the exit flush says it dropped the events", async () => {
+  const down = await downServer();
+  const r = await run(endsAfterFirstAttempt, { CODING_SH_URL: `http://127.0.0.1:${down.port}` }).finally(() => down.close());
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal((r.stderr.match(/\[coding\.sh\]/g) ?? []).length, 1, r.stderr);
+  assert.match(r.stderr, /could not reach the server after \d+ attempts? \(last status network error\); dropping events/);
 });
