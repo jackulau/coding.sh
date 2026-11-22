@@ -190,10 +190,37 @@ describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_
     const text = run(dir, cfg, ["--name", "twice"]);
     assert.match(text.stderr + text.stdout, /twice already exists, unchanged: 1 file\b/);
     assert.ok(text.stdout.includes(first.bundle.id), text.stdout);
+    // An MCP server is a record outside the id: the same bundle, its record updated.
+    put(join(cfg, ".claude.json"), JSON.stringify({ mcpServers: { docs: { command: "node" } } }));
+    const mcp = run(dir, cfg, ["--name", "twice"]);
+    assert.match(mcp.stderr + mcp.stdout, /twice already exists, MCP servers updated: 1 file, 1 MCP server recorded \(docs\)/);
+    assert.ok(mcp.stdout.includes(first.bundle.id), mcp.stdout);
+    put(join(cfg, ".claude.json"), "{}");
+    const gone = json(dir, cfg, "twice");
+    assert.deepEqual([gone.outcome, gone.bundle.id, gone.bundle.createdAt], ["updated", first.bundle.id, first.bundle.createdAt]);
+    assert.equal(json(dir, cfg, "twice").outcome, "unchanged");
     put(join(dir, "CLAUDE.md"), "changed\n");
     const changed = run(dir, cfg, ["--name", "twice"]);
     assert.match(changed.stderr + changed.stdout, /twice: 1 file\b/);
     assert.doesNotMatch(changed.stderr + changed.stdout, /already exists/);
+  });
+
+  it("says a harness TOML whose note alone changed is the same bundle, its note updated", () => {
+    const dir = join(root, "noted");
+    put(join(dir, "CLAUDE.md"), "noted\n");
+    const toml = (note: string) => put(join(dir, "harness.toml"), `name = "noted"\nagent = "claude-code"\ninclude = ["CLAUDE.md"]\nnote = "${note}"\n`);
+    const snap = (...args: string[]) => {
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "snapshot", "--file", join(dir, "harness.toml"), ...args], { env, cwd: dir, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+      return r;
+    };
+    toml("one");
+    const first = JSON.parse(snap("--json").stdout) as Snap;
+    toml("two");
+    const text = snap();
+    assert.match(text.stderr + text.stdout, /noted already exists, note updated: 1 file\b/);
+    const again = JSON.parse(snap("--json").stdout) as Snap;
+    assert.deepEqual([first.outcome, again.outcome, again.bundle.id], ["created", "unchanged", first.bundle.id]);
   });
 });
 

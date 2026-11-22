@@ -1775,9 +1775,11 @@ and a trial runs Claude Code with its own config directory, so it does not load 
 
 A file inside `$CLAUDE_CONFIG_DIR` keeps its `~/.claude/...` key when that directory is inside
 `--dir`, and is stored once: a project file that is the same file on disk is left out. When a
-bundle with the same id (the same name and content) is already stored, a snapshot prints
-`<name> already exists, unchanged` and keeps its first creation time. `--json` gives
-`"outcome": "unchanged"` where a new bundle gives `"created"`.
+bundle with the same id (the same name and content) is already stored, a snapshot keeps its first
+creation time and prints `<name> already exists, unchanged`. When only the MCP servers or a harness
+TOML's `note` changed, which are not part of the id, it stores the new ones and prints
+`MCP servers updated` or `note updated` in place of `unchanged`. `--json` gives
+`"outcome": "unchanged"` or `"updated"` where a new bundle gives `"created"`.
 
 Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
 removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list

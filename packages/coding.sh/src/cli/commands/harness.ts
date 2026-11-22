@@ -7,7 +7,7 @@ import { getAdapter } from "../../adapters/index.ts";
 import { agentFileProblems } from "../../core/agent-files.ts";
 import { IMPORT_HOPS, IMPORTING, importPaths } from "../../core/memory-audit.ts";
 import { userHome } from "../../core/paths.ts";
-import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE, userFile, type BundleFromDirOpts } from "../../runner/bundle.ts";
+import { bundleFromDir, bundleFromToml, bundleId, canonicalJson, DEFAULT_INCLUDE, userFile, type BundleFromDirOpts } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
 import type { BlobRef, BlobStore, HarnessBundle, HarnessMcpServer } from "../../core/types.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
@@ -365,16 +365,23 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
     // The id is the content, so the same setup snapshotted again is a bundle already stored: it
-    // keeps its creation time, and the record outside the id (MCP servers, note) is refreshed.
+    // keeps its creation time, and the record outside the id (MCP servers, note) is stored again,
+    // "updated" when it differs.
     const stored = await ctx.index.getBundle(bundle.id);
     const existed = stored?.id === bundle.id;
-    if (stored && existed) bundle = { ...bundle, createdAt: stored.createdAt };
+    const updated: string[] = [];
+    if (stored && existed) {
+      bundle = { ...bundle, createdAt: stored.createdAt };
+      if (canonicalJson(stored.mcpServers ?? []) !== canonicalJson(bundle.mcpServers ?? [])) updated.push("MCP servers");
+      if ((stored.note ?? "") !== (bundle.note ?? "")) updated.push("note");
+    }
     await ctx.index.putBundle(bundle);
-    if (out.json) out.data({ outcome: existed ? "unchanged" : "created", bundle: bundleJson(bundle) });
+    if (out.json) out.data({ outcome: !existed ? "created" : updated.length ? "updated" : "unchanged", bundle: bundleJson(bundle) });
     else {
       const pl = bundle.plugins?.length ? `, ${plural(bundle.plugins.length, "plugin")} (${bundle.plugins.map((p) => p.name).join(", ")})` : "";
       const mcp = bundle.mcpServers?.length ? `, ${plural(bundle.mcpServers.length, "MCP server")} recorded (${bundle.mcpServers.map((m) => m.name).join(", ")})` : "";
-      out.ok(`${bundle.name}${existed ? " already exists, unchanged" : ""}: ${plural(Object.keys(bundle.files).length, "file")}${pl}${mcp}`);
+      const was = !existed ? "" : ` already exists, ${updated.length ? `${updated.join(" and ")} updated` : "unchanged"}`;
+      out.ok(`${bundle.name}${was}: ${plural(Object.keys(bundle.files).length, "file")}${pl}${mcp}`);
       out.print(bundle.id);
     }
     return 0;
