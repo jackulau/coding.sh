@@ -70,7 +70,9 @@ describe("uninstall", () => {
     const r = cli(sb, ["uninstall", "--yes"], { PATH: dirname(process.execPath) });
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, /OpenCode: .*opencode\.json holds a coding\.sh install outside the config dir uninstall looked in/);
-    assert.match(r.stderr, /OPENCODE_CONFIG_DIR=.* coding\.sh uninstall --agent opencode/);
+    // `VAR=value cmd` is sh syntax: in PowerShell or cmd (no SHELL or MSYSTEM) it names the variable to set.
+    if (process.platform === "win32") assert.match(r.stderr, /Remove it: set OPENCODE_CONFIG_DIR to .*oc as at init, then run:\n {4}codingsh uninstall --agent opencode$/m);
+    else assert.match(r.stderr, /OPENCODE_CONFIG_DIR=.* coding\.sh uninstall --agent opencode/);
     const j = cli(sb, ["uninstall", "--yes", "--json"], { PATH: dirname(process.execPath) });
     assert.equal(JSON.parse(j.stdout).outcome, "partial");
     // The command it names removes both files.

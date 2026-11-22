@@ -17,7 +17,7 @@ export default {
   Script: "스크립트",
   "Copy the npx command: {{NPX}}": "npx 명령어 복사: {{NPX}}",
   "Paste it into your coding agent.": "코딩 에이전트에 붙여 넣으세요.",
-  "Needs Node.js 22.16 or newer. It does not work on Windows.": "Node.js 22.16 이상이 필요합니다. Windows에서는 동작하지 않습니다.",
+  "Needs Node.js 22.16 or newer. On Windows: ": "Node.js 22.16 이상이 필요합니다. Windows에서는: ",
   "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
     "Windows에서는 Git Bash에서 실행하세요. PowerShell이나 cmd에서는 동작하지 않습니다.",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":

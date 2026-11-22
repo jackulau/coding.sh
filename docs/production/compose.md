@@ -59,5 +59,14 @@ To add your own app, append a key to `CODING_SH_INGEST_KEYS` in `docker-compose.
   runs serve on ClickHouse instead of Postgres, with the `chdata` volume. See
   [Postgres and ClickHouse stores](../reference/stores.md#clickhouse).
 - **Data.** Three named volumes: `pgdata`, `minio-data` and `coding-sh-data`. Back up the first two.
-- **Tests.** The Postgres and S3 store suites run against this stack:
-  `docker compose up -d postgres minio minio-init`, then `CODING_SH_TEST_PG_URL=postgres://coding:$POSTGRES_PASSWORD@127.0.0.1:5432/coding`.
+- **Tests.** The Postgres and S3 store suites run against this stack. Without their URLs, they
+  skip the live tests. With `.env` written and loaded (steps 1 and 3), from the repo root:
+
+  ```sh
+  docker compose up -d postgres minio minio-init
+  CODING_SH_TEST_PG_URL="postgres://coding:$POSTGRES_PASSWORD@127.0.0.1:5432/coding" \
+    npm test -w coding.sh-store-postgres
+  CODING_SH_TEST_S3_URL='s3://coding-sh/test?endpoint=http://127.0.0.1:9000' \
+    AWS_ACCESS_KEY_ID="$MINIO_ROOT_USER" AWS_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" \
+    npm test -w coding.sh-store-s3
+  ```

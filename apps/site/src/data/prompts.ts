@@ -12,8 +12,11 @@ export interface QuickstartPath {
 }
 
 const STOP = "If a release-age policy or a permission error blocks an install, stop and ask me instead of changing it.";
+// npm also installs an extensionless sh script named coding.sh, and PowerShell and cmd open it instead of
+// running coding.sh.cmd. codingsh is the same CLI (docs/guides/install.md#windows).
+const WIN = "On Windows, in PowerShell or cmd, run codingsh instead of coding.sh.";
 
-export const SETUP_PROMPT = `Set up coding.sh on this machine. It needs Node.js 22.16 or newer.
+export const SETUP_PROMPT = `Set up coding.sh on this machine. It needs Node.js 22.16 or newer. ${WIN}
 
 1. Install the CLI: npm install -g coding.sh. ${STOP}
 2. Run coding.sh init --dry-run and show me the plan. When I agree, run coding.sh init --yes. It adds a capture hook and the coding.sh MCP server to each agent it finds, and imports their past sessions.
@@ -28,12 +31,12 @@ const sdkSetup = (lang: "TypeScript" | "Python") => {
   const wrap = ts
     ? `import { observe } from "@codingdotsh/sdk" and wrap each OpenAI or Anthropic client the agent creates: observe(new OpenAI()).`
     : `import coding_sh and wrap each OpenAI or Anthropic client the agent creates: coding_sh.observe(OpenAI()). Call coding_sh.flush() before a script exits.`;
-  return `Add coding.sh tracing to the ${lang} agent in this project.
+  return `Add coding.sh tracing to the ${lang} agent in this project. ${WIN}
 
 1. Install the coding.sh CLI (npm install -g coding.sh, Node.js 22.16 or newer) and ${pkg}. ${STOP}
 2. Read https://coding.sh/docs/sdk.md. Then ${wrap} Change nothing else in the agent.
-3. Start coding.sh serve in another terminal and leave it running. Where the agent runs, set CODING_SH_URL=http://127.0.0.1:4318 and CODING_SH_SERVICE to a short name for this agent. Without CODING_SH_URL the SDK does nothing, so the code is safe to ship.
-4. Verify: run the agent once, then coding.sh show latest --json. It should list each model call with its tokens and cost. Tell me the session id and what it recorded.`;
+3. Start coding.sh serve in another terminal and leave it running. Where the agent runs, set CODING_SH_URL=http://127.0.0.1:4318 and CODING_SH_SERVICE to a short lowercase name such as support-bot. Without CODING_SH_URL the SDK does nothing, so the code is safe to ship.
+4. Verify: run the agent once, then coding.sh sessions --agent <that name> --json. Each model call outside trace() is its own session, with its tokens and cost. Tell me the session ids and what they recorded.`;
 };
 
 const SDK_FIRST = `Run my agent on three different inputs. Then use coding.sh sessions and coding.sh show to tell me which run cost the most, which was slowest, and why. Quote the numbers coding.sh printed.`;

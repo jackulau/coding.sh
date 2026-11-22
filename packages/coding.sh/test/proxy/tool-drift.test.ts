@@ -126,6 +126,32 @@ describe("toolDrift", () => {
     assert.equal(row(none, "b").changed, undefined);
     assert.equal(row(none, "search").changed, "variants");
   });
+
+  it("keeps a pinned tool a session offered since the pin, though its later calls left it out", async () => {
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const t0 = Date.UTC(2026, 10, 1);
+    const both = await blobs.put(JSON.stringify([BASH, search("Search docs")]));
+    const bashOnly = await blobs.put(JSON.stringify([BASH]));
+    let n = 0;
+    const ev = (sessionId: string, ts: number, toolsRef: string): AgentEvent => ({ id: `u${n++}`, v: SCHEMA_VERSION, sessionId, ts, source: "proxy", agent: "claude-code", kind: "llm.call", payload: { toolsRef } });
+    // s1 offers both tools, then calls with Bash alone (a subagent's tools, say); s2 offers Bash alone.
+    await index.putEvents([ev("s1", t0, both), ev("s1", t0 + 1000, both), ev("s1", t0 + 2000, bashOnly), ev("s2", t0 + 3000, bashOnly)]);
+    for (const id of ["s1", "s2"]) await index.upsertSession({ id, agent: "claude-code", startedAt: t0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+    const pin = (t: unknown, at: number) => ({ descSha: toolHashes(t)!.descSha, schemaSha: toolHashes(t)!.schemaSha, at });
+    const changed = async (searchPinnedAt: number) => {
+      const d = await toolDrift(index, blobs, { since: t0, pins: { "builtin/Bash": pin(BASH, t0 + 500), "docs/search": pin(search("Search docs"), searchPinnedAt) } });
+      return d.tools.map((r) => [r.tool, r.changed]);
+    };
+
+    // s1 offered search at t0 + 1000, after its pin: not removed, though no session's latest call offers it.
+    assert.deepEqual(await changed(t0 + 500), [["Bash", undefined], ["search", undefined]]);
+    // Pinned after that call: every array offered since leaves it out.
+    assert.deepEqual(await changed(t0 + 1500), [["search", "removed"], ["Bash", undefined]]);
+    // An array offered since the pin that is no longer stored could offer it: undecided.
+    await index.putEvents([ev("s2", t0 + 4000, "sha256:0000000000000000000000000000000000000000000000000000000000000000")]);
+    assert.deepEqual(await changed(t0 + 1500), [["Bash", undefined], ["search", undefined]]);
+  });
 });
 
 describe("toolDrift after a pin", () => {
@@ -160,7 +186,8 @@ describe("toolDrift after a pin", () => {
       assert.deepEqual([row(d, "search")!.changed, row(d, "search")!.sessionIds], [undefined, undefined]);
       assert.equal(d.tools[0]!.tool, "exfil", "changed rows first");
 
-      // Every session since the pin now calls without search: removed.
+      // Pinned again, then every call since offers an array without search: removed.
+      writeToolPins(d.tools, env, t0 + 1500);
       await call("s2", t0 + 2000, [EXFIL]);
       await call("s1", t0 + 2100, [EXFIL]);
       d = await toolDrift(index, blobs, { since: t0, pins: readToolPins(env) });
@@ -168,15 +195,15 @@ describe("toolDrift after a pin", () => {
       // A window that holds none of its calls still lists it, from the pin.
       const late = await toolDrift(index, blobs, { since: t0 + 1500, pins: readToolPins(env) });
       const gone = row(late, "search")!;
-      assert.deepEqual([gone.server, gone.sessions, gone.variants, gone.firstSeen, gone.lastSeen, gone.pinned?.at, gone.changed], ["docs", 0, 0, t0 + 500, t0 + 500, t0 + 500, "removed"]);
+      assert.deepEqual([gone.server, gone.sessions, gone.variants, gone.firstSeen, gone.lastSeen, gone.pinned?.at, gone.changed], ["docs", 0, 0, t0 + 1500, t0 + 1500, t0 + 1500, "removed"]);
       // Capped: an unread array could still offer it, so it is not listed.
       assert.equal(row(await toolDrift(index, blobs, { since: t0 + 1500, pins: readToolPins(env), maxBlobs: 0 }), "search"), undefined);
 
-      // --changed exits 1 and names the new tool and its session.
+      // --changed exits 1 and names the removed tool.
       const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", "--changed", "--json"], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
       assert.equal(r.status, 1, r.stderr);
       const doc = JSON.parse(r.stdout) as { tools: { tool: string; changed: string; sessionIds?: string[] }[] };
-      assert.deepEqual(doc.tools.map((t) => [t.tool, t.changed, t.sessionIds]).sort(), [["exfil", "new", ["s1", "s2"]], ["search", "removed", undefined]]);
+      assert.deepEqual(doc.tools.map((t) => [t.tool, t.changed, t.sessionIds]), [["search", "removed", undefined]]);
 
       // The table says so, and pin counts the removed tool apart: its pin is dropped, not saved.
       const run = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
@@ -194,11 +221,72 @@ describe("toolDrift after a pin", () => {
       assert.equal(text.status, 0, text.stderr);
       assert.match(text.stderr, /Pinned 1 tool; dropped the pins of 1 removed tool/);
 
-      // Pinning again accepts both: the removed tool's pin is dropped.
+      // Pinning again accepts the removal: the removed tool's pin is dropped.
       writeToolPins(d.tools, env, t0 + 3000);
       assert.equal(readToolPins(env)["docs/search"], undefined);
       d = await toolDrift(index, blobs, { since: t0, pins: readToolPins(env) });
       assert.deepEqual(d.tools.filter((t) => t.changed), []);
+    } finally {
+      await index.close();
+      await blobs.close?.();
+    }
+  });
+});
+
+describe("harness tools pin after a removal", () => {
+  const FETCH = { name: "mcp__docs__fetch", description: "Fetch a page", input_schema: SCHEMA };
+  let root = "";
+  let env: NodeJS.ProcessEnv = {};
+  before(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-toolgone-")));
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), USERPROFILE: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" };
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it("keeps an accepted removal through later pins, until a session offers the tool again", async () => {
+    const stores = await openStores(loadConfig(env));
+    const { index, blobs } = stores;
+    const t0 = Date.now() - 3_600_000;
+    let n = 0;
+    const call = async (sessionId: string, ts: number, tools: unknown[]) => {
+      const ref = await blobs.put(JSON.stringify(tools));
+      await index.putEvents([{ id: `g${n++}`, v: SCHEMA_VERSION, sessionId, ts, source: "proxy", agent: "claude-code", kind: "llm.call", payload: { toolsRef: ref } }]);
+      await index.upsertSession({ id: sessionId, agent: "claude-code", startedAt: t0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+    };
+    const run = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
+    const changed = () => {
+      const r = run(["--changed", "--json"]);
+      return [r.status, (JSON.parse(r.stdout) as { tools: { tool: string; changed: string }[] }).tools.map((t) => [t.tool, t.changed])];
+    };
+    const pin = () => {
+      const r = run(["pin", "--json"]);
+      assert.equal(r.status, 0, r.stderr);
+      const p = JSON.parse(r.stdout) as { pinned: number; dropped?: number; pins: number };
+      return [p.pinned, p.dropped, p.pins];
+    };
+    try {
+      // fetch has one version, search two; all three tools are pinned.
+      await call("s1", t0, [BASH, search("Search docs"), FETCH]);
+      await call("s1", t0 + 100, [BASH, search("Search docs, v2"), FETCH]);
+      writeToolPins((await toolDrift(index, blobs, { since: t0 })).tools, env, t0 + 500);
+
+      // A session without them: removed. Pin accepts it, and --changed is clean.
+      await call("s2", t0 + 1000, [BASH]);
+      assert.deepEqual(changed(), [1, [["fetch", "removed"], ["search", "removed"]]]);
+      assert.deepEqual(pin(), [1, 2, 1]);
+      assert.deepEqual(changed(), [0, []]);
+
+      // Pin again: they stay unpinned, so another session without them leaves --changed clean.
+      assert.deepEqual(pin(), [1, undefined, 1]);
+      assert.deepEqual(Object.keys(readToolPins(env)), ["builtin/Bash"]);
+      await call("s3", Date.now(), [BASH]);
+      assert.deepEqual(changed(), [0, []]);
+
+      // A session that offers search again: the next pin saves it.
+      await call("s4", Date.now(), [BASH, search("Search docs, v2")]);
+      assert.deepEqual(pin(), [2, undefined, 2]);
+      assert.equal(readToolPins(env)["docs/search"]?.descSha, toolHashes(search("Search docs, v2"))!.descSha);
+      assert.deepEqual(changed(), [0, []]);
     } finally {
       await index.close();
       await blobs.close?.();

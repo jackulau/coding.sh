@@ -2,8 +2,10 @@
 // gets a 429 in its vendor's error shape, with Retry-After, and never reaches the
 // upstream. Without the flag (no guard) the same call goes through.
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { statusOf, type Budget, type BudgetStatus } from "../../src/budget/index.ts";
 import { budgetGuard } from "../../src/proxy/budget.ts";
 import { startProxy, type ProxyServer } from "../../src/proxy/server.ts";
@@ -43,7 +45,7 @@ async function proxy(up: Upstream, load?: (now: number) => Promise<BudgetStatus[
   const p = await startProxy({
     port: 0,
     upstreams: { anthropic: up.url, openai: up.url },
-    budget: load ? budgetGuard({ load, now: extra.now }) : undefined,
+    budget: load ? budgetGuard({ load, now: extra.now, onError: (e) => extra.errors?.push(e) }) : undefined,
     onError: (e) => extra.errors?.push(e),
   });
   open.push(p);
@@ -144,6 +146,52 @@ describe("proxy budget guard", () => {
     assert.equal(up.seen.length, 1);
     assert.ok(errors.some((e) => /store gone/.test(e.message)));
   });
+
+  test("a read that fails stops no call and is tried again 30 s on, not on every call", async () => {
+    const up = await upstream();
+    const errors: Error[] = [];
+    let t = Date.now();
+    let loads = 0;
+    let fail = false;
+    const p = await proxy(
+      up,
+      async (now) => {
+        loads++;
+        if (fail) throw new Error("budgets.json has no budgets list");
+        return [over(budget(), 2, now)];
+      },
+      { errors, now: () => t },
+    );
+    const send = async () => (await call(p.url, { path: "/v1/messages", body: messages, headers: anthropicHeaders })).status;
+    assert.equal(await send(), 429);
+    fail = true;
+    t += 31_000;
+    assert.deepEqual([await send(), await send(), await send()], [200, 200, 200], "nor does the spend read before the failure");
+    assert.equal(loads, 2, "the failed read is kept for 30 s");
+    assert.deepEqual(errors.map((e) => e.message), ["budgets can't be read, so none stops a call for 30 s: budgets.json has no budgets list"], "once a read, not once a call");
+    fail = false;
+    t += 31_000;
+    assert.equal(await send(), 429);
+    assert.equal(loads, 3);
+  });
+
+  test("a budget whose spend can't be read stops no call and is named once a read; one over its limit still blocks", async () => {
+    const up = await upstream();
+    const errors: Error[] = [];
+    let t = Date.now();
+    const unread = (now: number): BudgetStatus => ({ ...statusOf(budget(), 0, 0, now), resetsAt: now + HOUR, error: "store gone" });
+    const p = await proxy(up, async (now) => [unread(now), over(budget({ id: "week", period: "week", limitUsd: 10 }), 12, now)], { errors, now: () => t });
+    const send = () => call(p.url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+    const r = await send();
+    assert.equal(r.status, 429);
+    assert.equal(JSON.parse(r.body.toString()).error.budget.id, "week");
+    assert.equal((await send()).status, 429);
+    assert.deepEqual(errors.map((e) => e.message), ["budget day can't be read, so it stops no call: store gone"], "once a read, not once a call");
+    t += 31_000;
+    assert.equal((await send()).status, 429);
+    assert.equal(errors.length, 2);
+    assert.equal(up.seen.length, 0);
+  });
 });
 
 describe("coding.sh proxy --enforce-budget (CLI)", () => {
@@ -176,5 +224,52 @@ describe("coding.sh proxy --enforce-budget (CLI)", () => {
     assert.equal(ok.status, 200);
     assert.equal(up.seen.length, 1);
     plain.live.child.kill();
+  });
+
+  test("never reads a --where budget: one whose query no longer parses is not named, and the day budget over its limit blocks", async () => {
+    const up = await upstream();
+    const h = tmpHome({ CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_UPDATE_CHECK: "1" });
+    const index = await SqliteIndexStore.open(join(h.env.CODING_SH_HOME!, "index.db"));
+    await index.migrate();
+    await index.upsertSession(mkSession("s1", Date.now() - 60_000, { stats: { usage: { inputTokens: 1, outputTokens: 1, costUsd: 1.4, estimatedCostUsd: 1.4 } } }));
+    await index.close();
+    // A query stored before the grammar changed: reading its spend would fail.
+    const budgets = [
+      { id: "day-w0ld000", period: "day", limitUsd: 1, where: "bogus:1", createdAt: 0 },
+      { id: "day", period: "day", limitUsd: 1, createdAt: 0 },
+    ];
+    writeFileSync(join(h.env.CODING_SH_HOME!, "budgets.json"), JSON.stringify({ budgets }));
+    const live = runLive(["proxy", "--port", "0", "--anthropic-upstream", up.url, "--enforce-budget"], h.env);
+    const url = await live.waitFor(/http:\/\/127\.0\.0\.1:\d+/);
+    await live.waitFor(/Enforcing budgets/);
+    const r = await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+    assert.equal(r.status, 429, r.body.toString());
+    assert.match(JSON.parse(r.body.toString()).error.message, /budget "day"/);
+    // The block's line comes after anything the read printed.
+    await live.waitFor(/blocked a call/);
+    assert.doesNotMatch(live.err.join(""), /day-w0ld000|bogus/);
+    assert.equal(up.seen.length, 0);
+    live.child.kill();
+  });
+
+  test("a budgets.json that stops parsing while the proxy runs is read once in 30 s and stops no call", async () => {
+    const up = await upstream();
+    const h = tmpHome({ CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_UPDATE_CHECK: "1" });
+    const set = runSync(["budget", "set", "day", "1"], h.env);
+    assert.equal(set.status, 0, set.stderr);
+    const live = runLive(["proxy", "--port", "0", "--anthropic-upstream", up.url, "--enforce-budget"], h.env);
+    const url = await live.waitFor(/http:\/\/127\.0\.0\.1:\d+/);
+    await live.waitFor(/Enforcing budgets/);
+    writeFileSync(join(h.env.CODING_SH_HOME!, "budgets.json"), JSON.stringify({ nope: 1 }));
+    for (let i = 0; i < 3; i++) assert.equal((await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders })).status, 200);
+    assert.equal(up.seen.length, 3);
+    const lines = (re: RegExp) => live.err.join("").split("\n").filter((l) => re.test(l));
+    // Each call's line comes after anything its budget check printed.
+    for (let i = 0; i < 400 && lines(/ messages \S+ 200 /).length < 3; i++) await sleep(25);
+    assert.equal(lines(/ messages \S+ 200 /).length, 3, live.err.join(""));
+    const failed = lines(/has no "budgets" list/);
+    assert.equal(failed.length, 1, live.err.join(""));
+    assert.match(failed[0]!, /budgets can't be read, so none stops a call for 30 s: /);
+    live.child.kill();
   });
 });

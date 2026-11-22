@@ -184,16 +184,20 @@ reset.
 
 Which budgets the proxy can match:
 
-- A budget with no `--agent` and no `--repo` applies to every call.
+- A budget with no `--agent`, `--repo` or `--where` applies to every call.
 - A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
   their headers. Every other client's calls count as agent `proxy`.
-- A budget with `--repo` never blocks a call: the proxy does not know a call's repo.
+- A budget with `--repo` or `--where` never blocks a call, and the proxy does not read its spend:
+  the proxy does not know a call's repo or session.
 
 Only `/v1/messages`, `/v1/chat/completions` and `/v1/responses` calls are blocked;
 `count_tokens` and other paths go through. The proxy reads spend from the store at most every
-30 s, so a call can go through for up to 30 s after a budget passes its limit. If spend can't be
-read, the call goes through. Without the flag nothing is blocked. A proxy the hook restarts (step
-5) runs without the flag.
+30 s, so a call can go through for up to 30 s after a budget passes its limit. Without the flag
+nothing is blocked. A proxy the hook restarts (step 5) runs without the flag.
+
+A budget whose spend can't be read stops no call, and the proxy prints a warning that names it and
+the reason; the other budgets still apply. If `budgets.json` itself can't be read, no budget stops
+a call. Either way the proxy reads again 30 s later, not on every call.
 
 ## Catch a tool description that changed
 
@@ -220,11 +224,13 @@ After a pin, `--changed` also keeps these rows, named by `changed` (`variants` f
   table says `differs from pin`.
 - `new`: a tool with no pin first seen at or after the last pin, such as one an MCP server added.
   The table says `new since pin`.
-- `removed`: a pinned tool that the latest tools array of every session since its pin leaves out,
-  with `sessions` 0 when no call in the window offered it. The table says `removed since pin`.
+- `removed`: a pinned tool missing from every tools array any session offered since its pin, with
+  `sessions` 0 when no call in the window offered it. The table says `removed since pin`.
 
 Pin again to accept them: `harness tools pin` saves the latest hashes and drops the pins of
-removed tools.
+removed tools. A removal stays accepted: a later pin does not pin the tool again while no call has
+offered it since the last pin, and `--changed` does not keep it for the versions it had before.
+Once a session offers it again, the next pin saves it.
 
 In `--json`, each changed row other than `removed` has `sessionIds`: up to 20 sessions that offered
 a definition other than the pinned one, other than the first one seen, or, for a new tool, any, the

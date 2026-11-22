@@ -108,8 +108,9 @@ set it for the user's store unless they ask.
   `### Added`, `### Changed` or `### Fixed`: a bold area (`**Sessions.**`, `**Cost.**`,
   `**Capture.**`, …), what changed in a sentence or two, and a link to the docs.
   `node scripts/changelog/add.mjs --section Fixed --area Sessions --text "..." --link guides/explore.md#id`
-  writes that line and refuses one over 60 words, with a glyph outside the site font's CORE
-  subset, or with a link to a missing doc or heading; `--check` checks the unreleased lines.
+  writes that line and refuses one over 60 words, with a character the site font has outside its
+  CORE subset (the page would load a -rest font file for it), or with a link to a missing doc or
+  heading; `--check` checks the unreleased lines.
 
 ## Routines
 

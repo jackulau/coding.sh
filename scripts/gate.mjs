@@ -411,6 +411,14 @@ export function buildSteps(root = ROOT, opts = {}) {
     { ...commands("perf-test", () => [{ cmd: "npm", args: ["run", "perf:test"] }]), static: true, description: "tests of the Site perf gate and budgets" },
     { ...commands("dogfood-test", () => [{ cmd: "npm", args: ["run", "dogfood:test"] }]), static: true, description: "tests of the dogfood scorecard" },
     {
+      ...commands("changelog", () => [
+        { cmd: "npm", args: ["run", "changelog:test"] },
+        { cmd: node, args: ["scripts/changelog/add.mjs", "--check"] },
+      ]),
+      static: true,
+      description: "tests of the changelog helper, and its checks on the unreleased lines",
+    },
+    {
       name: "actionlint",
       static: true,
       description: "actionlint on the workflows",

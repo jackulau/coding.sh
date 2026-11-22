@@ -2,7 +2,7 @@
 // and in process, and the status line's `budget 82%` part.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import * as budget from "../../src/cli/commands/budget.ts";
@@ -94,6 +94,32 @@ describe("coding.sh budget (in process)", () => {
     const text = await runCmd(budget, b, { action: "status" });
     assert.match(text.stdout, /day-codex/);
     assert.match(text.stdout + text.stderr, /estimated/i);
+  });
+
+  test("a budget whose --where no longer parses shows its error, in text and --json, and the others still report", async () => {
+    const b = box();
+    await b.seed([priced("s1", 0.75)]);
+    // A query stored before the grammar changed (budget set refuses it now).
+    const budgets = [
+      { id: "day", period: "day", limitUsd: 1, createdAt: 0 },
+      { id: "day-w0ld000", period: "day", limitUsd: 5, where: "bogus:1", createdAt: 0 },
+    ];
+    writeFileSync(join(b.env.CODING_SH_HOME!, "budgets.json"), JSON.stringify({ budgets }));
+    const r = await runCmd(budget, b, { action: "status", json: true });
+    assert.equal(r.code, 1, String(r.error));
+    const [day, bad] = r.json.budgets;
+    assert.deepEqual([day.id, day.spendUsd, day.over], ["day", 0.75, false]);
+    assert.equal(bad.id, "day-w0ld000");
+    assert.equal(bad.where, "bogus:1");
+    assert.equal(bad.error, '--where does not parse (unknown key "bogus")');
+    assert.deepEqual([bad.spendUsd, bad.percent, bad.over, bad.sessions], [undefined, undefined, undefined, undefined], "no numbers for a spend that was not read");
+    assert.ok(Date.parse(bad.resetsAt) > Date.now(), bad.resetsAt);
+    const text = await runCmd(budget, b, { action: "status" });
+    assert.equal(text.code, 1, String(text.error));
+    assert.match(text.stdout, /^day\tday\tevery session\t~\$0\.7500\t\$1\.00\t75%\t/m);
+    assert.match(text.stdout, /^day-w0ld000\tday\twhere bogus:1\t-\t\$5\.00\t-\t/m);
+    assert.match(text.stderr, /Budget day-w0ld000 can't be read: --where does not parse \(unknown key "bogus"\)/);
+    assert.match(text.stderr, /coding\.sh budget rm day-w0ld000/);
   });
 
   test("status with no budgets says how to set one", async () => {

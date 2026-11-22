@@ -107,6 +107,16 @@ describe("statusline session part", () => {
     assert.equal(line(b, { session_id: "known", model: { display_name: "Opus" } }), "Opus  ·  $0.0000 session  ·  $0.0000 today\n");
     assert.equal(JSON.parse(line(b, { session_id: "known" }, "--json")).sessionCostUsd, 0);
   });
+
+  test("a stored session with no cost so far prints no session part, and --json gives null: an unknown cost is not $0", async () => {
+    const b = box();
+    // No model call yet, and calls with token counts but no price.
+    await b.seed([mkSession("fresh", Date.now() - 60_000), mkSession("unpriced", Date.now() - 60_000, { stats: { usage: { inputTokens: 10, outputTokens: 5 } } })]);
+    for (const id of ["fresh", "unpriced"]) {
+      assert.equal(line(b, { session_id: id, model: { display_name: "Opus" } }), "Opus  ·  $0.0000 today\n", id);
+      assert.equal(JSON.parse(line(b, { session_id: id }, "--json")).sessionCostUsd, null, id);
+    }
+  });
 });
 
 describe("statusline and quota --json numbers", () => {

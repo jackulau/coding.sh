@@ -43,7 +43,7 @@ private channel. Put only the hashes in `deploy/compose/.env`. Hashes are safe t
 
 ```sh
 CODING_SH_INGEST_KEYS=alice:sha256:...,billing-api:sha256:...
-CODING_SH_READ_KEYS=*:sha256:...          # a read key from step 3, or the first-start one
+CODING_SH_READ_KEYS=*:sha256:...          # a read key from step 3
 ```
 
 Then run `docker compose -f deploy/compose/compose.postgres.yml up -d`. To revoke a key, delete its
@@ -99,7 +99,8 @@ headers = { Authorization = "Bearer csh_ik_..." }   # your own ingest key
 
 Sessions are sent at the end of each turn, when the agent's hook starts a background ingest. They
 are also sent whenever you run a `coding.sh` command. To check that it works, run
-`coding.sh ingest`, then look for your session in the viewer under your project.
+`coding.sh ingest`, then reload the viewer and look for the session. The list does not show the
+project yet; `GET /api/sessions?project=alice` lists one project's sessions.
 
 - Redaction runs on your machine before anything is sent.
 - Long prompts and tool output are clipped to about 1.5 KB on the server. The full text stays in
@@ -120,7 +121,8 @@ export ANTHROPIC_CUSTOM_HEADERS="x-coding-sh-key: $INGEST_KEY"
 ```
 
 The agent's own API key still goes to the API unchanged, and is never stored. The ingest key is
-dropped before the call is forwarded. Upstreams come from `[proxy]` in the server's config.
+dropped before the call is forwarded. Upstreams come from `[proxy]` in the server's config, and
+default to the Anthropic and OpenAI APIs.
 
 ## 5. Send your apps
 
