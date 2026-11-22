@@ -352,6 +352,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `coding.sh cache` with no subcommand runs `cache doctor`, its only subcommand, and takes the same options. Before, it stopped with "Missing command" and named doctor. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache))
 - **Evals.** `eval candidates` and `eval init --sessions` say in plain words why each session is left out and what would change that. A session whose repository is no longer on this machine is left out with that reason, where it ranked first and `eval init` then failed on it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
 - **Evals.** `eval candidates` and `eval init --sessions` take a `coding.sh run --` session's prompt from its command's prompt argument, as `eval new` does, where they left it out for having no prompt. One that changed no files, or whose agent recorded its own session inside it, is left out with that reason. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
+- **Evals.** On Windows a trial no longer fails when its work folder is busy for a moment (another trial's git or an antivirus scan holding it) while the verifier's tree is swapped in: each move waits briefly and tries again. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#verifier-isolation))
 
 ## [0.1.7] - 2026-11-16
 
