@@ -4,6 +4,7 @@
 // option parsing. Unknown options and extra positionals are usage errors raised
 // before any work happens.
 import { parseWhen, type When } from "../query/time.ts";
+import { andQuery, parseWhere, printWhere, type Query } from "../query/where.ts";
 
 export type FlagType = "boolean" | "string" | "number" | "list";
 
@@ -148,6 +149,31 @@ const HIDDEN = "(value not shown)";
  */
 let typedNumbers = new Map<string, { raw: string; shown: string }>();
 
+/**
+ * `--where` given more than once, as one condition: the parts joined with AND. A query part
+ * (`<QUERY>`) is parsed and the whole printed again, as if every part were written in one --where;
+ * a later sort: or limit: wins. A part that does not parse is passed on alone, so the command's
+ * error points into it. An SQL part (`<SQL>`) is wrapped in parentheses. Blank parts are left out.
+ */
+export function joinWhere(parts: readonly string[], value: string | undefined): string {
+  const kept = parts.filter((p) => p.trim() !== "");
+  if (kept.length <= 1) return kept[0] ?? parts[parts.length - 1] ?? "";
+  if (value === "<SQL>") return kept.map((p) => `(${p})`).join(" AND ");
+  let q: Query = {};
+  for (const p of kept) {
+    let part: Query;
+    try {
+      part = parseWhere(p);
+    } catch {
+      return p;
+    }
+    q = andQuery(q, part.root);
+    if (part.sort) q.sort = part.sort;
+    if (part.limit !== undefined) q.limit = part.limit;
+  }
+  return printWhere(q);
+}
+
 export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], opts: ParseOptions = {}): ParsedArgs {
   const byName = new Map(specs.map((s) => [s.name, s]));
   const byShort = new Map(specs.filter((s) => s.short).map((s) => [s.short!, s]));
@@ -156,6 +182,8 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   let rest: string[] = [];
   let sawDashDash = false;
   typedNumbers = new Map();
+  // Every `--where` typed: a second one joins the first with AND instead of replacing it.
+  const whereParts: string[] = [];
 
   const sensitive = opts.sensitive === true;
   /** A user token as an error may show it: quoted, or hidden on a sensitive command. */
@@ -203,6 +231,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       flags[spec.name] = [...(Array.isArray(prev) ? prev : []), ...parts];
     } else {
       flags[spec.name] = raw;
+      if (spec.name === "where") whereParts.push(raw);
     }
   };
 
@@ -262,6 +291,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
     positionals.push(token);
   }
 
+  if (whereParts.length > 1) flags.where = joinWhere(whereParts, byName.get("where")?.value);
   if (opts.maxPositionals !== undefined && positionals.length > opts.maxPositionals) {
     const extra = positionals[opts.maxPositionals]!;
     if (sensitive) throw new UsageError(`Unexpected argument ${HIDDEN}: this command takes no values on the command line`, { reason: "extra_argument" });

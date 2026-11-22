@@ -1,19 +1,20 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
-// error quotes what was typed, stats --since in the future says it is after now, search "" is a
-// missing argument, an unknown --agent lists the agent ids, and a bad config value prints no
-// JavaScript type name.
+// error quotes what was typed, stats --since in the future says it is after now, --where given
+// twice joins with AND, search "" is a missing argument, an unknown --agent lists the agent ids,
+// and a bad config value prints no JavaScript type name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
+import { joinWhere, parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
 import { suiteHarness } from "../../src/cli/commands/eval-run.ts";
 import { emptyWindow } from "../../src/cli/commands/stats.ts";
+import { COMMANDS } from "../../src/cli/registry.ts";
 import { ConfigError, loadConfig } from "../../src/core/config.ts";
 import { parseWhere, QueryError } from "../../src/query/where.ts";
 import { CLI } from "../_cli.ts";
-import { sandbox, type Sandbox } from "./_cmd.ts";
+import { mkSession, sandbox, type Sandbox } from "./_cmd.ts";
 
 const boxes: Sandbox[] = [];
 after(() => boxes.forEach((b) => b.cleanup()));
@@ -105,6 +106,69 @@ describe("stats --since in the future", () => {
   test("the same instant as now is not before now", () => {
     const t = Date.parse("2026-11-01T10:00:00Z");
     assert.equal(emptyWindow("now", t, undefined, t).message, '--since is not before now: "now" is 2026-11-01T10:00:00.000Z, and now is 2026-11-01T10:00:00.000Z');
+  });
+});
+
+describe("--where given more than once", () => {
+  const WHERE: FlagSpec = { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "" };
+  const SQL: FlagSpec = { name: "where", type: "string", value: "<SQL>", desc: "" };
+  const where = (...parts: string[]) => parseArgs(parts.flatMap((p) => ["--where", p]), [WHERE]).flags.where;
+
+  test("joins the queries with AND, as if written in one", () => {
+    assert.equal(where("agent:codex", "cost>1"), "agent:codex cost>1");
+    assert.equal(where("a OR b", "-flag:compaction"), "(a OR b) -flag:compaction");
+    assert.equal(parseArgs(["--where=agent:codex", "--where", "turns>2"], [WHERE]).flags.where, "agent:codex turns>2");
+  });
+
+  test("a later sort: or limit: wins", () => {
+    assert.equal(where("agent:codex sort:cost limit:5", "limit:7"), "agent:codex sort:cost limit:7");
+    assert.equal(where("sort:cost", "sort:-turns"), "sort:-turns");
+  });
+
+  test("a blank part is left out; one --where is kept as typed", () => {
+    assert.equal(where("", "agent:codex"), "agent:codex");
+    assert.equal(where("agent:codex  cost>1"), "agent:codex  cost>1");
+  });
+
+  test("a part that does not parse is passed on alone, so the error points into it", () => {
+    assert.equal(where("agent:codex", "bogus:1"), "bogus:1");
+  });
+
+  test("the joined text parses to the same query as each part, and printing it again changes nothing", () => {
+    const joined = where('tool:Bash ok:false', 'model:claude-* "exact words"', "cost:0.5..2 -is:flagged since:7d");
+    assert.equal(joined, 'tool:Bash ok:false model:claude-* "exact words" cost:0.5..2 -is:flagged since:7d');
+    assert.equal(where(joined), joined);
+  });
+
+  test("SQL parts are wrapped in parentheses and joined with AND", () => {
+    assert.equal(parseArgs(["--where", "a = 1 OR b = 2", "--where", "c = 3"], [SQL]).flags.where, "(a = 1 OR b = 2) AND (c = 3)");
+    assert.equal(joinWhere(["a = 1"], "<SQL>"), "a = 1");
+  });
+
+  test("every --where in the registry is a query or SQL, the two kinds joinWhere joins", () => {
+    for (const c of COMMANDS) {
+      for (const f of [...(c.flags ?? []), ...(c.actions ?? []).flatMap((a) => a.flags ?? [])]) {
+        if (f.name === "where") assert.ok(f.value === "<QUERY>" || f.value === "<SQL>", `${c.name} --where takes ${f.value}`);
+      }
+    }
+  });
+
+  test("sessions --where agent:codex --where cost>1 lists only the sessions both pick", async () => {
+    const sb = box();
+    const t = Date.now() - 3_600_000;
+    await sb.seed([
+      mkSession("codex-cheap", t, { agent: "codex", stats: { usage: { inputTokens: 10, outputTokens: 1, costUsd: 0.01 } } }),
+      mkSession("codex-dear", t - 60_000, { agent: "codex", stats: { usage: { inputTokens: 10, outputTokens: 1, costUsd: 2 } } }),
+      mkSession("claude-dear", t - 120_000, { stats: { usage: { inputTokens: 10, outputTokens: 1, costUsd: 3 } } }),
+    ]);
+    const ids = (args: string[]) => {
+      const r = cli(sb, ["sessions", "--json", ...args]);
+      assert.equal(r.status, 0, r.stderr);
+      return (JSON.parse(r.stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+    };
+    assert.deepEqual(ids(["--where", "agent:codex", "--where", "cost>1"]), ["codex-dear"]);
+    assert.deepEqual(ids(["--where", "cost>1", "--where", "agent:codex"]), ["codex-dear"], "in either order");
+    assert.deepEqual(ids(["--where", "agent:codex cost>1"]), ["codex-dear"], "the same as one --where");
   });
 });
 
