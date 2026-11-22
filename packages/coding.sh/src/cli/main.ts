@@ -16,6 +16,7 @@ import { paths } from "../core/paths.ts";
 import { parseArgs, shellQuote, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
+import { windowsShell } from "./next-steps.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
 
 export const BIN = "coding.sh";
@@ -304,7 +305,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
         throw new UsageError(`Put -- before the command to run`, { reason: "missing_argument", suggestion: `${BIN} ${cmd.name} ${[...tail.slice(0, at), "--", ...tail.slice(at)].map(shellQuote).join(" ")}` });
       }
     }
-    const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES, sensitive: cmd.sensitive === true });
+    const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES, sensitive: cmd.sensitive === true, windowsShell: windowsShell(env) });
     if (cmd.passthrough) {
       if (parsed.rest.length === 0) throw new UsageError(`Missing command. Usage: ${BIN} ${cmd.name} -- <cmd> [args...]`, { reason: "missing_argument" });
     } else {

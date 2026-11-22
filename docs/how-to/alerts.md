@@ -169,8 +169,8 @@ codingsh alert add failures --measure failure-rate --over 0.5 --window 1d --noti
 ```
 
 Windows PowerShell 5.1 drops the double quotes inside an argument when it starts a program, so a
-one-line command with inner quotes falls apart (`✗ Unknown option -Path`). Write each inner quote
-as `\"`, inside single quotes:
+one-line command with inner quotes falls apart: `✗ Unknown option -Path`, then how to write the
+quotes. Write each inner quote as `\"`, inside single quotes:
 
 ```powershell
 codingsh alert add failures --measure failure-rate --over 0.5 --window 1d --notify 'command:powershell -NoProfile -Command \"$input | Add-Content -Path C:\alerts\alerts.log\"'

@@ -268,11 +268,11 @@ The command line was wrong. Nothing ran.
 | `unknown_command` | `Unknown command "workflows frob"` | `coding.sh --help` lists commands, and `coding.sh <command> --help` its actions. Typos get a suggestion. |
 | `missing_command` | `Missing command for coding.sh dataset. Choose one of: add, import, list` | Add the action. |
 | `unknown_action` | `Unknown workflows action "…"` | `coding.sh workflows --help` |
-| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. |
+| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. In PowerShell or cmd, after a value with a space, the message also says how to write a double quote inside a value: Windows PowerShell 5.1 splits the value at one. |
 | `missing_value` | `--since needs a value <WHEN>` | Give the option a value. |
 | `invalid_value` | `Invalid value for capture.mode: capture.mode must be one of "full", "metadata", got "loud"` (config set) | Use one of the values the message lists. |
 | `bad_flag` | `--facets: can't count foo; use agent, model, …` (sessions) | Use a value the message lists. |
-| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. |
+| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. In PowerShell or cmd the message also says how to write a double quote inside a value, as for `unknown_option`. |
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error, such as `--by must be one of agent, model, …, got "foo"` | Read the message. |

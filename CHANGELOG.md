@@ -367,6 +367,7 @@ grouped by area, with links to the docs for the details.
 - **Query.** `--where` given more than once joins the queries with AND, as if written in one, instead of keeping only the last. A later `sort:` or `limit:` wins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where))
 - **Query.** When `sessions --flag` or a `flag:` term finds nothing and the name is close to a flag coding.sh sets or a stored session carries, `sessions` exits 2 and names that flag. A name a stored session carries is not a typo. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 - **Work.** `work snooze` on an item blocked on you says it stays hidden until the snooze ends, even if it waits on you again. Before, it said the item comes back sooner if it moves to a more urgent bucket, and no bucket is more urgent. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#acknowledging-and-snoozing))
+- **CLI.** In PowerShell or cmd, an unknown option or extra argument after a value with a space says how to write a double quote inside a value. Windows PowerShell 5.1 passes such quotes on unescaped, so a `--notify` command with inner quotes reached coding.sh in pieces and failed with only `Unknown option -Path`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 
 ## [0.1.7] - 2026-11-16
 
