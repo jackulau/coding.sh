@@ -64,6 +64,8 @@ describe("proxy budget guard", () => {
     assert.equal(r.status, 429);
     const retry = Number(r.headers["retry-after"]);
     assert.ok(retry > 3500 && retry <= 3600, String(r.headers["retry-after"]));
+    // The Anthropic and OpenAI SDKs retry a 429 unless told not to, and the Anthropic one sleeps the whole Retry-After first.
+    assert.equal(r.headers["x-should-retry"], "false");
     const body = JSON.parse(r.body.toString());
     assert.equal(body.type, "error");
     assert.equal(body.error.type, "rate_limit_error");
@@ -92,6 +94,7 @@ describe("proxy budget guard", () => {
     assert.equal(body.error.code, "spend_limit_exceeded");
     assert.equal(body.error.budget.id, "week");
     assert.match(body.error.message, /\$12\.00 spent of \$10\.00/);
+    assert.equal(r.headers["x-should-retry"], "false");
     assert.equal(up.seen.length, 0);
   });
 

@@ -99,7 +99,11 @@ export function budgetGuard(o: {
   };
 }
 
-/** The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset. */
+/**
+ * The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset.
+ * `x-should-retry: false` stops the Anthropic and OpenAI SDKs retrying it: the Anthropic one would
+ * otherwise sleep the whole Retry-After, until the period resets, before the caller saw the error.
+ */
 export function budgetResponse(route: Route, block: BudgetBlock): { status: 429; headers: Record<string, string>; body: string } {
   const s = block.status;
   const b = s.budget;
@@ -112,5 +116,5 @@ export function budgetResponse(route: Route, block: BudgetBlock): { status: 429;
     route.provider === "anthropic"
       ? { type: "error", error: { type: "rate_limit_error", message, budget } }
       : { error: { message, type: "insufficient_quota", param: null, code: "spend_limit_exceeded", budget } };
-  return { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(block.retryAfter) }, body: JSON.stringify(body) };
+  return { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(block.retryAfter), "x-should-retry": "false" }, body: JSON.stringify(body) };
 }
