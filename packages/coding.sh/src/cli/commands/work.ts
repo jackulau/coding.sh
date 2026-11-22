@@ -230,6 +230,8 @@ async function show(c: CommandContext): Promise<number> {
     if (out.json) {
       out.data({
         ...workItemJson(item),
+        // JSON.stringify drops an undefined field: no sessionFilesChanged without a count, and an item that is
+        // no workflow run has no workflowAgents.
         sessionFilesChanged: own,
         workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
         files: [...files].slice(0, 200),
