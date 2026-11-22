@@ -497,7 +497,9 @@ describe("validateTask: pass-to-pass", () => {
   it("without a reference patch or reference run, says so", async () => {
     const { blobs, git, task, workRoot } = await setup({ reference: false });
     const o = await validateTask({ task, blobs, git, workRoot, k: 1, passToPass: false });
-    assert.ok(o.errors.some((e) => /no reference patch or reference run/.test(e)), o.errors.join("\n"));
+    const e = o.errors.find((x) => /no reference patch or reference run/.test(x)) ?? "";
+    assert.ok(e.includes(`coding.sh eval export ${task.id} -o <dir>`), o.errors.join("\n"));
+    assert.match(e, /<dir>\/reference\.patch.*coding\.sh eval import <dir>.*coding\.sh eval validate /);
     assert.equal(o.report.ok, false);
   });
 

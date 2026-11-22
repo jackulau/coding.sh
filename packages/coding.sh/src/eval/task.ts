@@ -373,6 +373,8 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   const hiddenFiles: Record<string, BlobRef> = {};
   let refText: string | undefined;
   const hidden = (opts.hiddenTests ?? []).map((g) => g.replace(/^\.\//, ""));
+  /** Index of the "no reference patch" note: the task id it names comes later. */
+  let noRefNote: number | undefined;
   if (session.endSnapshot) {
     const d = await ops.diffSnapshots(start.repoRoot, start.snapshot, session.endSnapshot);
     refText = d.patch;
@@ -395,9 +397,9 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
       }
     }
     if (refText && refText.trim() !== "") referencePatch = await blobs.put(refText, { contentType: "text/x-diff" });
-    else notes.push("session made no net changes; no reference patch");
+    else noRefNote = notes.push("session made no net changes; no reference patch") - 1;
   } else {
-    notes.push("session has no end snapshot; no reference patch (add one before validating)");
+    noRefNote = notes.push("session has no end snapshot; no reference patch") - 1;
   }
   // Test files already in the start tree that the glob names: hidden too, and taken out of the
   // start, or the agent reads (and may edit) the very tests that grade it.
@@ -480,6 +482,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   // The same session and prompt give the same id: drafting again updates that task, so keep its tags (suite:<name>) and say so.
   const prior = await index.getTask(id);
   if (prior) notes.push(`updated the existing task ${prior.name} (${prior.tags.filter((t) => t.startsWith("suite:")).join(", ") || "no suite"}), same id ${id}`);
+  if (noRefNote !== undefined) notes[noRefNote] += `; ${addReferenceHint(id)}`;
   const tags = [...new Set(["from-session", `agent:${session.agent}`, ...(prompts.length > 1 ? ["multi-turn"] : []), ...(prior?.tags ?? []), ...(opts.tags ?? [])])];
   return {
     id,
@@ -495,6 +498,14 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     createdAt: now,
     meta: { followUps, notes, instructionSource, setupSource, verifierSource, ...ledgerMeta },
   };
+}
+
+/**
+ * The steps that give a stored task a reference patch. A task drafted from a session has no
+ * task dir yet, so the first step writes one.
+ */
+export function addReferenceHint(task: string): string {
+  return `add one with coding.sh eval export ${task} -o <dir>, then write <dir>/reference.patch, then coding.sh eval import <dir> and coding.sh eval validate ${task}`;
 }
 
 function defaultName(instruction: string): string {
