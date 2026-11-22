@@ -242,7 +242,8 @@ session ids and joined per item, so an item keeps them when its root falls out o
 An ack covers one cause: its fingerprint is the bucket, the session and the wait's tool call id or
 time, so acknowledging one prompt does not hide the next. Acking the top cause shows the next one.
 A snooze is stored on the item's main session and on the session behind its cause, with the bucket
-the item was in. It ends at its time, or sooner when the item moves to a more urgent bucket. The
+the item was in. It ends at its time, or sooner when the item moves to a more urgent bucket. A
+blocked item has none, so its snooze runs to the end, even if the item waits on you again. The
 file is written to a temp file and renamed. A missing or corrupt file reads as empty. Each write
 drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 

@@ -1,7 +1,7 @@
 // The session counters on serve's /metrics (cost by agent and model, sessions by
 // outcome, failure flags) and the alert check serve runs every minute.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { saveAlerts } from "../../src/alerts/store.ts";
 import { paths } from "../../src/core/paths.ts";
-import type { Session } from "../../src/schema/index.ts";
+import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import { generateKey } from "../../src/server/auth.ts";
 import { resolveServeConfig } from "../../src/server/config.ts";
 import { createLogger } from "../../src/server/log.ts";
@@ -105,6 +105,32 @@ describe("serve session metrics", () => {
     await post([span("a000000000000001", "", "invoke_agent orchestrator", 0, 3000, { ...agent, "gen_ai.agent.name": "orchestrator" })]);
     assert.ok(Math.abs((await counted()) - 3 * one) < 1e-12);
   });
+
+  it("counts a session of OTel conversation traces once, when serve stores its first trace", async () => {
+    const ik = generateKey("ingest");
+    const rk = generateKey("read");
+    const h = await serve(tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_READ_KEYS: `*:${rk}` }));
+    // The Vercel AI SDK fixture as one turn of a chat: the telemetry metadata on every span names the chat.
+    const fixture = readFileSync(new URL("../fixtures/otel/vercel-ai.json", import.meta.url), "utf8");
+    const turn = (traceId: string) => {
+      const body = JSON.parse(fixture) as { resourceSpans: { scopeSpans: { spans: { traceId: string; attributes: unknown[] }[] }[] }[] };
+      for (const rs of body.resourceSpans) {
+        for (const sp of rs.scopeSpans.flatMap((ss) => ss.spans)) {
+          sp.traceId = traceId;
+          sp.attributes.push({ key: "ai.telemetry.metadata.sessionId", value: { stringValue: "chat-7" } });
+        }
+      }
+      return fetch(`${h.url}/v1/traces`, { method: "POST", headers: { authorization: `Bearer ${ik}`, "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.status);
+    };
+    const sessions = async () => /^coding_sh_sessions_total\{agent="my-vercel-app",outcome="ok"\} (\d+)$/m.exec(await metricsText(h, rk))?.[1];
+
+    assert.equal(await turn("4bf92f3577b34da6a3ce929d0e0e4736"), 200);
+    assert.equal(await sessions(), "1");
+    // The chat's next trace, then its first trace sent again: the session is not counted again.
+    assert.equal(await turn("5bf92f3577b34da6a3ce929d0e0e4736"), 200);
+    assert.equal(await turn("4bf92f3577b34da6a3ce929d0e0e4736"), 200);
+    assert.equal(await sessions(), "1");
+  });
 });
 
 describe("ServeMetrics.observeSessions", () => {
@@ -162,6 +188,43 @@ describe("ServeMetrics.observeSessions", () => {
       assert.ok(m.sessionCost.get({ agent: "other", model: "other" }) > 0);
     } finally {
       m.close();
+    }
+  });
+});
+
+describe("ServeMetrics.observeCommit", () => {
+  const session = (id: string, turns: number, over: Partial<Session> = {}): Session => ({ id, agent: "orch", startedAt: 1, flags: [], stats: { events: 1, turns, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, ...over }) as Session;
+  const event = (sessionId: string, kind: EventKind, turnId: string | undefined, source = "otel-span"): AgentEvent => {
+    const e: AgentEvent = { v: 0, id: `${sessionId}-${kind}-${turnId}`, sessionId, ts: 1, kind, source, agent: "orch", payload: {} };
+    if (turnId) e.turnId = turnId;
+    return e;
+  };
+
+  it("counts a session of OTel conversation traces in the tick that stores its first trace, once", () => {
+    const m = new ServeMetrics();
+    const restarted = new ServeMetrics();
+    try {
+      const ok = () => m.sessions.get({ agent: "orch", outcome: "ok" });
+      m.observeCommit([event("c", "turn.end", "t1")], [session("c", 1)]);
+      assert.equal(ok(), 1);
+      // Its next trace, its first trace sent again, and a hook that ends it later: still one.
+      m.observeCommit([event("c", "turn.end", "t2")], [session("c", 2)]);
+      m.observeCommit([event("c", "turn.end", "t1")], [session("c", 2)]);
+      m.observeCommit([event("c", "session.end", undefined, "hook")], [session("c", 2)]);
+      assert.equal(ok(), 1);
+      // A first tick with two traces counts the session, with the failure flags it has then.
+      m.observeCommit([event("d", "turn.end", "t1"), event("d", "turn.end", "t2")], [session("d", 2, { flags: ["llm-error"] })]);
+      assert.equal(m.sessions.get({ agent: "orch", outcome: "failed" }), 1);
+      assert.equal(m.sessionFlags.get({ flag: "llm-error" }), 1);
+      // A restarted serve does not count a conversation whose first trace it did not store.
+      restarted.observeCommit([event("c", "turn.end", "t3")], [session("c", 3)]);
+      assert.equal(restarted.sessions.get({ agent: "orch", outcome: "ok" }), 0);
+      // A hook session's turn does not count it: it counts when it ends.
+      m.observeCommit([event("h", "turn.end", "t1", "hook")], [session("h", 1, { agent: "codex" })]);
+      assert.equal(m.sessions.get({ agent: "codex", outcome: "ok" }), 0);
+    } finally {
+      m.close();
+      restarted.close();
     }
   });
 });

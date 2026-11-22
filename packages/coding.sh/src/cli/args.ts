@@ -4,6 +4,7 @@
 // option parsing. Unknown options and extra positionals are usage errors raised
 // before any work happens.
 import { parseWhen, type When } from "../query/time.ts";
+import { andQuery, parseWhere, printWhere, type Query } from "../query/where.ts";
 
 export type FlagType = "boolean" | "string" | "number" | "list";
 
@@ -118,6 +119,13 @@ export function suggest(input: string, candidates: readonly string[]): string | 
   return prefixed.length === 1 ? prefixed[0] : undefined;
 }
 
+/** An `--agent` that names none of `ids`: the near miss as a suggestion, else the ids to pick from. */
+export function unknownAgent(agent: string, ids: readonly string[], reason = "unknown_agent"): UsageError {
+  const s = suggest(agent, ids);
+  if (s) return new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: `--agent ${s}`, reason });
+  return new UsageError(`Unknown agent ${JSON.stringify(agent)}: use one of ${ids.join(", ")}`, { reason });
+}
+
 export interface ParseOptions {
   maxPositionals?: number;
   /** More `--name`s to suggest for a typo (e.g. global flags handled elsewhere). */
@@ -134,6 +142,38 @@ export interface ParseOptions {
 /** What a usage error says in place of a value on a sensitive command. */
 const HIDDEN = "(value not shown)";
 
+/**
+ * The text each number flag had in the last parse, and how an error may show it. Number() reads
+ * 1e3, 0x10, " 5" and 5.0 as whole numbers and rounds 99999999999999999999, so positiveInt checks
+ * and quotes this text, not the number. The CLI parses its argv once per process.
+ */
+let typedNumbers = new Map<string, { raw: string; shown: string }>();
+
+/**
+ * `--where` given more than once, as one condition: the parts joined with AND. A query part
+ * (`<QUERY>`) is parsed and the whole printed again, as if every part were written in one --where;
+ * a later sort: or limit: wins. A part that does not parse is passed on alone, so the command's
+ * error points into it. An SQL part (`<SQL>`) is wrapped in parentheses. Blank parts are left out.
+ */
+export function joinWhere(parts: readonly string[], value: string | undefined): string {
+  const kept = parts.filter((p) => p.trim() !== "");
+  if (kept.length <= 1) return kept[0] ?? parts[parts.length - 1] ?? "";
+  if (value === "<SQL>") return kept.map((p) => `(${p})`).join(" AND ");
+  let q: Query = {};
+  for (const p of kept) {
+    let part: Query;
+    try {
+      part = parseWhere(p);
+    } catch {
+      return p;
+    }
+    q = andQuery(q, part.root);
+    if (part.sort) q.sort = part.sort;
+    if (part.limit !== undefined) q.limit = part.limit;
+  }
+  return printWhere(q);
+}
+
 export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], opts: ParseOptions = {}): ParsedArgs {
   const byName = new Map(specs.map((s) => [s.name, s]));
   const byShort = new Map(specs.filter((s) => s.short).map((s) => [s.short!, s]));
@@ -141,6 +181,9 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   const positionals: string[] = [];
   let rest: string[] = [];
   let sawDashDash = false;
+  typedNumbers = new Map();
+  // Every `--where` typed: a second one joins the first with AND instead of replacing it.
+  const whereParts: string[] = [];
 
   const sensitive = opts.sensitive === true;
   /** A user token as an error may show it: quoted, or hidden on a sensitive command. */
@@ -179,6 +222,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       const n = Number(raw);
       if (raw.trim() === "" || !Number.isFinite(n)) throw new UsageError(`${label} must be a number, got ${shown(raw)}`);
       flags[spec.name] = n;
+      typedNumbers.set(spec.name, { raw, shown: shown(raw) });
     } else if (spec.type === "list") {
       const prev = flags[spec.name];
       const parts = spec.commas ? raw.split(",").map((x) => x.trim()).filter(Boolean) : [raw];
@@ -187,6 +231,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       flags[spec.name] = [...(Array.isArray(prev) ? prev : []), ...parts];
     } else {
       flags[spec.name] = raw;
+      if (spec.name === "where") whereParts.push(raw);
     }
   };
 
@@ -246,6 +291,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
     positionals.push(token);
   }
 
+  if (whereParts.length > 1) flags.where = joinWhere(whereParts, byName.get("where")?.value);
   if (opts.maxPositionals !== undefined && positionals.length > opts.maxPositionals) {
     const extra = positionals[opts.maxPositionals]!;
     if (sensitive) throw new UsageError(`Unexpected argument ${HIDDEN}: this command takes no values on the command line`, { reason: "extra_argument" });
@@ -290,12 +336,18 @@ export function parseAge(v: string, flag: string): number {
   return Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
 }
 
-/** A positive integer flag value, or a usage error. */
+/**
+ * A positive integer flag value, or a usage error. A typed value is decimal digits only (1e3,
+ * 0x10, " 5" and 5.0 are refused), and the error quotes it as typed.
+ */
 export function positiveInt(v: FlagValue, name: string): number | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) throw new UsageError(`--${name} must be an integer of at least 1, got ${JSON.stringify(v)}`);
+  // The text typed for the flag, when v came from it and not from a default or a config file.
+  const typed = typedNumbers.get(name);
+  const fromTyped = typed !== undefined && typeof v === "number" && Number(typed.raw) === v;
   // Past 2^53 - 1 the number has lost digits (and SQLite rejects it as a LIMIT): a usage error, not a crash.
-  if (!Number.isSafeInteger(v)) throw new UsageError(`--${name} must be an integer from 1 to ${Number.MAX_SAFE_INTEGER}, got ${JSON.stringify(v)}`);
+  const ok = typeof v === "number" && Number.isSafeInteger(v) && v >= 1 && (!fromTyped || /^\d+$/.test(typed.raw));
+  if (!ok) throw new UsageError(`--${name} must be a whole number from 1 to ${Number.MAX_SAFE_INTEGER}, got ${fromTyped ? typed.shown : JSON.stringify(v)}`);
   return v;
 }
 

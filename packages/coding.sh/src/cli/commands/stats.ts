@@ -68,6 +68,20 @@ const totalsCells = (t: MetricTotals): string[] => [
   ms(t.ttftP50Ms),
 ];
 
+/**
+ * The window --since and --until leave is empty. Without --until the window ends now, so --since
+ * is in the future: say that, not "before --until", which was never given. Both times print as
+ * ISO instants, since a date without a zone is local time.
+ */
+export function emptyWindow(sinceText: string, since: number, untilText: string | undefined, until: number): UsageError {
+  const at = (t: number) => new Date(t).toISOString();
+  const message =
+    untilText === undefined
+      ? `--since is ${since > until ? "after" : "not before"} now: ${JSON.stringify(sinceText)} is ${at(since)}, and now is ${at(until)}`
+      : `--since must be before --until: ${JSON.stringify(sinceText)} is ${at(since)}, and --until ${JSON.stringify(untilText)} is ${at(until)}`;
+  return new UsageError(message, { reason: "invalid_argument" });
+}
+
 function bucketLabel(t: number, per: MetricBucket): string {
   const d = new Date(t);
   const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -85,7 +99,7 @@ export async function run(c: CommandContext): Promise<number> {
   const sinceWhen = parseSinceWhen(str(c.flags.since) ?? "30d", now);
   const until = untilWhen.ms;
   const since = sinceWhen.ms;
-  if (!(since < until)) throw new UsageError("--since must be before --until", { reason: "invalid_argument" });
+  if (!(since < until)) throw emptyWindow(str(c.flags.since) ?? "30d", since, str(c.flags.until), until);
   const where = whereFlag(c);
   const window = timeWindow({ since: sinceWhen, until: untilWhen }, where);
   return withContext(c, async (ctx) => {

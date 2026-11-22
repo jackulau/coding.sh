@@ -40,6 +40,9 @@ coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 `sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
 most 2,000 characters.
 
+`--where` given more than once joins the queries with AND, as if written in one. A later `sort:` or
+`limit:` wins, and every bare word must match within one event.
+
 Session keys test the session. Event keys test its events: a session matches when one of its
 events matches, and event keys in one group must match the same event. So `tool:Bash ok:false` is
 a failed Bash call, and `-tool:Bash` means no Bash call at all. In `coding.sh search`, event keys
