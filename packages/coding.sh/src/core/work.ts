@@ -81,6 +81,8 @@ export interface WorkItem {
   provider?: string;
   cwd?: string;
   repo?: string;
+  /** The main worktree's root when the main session ran in a linked worktree (RepoState.main): it names the item's repo. Unset in a main checkout. */
+  repoMain?: string;
   branch?: string;
   /** The stored root session id, or the first member when the root is not stored. */
   primaryId: string;
@@ -803,6 +805,7 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   if (primary.cwd) item.cwd = primary.cwd;
   // A checkout of its own is where the agent worked: Where names it and the review diffs it.
   if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts, isCheckout) ? primary.cwd : primary.repo.root;
+  if (primary.repo?.main && pathKey(primary.repo.main) !== pathKey(primary.repo.root)) item.repoMain = primary.repo.main;
   if (primary.repo?.branch) item.branch = primary.repo.branch;
   if (cost > 0) item.costUsd = roundUsd(cost);
   const { prs, merged } = prsOfItem(members, primary, prStates);
@@ -1093,6 +1096,7 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
     provider: i.provider || undefined,
     cwd: i.cwd || undefined,
     repo: i.repo || undefined,
+    repoMain: i.repoMain,
     branch: i.branch || undefined,
     sessionId: i.primaryId,
     rootId: i.rootId,

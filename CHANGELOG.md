@@ -357,6 +357,7 @@ grouped by area, with links to the docs for the details.
 - **Work.** `work show`, `work ack` and `work snooze` take a prefix of a work item id, 4 or more characters, that only one item in the window starts with. A prefix that several items share fails and lists them, newest first. Before, an item id worked only whole. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#surfaces))
 - **MCP.** `resources/read` takes the session ids the tools take: `codingsh://session/<id>` accepts a unique prefix of 4 or more characters, `latest` and a subagent's own id. A prefix several sessions share fails with invalid params and lists them, as the tools do. Before, only a whole id was found. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#ask-your-agent))
 - **MCP.** The `status` tool shows a password in the store URL as `***`, as `coding.sh status` does, and so does the error of a store that fails to open. Before, the password went into the agent's context. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/stores.md#pick-a-store))
+- **Work.** `work` and `work show` write a pull request of the item's repo as `#N` when its sessions ran in a linked worktree, as in the main checkout. Before, a worktree folder named unlike the repo made linked PRs, or all PRs next to another repo's, read `owner/name#N`. `work --json` adds `repoMain`, the main checkout's root. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#work-items))
 
 ## [0.1.7] - 2026-11-16
 

@@ -44,7 +44,10 @@ are derived from those sessions on read. Nothing is filed.
   ran shows on every item that lists the PR. Absent when no session touched a PR.
   `coding.sh work` prints them on the item's line ("PR #12 merged", "PRs #12, #14 open"),
   `work show` lists each with its URL, `work --json` and the MCP `work` tool carry them, and the
-  Work page shows each as a link to its URL.
+  Work page shows each as a link to its URL. `work` and `work show` write a PR of the item's repo
+  as `#12` and one of another repo as `owner/name#12`. In a linked worktree the main checkout's
+  folder names the item's repo, and `work --json` and the MCP `work` tool give that checkout's
+  root as `repoMain`, absent in a main checkout.
 
 ## Workflow runs
 
@@ -348,6 +351,9 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
 - `test/cli/work.test.ts`: the recorded workflow fixture `test/fixtures/workflows/claude-code-running`
   gives one item, keyed by its missing root. It also runs `--json`, `show`, `ack` and `snooze` on a
   seeded store, and checks that an unknown id exits 1 and a bad duration is a usage error.
+- `test/cli/work-worktree-prs.test.ts`: items whose sessions ran in linked worktrees of `/work/demo`
+  print the PRs of `owner/demo`, opened or linked, as `#N` and one of `owner/other` in full, in
+  `work` and `work show`; `work --json` gives them `repoMain`, and an item in the main checkout none.
 - `test/core/waiting.test.ts`: the Claude Code subagents fixture with a permission prompt spliced
   in mid-run stays blocked across the subagent's `subagent.end`, and clears on the open call's
   `tool.end`. The Gemini CLI hook fixture's `ToolPermission` notification blocks. `idle_prompt`

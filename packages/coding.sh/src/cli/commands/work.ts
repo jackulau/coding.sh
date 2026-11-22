@@ -138,7 +138,7 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const badge = i.probablyClosed ? `${out.style("probably closed", "yellow")}  ` : "";
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
-  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
+  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repoMain ?? i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
   if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
@@ -150,7 +150,8 @@ export const prStateText = (state: PullRequestRef["state"]): string => (state ==
 
 /**
  * How a PR is named next to an item: "#12" for a PR of the item's own repo, "owner/name#12" for one of
- * another repo. A PR repo is the item's own when its name is the item folder's name. When none is (a
+ * another repo. A PR repo is the item's own when its name is the item folder's name (in a linked worktree,
+ * the main checkout's folder: callers pass WorkItem.repoMain first). When none is (a
  * clone can sit in a folder of another name), the PRs are its own while they all share one repo and the
  * sessions opened, merged or closed them: a PR only linked, such as one read for research, is not.
  */
@@ -322,7 +323,7 @@ async function show(c: CommandContext): Promise<number> {
     }
     if (item.prs) {
       const prs = item.prs;
-      const ref = (p: PullRequestRef) => prRef(p, prs, item.repo ?? item.cwd);
+      const ref = (p: PullRequestRef) => prRef(p, prs, item.repoMain ?? item.repo ?? item.cwd);
       out.row(prs.length === 1 ? "PR" : "PRs", prs.map((p) => `${ref(p)} ${prStateText(p.state)}`).join(", "), "none", true);
       for (const p of prs) out.print(`    ${ref(p)}  ${prStateText(p.state)}  ${p.url ?? "(no URL: the sessions named it by number only)"}  ${out.style(ago(p.at), "faint")}`);
     }
