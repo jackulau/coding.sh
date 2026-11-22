@@ -345,7 +345,7 @@ The command ran and something failed.
 | `conflict` | `Can't export to …: the directory is not empty` | Pick an empty directory, or add `--force`. |
 | `no_agents` | `No supported agents found on this machine` | Install a supported agent, or use `coding.sh run -- <cmd>`. |
 | `hook_missing` | `Can't find hook.mjs to install` | From a source checkout, run `npm run build` first. |
-| `remote_unauthorized` | `https://obs.example.com refused the key. Nothing was changed` | `init --remote` needs an ingest key the server knows. A server with no configured keys prints its own on every start: `docker logs coding-sh`. |
+| `remote_unauthorized` | `https://obs.example.com refused the key. Nothing was changed` | `init --remote` needs an ingest key the server knows. A server with no configured keys prints its own only on the start that made them, and keeps them in `serve-keys.json` in its data folder. On the compose stack, copy the file out with `docker compose cp coding-sh:/data/serve-keys.json ./serve-keys.json`, then delete the copy. |
 | `remote_unreachable` | `Can't reach https://obs.example.com: …. Nothing was changed` | Check the URL and that the server is up: `curl -s <url>/healthz`. |
 | `remote_not_serve` | `https://obs.example.com/v1/ingest answered 404: that is not a coding.sh serve that takes ingest` | The URL points somewhere else, or at a `serve --role viewer` replica. Use the server's base URL (the one that answers `/readyz`), with the ingest role. |
 | `remote_error` | `https://obs.example.com/v1/ingest answered 503. Nothing was changed` | The server is up but not ready, often while it waits for its database. Check `curl -s <url>/readyz` and try again. |
