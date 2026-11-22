@@ -222,9 +222,39 @@ export default define({
 `;
 }
 
-/** Hook path embedded in an installed plugin (to tell "ours, up to date" from "ours, stale"). */
+/** A plugin coding.sh wrote: it starts with the marker line. */
 export function isOurPlugin(text: string | undefined): boolean {
   return !!text && text.startsWith(PLUGIN_MARKER);
+}
+
+/** The hook path embedded in a plugin coding.sh wrote (its `const HOOK` line). */
+function pluginHook(text: string): string | undefined {
+  const m = /^const HOOK = (".*");$/m.exec(text);
+  try {
+    const hook: unknown = m ? JSON.parse(m[1]!) : undefined;
+    return typeof hook === "string" ? hook : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Notes on the user-scope plugins coding.sh wrote: one OpenCode `version` will not run (written
+ * for the other plugin API), or one this CLI would write differently for the hook it runs. Init
+ * writes both again. A plugin running another coding.sh home's hook is that home's, not stale.
+ */
+function pluginNotes(version: string | undefined): string[] {
+  const want = apiForVersion(version);
+  const notes: string[] = [];
+  for (const api of [1, 2] as const) {
+    const path = pluginPath({ scope: "user" }, api);
+    const text = readTextIfExists(path);
+    if (!isOurPlugin(text)) continue;
+    const hook = pluginHook(text!);
+    if (version !== undefined && api !== want) notes.push(`${path} is stale: OpenCode ${version} will not run a plugin written for OpenCode ${api}.x`);
+    else if (hook === undefined || text !== pluginSource(hook, api)) notes.push(`${path} is stale (differs from the plugin this CLI writes)`);
+  }
+  return notes;
 }
 
 // ---------------------------------------------------------------- normalize
@@ -709,10 +739,7 @@ export const opencode: Adapter = {
       hooked: () => ([1, 2] as const).some((api) => isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, api)))),
     });
     const notes = [...(r.notes ?? [])];
-    if (r.installed && r.hooked) {
-      const want = apiForVersion(r.version);
-      if (!isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, want)))) notes.push(`installed plugin targets the wrong OpenCode API for ${r.version}; re-run \`coding.sh init\``);
-    }
+    if (r.installed && r.hooked) notes.push(...pluginNotes(r.version));
     notes.push(...(await opencodeDbNotes()));
     return notes.length ? { ...r, notes } : r;
   },

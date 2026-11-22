@@ -27,7 +27,7 @@ import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
-import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters } from "./init.ts";
+import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, staleNotes } from "./init.ts";
 import { ingestStoppedText } from "./status.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
@@ -328,6 +328,11 @@ function hooksHere(a: { hooked: boolean; hookFiles: HookFile[] }): HookFile | tr
   return here ?? (a.hooked && !user.length ? true : undefined);
 }
 
+/** Hooked, and every blocker is a stale hook file: init writes the hooks again and clears them. */
+function staleHooks(a: DoctorAgent): boolean {
+  return a.capture === "hooks" && hooksHere(a) !== undefined && a.blockers.length > 0 && staleNotes(a.blockers).length === a.blockers.length;
+}
+
 /** One agent as doctor reports it (the `agents` rows of --json). */
 interface DoctorAgent {
   id: string;
@@ -348,7 +353,7 @@ interface DoctorAgent {
   lastEventAt: string | null;
   lastEventAgeMs: number | null;
   notes: string[];
-  /** What keeps its hooks from firing (agent too old, hooks disabled, not trusted yet), hooked or not. */
+  /** What keeps its hooks from firing (agent too old, hooks disabled, not trusted yet, a stale hook file), hooked or not. */
   blockers: string[];
 }
 
@@ -377,7 +382,7 @@ function agentRow(a: DoctorAgent, hookInstalled: boolean, env: NodeJS.ProcessEnv
   const where = (f: HookFile) => `${f.file}${f.scope === "project" ? " (project)" : ""}`;
   const more = (n: number) => (n > 1 ? ` and ${n - 1} more` : "");
   const state =
-    here !== undefined && a.blockers.length ? "hooked but not firing"
+    here !== undefined && a.blockers.length ? (staleHooks(a) ? "hooked but stale" : "hooked but not firing")
     : here !== undefined ? `hooked${here === true ? "" : ` in ${where(here)}${more(a.hookFiles.filter((f) => f.current).length)}`}${hookInstalled ? "" : ", but the hook it runs is missing"}`
     : elsewhere ? `hooks in ${where(elsewhere)} run ${elsewhere.hook}, not this home's hook`
     : recent ? "events arriving, hook not in user config" : "not hooked";
@@ -549,7 +554,7 @@ export async function run(c: CommandContext): Promise<number> {
       const hooks = a.capture === "hooks";
       const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} is not capturing: ${r.state}` };
       if (hooks && a.blockers.length) w.blockers = a.blockers;
-      if (hooks && hooksHere(a) === undefined) w.next = cliCommand(env, ["init", "--agent", a.id]);
+      if (hooks && (hooksHere(a) === undefined || staleHooks(a))) w.next = cliCommand(env, ["init", "--agent", a.id]);
       warn(label, parts.join(", "), w);
     }
     // Every blocker, hooked or not: each names what to change.
@@ -607,6 +612,8 @@ export async function run(c: CommandContext): Promise<number> {
   for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
   const unhooked = shown.filter((a) => a.capture === "hooks" && hooksHere(a) === undefined);
   if (unhooked.length) out.next("Capture the agents without hooks", cliCommand(env, ["init", ...unhooked.flatMap((a) => ["--agent", a.id])]));
+  const stale = shown.filter(staleHooks);
+  if (stale.length) out.next("Rewrite the stale hooks", cliCommand(env, ["init", ...stale.flatMap((a) => ["--agent", a.id])]));
   // `ok` and the exit code are about the spool and the store, so a script that checks them keeps
   // working; an agent that cannot capture is in `warnings` and on the last line.
   out.data({ ok: problems === 0, warnings, agents, hook: hookBin, mcp, spool, store, ...ingestStoppedField(stopped), receiver, proxy, gateway });

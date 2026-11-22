@@ -148,12 +148,20 @@ export function joinNames(names: string[]): string {
 
 // DetectResult.notes is free text that mixes tips with real problems; these
 // phrasings mark the notes that mean the installed hooks will not capture
-// anything (an agent too old for hooks, hooks disabled, hooks not trusted).
-const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b/i;
+// anything (an agent too old for hooks, hooks disabled, hooks not trusted),
+// or may not: a hook file that "is stale", not the one this CLI writes, which
+// init writes again.
+const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b|\bis stale\b/i;
+const STALE_NOTE = /\bis stale\b/i;
 
 /** The detect notes that block capture. */
 export function blockingNotes(notes: readonly string[] | undefined): string[] {
   return (notes ?? []).filter((n) => BLOCKING_NOTE.test(n));
+}
+
+/** The blocking notes init clears by writing the agent's hooks again. */
+export function staleNotes(notes: readonly string[] | undefined): string[] {
+  return (notes ?? []).filter((n) => STALE_NOTE.test(n));
 }
 
 interface Blocker {
@@ -426,6 +434,8 @@ export async function run(c: CommandContext): Promise<number> {
         pl.hooks = { changes: [] };
       }
     }
+    // A stale hook file the plan writes again or removes does not block capture after it.
+    pl.detectBlockers = pl.detectBlockers.filter((n) => !(staleNotes([n]).length && pl.hooks.changes.some((ch) => n.includes(ch.path))));
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
     if (withProxy && isProxyAgent(adapter.id)) {
       const id = adapter.id;
