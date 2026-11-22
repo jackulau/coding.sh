@@ -156,7 +156,8 @@ export async function run(c: CommandContext): Promise<number> {
       ["ID", "AGENT", "STARTED", "DURATION", "TURNS", "TOOLS", "TITLE"],
       sessions.map((s) => [
         s.id,
-        s.agent,
+        // A session a host app drove names it: --agent t3code lists it, and the row says why.
+        s.host ? `${s.agent} via ${s.host}` : s.agent,
         ago(s.startedAt),
         s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "-",
         String(s.stats.turns),
