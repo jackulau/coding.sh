@@ -225,9 +225,12 @@ async function show(c: CommandContext): Promise<number> {
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
+    // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
+    const own = mainFilesChanged(item, byId);
     if (out.json) {
       out.data({
         ...workItemJson(item),
+        sessionFilesChanged: own,
         workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
         files: [...files].slice(0, 200),
         sessions: [item.primaryId, ...children.map((s) => s.id)].map((id) => {
@@ -267,7 +270,7 @@ async function show(c: CommandContext): Promise<number> {
         if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
       }
     }
-    out.row("Files", item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed", "none", true);
+    out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));
     out.row("Sessions", `${item.primaryId}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
@@ -276,6 +279,15 @@ async function show(c: CommandContext): Promise<number> {
     out.row("Next", nextText(item.next), "none", true);
     return 0;
   });
+}
+
+/**
+ * The main session's own files-changed count (its stats.filesChanged, as `show` reports it), when
+ * the item has other sessions whose files its filesChanged also counts; undefined otherwise.
+ */
+export function mainFilesChanged(item: Pick<WorkItem, "primaryId" | "sessionIds">, byId: ReadonlyMap<string, Session>): number | undefined {
+  if (!item.sessionIds.some((id) => id !== item.primaryId)) return undefined;
+  return byId.get(item.primaryId)?.stats.filesChanged;
 }
 
 async function ack(c: CommandContext): Promise<number> {

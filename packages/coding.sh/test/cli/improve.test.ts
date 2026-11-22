@@ -261,6 +261,29 @@ describe("cli improve", () => {
     }
   });
 
+  it("--repo as a repo name reads that repo's history, as the MCP improve tool does; an unknown name is an error", async () => {
+    const w = await world("byname", { afterFlagged: 0 });
+    const at = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: root, env: w.env, encoding: "utf8" });
+    const want = (JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string }[] }).changes.map((ch) => ch.commit);
+    assert.ok(want.length > 0);
+    // From a folder with no "repo" in it: the name is the captured repo's, not a path.
+    for (const name of process.platform === "win32" ? ["repo", "REPO"] : ["repo"]) {
+      const r = at(["improve", "check", "--repo", name, "--json"]);
+      assert.equal(r.status, 0, r.stderr);
+      const j = JSON.parse(r.stdout) as { repo: string; changes: { commit: string }[] };
+      assert.deepEqual(j.changes.map((ch) => ch.commit), want, `check --repo ${name}`);
+      const rep = at(["improve", "--repo", name, "--json"]);
+      assert.equal(rep.status, 0, rep.stderr);
+      const jr = JSON.parse(rep.stdout) as { scope: { sessions: number }; changes: { commit: string }[] };
+      assert.deepEqual(jr.changes.map((ch) => ch.commit), want.slice(0, jr.changes.length), `improve --repo ${name}`);
+      assert.ok(jr.changes.length > 0 && jr.scope.sessions > 0);
+    }
+    const none = at(["improve", "check", "--repo", "no-such-repo"]);
+    assert.equal(none.status, 1);
+    assert.match(none.stderr, /No captured session in a git repo named "no-such-repo"/);
+    assert.doesNotMatch(none.stdout + none.stderr, /No commits changed/);
+  });
+
   it("outside a git repo, check and fix say why", async () => {
     const w = await world("norepo", { afterFlagged: 0 });
     const dir = join(root, "norepo", "plain");

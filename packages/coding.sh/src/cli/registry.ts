@@ -802,6 +802,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.",
       "With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in \"other\". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.",
+      "Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.",
       PENDING_NOTE,
     ],
     load: () => import("./commands/stats.ts"),

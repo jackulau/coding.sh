@@ -2,7 +2,7 @@
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
-import { andQuery, FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
+import { andQuery, FACET_KEYS, scopesSubagents, type Node, type Query } from "../../query/where.ts";
 import { parsePlace, placeNode } from "../../mcp/data.ts";
 import { userHome } from "../../core/paths.ts";
 import { viewQuery } from "../../query/views.ts";
@@ -33,12 +33,23 @@ function facetKeys(v: unknown, eventIndex: boolean): string[] | undefined {
  * (`repo:<name>`) and a folder of that name; a path matches sessions at or under it, and a
  * checkout's root or a folder inside a linked worktree stands for the whole repo (`repo:<main root>`).
  */
-export function withRepo(where: Query | undefined, repo: string | undefined, c: Pick<CommandContext, "cwd" | "env">): Query | undefined {
+export function withRepo(where: Query | undefined, repo: string | undefined, c: Pick<CommandContext, "cwd" | "env">, platform: string = process.platform): Query | undefined {
   if (repo === undefined) return where;
   const place = parsePlace(repo, c.cwd, userHome(c.env));
   // Wrapped in a group, as --agent is, so a repo facet keeps it.
-  const node = placeNode(place);
+  const node = place.name !== undefined && platform === "win32" ? nameNodeAnyCase(place.name) : placeNode(place);
   return node ? andQuery(where ?? {}, { t: "or", items: [node] }) : where;
+}
+
+/**
+ * A repo name on Windows, where folder names ignore case: `repo:` and the folder name compared
+ * without case (a glob value with no wildcard), as `work --repo` compares them (matchesPlace), so
+ * DEMO-REPO finds the main checkout's sessions and every worktree's, not only the ones whose
+ * folder happens to match. The folder name is matched after either slash.
+ */
+function nameNodeAnyCase(name: string): Node {
+  const cmp = (key: string, parts: string[]): Node => ({ t: "cmp", key, op: ":", values: [{ raw: parts.join("*"), parts, quoted: false, kind: "glob" }], at: 0 });
+  return { t: "or", items: [cmp("repo", [name]), cmp("dir", ["", "\\" + name]), cmp("dir", ["", `/${name}`])] };
 }
 
 /** "1 of these 5 sessions is flagged", "2 of these 5 sessions are flagged", "This session is flagged". */

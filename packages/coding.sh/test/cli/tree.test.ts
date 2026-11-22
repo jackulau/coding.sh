@@ -11,6 +11,7 @@ import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { removeTestDir } from "../_rm.ts";
 import { CLI } from "../_cli.ts";
+import { fixFirstRole } from "../../src/cli/commands/tree.ts";
 
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -83,4 +84,12 @@ describe("coding.sh tree", () => {
     assert.equal(r.status, 1, r.stdout);
     assert.match(r.stderr + r.stdout, /no-such-session|not found|No session/i);
   });
+});
+
+// A subagent whose type is "subagent" (T3 Code delegates) was named "subagent subagent <id>".
+test("the Fix first line names the role once", () => {
+  assert.equal(fixFirstRole(0, "subagent"), "the top-level agent");
+  assert.equal(fixFirstRole(1, "subagent"), "subagent");
+  assert.equal(fixFirstRole(2, undefined), "subagent");
+  assert.equal(fixFirstRole(1, "Explore"), "subagent Explore");
 });

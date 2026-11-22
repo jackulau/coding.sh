@@ -20,7 +20,9 @@ import { autoIngest, list, oneLine, pendingField, readIngest, shellQuote, str, w
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
-import { matchesPlace, pathPlace, type Place } from "../../mcp/data.ts";
+import { matchesPlace, parsePlace, pathPlace, type Place } from "../../mcp/data.ts";
+import { repoGroup } from "../../query/where.ts";
+import { userHome } from "../../core/paths.ts";
 import type { Session } from "../../schema/index.ts";
 
 interface Opts {
@@ -34,6 +36,8 @@ interface Opts {
   limit: number;
   /** --headless: keep headless sessions. */
   headless: boolean;
+  /** --repo given as a bare name with no such folder here: the captured repo it names, found in the store (byName). */
+  name?: string;
 }
 
 async function options(c: CommandContext, defaultSince: string, defaultLimit: number): Promise<Opts> {
@@ -48,8 +52,40 @@ async function options(c: CommandContext, defaultSince: string, defaultLimit: nu
     throw new UsageError(`--since must be a duration like 7d or 12h, or a date: got ${JSON.stringify(sinceText)}`, { reason: "invalid_argument" });
   }
   const agents = list(c.flags.agent).flatMap((x) => x.split(",")).map((x) => x.trim()).filter(Boolean);
+  const limit = positiveInt(c.flags.limit, "limit") ?? defaultLimit;
+  const headless = c.flags.headless === true;
+  // A bare name ("coding.sh") with no folder of that name here names a captured repo, as it does
+  // for sessions --repo and the MCP improve tool: byName finds its checkout in the store.
+  if (repoFlag && repoFlag !== "all" && repo && !existsSync(repo)) {
+    const p = parsePlace(repoFlag, c.cwd, userHome(c.env));
+    if (p.name !== undefined) return { root: undefined, repo: undefined, place: undefined, sinceText, since, agents, limit, headless, name: p.name };
+  }
   const place = repo ? pathPlace(repo) : undefined;
-  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, place: place?.repo ? place : undefined, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit, headless: c.flags.headless === true };
+  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, place: place?.repo ? place : undefined, sinceText, since, agents, limit, headless };
+}
+
+/**
+ * --repo as a repo name: the main checkout of the newest captured top-level session in a repo of
+ * that name (a worktree's session names its main repo; on Windows the case does not count), so the
+ * git history read is that repo's, and the sessions read are every worktree's. A name no captured
+ * session has is an error, never a repo with no harness changes.
+ */
+async function byName(ctx: Context, o: Opts): Promise<Opts> {
+  if (o.name === undefined) return o;
+  const want: Place = { name: o.name };
+  const recent = await ctx.index.listSessions({ parentSessionId: null, limit: 2000 });
+  for (const s of recent) {
+    if (!matchesPlace(s, want)) continue;
+    const dir = repoGroup(s).path;
+    const root = dir ? await repoRoot(dir).catch(() => undefined) : undefined;
+    if (!root) continue;
+    const place = pathPlace(root);
+    return { ...o, root, repo: root, place: place.repo ? place : undefined };
+  }
+  throw new CliError(`No captured session in a git repo named ${JSON.stringify(o.name)}`, {
+    reason: "not_a_repo",
+    next: ["Pass the repo's folder instead:", "coding.sh improve --repo <dir>", "See the repos with sessions:", "coding.sh usage --by repo"],
+  });
 }
 
 // The repo's own name from any folder inside it, never a path relative to the cwd ("..\..").
@@ -146,9 +182,10 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
 
 async function report(c: CommandContext): Promise<number> {
   const { out } = c;
-  const o = await options(c, "14d", 5);
+  const named = await options(c, "14d", 5);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    const o = await byName(ctx, named);
     const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless };
     const { sessions, notRead, headlessLeftOut } = await sessionsOf(ctx.index, o, scope);
     const children = sessions.filter((s) => s.parent).length;
@@ -221,11 +258,12 @@ async function fix(c: CommandContext): Promise<number> {
   const { out } = c;
   const ref = c.positionals[0];
   if (!ref) throw new UsageError("Name the issue to fix: its number in coding.sh improve, or its id", { reason: "missing_argument", suggestion: "coding.sh improve fix 1" });
-  const o = await options(c, "14d", 50);
-  if (!o.root) throw notARepo(c, "improve fix edits this repo's AGENTS.md or other instructions file", "fix");
-  const root = o.root;
+  const named = await options(c, "14d", 50);
+  if (!named.root && named.name === undefined) throw notARepo(c, "improve fix edits this repo's AGENTS.md or other instructions file", "fix");
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
+    const o = await byName(ctx, named);
+    const root = o.root!;
     const { sessions } = await sessionsOf(ctx.index, o, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless });
     const testCommand = await testCommandOf(root);
     const issues = await findIssues(ctx.index, sessions, { repoRoot: root, ...(testCommand ? { testCommand } : {}) });
@@ -298,13 +336,14 @@ const SECOND = 1000;
 
 async function check(c: CommandContext): Promise<number> {
   const { out } = c;
-  const o = await options(c, "30d", 5);
-  if (!o.root) throw notARepo(c, "improve check reads the history of AGENTS.md and other instructions files, rules and skills", "check");
-  const root = o.root;
+  const named = await options(c, "30d", 5);
+  if (!named.root && named.name === undefined) throw notARepo(c, "improve check reads the history of AGENTS.md and other instructions files, rules and skills", "check");
   const watch = c.flags.watch === true;
   if (watch && out.json) throw new UsageError("--watch prints a line per change; it does not combine with --json", { reason: "invalid_argument" });
   const interval = (positiveInt(c.flags.interval, "interval") ?? 60) * SECOND;
   return withContext(c, async (ctx) => {
+    const o = await byName(ctx, named);
+    const root = o.root!;
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
       return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }), backlog };
