@@ -384,6 +384,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** `eval trigger` names each expected route once, summed over the prompts that expect it: two prompts that expect `docx` read `docx 2/2`. They read `docx 1/1, docx 1/1`, one entry per prompt. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#skill-triggers))
 - **Evals.** `eval run` on a case suite names each line of the cases file it leaves out for repeating an earlier line's input and expected answer, and `--json` lists them in `duplicates`. A file of 10 lines reported 9 cases with no word on which one went. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#an-app-or-a-prompt))
 - **Query.** When `export`, `search` or `usage` finds nothing, a `--flag` or `flag:` name close to a known flag, or an `--agent` close to an agent id, exits 2 and names the one meant, as `sessions` does. `export --evidence --force` refuses before it clears the directory. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
+- **Evals.** `eval candidates` and `eval init --sessions` count a session whose last test command failed as tests still failing, so it ranks above sessions whose tests passed. Before, a test script that exits 1 with plain output, such as `node test-sum.js`, gave no failure counts, and the failed session could rank last. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
 
 ## [0.1.7] - 2026-11-16
 

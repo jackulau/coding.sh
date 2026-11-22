@@ -27,7 +27,7 @@
 // Score (additive, constants in SCORE):
 //   failure flags       premature-completion +2, repeated-tool-failure +2,
 //                       no-verification +1, any other failure flag +1; at most +5
-//   tests still failing +1 (stats.testsFailed > 0)
+//   tests still failing +1 (stats.testsFailed > 0, or the last test command the agent ran failed)
 //   pushback            +3 per follow-up prompt that corrects the agent, at most +6
 //   verifier guessable  +2 when the agent ran a test command (verifierGuess)
 //   test edit after a failing test run  +1 (the agent may have bent the test)
@@ -216,6 +216,23 @@ function testEditAfterFailure(events: readonly AgentEvent[]): boolean {
   return false;
 }
 
+/**
+ * The last test command the agent ran failed. A script that exits 1 with plain output (`node test-sum.js`, or
+ * `npm test` on a hand-written runner) gives no counts, so stats.testsFailed stays empty for it.
+ */
+function lastTestRunFailed(events: readonly AgentEvent[]): boolean {
+  const testIds = new Set<string>();
+  let failed = false;
+  for (const e of events) {
+    if (e.kind === "tool.start") {
+      const c = shellCommandOf(e);
+      if (c && extractTestCommand(c) && typeof e.payload.toolUseId === "string") testIds.add(e.payload.toolUseId);
+    }
+    if (e.kind === "tool.end" && testIds.has(String(e.payload.toolUseId))) failed = e.payload.ok === false;
+  }
+  return failed;
+}
+
 /** The start of a session captured with `coding.sh run -- <cmd>` (src/capture/wrapper.ts): it holds the command line. */
 function wrapperStart(events: readonly AgentEvent[]): AgentEvent | undefined {
   return events.find((e) => e.kind === "session.start" && e.payload.source === "wrapper");
@@ -268,7 +285,7 @@ export function scoreCandidate(item: CandidateItem, now = Date.now()): Candidate
     flagPts += n;
     add(n, f);
   }
-  if ((s.stats.testsFailed ?? 0) > 0) add(SCORE.testsFailing, "tests still failing");
+  if ((s.stats.testsFailed ?? 0) > 0 || lastTestRunFailed(events)) add(SCORE.testsFailing, "tests still failing");
   const pushback = prompts.slice(1).filter(isPushback).length;
   if (pushback) add(Math.min(pushback * SCORE.pushback, SCORE.pushbackCap), `pushback ×${pushback}`);
   const verifierGuess = guessVerifierFromEvents(events, events.find((e) => e.repo)?.repo?.root ?? s.repo?.root);

@@ -89,6 +89,30 @@ describe("rankEvalCandidates", () => {
     assert.equal(c!.score, 14);
   });
 
+  // A test command that exits 1 with plain output (`node test-sum.js`, or `npm test` on a hand-written script)
+  // gives no counts, so stats.testsFailed stays empty. The session ended with its test failing all the same,
+  // and ranked below sessions whose tests passed.
+  it("counts a session whose last test command failed as tests still failing, though its output gave no counts", () => {
+    const run = (id: string, ok: boolean, startedAt: number): CandidateItem => ({
+      session: session(id, { startedAt }),
+      events: [
+        ev(id, "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "snap" } }),
+        ev(id, "user.message", { text: "make sum.js add its two arguments" }),
+        ev(id, "tool.start", { tool: "Write", toolUseId: `${id}-w`, input: { file_path: "/work/demo/sum.js" } }),
+        ev(id, "tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "node test-sum.js" } }),
+        ev(id, "tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok }),
+      ],
+    });
+    const r = rankEvalCandidates([run("passed", true, NOW - DAY + 2), run("failed", false, NOW - DAY)], { now: NOW });
+    assert.deepEqual(r.map((c) => c.sessionId), ["failed", "passed"], "the session that ended failing ranks first, though it is older");
+    assert.deepEqual(r[0]!.reasons, ["+1 tests still failing", "+2 verifier guessable", "+1 last 7 days"]);
+    // A test command that failed and then passed is not still failing.
+    const again = ev("fixed", "tool.start", { tool: "Bash", toolUseId: "fixed-t2", input: { command: "node test-sum.js" } });
+    const fixed = [...run("fixed", false, NOW - DAY).events, again, ev("fixed", "tool.end", { tool: "Bash", toolUseId: "fixed-t2", ok: true })];
+    const [c] = rankEvalCandidates([{ session: session("fixed"), events: fixed }], { now: NOW });
+    assert.ok(!c!.reasons.includes("+1 tests still failing"), c!.reasons.join(", "));
+  });
+
   it("labels the compaction failure flag apart from the compacted-context penalty", () => {
     const id = "cmp";
     const s = session(id, { flags: ["compaction"] });
