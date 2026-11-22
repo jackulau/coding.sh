@@ -106,7 +106,15 @@ export async function probeRemote(r: Remote, opts: { timeoutMs?: number; fetch?:
   }
   if (res.status === 200) return;
   if (res.status === 401) {
-    throw new CliError(`${r.url} refused the key. Nothing was changed`, { reason: "remote_unauthorized", next: ["Use an ingest key the server knows (csh_ik_…). The server prints its first key on start: docker logs <container>"] });
+    // A server with no keys configured prints the keys it makes only on that first start
+    // (server/first-start.ts), so a later start's log has none.
+    throw new CliError(`${r.url} refused the key. Nothing was changed`, {
+      reason: "remote_unauthorized",
+      next: [
+        "Use an ingest key the server knows (csh_ik_…). With no keys configured, the server made its own on its first start and keeps them in serve-keys.json in its data folder. On the compose stack, copy the file out, then delete the copy:",
+        "docker compose cp coding-sh:/data/serve-keys.json ./serve-keys.json",
+      ],
+    });
   }
   if (res.status === 404 || res.status === 405) {
     throw new CliError(`${endpoint} answered ${res.status}: that is not a coding.sh serve that takes ingest. Nothing was changed`, { reason: "remote_not_serve" });
