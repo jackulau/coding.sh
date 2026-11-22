@@ -134,6 +134,13 @@ export interface ParseOptions {
 /** What a usage error says in place of a value on a sensitive command. */
 const HIDDEN = "(value not shown)";
 
+/**
+ * The text each number flag had in the last parse, and how an error may show it. Number() reads
+ * 1e3, 0x10, " 5" and 5.0 as whole numbers and rounds 99999999999999999999, so positiveInt checks
+ * and quotes this text, not the number. The CLI parses its argv once per process.
+ */
+let typedNumbers = new Map<string, { raw: string; shown: string }>();
+
 export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], opts: ParseOptions = {}): ParsedArgs {
   const byName = new Map(specs.map((s) => [s.name, s]));
   const byShort = new Map(specs.filter((s) => s.short).map((s) => [s.short!, s]));
@@ -141,6 +148,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   const positionals: string[] = [];
   let rest: string[] = [];
   let sawDashDash = false;
+  typedNumbers = new Map();
 
   const sensitive = opts.sensitive === true;
   /** A user token as an error may show it: quoted, or hidden on a sensitive command. */
@@ -179,6 +187,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       const n = Number(raw);
       if (raw.trim() === "" || !Number.isFinite(n)) throw new UsageError(`${label} must be a number, got ${shown(raw)}`);
       flags[spec.name] = n;
+      typedNumbers.set(spec.name, { raw, shown: shown(raw) });
     } else if (spec.type === "list") {
       const prev = flags[spec.name];
       const parts = spec.commas ? raw.split(",").map((x) => x.trim()).filter(Boolean) : [raw];
@@ -290,12 +299,18 @@ export function parseAge(v: string, flag: string): number {
   return Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
 }
 
-/** A positive integer flag value, or a usage error. */
+/**
+ * A positive integer flag value, or a usage error. A typed value is decimal digits only (1e3,
+ * 0x10, " 5" and 5.0 are refused), and the error quotes it as typed.
+ */
 export function positiveInt(v: FlagValue, name: string): number | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) throw new UsageError(`--${name} must be an integer of at least 1, got ${JSON.stringify(v)}`);
+  // The text typed for the flag, when v came from it and not from a default or a config file.
+  const typed = typedNumbers.get(name);
+  const fromTyped = typed !== undefined && typeof v === "number" && Number(typed.raw) === v;
   // Past 2^53 - 1 the number has lost digits (and SQLite rejects it as a LIMIT): a usage error, not a crash.
-  if (!Number.isSafeInteger(v)) throw new UsageError(`--${name} must be an integer from 1 to ${Number.MAX_SAFE_INTEGER}, got ${JSON.stringify(v)}`);
+  const ok = typeof v === "number" && Number.isSafeInteger(v) && v >= 1 && (!fromTyped || /^\d+$/.test(typed.raw));
+  if (!ok) throw new UsageError(`--${name} must be a whole number from 1 to ${Number.MAX_SAFE_INTEGER}, got ${fromTyped ? typed.shown : JSON.stringify(v)}`);
   return v;
 }
 
