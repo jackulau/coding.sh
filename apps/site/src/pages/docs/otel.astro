@@ -50,11 +50,11 @@ print(result.final_output)
 provider.shutdown()  # sends the spans before the script exits`;
 
 const agentsTree = `187809985675330cbb4e3553051c023a
-  1 subagent  ·  3.7s  ·  1 tool calls  ·  $0.0006
+  1 subagent  ·  3.7s  ·  1 tool call  ·  $0.0006
   in 144  out 306  cache -
 
 187809985675330cbb4e3553051c023a  coding-sh-triage  3.7s  0 tools
-  └ otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97  triage  gpt-5-mini  3.7s  1 tools  $0.0006`;
+  └ otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97  triage  gpt-5-mini  3.7s  1 tool  $0.0006`;
 
 const agentsChild = `otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97
   Session       otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97
@@ -62,7 +62,7 @@ const agentsChild = `otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97
   Repo          -
   Started       Nov 11 08:56 (16s ago)
   Duration      3.7s
-  Turns         0, 1 tool calls, 0 files changed
+  Turns         0, 1 tool call, 0 files changed
   Tokens        in 144  out 306  cache -  $0.0006 (estimated)
   Latency       2 llm calls, p50 1.6s, p95 2.1s; tools 4ms (p95 4ms)
   Parent        187809985675330cbb4e3553051c023a
@@ -109,7 +109,7 @@ const graphOut = `Proxy log is empty after init --proxy
   Repo          -
   Started       Nov 11 08:55 (6s ago)
   Duration      3.6s
-  Turns         1, 1 tool calls, 0 files changed
+  Turns         1, 1 tool call, 0 files changed
   Latency       tools 1ms (p95 1ms)
 
     +0ms  session.start
@@ -236,7 +236,7 @@ const agentRunsOut = `What is the weather in Paris?
   Repo          -
   Started       Nov 11 04:39 (29m ago)
   Duration      246ms
-  Turns         1, 1 tool calls, 0 files changed
+  Turns         1, 1 tool call, 0 files changed
   Tokens        in 450  out 65  cache 1.9k  $0.0035 (estimated)
   Latency       2 llm calls, p50 1ms, p95 172ms; tools 41ms (p95 41ms)
 

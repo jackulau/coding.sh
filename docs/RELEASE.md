@@ -173,7 +173,7 @@ cd ~/coding-sh && git checkout main && git pull
       pip index versions coding-sh               # if bumped
       npm audit signatures                       # in any project that depends on it
       gh release view vX.Y.Z                     # has coding.sh-X.Y.Z.tgz
-      npx -y coding.sh@X.Y.Z --version
+      npx -y coding.sh@X.Y.Z --version           # Windows: npx -y -p coding.sh@X.Y.Z codingsh --version
       curl -fsSL https://coding.sh/install | CODING_SH_NO_INIT=1 sh && coding.sh --version
       ```
 - [ ] Deploy the site (below), so `/changelog` and `/install` show the new release.

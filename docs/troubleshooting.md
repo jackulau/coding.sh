@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Fixes for sessions that don't show up, traces that don't arrive, incomplete data and slow upgrades,
-then every error `reason` coding.sh prints, with its fix.
+then every error `reason` with its fix.
 
 Find your symptom below. If a command failed, look up its `reason` in
 [Errors by reason](#errors-by-reason).
@@ -9,7 +9,7 @@ Find your symptom below. If a command failed, look up its `reason` in
 ## Sessions don't show up
 
 Start with doctor. It checks each agent's hooks, the spool and the store, and prints the fix under
-any row that fails.
+each failing row.
 
 ```sh
 coding.sh doctor          # one line per check
@@ -58,8 +58,7 @@ row:
   set it to `true` in `~/.codex/config.toml`. The note ends with the file and line number.
 - **Cursor: `cursor-agent <version> predates CLI hooks`.** Run `cursor-agent update`; hooks need
   2026.01 or newer.
-- **OpenCode: `installed plugin targets the wrong OpenCode API`.** Run `coding.sh init` again after
-  you upgrade OpenCode.
+- **OpenCode: `<file> is stale`.** Run `coding.sh init --agent opencode`.
 
 :::more Every doctor row
 An agent captured by hooks gets `✓` only when a hook that runs this home's `hook.mjs` is in a
@@ -78,9 +77,10 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.sh` (`hook.mjs` on Windows), and that file or the `hook.mjs` beside it is gone. | `coding.sh init` |
 | `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook. They can come from an import, the proxy or a project doctor did not look in. | `coding.sh init --agent <id>`, or run doctor from the project. |
 | `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why. | Follow the note. |
+| `hooked but stale` | The note names a hook file this coding.sh writes differently. | `coding.sh init --agent <id>` |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
-| `Any command  no hooks needed; …` | Always shown. With no agent row above it, doctor found no supported agent. | `coding.sh run -- <cmd>` |
+| `Agents  none detected; …` | doctor found no supported agent. | `coding.sh run -- <cmd>` |
 | `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
@@ -129,7 +129,7 @@ For an agent or app sending over OpenTelemetry or the SDK:
 - **Text shows `[redacted:<kind>]`.** A redactor matched it. Redaction runs before anything is
   stored. See [Configuration](https://coding.sh/docs/config#capture).
 - **Cursor headless runs have no prompt or reply.** `cursor-agent -p` does not fire the prompt and
-  response hooks. This is a Cursor limitation.
+  response hooks, a Cursor limitation.
 - **`eval new` fails with `has no repo state`.** The session ran outside a git repository, so there
   is nothing to replay. Record it with `coding.sh run --` inside the repository. See
   [Turn failed runs into evals](https://coding.sh/docs/how-to/session-to-eval).
@@ -206,9 +206,8 @@ coding.sh doctor --conformance --json               # one JSON document with eve
 
 It only reads: nothing is stored, and reports hold ids, counts and short details, never prompt,
 reply or tool text. Each agent stops after `--max-events` events (200,000 by default) or 60
-seconds. doctor exits 1 when any agent has a violation. Please
-[open an issue](https://github.com/jackulau/coding.sh/issues) with the `--json` output for that
-agent.
+seconds. doctor exits 1 when any agent has a violation:
+[open an issue](https://github.com/jackulau/coding.sh/issues) with that agent's `--json` output.
 
 :::more Every conformance rule
 | Rule | What it means |

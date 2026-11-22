@@ -110,7 +110,8 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
   <Code code={remove} />
   <p>
     <code>uninstall</code> restores each agent config file as it was before <code>init</code>, if nothing else has edited it since. Otherwise
-    it removes only the coding.sh entries. Your recorded sessions stay until you delete <code>~/.coding.sh</code>.
+    it removes only the coding.sh entries. Your recorded sessions stay until you delete <code>~/.coding.sh</code>. In PowerShell, type
+    <code>codingsh</code> for <code>coding.sh</code>, and delete the data with <code>Remove-Item -Recurse -Force ~\.coding.sh</code>.
   </p>
 
   <details class="more" id="source">
