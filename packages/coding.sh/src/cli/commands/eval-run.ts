@@ -8,7 +8,7 @@
 // experiments/run.ts (`exp run`); a skill's triggers through `eval trigger`.
 import { appendFile, readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { getAdapter } from "../../adapters/index.ts";
+import { ADAPTERS, getAdapter } from "../../adapters/index.ts";
 import { repoRoot } from "../../core/git.ts";
 import { sortableId } from "../../core/ids.ts";
 import type { EvalTask, HarnessBundle } from "../../core/types.ts";
@@ -33,7 +33,7 @@ import { TODO } from "../../eval/init.ts";
 import { capturedFailuresLine, trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
 import type { TriggerRunResult } from "./eval-trigger.ts";
 import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite } from "../../eval/suite-spec.ts";
-import { positiveInt, UsageError } from "../args.ts";
+import { positiveInt, unknownAgent, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
 import { rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
@@ -144,7 +144,8 @@ export async function suiteHarness(c: CommandContext, ctx: Context, s: LoadedSui
   }
   const agent = str(c.flags.agent) ?? s.spec.agent ?? "claude-code";
   const adapter = getAdapter(agent);
-  if (!adapter) throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { reason: "unknown_agent" });
+  // A suite runs the agent headless: only the agents with a driver are worth naming.
+  if (!adapter) throw unknownAgent(agent, ADAPTERS.filter((a) => a.run).map((a) => a.id));
   const hf = adapter.harnessFiles?.();
   const model = str(c.flags.model) ?? s.spec.model;
   const bundle = await bundleFromDir({ name: `${agent}-project`, agent, dir: root, include: hf ? [...hf.project, ...hf.user] : [...DEFAULT_INCLUDE], blobs: ctx.blobs, home: userHome(c.env), ...(model ? { model } : {}) });
