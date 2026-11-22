@@ -127,8 +127,14 @@ export function linkProblem(doc, root = ROOT) {
   if (!doc.file || doc.file.split("/").includes("..")) return `link "${doc.file}" is not a path under docs/`;
   const file = join(root, "docs", doc.file);
   if (!existsSync(file) || !statSync(file).isFile()) return `link names docs/${doc.file}, which does not exist`;
-  if (doc.id && doc.file.endsWith(".md") && !headingIds(file).has(decodeURIComponent(doc.id)))
-    return `link names #${doc.id}, but docs/${doc.file} has no heading with that id`;
+  if (!doc.id || !doc.file.endsWith(".md")) return undefined;
+  let id;
+  try {
+    id = decodeURIComponent(doc.id);
+  } catch {
+    return `link fragment #${doc.id} is not valid percent-encoding`;
+  }
+  if (!headingIds(file).has(id)) return `link names #${doc.id}, but docs/${doc.file} has no heading with that id`;
   return undefined;
 }
 

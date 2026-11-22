@@ -76,6 +76,7 @@ test("each rule refuses with exit 1, one reason, and leaves the file byte-identi
     { args: ["--section", "Fixed", "--area", "Area", "--text", "target ÷ reading", "--link", "guides/explore.md"], reason: /U\+00F7/ },
     { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/missing.md"], reason: /docs\/guides\/missing\.md, which does not exist/ },
     { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/explore.md#not-a-heading"], reason: /#not-a-heading/ },
+    { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/explore.md#%E0"], reason: /link fragment #%E0 is not valid percent-encoding/ },
     { args: ["--section", "Misc", "--area", "Area", "--text", "ok", "--link", "guides/explore.md"], reason: /section "Misc"/ },
     { args: ["--section", "Fixed", "--area", "Viewer", "--text", "A folded turn opens on the first failure.", "--link", DOC], reason: /already in CHANGELOG\.md/ },
   ];
