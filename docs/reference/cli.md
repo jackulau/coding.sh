@@ -374,7 +374,7 @@ coding.sh proxy [action] [options]
 | Action | What it does |
 |---|---|
 | [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
-| [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
+| [`stop`](#codingsh-proxy-stop) | Stop the running proxy: it finishes the calls in flight first, for up to 10 s |
 | [`env`](#codingsh-proxy-env) | Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy |
 
 | Option | Default | Description |
@@ -415,7 +415,7 @@ coding.sh proxy status
 
 ### `coding.sh proxy stop`
 
-Stop the background proxy.
+Stop the running proxy: it finishes the calls in flight first, for up to 10 s.
 
 ```text
 coding.sh proxy stop

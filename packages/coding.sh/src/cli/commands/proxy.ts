@@ -2,6 +2,7 @@
 // logs every model call into the store. stdout gets the environment that
 // points an agent at it; one line per call goes to stderr.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -10,7 +11,7 @@ import { isLoopbackHost } from "../../otel/receiver.ts";
 import { budgetStatuses, readBudgets, type Budget } from "../../budget/index.ts";
 import { budgetGuard, enforceable } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
-import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
+import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, requestStop, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
@@ -90,6 +91,11 @@ async function start(c: CommandContext): Promise<number> {
     // Only the spend of a budget a call can match is read: a --repo or --where one never blocks.
     const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env).filter(enforceable), now), onError: (e) => out.warn(e.message) }) : undefined;
     let proxy;
+    // `proxy stop` asks this proxy to stop with a POST that carries this secret, which only the
+    // state file holds.
+    const secret = randomBytes(32).toString("hex");
+    let stopAsked = (): void => {};
+    const asked = new Promise<"asked">((resolve) => (stopAsked = () => resolve("asked")));
     try {
       proxy = await startLocalProxy({
         config: ctx.config,
@@ -101,6 +107,7 @@ async function start(c: CommandContext): Promise<number> {
         upstreams: s.upstreams,
         allowRemote: c.flags.host !== undefined && s.host !== "127.0.0.1",
         info: { version: version(), pid: process.pid },
+        stop: { secret, onStop: () => stopAsked() },
         onError: (e) => out.warn(`not recorded: ${e.message}`),
         onEvent: c.flags.quiet ? undefined : (e) => out.note(callLine(e)),
         budget,
@@ -119,7 +126,7 @@ async function start(c: CommandContext): Promise<number> {
     }
     // A client dials 127.0.0.1 even when the proxy listens on every interface.
     const url = proxyUrl(proxy.port, proxy.host);
-    await writeProxyState({ pid: process.pid, url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams }, c.env);
+    await writeProxyState({ pid: process.pid, url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams, secret }, c.env);
     const vars = proxyEnv(url);
     if (out.json) out.data({ url, host: proxy.host, port: proxy.port, env: vars, upstreams: s.upstreams });
     else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
@@ -129,10 +136,12 @@ async function start(c: CommandContext): Promise<number> {
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
     // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
     out.note(c.env[DETACHED_ENV] === "1" ? `Stop with: ${cliCommand(c.env, ["proxy", "stop"])}` : "Press Ctrl-C to stop");
-    await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
+    const signalled = new Promise<"signal">((resolve) => c.signal.addEventListener("abort", () => resolve("signal"), { once: true }));
+    const how = await Promise.race([asked, signalled]);
+    if (how === "asked") out.note("Stopping: proxy stop asked. The calls in flight finish first");
     await proxy.close();
     clearProxyState(process.pid, c.env);
-    return 130;
+    return how === "asked" ? 0 : 130;
   });
 }
 
@@ -235,12 +244,41 @@ export async function ensureRunning(env: NodeJS.ProcessEnv): Promise<{ state: Pr
   return { state: await startInBackground(env, {}, s.port), started: true };
 }
 
-async function stopProxy(st: ProxyState, env: NodeJS.ProcessEnv): Promise<void> {
-  process.kill(st.pid, "SIGTERM");
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && pidAlive(st.pid)) await sleep(50);
-  if (pidAlive(st.pid)) throw new CliError(`The proxy (pid ${st.pid}) did not stop`, { reason: "proxy_failed" });
+/** How long `proxy stop` waits for a proxy it asked to stop while the calls in flight finish. */
+const STOP_WAIT_MS = 10_000;
+
+/**
+ * Stops the proxy `st` names. It is asked first, over its own port with the secret from its state
+ * file: it stops listening, lets the calls in flight finish, clears its state and exits. One still
+ * running after `waitMs` is ended (`cut`), and so is one that can't be asked: an older version
+ * wrote no secret, or nothing answered.
+ */
+export async function stopProxy(st: ProxyState, env: NodeJS.ProcessEnv, waitMs = STOP_WAIT_MS): Promise<{ cut: boolean }> {
+  const asked = typeof st.secret === "string" && st.secret !== "" && (await requestStop(st.url, st.secret)) === 200;
+  if (asked && (await exited(st.pid, waitMs))) {
+    clearProxyState(st.pid, env);
+    return { cut: false };
+  }
+  // On Windows either signal ends the process at once. Elsewhere SIGTERM stops it as Ctrl-C does;
+  // SIGKILL ends one that was asked and is still running, which a SIGTERM would not.
+  try {
+    process.kill(st.pid, asked ? "SIGKILL" : "SIGTERM");
+  } catch {
+    // it exited in between
+  }
+  if (!(await exited(st.pid, 5000))) throw new CliError(`The proxy (pid ${st.pid}) did not stop`, { reason: "proxy_failed" });
   clearProxyState(st.pid, env);
+  return { cut: asked };
+}
+
+/** Whether `pid` exits within `ms`. */
+async function exited(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (pidAlive(pid)) {
+    if (Date.now() >= deadline) return false;
+    await sleep(50);
+  }
+  return true;
 }
 
 async function status(c: CommandContext): Promise<number> {
@@ -271,8 +309,9 @@ async function stop(c: CommandContext): Promise<number> {
     out.note("No proxy is running");
     return 0;
   }
-  await stopProxy(st, c.env);
+  const { cut } = await stopProxy(st, c.env);
   out.ok(`Stopped the proxy on ${st.url}`);
+  if (cut) out.warn(`It was still finishing calls after ${STOP_WAIT_MS / 1000} s, so it was ended`);
   return 0;
 }
 

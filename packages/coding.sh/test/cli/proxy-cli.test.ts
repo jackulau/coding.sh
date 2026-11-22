@@ -1,12 +1,17 @@
 // `coding.sh proxy` through the CLI: a public bind is warned about and its env stays dialable,
 // upstream URLs are validated, and the background log keeps one line per call.
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { type AddressInfo, createServer } from "node:net";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, describe, it } from "node:test";
-import { anthropicStream, startUpstream, type Upstream } from "../proxy/_helpers.ts";
+import { stopProxy } from "../../src/cli/commands/proxy.ts";
+import { DEFAULT_UPSTREAMS } from "../../src/proxy/server.ts";
+import { pidAlive, probeProxy, readProxyState, requestStop, writeProxyState } from "../../src/proxy/state.ts";
+import { anthropicStream, call, startUpstream, type Upstream } from "../proxy/_helpers.ts";
 import { cleanup, runAsync, runLive, runSync, tmpHome } from "./_run-cli.ts";
 
 const ups: Upstream[] = [];
@@ -216,5 +221,132 @@ describe("coding.sh proxy --background", () => {
     const r = runSync(["proxy", "--background", "--enforce-budget", "--port", "0"], h.env);
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, /Can't read the budgets/, r.stderr);
+  });
+});
+
+/** Resolves once `check` holds, or fails after `ms`. */
+async function until(check: () => boolean | Promise<boolean>, ms: number, what: string): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`not within ${ms} ms: ${what}`);
+    await sleep(50);
+  }
+}
+
+/** `proxy --background` on a free port in `h`: its pid, URL and state file. */
+function startBackground(h: ReturnType<typeof tmpHome>, args: string[] = []): { pid: number; url: string; statePath: string } {
+  const r = runSync(["proxy", "--background", "--port", "0", ...args, "--json"], h.env);
+  assert.equal(r.status, 0, r.stderr);
+  const { pid, url } = JSON.parse(r.stdout) as { pid: number; url: string };
+  return { pid, url, statePath: join(h.env.CODING_SH_HOME!, "proxy.json") };
+}
+
+const messagesBody = JSON.stringify({ model: "claude-sonnet-4-5", stream: true, max_tokens: 5, messages: [{ role: "user", content: "hi" }] });
+
+describe("coding.sh proxy stop", () => {
+  it("asks the proxy to stop: a call in flight finishes, then the proxy exits and its state file is gone", async () => {
+    const parts = anthropicStream({ text: "finished" });
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const up = await startUpstream(async (_r, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(parts[0]);
+      await held;
+      for (const s of parts.slice(1)) res.write(s);
+      res.end();
+    });
+    ups.push(up);
+    const h = home();
+    const { pid, url, statePath } = startBackground(h, ["--anthropic-upstream", up.url]);
+    try {
+      let first: () => void = () => {};
+      const started = new Promise<void>((r) => (first = r));
+      const inFlight = call(url, { path: "/v1/messages", body: messagesBody, headers: { "content-type": "application/json" }, onChunk: () => first() });
+      await started;
+      const stopping = runAsync(["proxy", "stop"], h.env, 30_000);
+      // The proxy stops listening while the call is still open; then the upstream finishes it.
+      await until(async () => !(await probeProxy(url, 500)), 10_000, "the proxy stops listening");
+      release();
+      const r = await inFlight;
+      assert.equal(r.status, 200);
+      assert.equal(r.body.toString(), parts.join(""));
+      const stop = await stopping;
+      assert.equal(stop.status, 0, stop.stderr);
+      assert.ok(stop.stderr.includes(`Stopped the proxy on ${url}`), stop.stderr);
+      assert.doesNotMatch(stop.stderr, /ended/, stop.stderr);
+      assert.equal(pidAlive(pid), false);
+      assert.equal(existsSync(statePath), false);
+      // It was asked, not signalled: its log says so.
+      assert.match(readFileSync(join(h.env.CODING_SH_HOME!, "proxy.log"), "utf8"), /Stopping: proxy stop asked/);
+    } finally {
+      release();
+      killIfAlive(pid);
+    }
+  });
+
+  it("the secret in the state file stops the proxy, which removes that file itself; a wrong one changes nothing", async () => {
+    const up = await startUpstream((_r, res) => {
+      res.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+    ups.push(up);
+    const h = home();
+    const { pid, url, statePath } = startBackground(h, ["--anthropic-upstream", up.url]);
+    try {
+      const { secret } = JSON.parse(readFileSync(statePath, "utf8")) as { secret?: string };
+      assert.match(secret ?? "", /^[0-9a-f]{64}$/);
+      // Only this user can read it, where the OS has file modes.
+      if (process.platform !== "win32") assert.equal(statSync(statePath).mode & 0o777, 0o600);
+      // Without it: refused by the proxy, never sent upstream, and the proxy keeps running.
+      for (const wrong of ["", "0".repeat(64), secret!.slice(1)]) assert.equal(await requestStop(url, wrong), 403, wrong);
+      assert.equal(up.seen.length, 0);
+      assert.ok(await probeProxy(url));
+      assert.ok(pidAlive(pid));
+      assert.ok(existsSync(statePath));
+      // With it, and no `proxy stop` to clean up after it.
+      assert.equal(await requestStop(url, secret!), 200);
+      await until(() => !pidAlive(pid), 10_000, "the proxy exits");
+      assert.equal(existsSync(statePath), false);
+    } finally {
+      killIfAlive(pid);
+    }
+  });
+
+  it("stops a proxy whose state file has no secret, as an older version wrote it, as before", async () => {
+    const h = home();
+    const { pid, statePath } = startBackground(h);
+    try {
+      const old = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+      delete old.secret;
+      writeFileSync(statePath, JSON.stringify(old));
+      const stop = runSync(["proxy", "stop"], h.env, 30_000);
+      assert.equal(stop.status, 0, stop.stderr);
+      assert.match(stop.stderr, /Stopped the proxy/, stop.stderr);
+      assert.equal(pidAlive(pid), false);
+      assert.equal(existsSync(statePath), false);
+      // Signalled, not asked.
+      assert.doesNotMatch(readFileSync(join(h.env.CODING_SH_HOME!, "proxy.log"), "utf8"), /proxy stop asked/);
+    } finally {
+      killIfAlive(pid);
+    }
+  });
+
+  it("ends a proxy that was asked to stop and is still running after the wait", async () => {
+    const h = home();
+    // A process that says yes to the stop request and keeps running, as a proxy whose call does not end.
+    const fake = spawn(process.execPath, ["-e", `const s = require("node:http").createServer((q, r) => { q.resume(); r.writeHead(q.url === "/__codingsh/stop" ? 200 : 404).end(); }); s.listen(0, "127.0.0.1", () => console.log(s.address().port));`], { stdio: ["ignore", "pipe", "ignore"] });
+    const exit = once(fake, "exit");
+    try {
+      const [line] = (await once(fake.stdout!.setEncoding("utf8"), "data")) as [string];
+      const port = Number(line.trim());
+      const st = { pid: fake.pid!, url: `http://127.0.0.1:${port}`, host: "127.0.0.1", port, startedAt: Date.now(), upstreams: { ...DEFAULT_UPSTREAMS }, secret: "s" };
+      await writeProxyState(st, h.env);
+      assert.deepEqual(await stopProxy(st, h.env, 300), { cut: true });
+      const [, signal] = (await exit) as [number | null, NodeJS.Signals | null];
+      // Windows reports no signal for a process it ended.
+      if (process.platform !== "win32") assert.equal(signal, "SIGKILL");
+      assert.equal(readProxyState(h.env), undefined);
+    } finally {
+      killIfAlive(fake.pid!);
+    }
   });
 });

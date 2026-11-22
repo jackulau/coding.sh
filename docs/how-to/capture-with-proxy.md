@@ -301,6 +301,8 @@ coding.sh uninstall --proxy        # stop routing agents through the proxy, keep
 coding.sh proxy stop
 ```
 
+`proxy stop` asks the proxy to stop over its own port, with a secret from `~/.coding.sh/proxy.json` (mode 600 where the OS has file modes). The proxy stops listening, lets the calls in flight finish, and exits. A request without the secret gets an error and changes nothing. If the proxy is still running after 10 seconds, `proxy stop` ends it and says so. A proxy that an older version started is stopped with a signal, as before.
+
 ## Next steps
 
 - [Find and read runs](https://coding.sh/docs/explore): search and open the calls you logged.
