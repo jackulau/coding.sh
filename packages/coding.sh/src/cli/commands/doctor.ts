@@ -10,7 +10,7 @@ import { ADAPTERS, detectAll } from "../../adapters/index.ts";
 import { mcpTargetOf, readMcpEntry } from "../../adapters/_shared/mcp.ts";
 import type { Adapter, IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
-import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
+import { MCP_CONFIG_NAME, runningCli } from "../../mcp/launch.ts";
 import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
@@ -19,11 +19,13 @@ import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { spoolFile } from "../../spool/write.ts";
 import { maskStoreUrl, maskUrlsIn } from "../../core/store-url.ts";
+import { storeOwner } from "../../core/store-guard.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
 import { gatewayFlag, GATEWAYS, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
 import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
+import { version } from "../meta.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
@@ -462,12 +464,20 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   // After an update the bin can lag the CLI (stale hook.mjs, cli-path naming an old install).
-  const health = hookBinHealth(env);
+  const self = runningCli();
+  const health = hookBinHealth(env, self);
   // The files the installed commands run: hook.sh outside Windows (it hands what it
   // does not handle to the hook.mjs beside it), hook.mjs on Windows.
   const hookGone = (process.platform === "win32" ? [p.hook] : [p.hookSh, p.hook]).find((f) => !existsSync(f));
-  const hookBin: { path: string; installed: boolean; missing?: string; stale: boolean } & typeof health = { path: p.hook, installed: hookGone === undefined, ...health, stale: hookGone === undefined && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
+  const hookBin: { path: string; installed: boolean; missing?: string; stale: boolean; owner?: string; ownerVersion?: string } & typeof health = { path: p.hook, installed: hookGone === undefined, ...health, stale: hookGone === undefined && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
   if (hookGone !== undefined) hookBin.missing = hookGone;
+  // bin/cli-path names another install that is still there: the hooks run it, and it owns the store.
+  // Refreshing the bin would hand them to this one without asking; upgrade-store asks first.
+  const owner = self !== undefined && hookGone === undefined ? storeOwner(p.root) : undefined;
+  if (owner && owner.cli !== self) {
+    hookBin.owner = owner.cli;
+    if (owner.version) hookBin.ownerVersion = owner.version;
+  }
   const home = resolve(userHome(env));
   const agents: DoctorAgent[] = [];
   for (const { adapter, result } of detected) {
@@ -571,7 +581,11 @@ export async function run(c: CommandContext): Promise<number> {
   // The built-in wrapper's row is always shown: it is not an agent doctor found.
   if (!shown.some((a) => a.id !== "wrapper")) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
   if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run ${bin} init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: `${bin} init` });
-  else if (hookBin.stale) {
+  else if (hookBin.owner !== undefined) {
+    const named = `the coding.sh${hookBin.ownerVersion ? ` ${hookBin.ownerVersion}` : ""} at ${hookBin.owner}`;
+    const upgrade = cliCommand(env, ["upgrade-store"]);
+    warn("Hook", `hooks run ${named}, another install; run ${upgrade} to have them run this coding.sh ${version()} (it asks first)`, { check: "hook", message: `Hooks run ${named}, another install`, next: upgrade });
+  } else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
     warn("Hook", `${hookBin.path} is stale (${why}); run ${bin} update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: `${bin} update --refresh-bin` });
