@@ -7,7 +7,8 @@
 // the MCP registration. --remote <url> --key <ingest key> also adds an http sink
 // that sends new sessions to a team's `coding.sh serve` (see ../remote.ts).
 // --proxy also points Claude Code and Codex at the local model API proxy
-// (src/proxy/install.ts) and starts it in the background.
+// (src/proxy/install.ts) and starts it in the background, unless the proxy can't
+// hold the configured port: then it routes nothing and names the setting to change.
 // Ends with a few lines: what was set up, how to open the viewer, and the docs URL.
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -22,6 +23,7 @@ import { mcpLaunchSpec, mcpLauncherSource, runningCli } from "../../mcp/launch.t
 import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import { spawnBackgroundIngest } from "../../spool/kick.ts";
+import type { RoutePortProblem } from "./proxy.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
@@ -379,6 +381,11 @@ function applyArgv(argv: readonly string[]): string[] {
   return argv.filter((a) => !/^--(no-)?(dry-run|diff)(=|$)/.test(a));
 }
 
+/** The command line with --proxy, which a run in-process has no argv for. */
+function withProxyFlag(argv: readonly string[]): string[] {
+  return argv.some((a) => /^--proxy(=|$)/.test(a)) ? [...argv] : [...argv, "--proxy"];
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   // How the user's shell runs this CLI, for every command init names.
@@ -419,6 +426,8 @@ export async function run(c: CommandContext): Promise<number> {
   spin.stop();
 
   const plans: AgentPlan[] = [];
+  // With --proxy: why the configured port can't take the agents' calls, checked once for every agent.
+  let routeCheck: Promise<RoutePortProblem | undefined> | undefined;
   for (const { adapter, result } of detected) {
     // Only agents found on this machine, unless named explicitly. Tier C
     // (wrapper-only) agents have nothing to install.
@@ -445,10 +454,14 @@ export async function run(c: CommandContext): Promise<number> {
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
     if (withProxy && isProxyAgent(adapter.id)) {
       const id = adapter.id;
-      pl.proxy = await plan(async () => [planProxyInstall(id, { url: proxyUrl, env, force })].filter((x) => x !== undefined));
+      // A base URL for a port the proxy can't hold sends the agent's calls to another program, or nowhere.
+      routeCheck ??= import("./proxy.ts").then((m) => m.routePortProblem(env));
+      const problem = await routeCheck;
+      pl.proxy = problem ? { changes: [], error: problem.reason } : await plan(async () => [planProxyInstall(id, { url: proxyUrl, env, force })].filter((x) => x !== undefined));
     } else if (withProxy && named.includes(adapter.id)) pl.proxyUnsupported = true;
     plans.push(pl);
   }
+  const routeBlock = routeCheck ? await routeCheck : undefined;
 
   // With --remote and no agents here, the sink is still worth writing (apps, `coding.sh run`, agents installed later).
   if (plans.length === 0 && !remote) {
@@ -502,11 +515,11 @@ export async function run(c: CommandContext): Promise<number> {
         for (const pl of plans) printChanges(out, agentChanges(pl), pl.adapter.id);
       }
       if (own.length + total === 0) out.ok("Nothing to change");
-      else {
-        out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
-        // The same command, flags included, minus the dry run.
-        out.next("Apply the plan", cliCommand(env, applyArgv(given)));
-      }
+      else out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
+      if (routeBlock) out.next(...routeBlock.fix);
+      // The same command, flags included, minus the dry run.
+      if (own.length + total > 0) out.next("Apply the plan", cliCommand(env, applyArgv(given)));
+      else if (routeBlock) out.next("Then run init again", cliCommand(env, applyArgv(withProxyFlag(given))));
     }
     return failed ? 1 : 0;
   }
@@ -583,7 +596,11 @@ export async function run(c: CommandContext): Promise<number> {
       scope,
       hook: hookCommand,
       mcpServer: withMcp ? server : null,
-      proxy: proxyStart ? { url: proxyUrl, running: !proxyStart.error, started: proxyStart.started, ...(proxyStart.error ? { error: proxyStart.error } : { pid: proxyStart.pid }) } : null,
+      proxy: proxyStart
+        ? { url: proxyUrl, running: !proxyStart.error, started: proxyStart.started, ...(proxyStart.error ? { error: proxyStart.error } : { pid: proxyStart.pid }) }
+        : routeBlock
+          ? { url: proxyUrl, running: false, started: false, error: routeBlock.reason, next: routeBlock.fix[1] }
+          : null,
       changes: own.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })),
       remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
       import: imported ?? null,
@@ -619,7 +636,7 @@ export async function run(c: CommandContext): Promise<number> {
   }
   if (routed.length) {
     const names = joinNames(routed.map((x) => x.pl.adapter.displayName));
-    if (proxyStart?.error) out.warn(`${names} now call ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: ${bin} proxy --background`);
+    if (proxyStart?.error) out.warn(`${names} now ${routed.length === 1 ? "calls" : "call"} ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: ${bin} proxy --background`);
     else out.ok(`${names} → proxy at ${proxyUrl}${proxyStart?.started ? ` (${proxyStart.restarted ? "restarted" : "started"}, pid ${proxyStart.pid})` : ""}; restart running sessions to pick it up`);
     const recs = readProxyInstalls(env);
     for (const x of routed) {
@@ -627,9 +644,16 @@ export async function run(c: CommandContext): Promise<number> {
       if (chained) out.note(`${x.pl.adapter.displayName} calls go on to ${chained}, the base URL it used before`);
     }
   }
+  // Agents left as they were because of the port: the setting to change, then this command again.
+  const unrouted = routeBlock ? applied.filter((x) => x.proxy?.error === routeBlock.reason) : [];
+  if (routeBlock && unrouted.length) out.warn(`Did not route ${joinNames(unrouted.map((x) => x.pl.adapter.displayName))} through the proxy: ${routeBlock.reason}`);
   if (imported) reportImport(out, imported, bin);
   out.note(`Open the viewer: ${out.style(`${bin} ui`, "cyan", "err")}`);
   out.note(`After a few sessions, see what to fix first: ${out.style(`${bin} improve`, "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
+  if (routeBlock && unrouted.length) {
+    out.next(...routeBlock.fix);
+    out.next("Then run init again", cliCommand(env, withProxyFlag(given)));
+  }
   return errors ? 1 : 0;
 }

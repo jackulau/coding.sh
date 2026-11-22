@@ -316,7 +316,7 @@ The command ran and something failed.
 | `no_backup` | `No index from before a migration is kept next to ~/.coding.sh/index.db: nothing to restore` | `upgrade-store --restore` found no `index.db.v<N>.bak` this coding.sh can open: none was kept, or a `coding.sh purge` deleted it. Update instead: `coding.sh update`. |
 | `source_checkout` | `coding.sh is running from a source checkout (…), so it won't open your real store in ~/.coding.sh: …` | Set `CODING_SH_HOME` to a temp dir, or `CODING_SH_DEV_REAL_STORE=1` to use the real store. |
 | `locked` | `Can't ingest: …` | Another ingest is running. Wait for it, then run `coding.sh ingest`. |
-| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
+| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. `init --proxy` writes no base URL while it can't use `proxy.port`: another program holds it, it is 0, or this home's proxy runs on another port. It prints the command that fixes it, such as `coding.sh config set proxy.port 4321`. Run that, then `coding.sh init --proxy` again. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |
 | `proxy_failed` | `The background proxy did not start` | Read `~/.coding.sh/proxy.log`, or run `coding.sh proxy` in the foreground to see the error. |
 | `grader_error` | (judge grade) `grader error: …` (exit 2) | The grader could not grade, so there is no verdict. Check the grader's provider and API key, then run again. A fail verdict exits 1. |

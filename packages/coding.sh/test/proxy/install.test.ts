@@ -336,20 +336,21 @@ describe("init --proxy and uninstall --proxy", () => {
     try {
       mkdirSync(join(t.home, ".claude"), { recursive: true });
       writeFile(codex, CODEX_CONFIG);
-      // A proxy already running (in this process), so init does not start one.
+      // A proxy already running (in this process) on the configured port, so init does not start one.
       const running = await startProxy({ port: 0 });
       t.cleanup = () => running.close();
       await writeProxyState({ pid: process.pid, url: running.url, host: running.host, port: running.port, startedAt: Date.now(), upstreams: { anthropic: "", openai: "", chatgpt: "" } }, process.env);
+      writeFile(join(t.dataHome, "config.toml"), `[proxy]\nport = ${running.port}\n`);
       const dry = ctx({ agent: ["claude-code", "codex"], proxy: true, "dry-run": true });
       assert.equal(await initRun(dry.c), 0);
       assert.ok(!existsSync(claude), "dry run writes nothing");
 
       const r = ctx({ agent: ["claude-code", "codex", "cursor"], proxy: true });
       assert.equal(await initRun(r.c), 0);
-      assert.match(r.err(), /Claude Code and Codex CLI → proxy at http:\/\/127\.0\.0\.1:4320/);
+      assert.ok(r.err().includes(`Claude Code and Codex CLI → proxy at ${running.url};`), r.err());
       assert.doesNotMatch(r.err(), /did not start/);
       assert.match(r.err(), /Cursor[\s\S]*init --proxy can't route this agent/);
-      assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, URL);
+      assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, running.url);
       assert.ok(JSON.parse(readFileSync(claude, "utf8")).hooks, "hooks installed alongside");
       assert.equal(parseToml(readFileSync(codex, "utf8")).model_provider, "coding-sh");
 
@@ -384,19 +385,20 @@ describe("init --proxy and uninstall --proxy", () => {
       const codexBefore = `model_provider = "cliproxy"\n\n[model_providers.cliproxy]\nname = "CLIProxyAPI"\nbase_url = "http://127.0.0.1:8317/v1"\nenv_key = "CLIPROXY_KEY"\n`;
       writeFile(claude, claudeBefore);
       writeFile(codex, codexBefore);
-      // A proxy already running with the chained upstreams, so init neither starts nor restarts one.
+      // A proxy already running on the configured port with the chained upstreams, so init neither starts nor restarts one.
       const running = await startProxy({ port: 0 });
       t.cleanup = () => running.close();
       await writeProxyState({ pid: process.pid, url: running.url, host: running.host, port: running.port, startedAt: Date.now(), upstreams: { anthropic: "http://127.0.0.1:8317", openai: "http://127.0.0.1:8317", chatgpt: "https://chatgpt.com/backend-api/codex" } }, process.env);
+      writeFile(join(t.dataHome, "config.toml"), `[proxy]\nport = ${running.port}\n`);
 
       const r = ctx({ agent: ["claude-code", "codex"], proxy: true });
       assert.equal(await initRun(r.c), 0);
       assert.match(r.err(), /Claude Code calls go on to http:\/\/127\.0\.0\.1:8317, the base URL it used before/);
       assert.match(r.err(), /Codex CLI calls go on to http:\/\/127\.0\.0\.1:8317\/v1/);
-      assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, URL);
+      assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, running.url);
       const v = parseToml(readFileSync(codex, "utf8"));
       assert.equal(v.model_provider, "cliproxy");
-      assert.equal((v.model_providers as Record<string, Record<string, unknown>>).cliproxy!.base_url, `${URL}/v1`);
+      assert.equal((v.model_providers as Record<string, Record<string, unknown>>).cliproxy!.base_url, `${running.url}/v1`);
       assert.deepEqual(proxySettings(process.env).upstreams, { anthropic: "http://127.0.0.1:8317", openai: "http://127.0.0.1:8317", chatgpt: "https://chatgpt.com/backend-api/codex" });
 
       assert.equal(await uninstallRun(ctx({}).c), 0);

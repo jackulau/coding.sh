@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
+import { createServer } from "node:net";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
@@ -11,6 +12,7 @@ import { isLoopbackHost } from "../../otel/receiver.ts";
 import { budgetStatuses, readBudgets, type Budget } from "../../budget/index.ts";
 import { budgetGuard, enforceable } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
+import { DEFAULT_PROXY_PORT } from "../../proxy/server.ts";
 import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, requestStop, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
@@ -242,6 +244,54 @@ export async function ensureRunning(env: NodeJS.ProcessEnv): Promise<{ state: Pr
     return { state: await startInBackground(env, {}, s.port), started: true, restarted: true };
   }
   return { state: await startInBackground(env, {}, s.port), started: true };
+}
+
+/** Why `init --proxy` routes no agent to the configured port, and the command that fixes it. */
+export interface RoutePortProblem {
+  reason: string;
+  fix: [benefit: string, command: string];
+}
+
+/**
+ * Why `init --proxy` can't point agents at the configured port, or undefined when it can: this
+ * home's proxy runs there, or the port is free for ensureRunning to start one on. Another program
+ * on the port would get the agents' calls. Port 0 changes each time the proxy starts. While this
+ * home's proxy runs on another port, nothing starts one on the configured port.
+ */
+export async function routePortProblem(env: NodeJS.ProcessEnv): Promise<RoutePortProblem | undefined> {
+  const s = proxySettings(env);
+  const setPort = async (from: number) => {
+    const free = await freePortFrom(s.host, from);
+    return free === undefined ? `${cliCommand(env, ["config", "set", "proxy.port"])} <port>` : cliCommand(env, ["config", "set", "proxy.port", String(free)]);
+  };
+  if (s.port === 0) return { reason: "proxy.port is 0, which gives the proxy a new port each time it starts", fix: ["Pick a port that stays", await setPort(DEFAULT_PROXY_PORT)] };
+  const st = readProxyState(env);
+  const ours = st && pidAlive(st.pid) && (await probeProxy(st.url)) ? st : undefined;
+  if (ours?.port === s.port) return undefined;
+  const failed = await listenError(s.host, s.port);
+  if (failed?.code === "EADDRINUSE") {
+    const other = await probeProxy(proxyUrl(s.port, s.host));
+    const who = other ? `another coding.sh proxy${typeof other.pid === "number" ? ` (pid ${other.pid})` : ""}` : "another program";
+    return { reason: `port ${s.port} is in use by ${who}`, fix: ["Pick another port", await setPort(s.port + 1)] };
+  }
+  if (failed) return { reason: `the proxy can't listen on port ${s.port}: ${failed.message}`, fix: ["Pick another port", await setPort(s.port + 1)] };
+  if (ours) return { reason: `the coding.sh proxy runs on port ${ours.port} (pid ${ours.pid}), not on port ${s.port}, which proxy.port sets`, fix: ["Stop it", cliCommand(env, ["proxy", "stop"])] };
+  return undefined;
+}
+
+/** Why a server can't listen on `host`:`port` now, as the proxy would, or undefined when it can. */
+function listenError(host: string, port: number): Promise<NodeJS.ErrnoException | undefined> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", (e: NodeJS.ErrnoException) => resolve(e));
+    server.listen(port, host, () => server.close(() => resolve(undefined)));
+  });
+}
+
+/** The first of 20 ports from `from` on that a server can listen on, or undefined. */
+async function freePortFrom(host: string, from: number): Promise<number | undefined> {
+  for (let p = from; p < from + 20 && p <= 65535; p++) if (!(await listenError(host, p))) return p;
+  return undefined;
 }
 
 /** How long `proxy stop` waits for a proxy it asked to stop while the calls in flight finish. */

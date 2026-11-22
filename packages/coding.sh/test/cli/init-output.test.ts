@@ -2,7 +2,7 @@
 // commands to run next that keep every flag the user gave.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -57,6 +57,7 @@ describe("init's commands to run next keep every flag", () => {
   let env: TmpEnv;
   let server: Server;
   let url = "";
+  let config = "";
   // The CLI as Git Bash starts it (MSYSTEM and SHELL set), and as PowerShell does (neither).
   const shellEnv = (shell: "Git Bash" | "PowerShell"): NodeJS.ProcessEnv => {
     const e: NodeJS.ProcessEnv = { ...process.env, CODING_SH_HOOK_SOURCE: join(env.root, "dist", "hook.mjs"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
@@ -79,6 +80,12 @@ describe("init's commands to run next keep every flag", () => {
     process.env.CLAUDE_CONFIG_DIR = join(env.home, ".claude");
     fakeBin(env, "agy", "1.3.0");
     fakeBin(env, "claude", "2.1.319 (Claude Code)");
+    // --proxy plans a route only to a port the proxy can hold: a free one, not whatever holds 4320 here.
+    const free = createServer();
+    await new Promise<void>((r) => free.listen(0, "127.0.0.1", r));
+    config = `[proxy]\nport = ${(free.address() as AddressInfo).port}\n`;
+    await new Promise<void>((r) => free.close(() => r()));
+    writeFile(join(env.dataHome, "config.toml"), config);
     // Stands in for `coding.sh serve`: /v1/ingest takes KEY.
     server = createServer((req, res) => {
       req.resume();
@@ -118,7 +125,7 @@ describe("init's commands to run next keep every flag", () => {
       assert.ok(dry.stderr.includes(`\n  Apply the plan:\n    ${cmd(flags)}\n`), dry.stderr);
       assert.equal(dryEquals.status, 0, dryEquals.stderr);
       assert.ok(dryEquals.stderr.includes(`\n  Apply the plan:\n    ${cmd(equals)}\n`), dryEquals.stderr);
-      assert.equal(existsSync(join(env.dataHome, "config.toml")), false);
+      assert.equal(readFileSync(join(env.dataHome, "config.toml"), "utf8"), config, "nothing written");
     });
   }
 });
