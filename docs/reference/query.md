@@ -378,7 +378,7 @@ JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `agent_version` | Agent version, when known |
 | `model` | Main model |
 | `cwd` | Working directory |
-| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote`, and `main` for a worktree |
+| `repo` | Repo JSON: `root`, `head` (the HEAD commit), `branch`, and `main` (the main checkout's root) when `root` is a linked worktree. A worktree of a bare repo has no `main`. `snapshot` and `partial` appear when a working-tree snapshot was taken |
 | `repo_root` | The repo root, for filtering |
 | `title` | First prompt or the agent's title. It skips a workflow harness's frame line, a `Project:` line in a prompt with a frame line, and pasted blocks; a prompt that is only a paste gives its first line. A subagent takes the first line left. A workflow agent whose prompt is only a frame is titled by its phase and label ("build · titles") |
 | `started_at` | Start time |
