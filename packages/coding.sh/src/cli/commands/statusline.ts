@@ -27,14 +27,21 @@ import { needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
 import { readOverlay } from "../../core/work-overlay.ts";
 import { claudeRateLimits, quotaPart, round4, saveClaudeQuota, spendJson } from "../../quota/index.ts";
 import { autoIngest, readBudgetMs, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import { contextPart, ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
 
-// The command Claude Code runs. coding.sh is on PATH after a global install.
-const STATUSLINE_COMMAND = "coding.sh statusline";
-// Recognises a status line as ours, whether the plain command or a bundle path.
-const OURS = /coding\.sh\s+statusline|statusline\.mjs/;
+/**
+ * The command Claude Code runs; coding.sh is on PATH after a global install. On Windows Claude Code
+ * runs it through Git Bash, or through PowerShell when Git Bash is absent, and PowerShell can't run
+ * `coding.sh`, npm's extensionless sh script: npm's codingsh.cmd runs in both.
+ */
+export function statuslineCommand(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "codingsh.cmd statusline" : "coding.sh statusline";
+}
+// Recognises a status line as ours: coding.sh, codingsh or codingsh.cmd, or a bundle path.
+const OURS = /coding\.?sh(?:\.cmd)?\s+statusline|statusline\.mjs/;
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action === "install") return install(c);
@@ -267,10 +274,10 @@ async function install(c: CommandContext): Promise<number> {
     throw new CliError(`Claude Code already has a status line: ${existing}`, {
       reason: "statusline_exists",
       askUser: true,
-      next: ["Replace it (the old one is restored on uninstall):", "coding.sh statusline install --force"],
+      next: ["Replace it (the old one is restored on uninstall):", cliCommand(env, ["statusline", "install", "--force"])],
     });
   }
-  const after = stringifyJsonLike({ ...cfg, statusLine: { type: "command", command: STATUSLINE_COMMAND, padding: 0 } }, before);
+  const after = stringifyJsonLike({ ...cfg, statusLine: { type: "command", command: statuslineCommand(), padding: 0 } }, before);
   if (before !== undefined && JSON.stringify(parseJsonObject(file, after)) === JSON.stringify(cfg)) {
     out.data({ outcome: "unchanged", path: file });
     out.note("coding.sh status line is already installed");
@@ -301,7 +308,7 @@ async function install(c: CommandContext): Promise<number> {
   });
   out.data({ outcome: "installed", path: file });
   out.print(`Installed the coding.sh status line into ${file}`);
-  out.note("Claude Code shows it on the next turn. Remove it with: coding.sh statusline uninstall");
+  out.note(`Claude Code shows it on the next turn. Remove it with: ${cliCommand(env, ["statusline", "uninstall"])}`);
   return 0;
 }
 

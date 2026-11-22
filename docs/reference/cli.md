@@ -375,7 +375,7 @@ coding.sh proxy [action] [options]
 |---|---|
 | [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
 | [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
-| [`env`](#codingsh-proxy-env) | Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy |
+| [`env`](#codingsh-proxy-env) | Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy |
 
 | Option | Default | Description |
 |---|---|---|
@@ -397,7 +397,7 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Forwards /v1/messages (and count_tokens), /v1/chat/completions, /v1/responses and every other path to the real API with the client's own auth headers. Auth headers are never stored.
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
-- Prints the environment to stdout; one line per call goes to stderr.
+- Prints the environment to stdout as export lines; in PowerShell or cmd, as PowerShell's $env: lines, which codingsh proxy env \| Invoke-Expression runs. One line per call goes to stderr.
 - --enforce-budget reads the spend at most every 30 s. Only a budget for every session or for an agent stops a call (claude-code and codex by their headers, every other client as proxy). A --repo or --where budget never stops one: the proxy does not know a call's repo or which session a query would match. count_tokens and other paths are never blocked.
 - When the budgets can't be read, none stops a call for 30 s, and one warning prints for that read, not one per call. A budget whose own spend can't be read stops no call and gets a warning of its own.
 
@@ -427,7 +427,7 @@ coding.sh proxy stop
 
 ### `coding.sh proxy env`
 
-Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy.
+Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy.
 
 ```text
 coding.sh proxy env
@@ -911,9 +911,9 @@ coding.sh alert list
 ```
 
 - States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:&lt;NAME&gt; averages the scores of that name given to those sessions (coding.sh score, a judge, a review).
-- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and three headers keyed with the alert's secret: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=&lt;HMAC-SHA256 of "&lt;timestamp&gt;.&lt;body&gt;"&gt;, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body alone&gt;, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. A command gets the same JSON on stdin and succeeds by exiting 0.
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and three headers keyed with the alert's secret: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=&lt;HMAC-SHA256 of "&lt;timestamp&gt;.&lt;body&gt;"&gt;, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body alone&gt;, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. A command gets the same JSON on stdin and succeeds by exiting 0; on Windows it runs in cmd.exe.
 - Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
-- alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
+- alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute, the first a minute after it starts. The hook and the read commands never run alerts.
 - Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.
 
 ### `coding.sh alert add`

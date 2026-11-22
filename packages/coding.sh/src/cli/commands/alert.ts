@@ -13,6 +13,7 @@ import { deliver, type DeliverOptions, SIGNING_NOTES, targetText } from "../../a
 import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
 import { UsageError } from "../args.ts";
 import { autoIngest, num, readIngest, str, whereFlag, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -75,9 +76,12 @@ function requireName(c: CommandContext): string {
   return name;
 }
 
-function notFound(name: string): CliError {
-  return new CliError(`No alert named ${JSON.stringify(name)}`, { reason: "not_found", next: ["List the alerts:", "coding.sh alert list"] });
+function notFound(env: NodeJS.ProcessEnv, name: string): CliError {
+  return new CliError(`No alert named ${JSON.stringify(name)}`, { reason: "not_found", next: ["List the alerts:", cliCommand(env, ["alert", "list"])] });
 }
+
+/** The alert the empty states suggest, as the user's shell runs it. */
+const addExample = (env: NodeJS.ProcessEnv): string => cliCommand(env, ["alert", "add", "failures", "--measure", "failure-rate", "--over", "0.5", "--window", "1d", "--notify", "webhook:https://example.com/hook"]);
 
 async function add(c: CommandContext, file: string): Promise<number> {
   const { out } = c;
@@ -115,7 +119,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
 
   await withAlertsLock(file, async () => {
     const doc = loadAlerts(file);
-    if (doc.alerts.some((a) => a.name === name)) throw new CliError(`An alert named ${JSON.stringify(name)} exists`, { reason: "exists", exitCode: 2, next: ["Remove it first:", `coding.sh alert rm ${name}`] });
+    if (doc.alerts.some((a) => a.name === name)) throw new CliError(`An alert named ${JSON.stringify(name)} exists`, { reason: "exists", exitCode: 2, next: ["Remove it first:", cliCommand(c.env, ["alert", "rm", name])] });
     doc.alerts.push(def);
     await saveAlerts(file, doc);
   });
@@ -132,7 +136,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
     out.print(`Signing secret (shown once): ${def.secret}`);
     for (const n of SIGNING_NOTES) out.note(n);
   }
-  out.next("Send a test notification", `coding.sh alert test ${name}`);
+  out.next("Send a test notification", cliCommand(c.env, ["alert", "test", name]));
   return 0;
 }
 
@@ -152,7 +156,7 @@ async function list(c: CommandContext, file: string): Promise<number> {
   }
   if (!doc.alerts.length) {
     out.note("No alerts yet");
-    out.next("Add one", "coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook");
+    out.next("Add one", addExample(c.env));
     return 0;
   }
   out.table(
@@ -165,7 +169,7 @@ async function list(c: CommandContext, file: string): Promise<number> {
   );
   for (const a of doc.alerts) {
     if (a.delivery.disabledAt !== undefined) {
-      out.warn(`${a.name}: notifications are off after ${MAX_FAILED_DELIVERIES} failed deliveries in a row (${a.delivery.lastError ?? "no error recorded"}). Fix the target, then run: coding.sh alert test ${a.name}`);
+      out.warn(`${a.name}: notifications are off after ${MAX_FAILED_DELIVERIES} failed deliveries in a row (${a.delivery.lastError ?? "no error recorded"}). Fix the target, then run: ${cliCommand(c.env, ["alert", "test", a.name])}`);
     } else if (a.delivery.failures) out.warn(`${a.name}: the last ${plural(a.delivery.failures, "delivery", "deliveries")} failed (${a.delivery.lastError ?? "no error recorded"})`);
   }
   return 0;
@@ -176,7 +180,7 @@ async function rm(c: CommandContext, file: string): Promise<number> {
   await withAlertsLock(file, async () => {
     const doc = loadAlerts(file);
     const i = doc.alerts.findIndex((a) => a.name === name);
-    if (i === -1) throw notFound(name);
+    if (i === -1) throw notFound(c.env, name);
     doc.alerts.splice(i, 1);
     await saveAlerts(file, doc);
   });
@@ -210,7 +214,7 @@ async function check(c: CommandContext, file: string): Promise<number> {
     if (out.json) out.data({ alerts: [] });
     else {
       out.note("No alerts to check");
-      out.next("Add one", "coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook");
+      out.next("Add one", addExample(c.env));
     }
     return 0;
   }
@@ -237,7 +241,7 @@ async function check(c: CommandContext, file: string): Promise<number> {
   if (sent) out.note(`Sent ${plural(sent, "notification")}.`);
   for (const r of results) {
     if (r.failed) out.warn(`${r.name}: ${plural(r.failed, "notification")} not delivered (${r.deliveryError ?? "no error recorded"})`);
-    if (r.skipped || (r.disabled && r.failed)) out.warn(`${r.name}: notifications are off after ${MAX_FAILED_DELIVERIES} failed deliveries in a row. Fix the target, then run: coding.sh alert test ${r.name}`);
+    if (r.skipped || (r.disabled && r.failed)) out.warn(`${r.name}: notifications are off after ${MAX_FAILED_DELIVERIES} failed deliveries in a row. Fix the target, then run: ${cliCommand(c.env, ["alert", "test", r.name])}`);
     if (r.truncated) out.warn(`${r.name}: read only the first 100,000 sessions of the window`);
   }
   return 0;
@@ -249,7 +253,7 @@ async function test(c: CommandContext, file: string): Promise<number> {
   return withAlertsLock(file, async () => {
     const doc = loadAlerts(file);
     const def = doc.alerts.find((a) => a.name === name);
-    if (!def) throw notFound(name);
+    if (!def) throw notFound(c.env, name);
     const now = Date.now();
     const [key, g] = Object.entries(def.states)[0] ?? ["", undefined];
     const state = g?.state ?? "OK";
