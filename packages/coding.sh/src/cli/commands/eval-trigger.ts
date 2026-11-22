@@ -30,8 +30,8 @@ import {
 } from "../../eval/trigger.ts";
 import { positiveInt, shellQuote, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
-import { ensureHookBin } from "../hookbin.ts";
 import { nextStepBin, rerunWithYes } from "../next-steps.ts";
+import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
