@@ -393,6 +393,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** In PowerShell or cmd, an unknown option or extra argument after a value with a space says how to write a double quote inside a value. Windows PowerShell 5.1 passes such quotes on unescaped, so a `--notify` command with inner quotes reached coding.sh in pieces and failed with only `Unknown option -Path`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 - **Doctor.** `doctor` and `doctor --conformance` print their rows to stdout, not stderr, as `status` does, so `coding.sh doctor | less` and `coding.sh doctor > doctor.txt` keep the whole report and not only its last line. The next steps stay on stderr. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Viewer.** The session list names the app that drove an agent after its name, `claude-code via T3 Code`, so a row that `agent:t3code` lists says why it matched. The page drawn before its script runs reads the same. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
+- **CLI.** The one-time GitHub star line waits for a person. A command run with `CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` set no longer prints it, even at a terminal, where Codex runs some commands, so an agent no longer uses it up before you see it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#updates))
 
 ## [0.1.7] - 2026-11-16
 
