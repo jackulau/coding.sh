@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { PassThrough } from "node:stream";
-import { MAX_STATUSLINE_STDIN, readStdin, run, STATUSLINE_STDIN_MS } from "../../src/cli/commands/statusline.ts";
-import { Output } from "../../src/cli/output.ts";
+import { MAX_STATUSLINE_STDIN, readStdin, run, STATUSLINE_STDIN_MS, statuslineCommand } from "../../src/cli/commands/statusline.ts";
+import { type CliError, Output } from "../../src/cli/output.ts";
 import { contextPart, statuslineLine, worstFailureFlag } from "../../src/cli/statusline.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
@@ -93,12 +93,23 @@ function ctx(e: NodeJS.ProcessEnv, action: string | undefined, flags: Record<str
 
 const settings = (e: NodeJS.ProcessEnv) => join(e.CLAUDE_CONFIG_DIR!, "settings.json");
 
+// What install writes here: on Windows, Claude Code may run it through PowerShell, where coding.sh fails.
+const COMMAND = process.platform === "win32" ? "codingsh.cmd statusline" : "coding.sh statusline";
+
+describe("the status line command", () => {
+  test("is codingsh.cmd on Windows, which Git Bash and PowerShell both run, and coding.sh elsewhere", () => {
+    assert.equal(statuslineCommand("win32"), "codingsh.cmd statusline");
+    assert.equal(statuslineCommand("linux"), "coding.sh statusline");
+    assert.equal(statuslineCommand("darwin"), "coding.sh statusline");
+  });
+});
+
 describe("statusline install / uninstall", () => {
   test("creates settings.json then deletes the one it created", async () => {
     const e = env();
     assert.equal(await run(ctx(e, "install")), 0);
     const cfg = JSON.parse(readFileSync(settings(e), "utf8"));
-    assert.equal(cfg.statusLine.command, "coding.sh statusline");
+    assert.equal(cfg.statusLine.command, COMMAND);
     assert.equal(cfg.statusLine.type, "command");
     assert.equal(await run(ctx(e, "uninstall")), 0);
     assert.ok(!existsSync(settings(e)), "the file coding.sh created is removed");
@@ -118,7 +129,12 @@ describe("statusline install / uninstall", () => {
     const e = env();
     const original = '{"statusLine":{"type":"command","command":"ccusage statusline"}}';
     writeFileSync(settings(e), original);
-    await assert.rejects(run(ctx(e, "install")), /already has a status line/);
+    await assert.rejects(run(ctx(e, "install")), (err: CliError) => {
+      assert.match(err.message, /already has a status line/);
+      // env() sets no SHELL or MSYSTEM: PowerShell or cmd on Windows, where only codingsh runs.
+      assert.deepEqual(err.next, ["Replace it (the old one is restored on uninstall):", `${process.platform === "win32" ? "codingsh" : "coding.sh"} statusline install --force`]);
+      return true;
+    });
     assert.equal(readFileSync(settings(e), "utf8"), original, "file untouched on refusal");
   });
 
@@ -127,7 +143,7 @@ describe("statusline install / uninstall", () => {
     const original = '{\n  "statusLine": {\n    "type": "command",\n    "command": "ccusage statusline"\n  }\n}\n';
     writeFileSync(settings(e), original);
     await run(ctx(e, "install", { force: true }));
-    assert.equal(JSON.parse(readFileSync(settings(e), "utf8")).statusLine.command, "coding.sh statusline");
+    assert.equal(JSON.parse(readFileSync(settings(e), "utf8")).statusLine.command, COMMAND);
     await run(ctx(e, "uninstall"));
     assert.equal(readFileSync(settings(e), "utf8"), original, "the previous status line comes back byte-for-byte");
   });
@@ -143,6 +159,17 @@ describe("statusline install / uninstall", () => {
     const after = JSON.parse(readFileSync(settings(e), "utf8"));
     assert.deepEqual(after.statusLine, { type: "command", command: "my-line" });
     assert.deepEqual(after.permissions, { allow: ["Bash(ls)"] }, "the later change stays");
+  });
+
+  test("coding.sh, codingsh and codingsh.cmd are all ours: install updates the line, uninstall removes it", async () => {
+    for (const command of ["coding.sh statusline", "codingsh statusline", "codingsh.cmd statusline"]) {
+      const e = env();
+      writeFileSync(settings(e), JSON.stringify({ model: "opus", statusLine: { type: "command", command, padding: 0 } }) + "\n");
+      assert.equal(await run(ctx(e, "install")), 0, command);
+      assert.equal(JSON.parse(readFileSync(settings(e), "utf8")).statusLine.command, COMMAND, command);
+      assert.equal(await run(ctx(e, "uninstall")), 0, command);
+      assert.deepEqual(JSON.parse(readFileSync(settings(e), "utf8")), { model: "opus" }, command);
+    }
   });
 
   test("no earlier status line, then settings.json changes: uninstall removes only ours", async () => {

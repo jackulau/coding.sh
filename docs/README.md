@@ -35,6 +35,7 @@ has the terms, and [troubleshooting.md](troubleshooting.md) helps when something
 |---|---|
 | [guides/explore.md](guides/explore.md) | find and read runs: the CLI, the viewer and the MCP server |
 | [how-to/track-cost.md](how-to/track-cost.md) | tokens and cost per session, agent, model, repo and day |
+| [how-to/alerts.md](how-to/alerts.md) | post to a webhook or run a command when failures or cost cross a threshold |
 | [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a session step by step |
 | [how-to/attribute-commits.md](how-to/attribute-commits.md) | see which agent session wrote the lines of each commit |
 

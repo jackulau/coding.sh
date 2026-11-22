@@ -99,18 +99,25 @@ export function budgetGuard(o: {
   };
 }
 
-/** The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset. */
+/** `$1.40`, or `$0.0016` under $1, as `coding.sh budget status` prints amounts. */
+const money = (n: number): string => `$${n.toFixed(n < 1 ? 4 : 2)}`;
+
+/**
+ * The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset.
+ * `x-should-retry: false` stops the Anthropic and OpenAI SDKs retrying it: the Anthropic one would
+ * otherwise sleep the whole Retry-After, until the period resets, before the caller saw the error.
+ */
 export function budgetResponse(route: Route, block: BudgetBlock): { status: 429; headers: Record<string, string>; body: string } {
   const s = block.status;
   const b = s.budget;
   const scope = b.agent ? ` for ${b.agent}` : "";
   const resets = new Date(s.resetsAt).toISOString();
-  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: $${s.spendUsd.toFixed(2)} spent of $${b.limitUsd.toFixed(2)} (estimated). It resets at ${resets}. See coding.sh budget status.`;
+  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: ${money(s.spendUsd)} spent of ${money(b.limitUsd)} (estimated). It resets at ${resets}. See coding.sh budget status.`;
   // JSON.stringify leaves out an agent that is undefined.
   const budget = { id: b.id, period: b.period, agent: b.agent || undefined, limitUsd: b.limitUsd, spendUsd: s.spendUsd, resetsAt: resets };
   const body =
     route.provider === "anthropic"
       ? { type: "error", error: { type: "rate_limit_error", message, budget } }
       : { error: { message, type: "insufficient_quota", param: null, code: "spend_limit_exceeded", budget } };
-  return { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(block.retryAfter) }, body: JSON.stringify(body) };
+  return { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(block.retryAfter), "x-should-retry": "false" }, body: JSON.stringify(body) };
 }
