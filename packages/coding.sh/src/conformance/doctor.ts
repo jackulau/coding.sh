@@ -77,37 +77,40 @@ export async function runConformance(c: CommandContext): Promise<number> {
     out.data(run);
     return run.ok ? 0 : 1;
   }
+  // The report is the answer, as in doctor: the rows and the examples under them go to stdout,
+  // ending with the verdict. The next steps stay on stderr.
+  const row = (label: string, value: string, glyph: "ok" | "fail" | "none") => out.row(label, value, glyph, true);
   for (const a of run.agents) {
     if (a.status === "no-backfill") {
-      out.row(a.name, "no transcripts to read (captured by hooks only)", "none");
+      row(a.name, "no transcripts to read (captured by hooks only)", "none");
       continue;
     }
     if (a.status === "no-data") {
-      out.row(a.name, `no transcripts since ${sinceRaw === DEFAULT_SINCE ? "7 days ago" : sinceRaw}`, "none");
+      row(a.name, `no transcripts since ${sinceRaw === DEFAULT_SINCE ? "7 days ago" : sinceRaw}`, "none");
       continue;
     }
     const k = a.report.counts;
     const size = `${plural(k.events, "event")}, ${plural(k.sessions, "session")}`;
     const cut = a.truncated ? `, stopped at ${a.truncated === "timeout" ? `${DEFAULT_TIMEOUT_MS / 1000} s` : plural(maxEvents, "event")}` : "";
     if (!a.violations) {
-      out.row(a.name, `${size}${cut}, no violations`, "ok");
+      row(a.name, `${size}${cut}, no violations`, "ok");
       continue;
     }
     const rules = (Object.entries(a.report.violations) as [Rule, number][]).map(([r, n]) => {
       const f = (RULES[r] as { finding?: string }).finding;
       return `${r} ${n}${f ? ` (${f})` : ""}`;
     });
-    out.row(a.name, `${size}${cut}, ${plural(a.violations, "violation")}: ${rules.join(", ")}`, "fail");
+    row(a.name, `${size}${cut}, ${plural(a.violations, "violation")}: ${rules.join(", ")}`, "fail");
     const shown = new Set<Rule>();
     for (const v of a.report.examples) {
       if (shown.has(v.rule)) continue;
       shown.add(v.rule);
-      out.note(`${v.rule}: ${v.detail}${v.sessionId ? ` (session ${v.sessionId.slice(0, 36)})` : ""}`);
+      out.print(`  ${v.rule}: ${v.detail}${v.sessionId ? ` (session ${v.sessionId.slice(0, 36)})` : ""}`);
     }
   }
   const checked = run.agents.filter((a) => a.status === "clean" || a.status === "violations");
   if (!checked.length) {
-    out.row("Conformance", `no agent transcripts since ${sinceRaw}`, "none");
+    row("Conformance", `no agent transcripts since ${sinceRaw}`, "none");
     out.next("Look further back", "coding.sh doctor --conformance --since 30d");
     out.print("ok");
     return 0;

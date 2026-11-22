@@ -49,7 +49,7 @@ describe("gateway tagged sessions", () => {
     assert.ok(gw.counted.includes("cliproxyapi"), JSON.stringify(gw.counted));
     assert.equal(gw.sessions, 1);
     const text = await runCmd(doctor, sb);
-    assert.match(text.stderr, /AI Gateway\s+routes claude-code via cliproxyapi, no key, 1 tagged sessions/);
+    assert.match(text.stdout, /AI Gateway\s+routes claude-code via cliproxyapi, no key, 1 tagged sessions/);
   });
 
   test("gateway status puts where the route is set on the agent's row", async () => {
