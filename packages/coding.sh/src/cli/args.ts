@@ -118,6 +118,13 @@ export function suggest(input: string, candidates: readonly string[]): string | 
   return prefixed.length === 1 ? prefixed[0] : undefined;
 }
 
+/** An `--agent` that names none of `ids`: the near miss as a suggestion, else the ids to pick from. */
+export function unknownAgent(agent: string, ids: readonly string[], reason = "unknown_agent"): UsageError {
+  const s = suggest(agent, ids);
+  if (s) return new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: `--agent ${s}`, reason });
+  return new UsageError(`Unknown agent ${JSON.stringify(agent)}: use one of ${ids.join(", ")}`, { reason });
+}
+
 export interface ParseOptions {
   maxPositionals?: number;
   /** More `--name`s to suggest for a typo (e.g. global flags handled elsewhere). */

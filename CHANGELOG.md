@@ -340,6 +340,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `stats --since` with a time in the future and no `--until` says `--since` is after now and prints both times, instead of asking for it to be before a `--until` that was not given. It still exits 2. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-stats))
 - **Config.** A bad config value prints as written, `got -1` or `got "5"`, without a type name such as `number` in front of it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#where-settings-come-from))
 - **Search.** `search ""` and a search for blank text are a usage error that exits 2, not a search that finds nothing. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#search-every-session))
+- **CLI.** An unknown `--agent` with no close match lists the agent ids to pick from, on `init`, `doctor`, `ingest`, `uninstall`, `harness audit`, `harness snapshot`, `eval run` and `eval trigger`. A close match is still suggested. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/agents.md#coding-agents))
 
 ## [0.1.7] - 2026-11-16
 

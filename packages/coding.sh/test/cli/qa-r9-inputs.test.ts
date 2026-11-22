@@ -1,12 +1,14 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
 // error quotes what was typed, stats --since in the future says it is after now, search "" is a
-// missing argument, and a bad config value prints no JavaScript type name.
+// missing argument, an unknown --agent lists the agent ids, and a bad config value prints no
+// JavaScript type name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
+import { suiteHarness } from "../../src/cli/commands/eval-run.ts";
 import { emptyWindow } from "../../src/cli/commands/stats.ts";
 import { ConfigError, loadConfig } from "../../src/core/config.ts";
 import { parseWhere, QueryError } from "../../src/query/where.ts";
@@ -123,6 +125,53 @@ describe("search with blank text", () => {
     const r = cli(box(), ["search", "", "deploy"]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout + r.stderr, /No matches for "deploy"/);
+  });
+});
+
+describe("an unknown --agent", () => {
+  const LISTED = /Unknown agent "nope": use one of [a-z0-9-]+(, [a-z0-9-]+)+/;
+
+  for (const args of [
+    ["harness", "snapshot", "--agent", "nope"],
+    ["harness", "audit", "--agent", "nope"],
+    ["init", "--agent", "nope"],
+    ["doctor", "--agent", "nope"],
+    ["ingest", "--agent", "nope"],
+    ["uninstall", "--agent", "nope"],
+  ]) {
+    test(`${args.slice(0, -2).join(" ")} lists the agent ids when nothing is close`, () => {
+      const r = cli(box(), args);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.match(r.stderr, LISTED);
+      assert.match(r.stderr, /\bclaude-code\b/);
+      assert.match(r.stderr, /\bcodex\b/);
+    });
+  }
+
+  test("a near miss is still a suggestion, not the list", () => {
+    const r = cli(box(), ["harness", "snapshot", "--agent", "claud-code"]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /Unknown agent "claud-code"\n/);
+    assert.match(r.stderr, /Did you mean --agent claude-code\?/);
+    assert.doesNotMatch(r.stderr, /use one of/);
+  });
+
+  test("eval run lists the agents it can run headless", async () => {
+    const c = { flags: { agent: "nope" }, env: {}, cwd: "." } as never;
+    const suite = { spec: { name: "s" }, dir: "." } as never;
+    await assert.rejects(suiteHarness(c, {} as never, suite, "."), (e: unknown) => e instanceof UsageError && LISTED.test(e.message) && e.message.includes("claude-code") && e.reason === "unknown_agent");
+  });
+
+  test("eval trigger lists the agents it can run headless", () => {
+    const sb = box();
+    const skill = join(sb.root, "skills", "pdf");
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(join(skill, "SKILL.md"), "---\nname: pdf\ndescription: Use when the user mentions pdf.\n---\nBody.\n");
+    writeFileSync(join(skill, "triggers.toml"), 'k = 1\n[[should]]\nprompt = "Fill in the pdf form"\n[[should_not]]\nprompt = "Rename every txt file"\n');
+    const r = cli(sb, ["eval", "trigger", "skills/pdf", "--agent", "nope", "--no-siblings"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, LISTED);
+    assert.match(r.stderr, /\bclaude-code\b/);
   });
 });
 
