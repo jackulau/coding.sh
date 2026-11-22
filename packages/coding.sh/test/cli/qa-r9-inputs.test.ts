@@ -1,9 +1,10 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
-// error quotes what was typed.
+// error quotes what was typed, and stats --since in the future says it is after now.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { after, describe, test } from "node:test";
 import { parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
+import { emptyWindow } from "../../src/cli/commands/stats.ts";
 import { parseWhere, QueryError } from "../../src/query/where.ts";
 import { CLI } from "../_cli.ts";
 import { sandbox, type Sandbox } from "./_cmd.ts";
@@ -19,6 +20,8 @@ const cli = (sb: Sandbox, args: string[]) => {
   const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: sb.root, env: sb.env, encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 };
+/** The error a --json run prints on stderr. */
+const jsonError = (stderr: string) => JSON.parse(stderr.trim().split("\n").pop()!) as { status: string; reason: string; message: string; next?: string[] };
 
 const RANGE = `a whole number from 1 to ${Number.MAX_SAFE_INTEGER}`;
 
@@ -67,5 +70,34 @@ describe("a whole-number flag", () => {
     for (const typed of ["0x10", "1e3", "5.0", "99999999999999999999", "0"]) {
       assert.throws(() => parseWhere(`limit:${typed}`), (e: unknown) => e instanceof QueryError && e.message === `limit: must be ${RANGE}, got ${JSON.stringify(typed)}`, typed);
     }
+  });
+});
+
+describe("stats --since in the future", () => {
+  test("without --until, says --since is after now, and exits 2", () => {
+    const r = cli(box(), ["stats", "--since", "2099-01-01"]);
+    assert.equal(r.status, 2, r.stderr);
+    // A date is local midnight, so its UTC instant falls on 2098-12-31 east of UTC.
+    assert.match(r.stderr, /--since is after now: "2099-01-01" is 209[89]-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z, and now is \d{4}-\d\d-\d\dT/);
+    assert.doesNotMatch(r.stderr, /--until/, "no --until was given");
+  });
+
+  test("in --json the same message, reason invalid_argument", () => {
+    const r = cli(box(), ["stats", "--since", "2099-01-01", "--json"]);
+    assert.equal(r.status, 2, r.stderr);
+    const e = jsonError(r.stderr);
+    assert.equal(e.reason, "invalid_argument");
+    assert.match(e.message, /^--since is after now: /);
+  });
+
+  test("with --until, says --since must be before --until and gives both times", () => {
+    const r = cli(box(), ["stats", "--since", "1d", "--until", "7d"]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /--since must be before --until: "1d" is \d{4}-\d\d-\d\dT[\d:.]+Z, and --until "7d" is \d{4}-\d\d-\d\dT[\d:.]+Z/);
+  });
+
+  test("the same instant as now is not before now", () => {
+    const t = Date.parse("2026-11-01T10:00:00Z");
+    assert.equal(emptyWindow("now", t, undefined, t).message, '--since is not before now: "now" is 2026-11-01T10:00:00.000Z, and now is 2026-11-01T10:00:00.000Z');
   });
 });
