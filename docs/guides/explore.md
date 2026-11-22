@@ -27,6 +27,8 @@ agents. Subagents, trials from eval, compare and exp runs, and empty sessions ar
 lines count them (`hiddenChildren`, `hiddenRuns` in `--json`). TOOLS is `-` when the source
 records model calls only. Off a terminal, titles are cut to 100 characters.
 
+AGENT reads `claude-code via t3code` when T3 Code drove the agent.
+
 | Flag | What it does |
 |---|---|
 | `--agent codex` | Only this agent. Repeat it or pass `a,b` for several. |
