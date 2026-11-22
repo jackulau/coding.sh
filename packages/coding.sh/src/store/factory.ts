@@ -8,10 +8,11 @@
 //                             clickhouses:// loads coding.sh-store-clickhouse)
 //   coding.sh-sink-<kind>     exporting { sink } factory
 import { tmpdir } from "node:os";
-import { posix, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import type { BlobStore, Config, IndexStore, Sink, SinkConfig } from "../core/types.ts";
 import { expandHome } from "../core/paths.ts";
-import { repriceStored } from "../core/reprice.ts";
+import { pricesFor } from "../core/pricing.ts";
+import { deferReprice, priceStamp, REPRICE_CURSOR, repriceLock, repriceStored } from "../core/reprice.ts";
 import { version } from "../cli/meta.ts";
 import { ownerGuard } from "../core/store-guard.ts";
 import { createHttpSink } from "../sinks/http.ts";
@@ -134,8 +135,19 @@ async function loadPlugin(pkg: string): Promise<StorePlugin | undefined> {
   }
 }
 
-export async function openIndexStore(url: string, config: Config): Promise<IndexStore> {
-  const { scheme } = parseStoreUrl(url);
+export interface OpenIndexOptions {
+  /**
+   * Leave a due repricing to the background ingest that refolds (core/reparse.ts) when one will
+   * run for this store (repriceDeferred). openStores, which reads open, sets it; default false: the
+   * pass runs on the open.
+   */
+  defer?: boolean;
+  /** The environment that decides whether background ingests run (default process.env). */
+  env?: NodeJS.ProcessEnv;
+}
+
+export async function openIndexStore(url: string, config: Config, o: OpenIndexOptions = {}): Promise<IndexStore> {
+  const { scheme, rest } = parseStoreUrl(url);
   let factory = indexFactories.get(scheme);
   if (!factory) {
     const pkg = storePluginPackage(scheme);
@@ -147,10 +159,46 @@ export async function openIndexStore(url: string, config: Config): Promise<Index
   }
   const store = await factory(url, config);
   await store.migrate();
-  // Cost estimates for events stored before local pricing (or under older prices): once per
-  // price table. Never fails the open: a pass that errors runs again on the next one.
-  await repriceStored(store, config.pricing).catch(() => {});
+  // A pass on a store other processes open holds the lock the refold of this home holds
+  // (core/reparse.ts), so two processes never run one at once.
+  if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
+  await repriceOnOpen(store, url, config, o);
   return store;
+}
+
+/**
+ * Cost estimates for events stored before local pricing (or under older prices), once per price
+ * table (core/reprice.ts). Left to the background ingest when one will run (`defer`), so the open
+ * costs a cursor read; else run here. Never fails the open: a pass that errors, or finds another
+ * running, runs again on a later open.
+ */
+async function repriceOnOpen(store: IndexStore, url: string, config: Config, o: OpenIndexOptions): Promise<void> {
+  if (!store.setEventCosts) return;
+  const stamp = priceStamp(pricesFor(config.pricing));
+  if ((await store.getCursor(REPRICE_CURSOR)) === stamp) return;
+  // A store with no sessions has nothing to reprice: the table already applies to all it holds.
+  if (!(await store.listSessions({ limit: 1 })).length) {
+    await store.setCursor(REPRICE_CURSOR, stamp);
+    return;
+  }
+  if (o.defer && repriceDeferred(store, url, config, o.env ?? process.env)) {
+    deferReprice(store, stamp);
+    return;
+  }
+  await repriceStored(store, config.pricing).catch(() => {});
+}
+
+/**
+ * Whether a background ingest will reprice this store: background ingests are on, the store keeps
+ * event rows to fold from, and it is the home's own index, the one a background ingest opens
+ * (a store named by CODING_SH_STORE_URL or another path is opened by this process alone).
+ */
+function repriceDeferred(store: IndexStore, url: string, config: Config, env: NodeJS.ProcessEnv): boolean {
+  if (env.CODING_SH_NO_AUTO_INGEST === "1" || env.CODING_SH_STORE_URL?.trim() || env.CODING_SH_BLOB_URL?.trim()) return false;
+  if (!store.replaceSessionEvents) return false;
+  const { scheme, rest } = parseStoreUrl(url);
+  if (scheme !== "sqlite" || rest === ":memory:") return false;
+  return resolve(fileUrlPath(rest)) === resolve(join(config.home, "index.db"));
 }
 
 export async function openBlobStore(url: string, config: Config): Promise<BlobStore> {
@@ -189,9 +237,12 @@ export interface Stores {
   sinks: Sink[];
 }
 
-/** Opens (and migrates) the configured index, blob store and sinks. Closes what it opened on failure. */
-export async function openStores(config: Config): Promise<Stores> {
-  const index = await openIndexStore(config.store.index, config);
+/**
+ * Opens (and migrates) the configured index, blob store and sinks. Closes what it opened on failure.
+ * A due repricing is left to the background ingest when one will run (openIndexStore `defer`).
+ */
+export async function openStores(config: Config, o: Pick<OpenIndexOptions, "env"> = {}): Promise<Stores> {
+  const index = await openIndexStore(config.store.index, config, { ...o, defer: true });
   try {
     const blobs = await openBlobStore(config.store.blobs, config);
     const sinks: Sink[] = [];
