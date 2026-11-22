@@ -22,10 +22,11 @@
 // back in with `meta.verifierAllow: ["globs"]`, or turns isolation off with
 // `meta.verifierIsolation: "off"`.
 import { constants, existsSync } from "node:fs";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import type { EvalTask, VerifierIsolation } from "../core/types.ts";
+import { renameOver } from "../store/durable.ts";
 import { execFileTail } from "./exec.ts";
 import { assertInsideReal, safeJoin } from "./fsutil.ts";
 import { rmrf, START_REF } from "./git.ts";
@@ -286,7 +287,10 @@ export interface IsolatedDirs {
 /**
  * Swap the verified tree in at the work dir's path, run `fn` there, and put the
  * agent's tree back. `reuseStart` keeps the pristine copy for a later round
- * (copied, not moved). The plan is decided before the swap.
+ * (copied, not moved). The plan is decided before the swap. On Windows a folder
+ * can't move while a process has its current directory in it (git run by
+ * another trial's ingest, an antivirus scan), so each move waits a moment for
+ * it (renameOver) instead of failing the trial.
  */
 export async function withIsolatedTree<T>(
   d: IsolatedDirs,
@@ -308,18 +312,18 @@ export async function withIsolatedTree<T>(
     readAgent: (p) => pkg.get(`agent:${p}`),
   });
   await rmrf(d.aside);
-  await rename(d.work, d.aside);
+  await renameOver(d.work, d.aside);
   try {
     if (o.reuseStart) await copyTree(d.start, d.work);
-    else await rename(d.start, d.work);
+    else await renameOver(d.start, d.work);
     await applyPlan(plan, d.aside, d.work);
     return await fn({ carried: plan.carry.length + plan.merge.length, stripped: plan.stripped });
   } finally {
     await rmrf(d.verified).catch(() => {});
     if (existsSync(d.work)) {
-      if (o.keepVerified) await rename(d.work, d.verified).catch(() => rmrf(d.work));
+      if (o.keepVerified) await renameOver(d.work, d.verified).catch(() => rmrf(d.work));
       else await rmrf(d.work);
     }
-    await rename(d.aside, d.work);
+    await renameOver(d.aside, d.work);
   }
 }
