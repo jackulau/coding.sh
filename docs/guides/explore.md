@@ -120,9 +120,8 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and tool output, and errors: error events (their
-message, type such as `rate_limit_error` and status code), failed model calls, tool errors, and
-the error a subagent or a session ended with.
+Search covers prompts, replies, tool input and output, and errors: error events (message, type and
+status code), failed model calls, tool errors, and the error a session or subagent ended with.
 Every word must match within one event. Open a hit with `coding.sh show <session>`.
 
 ## Open the viewer
@@ -306,9 +305,8 @@ coding.sh harness audit --agent codex --since 90d
 | `write-only` | Was written, and no other session loaded or read it. |
 | `loaded-not-read` | Is a skill that was listed but never invoked or read. |
 
-A file that the agent's loaded instructions file or a rule pulls in with an `@path` import
-(`@AGENTS.md`) counts as loaded in each Claude Code session that loaded the importing file, and so
-do its own imports, up to 5 deep. The load cost is the file's tokens (bytes / 4) times the sessions
+A file pulled in with an `@path` import (`@AGENTS.md`) counts as loaded in each Claude Code
+session that loaded the importing file, up to 5 imports deep. The load cost is the file's tokens (bytes / 4) times the sessions
 that loaded it.
 
 The audit also warns about a Claude Code subagent file whose `tools:` is a map, which leaves that subagent with no

@@ -19,8 +19,7 @@ share a conversation id become turns of one session.
 One run of your agent, from the first prompt to the end: a Claude Code conversation, a Codex
 thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 
-- In the viewer: a row in the session list. Click it to open its timeline. Each row is a link you
-  can open in a new tab.
+- In the viewer: a row in the session list, a link to its timeline.
 - A session with a failure opens on its first failing step. First failure in the session header,
   or `F`, goes back to it.
 - A session with no failure opens on its first prompt. A link to a step opens on that step.
