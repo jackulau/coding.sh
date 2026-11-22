@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
 import { CLI } from "../_cli.ts";
@@ -29,7 +30,9 @@ describe("eval trigger --draft", () => {
     const r = cli(["eval", "trigger", skill, "--draft", "mock", "--no-traces"]);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /triggers\.toml exists; pass --force/);
-    assert.match(r.stderr, /With their approval: coding\.?sh eval trigger \S+ --draft mock --no-traces --force\n/, "the approved command replaces the file, every flag kept");
+    // The approved command replaces the file, every flag kept, quoted for the user's shell (PowerShell and cmd too).
+    const replace = cliCommand(env, ["eval", "trigger", skill, "--draft", "mock", "--no-traces", "--force"]);
+    assert.ok(r.stderr.includes(`With their approval: ${replace}\n`), `${replace}\n${r.stderr}`);
     assert.equal(readFileSync(file, "utf8"), "# mine\n");
     rmSync(file);
   });
@@ -87,7 +90,8 @@ describe("eval trigger --draft", () => {
     const w = cli(["eval", "trigger", skill, "--draft", "mock", "--n", "1", "--spec", "../pdf-triggers.toml"], repoA);
     assert.equal(w.status, 0, w.stderr);
     assert.ok(existsSync(join(root, "pdf-triggers.toml")));
-    assert.match(w.stderr, /coding\.?sh eval trigger \S+ --spec \.\.\/pdf-triggers\.toml -k 3\n/);
+    const next = cliCommand(env, ["eval", "trigger", skill, "--spec", "../pdf-triggers.toml", "-k", "3"]);
+    assert.ok(w.stderr.includes(`${next}\n`), `${next}\n${w.stderr}`);
     // A directory with no sessions under it mines nothing, so the model is asked (and the mock can't answer):
     // the other repos' prompts are never the fallback. Its own repo, so a TMPDIR inside another work
     // tree does not make that tree's root (which holds a and b) the repo it mines.

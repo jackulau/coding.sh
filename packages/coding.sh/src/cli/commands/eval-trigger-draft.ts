@@ -10,10 +10,10 @@ import { DraftError } from "../../eval/draft.ts";
 import { siblingSkills, type SkillSource } from "../../eval/trigger.ts";
 import { ALL_REPOS, DRAFT_N, draftTriggerSpec, MINE_SINCE_MS, mineTriggerPrompts, renderTriggerToml, skillCard, type MinedPrompts } from "../../eval/trigger-draft.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
-import { parseAge, positiveInt, shellQuote, UsageError } from "../args.ts";
+import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
-import { nextStepBin } from "../next-steps.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { draftProvider } from "./eval-init.ts";
@@ -24,7 +24,7 @@ export async function evalTriggerDraft(c: CommandContext, current: SkillSource, 
   const dryRun = flags["dry-run"] === true;
   if (existsSync(file) && flags.force !== true && !dryRun) {
     // What the user approves: the command as given, every flag kept, plus --force.
-    const replace = [nextStepBin(c.env), ...(c.argv ?? ["eval", "trigger", target, "--draft"]).map(shellQuote), "--force"].join(" ");
+    const replace = cliCommand(c.env, [...(c.argv ?? ["eval", "trigger", target, "--draft"]), "--force"]);
     throw new UsageError(`${relative(c.cwd, file) || file} exists; pass --force to replace it, or --dry-run to print a draft`, { reason: "exists", askUser: true, suggestion: replace });
   }
   const n = positiveInt(flags.n, "n") ?? DRAFT_N;
@@ -67,7 +67,7 @@ export async function evalTriggerDraft(c: CommandContext, current: SkillSource, 
     const runArgs = [target];
     const spec = str(flags.spec);
     if (spec) runArgs.push("--spec", spec);
-    out.next("Read and fix the prompts, then run them", [nextStepBin(c.env), "eval", "trigger", ...[...runArgs, "-k", "3"].map(shellQuote)].join(" "));
+    out.next("Read and fix the prompts, then run them", cliCommand(c.env, ["eval", "trigger", ...runArgs, "-k", "3"]));
     return 0;
   };
 

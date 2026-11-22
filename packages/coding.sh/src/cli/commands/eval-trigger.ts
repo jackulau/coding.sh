@@ -28,9 +28,9 @@ import {
   type TriggerReport,
   type TriggerSpec,
 } from "../../eval/trigger.ts";
-import { positiveInt, shellQuote, UsageError } from "../args.ts";
+import { positiveInt, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
-import { nextStepBin, rerunWithYes } from "../next-steps.ts";
+import { cliCommand, rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -60,9 +60,9 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
   const specText = await readFile(specPath, "utf8").catch(() => undefined);
   if (specText === undefined) {
     // The draft goes where this run looks: --spec when given.
-    const draftArgs = [target];
+    const draftArgs = ["eval", "trigger", target];
     if (specFlag) draftArgs.push("--spec", specFlag);
-    const draft = [nextStepBin(c.env), "eval", "trigger", ...draftArgs.map(shellQuote), "--draft"].join(" ");
+    const draft = cliCommand(c.env, [...draftArgs, "--draft"]);
     throw new UsageError(`No trigger spec at ${specPath}. Draft one with --draft${specFlag ? "" : ", pass --spec <FILE>"}, or write one with should and should_not prompts:\n${SPEC_EXAMPLE}`, { reason: "missing_argument", suggestion: draft });
   }
   let spec;

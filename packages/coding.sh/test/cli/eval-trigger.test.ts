@@ -146,10 +146,13 @@ describe("eval trigger", () => {
     const e2 = cli(["eval", "trigger", "skills/docx", "--yes"]);
     assert.equal(e2.status, 2);
     assert.match(e2.stderr, /No trigger spec at .*triggers\.toml/);
-    assert.match(e2.stderr, /Did you mean coding\.?sh eval trigger skills\/docx --draft\?/, "a hint that runs when pasted");
-    const e3 = cli(["eval", "trigger", "skills/docx", "--spec", "docx.toml", "--yes"]);
+    // A hint that runs when pasted, quoted for the user's shell; the draft goes where the run looks.
+    const draft = cliCommand(env, ["eval", "trigger", "skills/docx", "--draft"]);
+    assert.ok(e2.stderr.includes(`Did you mean ${draft}?`), `${draft}\n${e2.stderr}`);
+    const e3 = cli(["eval", "trigger", "skills/docx", "--spec", "docx triggers.toml", "--yes"]);
     assert.equal(e3.status, 2);
-    assert.match(e3.stderr, /Did you mean coding\.?sh eval trigger skills\/docx --spec docx\.toml --draft\?/, "the draft goes where the run looks");
+    const draftSpec = cliCommand(env, ["eval", "trigger", "skills/docx", "--spec", "docx triggers.toml", "--draft"]);
+    assert.ok(e3.stderr.includes(`Did you mean ${draftSpec}?`), `${draftSpec}\n${e3.stderr}`);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--fail-on", "regression", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--candidate", "skills/docx", "--description", "x", "--yes"]).status, 2);
     assert.equal(cli(["eval", "trigger", "skills/pdf", "--min-f1", "2", "--yes"]).status, 2);
