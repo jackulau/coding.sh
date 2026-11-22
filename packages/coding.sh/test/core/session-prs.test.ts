@@ -3,7 +3,7 @@
 // over an item's sessions with the newest state per PR.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { buildSession, PRS_MAX } from "../../src/core/sessions.ts";
+import { buildSession, PRS_ALL_MAX, PRS_MAX } from "../../src/core/sessions.ts";
 import { buildWorkQueue, itemPrs, workItemJson } from "../../src/core/work.ts";
 import { bash, CREATED, ev, PR12, prSessions, session, T0, tool } from "./_prs.ts";
 
@@ -87,6 +87,18 @@ describe("Session.stats.prs", () => {
     const many = session("y", ...Array.from({ length: PRS_MAX + 3 }, (_, i) => bash("y", `gh pr view ${i + 1} -R acme/widgets`, "")));
     assert.equal(many.stats.prs?.length, PRS_MAX);
     assert.equal(many.stats.prs?.[0]?.number, 4);
+  });
+
+  test("an orchestrator that merged more than PRS_MAX PRs keeps every merge, and drops PRs it only viewed first", () => {
+    const n = PRS_MAX + 17;
+    const merges = Array.from({ length: n }, (_, i) => bash("o", `gh pr merge ${133 + i} --repo acme/widgets --merge`, ""));
+    const views = Array.from({ length: PRS_MAX + 2 }, (_, i) => bash("o", `gh pr view ${500 + i} -R acme/widgets`, ""));
+    const s = session("o", ...merges.slice(0, 5), ...views, ...merges.slice(5));
+    const prs = s.stats.prs!;
+    assert.deepEqual(prs.filter((p) => p.state === "merged").map((p) => p.number), Array.from({ length: n }, (_, i) => 133 + i));
+    assert.deepEqual(prs.filter((p) => p.state === "linked").map((p) => p.number), Array.from({ length: PRS_MAX }, (_, i) => 502 + i));
+    assert.equal(prs.find((p) => p.number === 133)?.url, "https://github.com/acme/widgets/pull/133");
+    assert.ok(PRS_ALL_MAX >= 10 * PRS_MAX);
   });
 
   test("folding in two appends gives what one fold gives", async () => {
