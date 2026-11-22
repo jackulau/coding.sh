@@ -81,7 +81,14 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
     if (ts.some((t) => t.pass)) passAnyK++;
   }
   const sources = new Set(mine.map((t) => t.metrics?.latencySource ?? "none"));
-  const extra: Pick<ToolArmSummary, "cost" | "cuts" | "kinds"> = {};
+  const extra: Pick<ToolArmSummary, "cost" | "cuts" | "kinds" | "silentFailures" | "targetCallsPerSuccess"> = {};
+  if (mine.some((t) => t.metrics)) {
+    // A wrong answer with no rejected call, no failed call and no retry: nothing in the trace flags it.
+    const silent = mine.filter((t) => !t.pass && !t.error && t.metrics && !t.metrics.invalidCalls && !t.metrics.failedCalls && !t.metrics.retries).length;
+    if (silent) extra.silentFailures = silent;
+    const targetCalls = mine.reduce((n, t) => n + (t.metrics?.targetCalls ?? 0), 0);
+    extra.targetCallsPerSuccess = passes ? targetCalls / passes : null;
+  }
   if (mine.some(hasCacheTokens)) {
     const avg = (xs: (number | null | undefined)[]) => {
       const v = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
