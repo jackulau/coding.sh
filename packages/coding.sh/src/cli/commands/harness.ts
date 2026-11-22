@@ -40,9 +40,10 @@ const HIDDEN_SKILL = /^(?:~\/)?\.claude\/skills\/\.[^/]+\//;
 /**
  * The bundle with what Claude Code loads that the include globs miss or wrongly take: the files
  * CLAUDE.md and rules pull in with `@path` imports (followed up to 5 hops, relative to the
- * importing file, `~/` from the home), and without dot dirs under skills/. An import inside
- * `dir` is stored repo-relative, one in Claude Code's config dir (`claudeDir`, $CLAUDE_CONFIG_DIR)
- * as `~/.claude/…`, one in the home as `~/…`; one elsewhere is left out.
+ * importing file, `~/` from the home), and without dot dirs under skills/. An import in Claude
+ * Code's config dir (`claudeDir`, $CLAUDE_CONFIG_DIR) is stored as `~/.claude/…`, even when that
+ * dir is inside `dir`, as bundleFromDir stores the files it holds; one elsewhere in `dir`
+ * repo-relative, one in the home as `~/…`; one elsewhere is left out.
  */
 export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; home: string; claudeDir?: string; blobs: BlobStore }): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
@@ -50,7 +51,7 @@ export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; 
   const claudeDir = o.claudeDir ?? join(o.home, ".claude");
   const local = (key: string) => (key.startsWith("~/") ? userFile(key.slice(2), o.home, claudeDir) : join(o.dir, key));
   const keyOf = (abs: string): string | undefined => {
-    for (const [base, prefix] of [[o.dir, ""], [claudeDir, "~/.claude/"], [o.home, "~/"]] as const) {
+    for (const [base, prefix] of [[claudeDir, "~/.claude/"], [o.dir, ""], [o.home, "~/"]] as const) {
       const rel = relative(base, abs);
       if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return prefix + rel.split(sep).join("/");
     }

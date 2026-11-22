@@ -1773,6 +1773,9 @@ values. `harness list` shows the server names in its `MCP` column, and `--json` 
 any other file. User and local servers live in `.claude.json`, which a snapshot does not store,
 and a trial runs Claude Code with its own config directory, so it does not load them.
 
+A file inside `$CLAUDE_CONFIG_DIR` keeps its `~/.claude/...` key when that directory is inside
+`--dir`, and is stored once: a project file that is the same file on disk is left out.
+
 Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
 removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list
 longer than 20 lines collapses into directories with their file counts, such as

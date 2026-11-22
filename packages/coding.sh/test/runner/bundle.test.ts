@@ -74,6 +74,30 @@ describe("bundleFromDir", () => {
     const dirInclude = await bundleFromDir({ name: "u", agent: "claude-code", dir: home, home, include: ["~/.claude/skills/pdf"], blobs });
     assert.deepEqual(Object.keys(dirInclude.files), ["~/.claude/skills/pdf/SKILL.md", "~/.claude/skills/pdf/scripts/fill.py"]);
   });
+
+  it("records a file a project glob and a user glob both reach once, as the user file, by its real path", async () => {
+    const include = ["CLAUDE.md", "**/CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json", "~/.claude/CLAUDE.md", "~/.claude/settings.json"];
+    const blobs = new MemBlobs();
+    // Claude Code's config dir inside the project, as CLAUDE_CONFIG_DIR=<dir>/cc puts it. The
+    // project's own CLAUDE.md holds the same text but is another file, so it stays.
+    const dir = await tree({ "CLAUDE.md": "same", "cc/CLAUDE.md": "same", "cc/settings.json": "{}" });
+    const other = await tree({ "CLAUDE.md": "same" });
+    const inside = await bundleFromDir({ name: "c", agent: "claude-code", dir, home: other, claudeDir: join(dir, "cc"), include, blobs });
+    assert.deepEqual(Object.keys(inside.files), ["CLAUDE.md", "~/.claude/CLAUDE.md", "~/.claude/settings.json"]);
+    const elsewhere = await bundleFromDir({ name: "c", agent: "claude-code", dir: other, home: other, claudeDir: join(dir, "cc"), include, blobs });
+    assert.equal(inside.id, elsewhere.id, "the folder it runs in does not change the id");
+    // The home snapshotted as the project: its .claude dir is the user's, but settings.local.json
+    // is only a project file.
+    const home = await tree({ ".claude/settings.json": "{}", ".claude/settings.local.json": "{}" });
+    const atHome = await bundleFromDir({ name: "c", agent: "claude-code", dir: home, home, include, blobs });
+    assert.deepEqual(Object.keys(atHome.files), [".claude/settings.local.json", "~/.claude/settings.json"]);
+    // Reached through a link, the config dir's file is still one file.
+    const cfg = await tree({ "CLAUDE.md": "linked" });
+    const viaLink = await tree({});
+    await symlink(cfg, join(viaLink, "cc"), process.platform === "win32" ? "junction" : undefined);
+    const linked = await bundleFromDir({ name: "c", agent: "claude-code", dir: viaLink, home: other, claudeDir: cfg, include, blobs });
+    assert.deepEqual(Object.keys(linked.files), ["~/.claude/CLAUDE.md"]);
+  });
 });
 
 describe("bundleFromToml", () => {

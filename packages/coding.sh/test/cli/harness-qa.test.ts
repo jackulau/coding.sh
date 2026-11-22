@@ -153,6 +153,31 @@ describe("harness snapshot --agent claude-code with CLAUDE_CONFIG_DIR, and the M
   });
 });
 
+describe("harness snapshot from a folder that holds CLAUDE_CONFIG_DIR", () => {
+  const run = (cwd: string, cfg: string, args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "snapshot", "-a", "claude-code", ...args], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    return r;
+  };
+  type Snap = { outcome: string; bundle: { id: string; files: string[]; createdAt: string } };
+  const json = (cwd: string, cfg: string, name: string): Snap => JSON.parse(run(cwd, cfg, ["--name", name, "--json"]).stdout);
+
+  it("records a file in the config dir once, as ~/.claude/…, with the id a run from another folder gets", () => {
+    const dir = join(root, "holds-config");
+    const cfg = join(dir, "cc");
+    const elsewhere = join(root, "holds-nothing");
+    mkdirSync(elsewhere, { recursive: true });
+    put(join(cfg, "CLAUDE.md"), "user rules\n@notes.md\n@rules/style.md\n");
+    put(join(cfg, "notes.md"), "notes\n");
+    put(join(cfg, "rules", "style.md"), "style\n");
+    const inside = json(dir, cfg, "inner");
+    assert.deepEqual(inside.bundle.files, ["~/.claude/CLAUDE.md", "~/.claude/notes.md", "~/.claude/rules/style.md"]);
+    const outside = json(elsewhere, cfg, "inner");
+    assert.deepEqual(outside.bundle.files, inside.bundle.files);
+    assert.equal(outside.bundle.id, inside.bundle.id);
+  });
+});
+
 describe("harness audit follows @imports", () => {
   it("counts a file a loaded CLAUDE.md imports as loaded, with its size in the load cost", async () => {
     const app = join(home, "import-app");

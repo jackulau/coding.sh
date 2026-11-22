@@ -201,10 +201,40 @@ export function userFile(rel: string, home: string, claudeDir: string): string {
   return join(home, rel);
 }
 
+/**
+ * The repo-relative keys whose file a "~/" key also holds, compared by real path. Claude Code's
+ * config dir inside the project (CLAUDE_CONFIG_DIR=<dir>/cc), or the home snapshotted as the
+ * project, puts one file under a project glob and a user glob. Dropping these keys records it
+ * once, as the user file, so the id does not depend on the folder the snapshot ran in. Only keys
+ * that hold the same blob are compared.
+ */
+async function userDuplicates(files: Record<string, BlobRef>, pathOf: ReadonlyMap<string, string>): Promise<string[]> {
+  const user = new Map<BlobRef, string[]>();
+  for (const [key, path] of pathOf) {
+    const ref = files[key];
+    if (key.startsWith("~/") && ref) user.set(ref, [...(user.get(ref) ?? []), path]);
+  }
+  if (!user.size) return [];
+  const real = (p: string) => realpath(p).catch(() => resolve(p));
+  const out: string[] = [];
+  for (const [key, path] of pathOf) {
+    const same = key.startsWith("~/") ? undefined : user.get(files[key] ?? "");
+    if (!same) continue;
+    const mine = await real(path);
+    for (const p of same) {
+      if ((await real(p)) !== mine) continue;
+      out.push(key);
+      break;
+    }
+  }
+  return out;
+}
+
 export async function bundleFromDir(o: BundleFromDirOpts): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
   const home = o.home ?? userHome();
   const claudeDir = o.claudeDir ?? join(home, ".claude");
+  const pathOf = new Map<string, string>();
   for (const inc of o.include) {
     const user = inc.startsWith("~/");
     // "~/.claude/…" is Claude Code's config dir, which $CLAUDE_CONFIG_DIR moves; the key stays "~/.claude/…".
@@ -214,8 +244,10 @@ export async function bundleFromDir(o: BundleFromDirOpts): Promise<HarnessBundle
     const key = claude ? "~/.claude/" : user ? "~/" : "";
     for (const rel of await collect(base, pat)) {
       files[key + rel] = await o.blobs.put(await readFile(join(base, rel)));
+      pathOf.set(key + rel, join(base, rel));
     }
   }
+  for (const key of await userDuplicates(files, pathOf)) delete files[key];
   for (const [target, src] of Object.entries(o.files ?? {})) {
     const abs = resolve(o.dir, src.startsWith("~/") ? userFile(src.slice(2), home, claudeDir) : src);
     files[target] = await o.blobs.put(await readFile(abs));
