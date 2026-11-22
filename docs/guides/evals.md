@@ -1752,6 +1752,16 @@ A snapshot follows linked files and directories, such as skills that `npx skills
 repo links into `~/.claude/skills`, and stores the files they point to. It skips dangling links and
 links that loop back to a directory it is already in.
 
+With `--agent claude-code`, a snapshot reads the `~/.claude/...` files from `$CLAUDE_CONFIG_DIR` when
+it is set, and stores them under the same `~/.claude/...` keys. It also records the MCP servers
+Claude Code would load in `--dir`: user and local scope from `.claude.json`, project scope from
+`.mcp.json`. For each it keeps the name, scope, transport, and the command or the URL without its
+query string or user info. Of the server's env and headers it keeps only the names, never the
+values. `harness list` shows the server names in its `MCP` column, and `--json` gives
+`mcpServers`. The record is not part of the bundle id. A trial writes a project `.mcp.json` like
+any other file. User and local servers live in `.claude.json`, which a snapshot does not store,
+and a trial runs Claude Code with its own config directory, so it does not load them.
+
 Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
 removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list
 longer than 20 lines collapses into directories with their file counts, such as
@@ -2379,8 +2389,8 @@ in the agent's context.
 **The noise floor.** A is the control arm. A replayed turn won't match what the agent did at the
 time, even with the same files: a different model version, a missing system prompt and plain
 sampling all move it. So `exp ab` also counts how often A's turn differs from the one recorded in
-the session. That rate, with its Wilson interval, is the noise floor. When B moves fewer points than
-that, the line says the difference may be replay noise. This is the control-arm requirement in
+the session. That rate, with its Wilson interval, is the noise floor. When B moves no more points
+than that, to 0.1 points, the line says the difference may be replay noise. This is the control-arm requirement in
 [experimentation-methods.md](../research/experimentation-methods.md) (EM-19). It is also why
 absolute pass rates mean little here. Read the difference between A and B, not either number on
 its own.

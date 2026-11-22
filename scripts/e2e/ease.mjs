@@ -164,7 +164,8 @@ async function realSession(m) {
 /** --real: Claude Code is installed before coding.sh, as on a user's machine, so init finds it. */
 function installAgent(m) {
   if (!REAL) return;
-  const r = run(m, "npm", ["install", "-g", "--no-fund", "--no-audit", CLAUDE_PKG], { timeout: 300_000 });
+  // npm 12 runs no install script it is not told to; Claude Code's fetches its native binary. npm 11 and older accept the flag too.
+  const r = run(m, "npm", ["install", "-g", "--no-fund", "--no-audit", "--allow-scripts=@anthropic-ai/claude-code", CLAUDE_PKG], { timeout: 300_000 });
   if (r.code !== 0) throw new Error(`npm install ${CLAUDE_PKG} failed: ${r.stderr.slice(-400)}`);
 }
 

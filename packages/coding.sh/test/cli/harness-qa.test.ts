@@ -82,6 +82,77 @@ describe("harness snapshot --agent claude-code", () => {
   });
 });
 
+describe("harness snapshot --agent claude-code with CLAUDE_CONFIG_DIR, and the MCP servers it loads", () => {
+  // Claude Code's config dir moved away from ~/.claude, as CLAUDE_CONFIG_DIR does it.
+  const run = (proj: string, cfg: string, args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd: proj, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    return r;
+  };
+
+  it("reads the user files from CLAUDE_CONFIG_DIR, not the home's .claude, and keeps their ~/.claude/ keys", () => {
+    const proj = join(root, "proj-config-dir");
+    const cfg = join(root, "config-dir", "claude");
+    mkdirSync(proj, { recursive: true });
+    put(join(cfg, "CLAUDE.md"), "from the config dir\n@extra.md\n@~/notes/cfg.md\n");
+    put(join(cfg, "extra.md"), "extra\n");
+    put(join(cfg, "skills", "cfg-only", "SKILL.md"), "---\nname: cfg-only\ndescription: d\n---\n");
+    put(join(home, "notes", "cfg.md"), "cfg note\n");
+    put(join(home, ".claude", "CLAUDE.md"), "from the home\n@~/notes/home.md\n");
+    put(join(home, "notes", "home.md"), "home note\n");
+    const r = run(proj, cfg, ["harness", "snapshot", "-a", "claude-code", "--dir", proj, "--name", "cfg", "--json"]);
+    const files = (JSON.parse(r.stdout) as { bundle: { files: string[] } }).bundle.files;
+    assert.ok(files.includes("~/.claude/CLAUDE.md"), files.join(", "));
+    // The config dir's CLAUDE.md was read: its imports came along, the home's did not.
+    assert.ok(files.includes("~/notes/cfg.md"), files.join(", "));
+    assert.ok(files.includes("~/.claude/extra.md"), files.join(", "));
+    assert.ok(files.includes("~/.claude/skills/cfg-only/SKILL.md"), files.join(", "));
+    assert.ok(!files.includes("~/notes/home.md"), files.join(", "));
+    assert.ok(!files.some((f) => f.startsWith("~/.claude/skills/live/")), "the home's .claude skills are not read");
+  });
+
+  it("records each server's name, scope, transport and command or URL, with the keys of its env and headers and never their values", () => {
+    const proj = join(root, "proj-mcp");
+    const cfg = join(root, "config-mcp");
+    mkdirSync(proj, { recursive: true });
+    // Claude Code keys a project by its path; on Windows with forward slashes.
+    const projectKey = process.platform === "win32" ? proj.replace(/\\/g, "/") : proj;
+    put(
+      join(cfg, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          remote: { type: "http", url: "https://user:pw-value@mcp.example.test/v1?token=query-value#frag", headers: { Authorization: "Bearer header-value", "X-Team": "t" } },
+          shadowed: { command: "user-scope" },
+        },
+        projects: {
+          [projectKey]: { mcpServers: { db: { command: "npx", args: ["-y", "db-mcp", "--password", "arg-value"], env: { DB_PASSWORD: "env-value" } } } },
+          [join(root, "elsewhere")]: { mcpServers: { other: { command: "nope" } } },
+        },
+      }),
+    );
+    put(join(proj, ".mcp.json"), JSON.stringify({ mcpServers: { docs: { type: "stdio", command: "node", args: ["docs.js"] }, shadowed: { command: "project-scope" } } }));
+    const r = run(proj, cfg, ["harness", "snapshot", "-a", "claude-code", "--dir", proj, "--name", "mcp", "--json"]);
+    const want = [
+      { name: "db", scope: "local", transport: "stdio", command: "npx", envKeys: ["DB_PASSWORD"] },
+      { name: "docs", scope: "project", transport: "stdio", command: "node" },
+      { name: "shadowed", scope: "project", transport: "stdio", command: "project-scope" },
+      { name: "remote", scope: "user", transport: "http", url: "https://mcp.example.test/v1", headerKeys: ["Authorization", "X-Team"] },
+    ];
+    assert.deepEqual((JSON.parse(r.stdout) as { bundle: { mcpServers: unknown } }).bundle.mcpServers, want);
+    assert.doesNotMatch(r.stdout, /-value/, "no env, header, argument, query or password value");
+
+    const list = run(proj, cfg, ["harness", "list", "--json"]);
+    const bundle = (JSON.parse(list.stdout) as { bundles: { name: string; mcpServers?: unknown }[] }).bundles.find((b) => b.name === "mcp");
+    assert.deepEqual(bundle?.mcpServers, want);
+    assert.doesNotMatch(list.stdout, /-value/);
+    const text = run(proj, cfg, ["harness", "list"]);
+    assert.match(text.stdout, /\bMCP\b/);
+    assert.match(text.stdout, /mcp\s+claude-code\s+\d+\s+db, docs, shadowed, remote\b/);
+    const ok = run(proj, cfg, ["harness", "snapshot", "-a", "claude-code", "--dir", proj, "--name", "mcp"]);
+    assert.match(ok.stderr + ok.stdout, /4 MCP servers recorded \(db, docs, shadowed, remote\)/);
+  });
+});
+
 describe("harness audit follows @imports", () => {
   it("counts a file a loaded CLAUDE.md imports as loaded, with its size in the load cost", async () => {
     const app = join(home, "import-app");

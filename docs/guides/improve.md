@@ -105,6 +105,9 @@ coding.sh improve fix 1
     git add AGENTS.md && git commit -m "AGENTS.md: says it is done without running anything to check" && coding.sh improve check
 ```
 
+In PowerShell or cmd, the commit step is three separate lines: `git add`, `git commit -m` and
+`coding.sh improve check`. Windows PowerShell 5.1 has no `&&`.
+
 `improve fix` appends the line to the repo's instructions file: AGENTS.md or the agent's own file,
 whichever the repo has. With both, it picks the one the issue's agents read. When the file already has the line, it adds nothing; a line that is there and still
 not followed needs rewording, or a place nearer the top.
@@ -153,7 +156,7 @@ and did each session take more work. Then it gives one verdict:
 | Regressed | More flagged sessions. `check` exits 1. |
 | No clear change | 5 or more sessions after, and the difference could be chance. |
 | Too early to tell | Fewer than 5 sessions after, and no clear result yet. |
-| No sessions yet | No session ran with the change. |
+| No sessions yet | No session ran with the change. When headless sessions ran with it, the line under the verdict counts them and names `--headless`. |
 | No sessions before it | Nothing to compare with, often the commit that added the file. |
 
 For Followed and Costlier, `check` suggests `coding.sh refine test git:<previous>` to test the

@@ -155,8 +155,13 @@ const verdictTone = (v: Verdict) => (v === "helped" ? "green" : v === "regressed
 /** Flagged sessions listed under each change by improve check, unless --sessions. */
 const FLAGGED_SHOWN = 5;
 
-/** `flagged`: how many of the sessions still flagged after the change to list (0, the default: none). */
-function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number } = {}): void {
+/**
+ * `flagged`: how many of the sessions still flagged after the change to list (0, the default: none).
+ * `headlessLeftOut`: headless sessions that ran after a change with no sessions after it, left out without --headless.
+ * `headlessInWindow`: headless sessions in the window were left out, though none counted after this change
+ * (with --headless they may still be left out for another reason, such as no git HEAD).
+ */
+function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number; headlessLeftOut?: number; headlessInWindow?: boolean } = {}): void {
   const { out } = c;
   const indent = o.indent ?? "  ";
   const ch = e.change;
@@ -170,6 +175,8 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
     for (const l of ch.removed.slice(0, 2)) out.print(`${indent}    - ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
     out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.reason}`);
   }
+  if (o.headlessLeftOut) out.print(`${indent}  ${out.style(`Left out: ${plural(o.headlessLeftOut, "headless session")} after it (claude -p, an Agent SDK, codex exec); --headless counts them`, "faint")}`);
+  else if (o.headlessInWindow && e.verdict === "no-sessions-after") out.print(`${indent}  ${out.style("Headless sessions (claude -p, an Agent SDK, codex exec) are left out; --headless counts them", "faint")}`);
   // Sessions that never got to work (a chat, a refused login) are no evidence either way: say how many were left out.
   const idle = (e.before.idle ?? 0) + (e.after.idle ?? 0);
   if (idle) out.print(`${indent}  ${out.style(`Left out: ${plural(idle, "session")} with no tool call (${e.before.idle ?? 0} before, ${e.after.idle ?? 0} after), such as a chat or an agent that was not logged in`, "faint")}`);
@@ -346,12 +353,29 @@ async function check(c: CommandContext): Promise<number> {
     const root = o.root!;
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
-      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }), backlog };
+      return { changes: await findChanges(ctx.index, root, changeOptions(o, o.headless)), backlog };
     };
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");
+    const leftOut = await headlessAfter(ctx, root, o, first.changes);
+    // Headless sessions in the window, left out without --headless: plain improve says so, and so does check.
+    let windowLeftOut = 0;
+    if (!o.headless) {
+      const scope: ImproveScope = { since: o.since, headless: false };
+      if (o.repo) scope.repo = o.repo;
+      if (o.agents.length) scope.agents = o.agents;
+      windowLeftOut = (await sessionsOf(ctx.index, o, scope)).headlessLeftOut;
+    }
     if (out.json) {
-      out.data({ repo: root, since: new Date(o.since).toISOString(), changes: first.changes.map(changeJson), regressed: regressed.map((e) => e.change.commit), ...pendingField(first.backlog) });
+      const changes = first.changes.map((e) => {
+        const j: ReturnType<typeof changeJson> & { headlessLeftOut?: number } = changeJson(e);
+        const n = leftOut.get(e.change.commit);
+        if (n) j.headlessLeftOut = n;
+        return j;
+      });
+      const doc: Record<string, unknown> = { repo: root, since: new Date(o.since).toISOString(), changes, regressed: regressed.map((e) => e.change.commit) };
+      if (windowLeftOut) doc.headlessLeftOut = windowLeftOut;
+      out.data({ ...doc, ...pendingField(first.backlog) });
       return regressed.length ? 1 : 0;
     }
     if (!first.changes.length) {
@@ -361,19 +385,47 @@ async function check(c: CommandContext): Promise<number> {
     }
     const shown = c.flags.sessions === true ? Number.POSITIVE_INFINITY : FLAGGED_SHOWN;
     for (const e of first.changes) {
-      printChange(c, e, { indent: "", flagged: shown });
+      printChange(c, e, { indent: "", flagged: shown, headlessLeftOut: leftOut.get(e.change.commit), headlessInWindow: windowLeftOut > 0 });
       out.print("");
     }
+    if (windowLeftOut) out.note(`${plural(windowLeftOut, "headless session")} left out (--headless)`);
     if (!watch) {
       const after = regressed[0]?.after;
       const removal = first.changes.map(removalStep).find((s) => s !== undefined);
       if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${after.flaggedSessions[0]?.id ?? after.examples[0] ?? "latest"}`);
       else if (removal) out.next(removal.label, removal.command);
+      else if (leftOut.size || windowLeftOut) out.next("Count the headless sessions too", `coding.sh improve check --headless${o.repo ? "" : " --repo all"}`);
       else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", "coding.sh improve check --watch");
       return regressed.length ? 1 : 0;
     }
     return watchLoop(c, first.changes, read, interval);
   });
+}
+
+/** What improve check reads: the changes in the repo, with the headless sessions or without. */
+function changeOptions(o: Opts, headless: boolean): Parameters<typeof findChanges>[2] {
+  const opts: Parameters<typeof findChanges>[2] = { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", headless };
+  if (o.agents.length) opts.agents = o.agents;
+  return opts;
+}
+
+/**
+ * For each change with no sessions after it, how many headless sessions ran after it: without
+ * --headless they are left out, and "No sessions yet" alone would hide them. Read again with
+ * --headless only when such a change exists, so the count matches what --headless would show.
+ */
+async function headlessAfter(ctx: Context, root: string, o: Opts, changes: readonly ChangeEffect[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (o.headless || !changes.some((e) => e.verdict === "no-sessions-after")) return counts;
+  const wide = await findChanges(ctx.index, root, changeOptions(o, true));
+  const all = (e: ChangeEffect) => e.after.sessions + (e.after.idle ?? 0);
+  for (const e of changes) {
+    if (e.verdict !== "no-sessions-after") continue;
+    const w = wide.find((x) => x.change.commit === e.change.commit);
+    const n = w ? all(w) - all(e) : 0;
+    if (n > 0) counts.set(e.change.commit, n);
+  }
+  return counts;
 }
 
 async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], read: () => Promise<{ changes: ChangeEffect[] }>, interval: number): Promise<number> {

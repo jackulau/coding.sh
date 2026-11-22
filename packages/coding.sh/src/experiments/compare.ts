@@ -375,7 +375,7 @@ export interface Comparison {
   /**
    * Continuation experiments (EM-19): how often the control arm (A, the
    * recorded config) diverged from the recorded turn from the same prefix.
-   * `warning` is set when B's change is smaller than that noise floor.
+   * `warning` is set when B's change is no larger than that noise floor.
    */
   replay?: ComparisonReplay;
   /** Set when A is a continuation experiment with no control arm (`exp run --no-control`). */
@@ -415,7 +415,7 @@ export interface ComparisonGiven {
 }
 
 export interface ComparisonReplay extends ReplayNoise {
-  /** |B − A| is below the noise floor: the replay itself moves outcomes that much. */
+  /** |B − A| is at or below the noise floor, both to 0.1 points: the replay itself moves outcomes that much. */
   withinNoise: boolean;
   warning?: string;
 }
@@ -828,10 +828,12 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     out.nonInferiority = { ...ni, hardRegressions: hardRegressions(outcomesByCase(a.runs), outcomesByCase(b.runs)) };
   }
   if (opts.replay) {
-    const withinNoise = ids.length > 0 && Math.abs(d.mean) < opts.replay.rate;
+    // Compared at the 0.1 points the warning prints, so a B − A that reads equal to the floor is within it.
+    const tenths = (x: number) => Math.round(x * 1000);
+    const withinNoise = ids.length > 0 && tenths(Math.abs(d.mean)) <= tenths(opts.replay.rate);
     out.replay = { ...opts.replay, withinNoise };
     if (withinNoise) {
-      out.replay.warning = `B − A (${(d.mean * 100).toFixed(1)} points) is smaller than the replay noise floor (${(opts.replay.rate * 100).toFixed(0)}%): the control arm alone diverges from the recorded turns that often, so this difference may be replay noise`;
+      out.replay.warning = `B − A (${(d.mean * 100).toFixed(1)} points) is no larger than the replay noise floor (${(opts.replay.rate * 100).toFixed(1)}%): the control arm alone diverges from the recorded turns that often, so this difference may be replay noise`;
     }
   }
   if (a.task.kind === "continuation" && a.metadata?.control === "skipped") {

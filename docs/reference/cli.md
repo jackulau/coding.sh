@@ -385,7 +385,7 @@ coding.sh proxy [action] [options]
 | `--openai-upstream <URL>` | `https://api.openai.com` | Where OpenAI calls go ([proxy] openai_upstream) |
 | `--background` |  | Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log) |
 | `-q, --quiet` |  | No line per call on stderr. |
-| `--enforce-budget` |  | Answer 429 (with Retry-After) instead of calling the API when a budget that applies to the call is over its limit (coding.sh budget) |
+| `--enforce-budget` |  | Answer 429 (with Retry-After) instead of calling the API when a budget with no --repo and no --where that applies to the call is over its limit (coding.sh budget) |
 
 ```sh
 coding.sh proxy
@@ -398,7 +398,8 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
 - Prints the environment to stdout; one line per call goes to stderr.
-- --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
+- --enforce-budget reads the spend at most every 30 s. Only a budget for every session or for an agent stops a call (claude-code and codex by their headers, every other client as proxy). A --repo or --where budget never stops one: the proxy does not know a call's repo or which session a query would match. count_tokens and other paths are never blocked.
+- When the budgets can't be read, none stops a call for 30 s, and one warning prints for that read, not one per call. A budget whose own spend can't be read stops no call and gets a warning of its own.
 
 ### `coding.sh proxy status`
 
@@ -908,7 +909,7 @@ coding.sh alert list
 ```
 
 - States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:&lt;NAME&gt; averages the scores of that name given to those sessions (coding.sh score, a judge, a review).
-- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and three headers keyed with the alert's secret: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=&lt;HMAC-SHA256 of "&lt;timestamp&gt;.&lt;body&gt;"&gt;, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body alone&gt;, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. A command gets the same JSON on stdin and succeeds by exiting 0.
 - Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
 - alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
 - Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.
@@ -1033,6 +1034,7 @@ coding.sh proxy --enforce-budget
 - The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.
 - A --where budget counts the sessions its query matches and their subagents. The status line counts it only for a day budget whose query uses session keys (agent, model, repo, flag, cost, ...), matched on the day's sessions it already read; a week or month --where budget, or one with an event key such as user:, env: or release:, is left out of the line. coding.sh proxy --enforce-budget never applies a --where budget.
 - With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times), and where when the budget has one.
+- A budget whose spend can't be read, such as one whose --where no longer parses, prints an error in place of its numbers: in --json, error replaces spendUsd, percent and over, and limitUsd, since and resetsAt stay. The other budgets still report, and status exits 1.
 
 ### `coding.sh budget set`
 
@@ -2524,7 +2526,8 @@ coding.sh monitor <action>
 - Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.
 - A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.
 - --judge with no provider records 'no judge provider' and scores nothing until one is set.
-- Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters); each POST carries X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body&gt;. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.
+- Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters). Each POST carries three headers keyed with it: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=&lt;HMAC-SHA256 of "&lt;timestamp&gt;.&lt;body&gt;"&gt;, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body alone&gt;, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.
+- When --http can't reach the service for 2 sessions in a row, the pass stops and its cursor stays before them, so the next pass tries them again. An answer for a later session, a score or a refusal, moves the cursor past them. monitor list and its --json show the --http URL without its query string or fragment.
 - Definitions, cursors, spend, errors and --http secrets are in monitors.json (mode 600 where the OS has file modes), next to the config file (coding.sh config path shows it).
 
 ### `coding.sh monitor add`
@@ -3455,7 +3458,8 @@ coding.sh harness <action>
 - A harness TOML can carry Claude Code plugins too: plugins = ["terse", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
 - harness tools reads the tools arrays coding.sh proxy stored with each model call, so it needs the proxy with request capture (capture mode full). Each distinct tools array is read once, the 2,000 most recently used at most. A tool named mcp__&lt;server&gt;__&lt;tool&gt; belongs to that MCP server; every other tool is builtin. descSha and schemaSha are the first 12 hex characters of the sha256 of the description and of the input schema as JSON.
-- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (differs from pin). It also keeps a tool with no pin first seen at or after the last pin, such as one an MCP server added (new since pin), and a pinned tool the latest tools array of every session since its pin leaves out (removed since pin). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window and drops the pins of removed tools.
+- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (differs from pin). It also keeps a tool with no pin first seen at or after the last pin, such as one an MCP server added (new since pin), and a pinned tool that no tools array offered since its pin includes, when at least one was offered (removed since pin). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory. pin keeps the pins of tools not seen in the window and drops the pins of removed tools; a later pin does not pin again a tool that is gone, one last seen before the newest pin.
+- harness snapshot --agent claude-code reads ~/.claude files from $CLAUDE_CONFIG_DIR when it is set, and records the MCP servers Claude Code would load in --dir: user and local scope from .claude.json, project scope from .mcp.json. Each keeps its name, scope, transport, and command or URL (without query string or user info), and only the names of its env and headers. harness list shows them. A trial writes a project .mcp.json like any other file, and does not load user or local servers.
 
 ### `coding.sh harness snapshot`
 
@@ -3525,7 +3529,7 @@ coding.sh harness tools [pin] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
-| `--changed` |  | Only tools whose description or schema differs from its pin, that are new or removed since the last pin, or, with no pin, had more than one in the window; exit 1 when any remain. |
+| `--changed` |  | Only tools whose description or schema differs from its pin, that are new since the last pin, that are pinned but no session offered since the pin (removed), or, with no pin, had more than one in the window; exit 1 when any remain. |
 
 ```sh
 coding.sh harness tools

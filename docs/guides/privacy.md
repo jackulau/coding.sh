@@ -35,7 +35,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `index.db` | The SQLite index of sessions and events. |
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
 | `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
-| `repos/` | Snapshots of the working tree before and after a session. They hold your files as they are, not redacted; files your `.gitignore` skips are left out. Your repo's own refs are never touched. |
+| `repos/` | Snapshots of the working tree before and after a session. They hold your files as they are, not redacted; files your `.gitignore` skips are left out. On Windows, paths over 260 characters are kept too. Your repo's own refs are never touched. |
 | `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with your `[capture]` rules. See [Replay recorded model calls](../how-to/replay-llm-calls.md#what-is-stored). |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |

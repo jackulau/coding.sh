@@ -197,7 +197,8 @@ nothing is blocked. A proxy the hook restarts (step 5) runs without the flag.
 
 A budget whose spend can't be read stops no call, and the proxy prints a warning that names it and
 the reason; the other budgets still apply. If `budgets.json` itself can't be read, no budget stops
-a call. Either way the proxy reads again 30 s later, not on every call.
+a call for 30 s, and the proxy prints one warning for that read, not one per call. Either way the
+proxy reads again 30 s later, not on every call.
 
 ## Catch a tool description that changed
 
