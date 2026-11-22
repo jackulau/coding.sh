@@ -1,6 +1,7 @@
-// The commands replay --fork prints, as the user's shell runs them (cliCommand): a session
-// captured through the proxy, forked against a stub API. Every forked call goes to the stub, and
-// each test checks how many it got.
+// What replay, replay --fork and exp replay print, with each command as the user's shell runs it
+// (cliCommand, envLine): a session captured through the proxy, forked against a stub API, and a
+// session the proxy logged alone. Every forked call goes to the stub, and each test checks how
+// many it got.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -18,6 +19,7 @@ import { anthropicStream, call, sleep, startUpstream, type Upstream } from "../p
 import { CLI } from "../_cli.ts";
 
 const SESSION = "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+const PROXY_ONLY = "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a";
 const USER_KEY = ["sk-ant-api03-", "NEXTSTEPNEXTSTEPNEXTSTEP", "-abcdefAA"].join("");
 const AGENT_KEY = ["sk-ant-api03-", "AGENTKEYAGENTKEYAGENTKEY", "-abcdefAA"].join("");
 
@@ -25,7 +27,7 @@ const reminder = "<system-reminder>\nAs you answer the user's questions, you can
 const first = { role: "user", content: [{ type: "text", text: reminder }, { type: "text", text: "fix the failing test" }] };
 const toolUse = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "npm test" } }] };
 
-describe("replay --fork: the commands it prints", () => {
+describe("replay and exp replay: what they print", () => {
   let up: Upstream;
   let root = "";
   let proj = "";
@@ -62,11 +64,11 @@ describe("replay --fork: the commands it prints", () => {
     const recorder = recorderFor({ config, index: stores.index, blobs: stores.blobs, env: {} });
     const proxy = await startProxy({ port: 0, upstreams: { anthropic: up.url, openai: up.url }, recorder });
     const hook = (id: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ id, v: 0, sessionId: SESSION, ts, agent: "claude-code", source: "hook", kind, cwd: "/work/demo", payload });
-    const proxied = async (messages: unknown[]) => {
+    const proxied = async (messages: unknown[], session = SESSION) => {
       const r = await call(proxy.url, {
         method: "POST",
         path: "/v1/messages?beta=true",
-        headers: { "content-type": "application/json", "x-api-key": AGENT_KEY, "anthropic-version": "2023-06-01", "user-agent": "claude-cli/2.1.319 (external, cli)", "x-claude-code-session-id": SESSION },
+        headers: { "content-type": "application/json", "x-api-key": AGENT_KEY, "anthropic-version": "2023-06-01", "user-agent": "claude-cli/2.1.319 (external, cli)", "x-claude-code-session-id": session },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1024, stream: true, system: [{ type: "text", text: "You are Claude Code." }], tools: [{ name: "Bash", input_schema: { type: "object" } }], messages }),
       });
       assert.equal(r.status, 200);
@@ -86,6 +88,9 @@ describe("replay --fork: the commands it prints", () => {
       await sleep(20);
       await proxied([first, toolUse, { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "npm ERR! Missing script: test" }, { type: "text", text: "thanks" }] }]);
       await stores.index.upsertSession(buildSession(await stores.index.listEvents(SESSION)));
+      // A session the proxy logged alone (no hooks): model calls, but no prompts or tool calls of its own.
+      await proxied([first], PROXY_ONLY);
+      await stores.index.upsertSession(buildSession(await stores.index.listEvents(PROXY_ONLY)));
     } finally {
       await proxy.close();
       await stores.index.close();
@@ -181,6 +186,20 @@ describe("replay --fork: the commands it prints", () => {
     assert.match(r.stderr, /add --dry-run to see the cost first:$/m);
     const set = envLine(env, "ANTHROPIC_API_KEY", "…");
     assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
+  });
+
+  it("a session the proxy logged alone: replay says why it has no steps, and --fork stops before any call", async () => {
+    const r = await cli(["replay", PROXY_ONLY]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^0 steps, 0 files touched$/m);
+    assert.match(r.stdout, /^This session has no steps to replay: it came from a source that records model calls only \(the proxy, or an SDK call outside trace\(\)\), and steps come from the agent's prompts and tool calls\.$/m, r.stdout);
+    const show = cliCommand(env, ["show", PROXY_ONLY]);
+    assert.ok(lines(r.stderr).includes(`    ${show}`), `expected "${show}" in:\n${r.stderr}`);
+    const before = up.seen.length;
+    const f = await cli(["replay", PROXY_ONLY, "--step", "1", "--fork"], { ANTHROPIC_API_KEY: USER_KEY });
+    assert.equal(f.status, 2, f.stderr);
+    assert.equal(up.seen.length, before, "no step to fork: no request");
+    assert.match(f.stderr, /This session has no steps to replay: it came from a source that records model calls only/);
   });
 
   it("exp replay with no calls named: the example in the message runs in the user's shell", async () => {
