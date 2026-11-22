@@ -145,7 +145,7 @@ keeps the cache under 1 GB, dropping the least recently used recordings first.
 |---|---|
 | `0 cached` on a replay | The task sets its own base URL, or calls another provider. It must read `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`. |
 | Everything runs live from call 1 | The first request changed. A change to the system prompt alone still replays. A change to the tools or the model replays only when the recording and the replay both set `excludeTools` or `excludeModel`. |
-| `… did not record a command or http task spec` | The recording ran a function task, which can't be stored as the control, or it is a replay made before coding.sh 0.1.8. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
+| `… did not record a command or http task spec` | The recording ran a function task, which can't be stored as the control, or it is a replay that an older coding.sh made without storing its task. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
 | Calls missing from the count | Paths other than messages, chat completions and responses, such as `count_tokens`, go straight to the API. WebSocket APIs are not proxied. |
 
 The proxy adds under 50 ms per call, measured against a local stub API.
