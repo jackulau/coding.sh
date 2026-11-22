@@ -10,6 +10,7 @@ import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../../src/core/config.ts";
 import { backfill } from "../../../src/core/ingest.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../../src/store/memory.ts";
+import { nodeBin } from "../../_bin.ts";
 
 describe("gemini-cli normalize", () => {
   it("maps hook payloads to golden events", async () => {
@@ -129,6 +130,25 @@ describe("gemini-cli cancelled tool calls", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("gemini-cli detect", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = moreEnv();
+  });
+  after(() => env.restore());
+
+  // With no npm package.json beside it, the version comes from `gemini --version`, which a busy
+  // machine can hold past 5 s.
+  it("waits out a gemini --version that takes over 5 s", { timeout: 30_000 }, async () => {
+    const bin = join(env.root, "bin");
+    nodeBin(bin, "gemini", 'setTimeout(() => console.log("0.9.0"), 6000);\n');
+    process.env.PATH = bin;
+    const r = await geminiCliAdapter.detect();
+    assert.equal(r.binary, join(bin, process.platform === "win32" ? "gemini.cmd" : "gemini"));
+    assert.equal(r.version, "0.9.0");
   });
 });
 
