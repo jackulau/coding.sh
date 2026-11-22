@@ -53,6 +53,8 @@ export interface TaskRow {
   /** A failed trial's session (the transcript to read first). */
   failedSession?: string;
   reason?: string;
+  /** Why the first trial with an unknown outcome has none: the infrastructure or grader error. */
+  unknownReason?: string;
 }
 
 export interface SuiteReport {
@@ -90,6 +92,7 @@ export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonl
     const known = t.trials.filter((x) => !x.unknown);
     const passed = known.filter((x) => x.pass).length;
     const failed = known.find((x) => !x.pass);
+    const unknownReason = t.trials.find((x) => x.unknown && x.reason)?.reason;
     return {
       id: t.id,
       name: t.name,
@@ -100,6 +103,7 @@ export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonl
       flaky: passed > 0 && passed < known.length,
       ...(failed?.sessionId ? { failedSession: failed.sessionId } : {}),
       ...(failed?.reason ? { reason: failed.reason } : {}),
+      ...(unknownReason ? { unknownReason } : {}),
     };
   });
   const graded = rows.filter((r) => r.n > 0);
@@ -156,33 +160,33 @@ export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
   const u = r.unit;
   const out: string[] = [];
   out.push(`${paint(r.suite, "bold", color)}  ${paint(`${r.purpose} suite · ${plural(r.tasks, u)} · ${r.k || "?"} trial${r.k === 1 ? "" : "s"} each`, "dim", color)}`);
-  if (!r.trials) {
-    out.push(paint("no trial finished with a known outcome", "yellow", color));
-    for (const n of r.notes) out.push(paint(n, "dim", color));
-    if (r.purpose === "regression") out.push(paint("regression suite: nothing was graded, so it can't pass", "red", color));
-    return out.join("\n");
+  if (!r.trials) out.push(paint("no trial finished with a known outcome", "yellow", color));
+  else {
+    const tone = r.passRate.p >= 0.8 ? "green" : r.passRate.p >= 0.5 ? "yellow" : "red";
+    out.push(`pass@1  ${paint(pct(r.passRate.p), tone, color)} [${pct(r.passRate.lo)}, ${pct(r.passRate.hi)}]  ${paint(`(${r.passed}/${r.trials} trials, 95% Wilson)`, "dim", color)}`);
+    if (r.passAtK !== undefined) out.push(`pass@${r.k}  ${pct(r.passAtK)}  ${paint(`a ${u} counts when any of ${r.k} trials passes`, "dim", color)}`);
+    if (r.passHatK !== undefined) out.push(`pass^${r.k}  ${pct(r.passHatK)}  ${paint(`a ${u} counts only when all ${r.k} trials pass`, "dim", color)}`);
   }
-  const tone = r.passRate.p >= 0.8 ? "green" : r.passRate.p >= 0.5 ? "yellow" : "red";
-  out.push(`pass@1  ${paint(pct(r.passRate.p), tone, color)} [${pct(r.passRate.lo)}, ${pct(r.passRate.hi)}]  ${paint(`(${r.passed}/${r.trials} trials, 95% Wilson)`, "dim", color)}`);
-  if (r.passAtK !== undefined) out.push(`pass@${r.k}  ${pct(r.passAtK)}  ${paint(`a ${u} counts when any of ${r.k} trials passes`, "dim", color)}`);
-  if (r.passHatK !== undefined) out.push(`pass^${r.k}  ${pct(r.passHatK)}  ${paint(`a ${u} counts only when all ${r.k} trials pass`, "dim", color)}`);
   out.push("");
   const limit = o.limit ?? 50;
   const shown = [...r.rows].sort((a, b) => (a.rate || 0) - (b.rate || 0) || a.name.localeCompare(b.name)).slice(0, limit);
-  out.push(
-    table(
-      [{ header: u }, { header: "passed", align: "right" }, { header: "" }, { header: "first failure" }],
-      shown.map((t) => [
-        t.name,
-        t.n ? `${t.passed}/${t.n}` : "—",
-        t.n === 0 ? paint("unknown", "yellow", color) : t.passed === 0 ? paint("never", "red", color) : t.flaky ? paint("flaky", "yellow", color) : paint("ok", "green", color),
-        t.failedSession ? (o.transcript ? o.transcript(t.failedSession) : t.failedSession) : t.passed < t.n && t.reason ? oneLine(t.reason, 60) : "",
-      ]),
-      { color },
-    ),
-  );
-  if (r.rows.length > limit) out.push(paint(`… ${r.rows.length - limit} more (use --json for all)`, "dim", color));
-  out.push("");
+  // With nothing graded the rows still say why: each one's infrastructure or grader error.
+  if (shown.length) {
+    out.push(
+      table(
+        [{ header: u }, { header: "passed", align: "right" }, { header: "" }, { header: "first failure" }],
+        shown.map((t) => [
+          t.name,
+          t.n ? `${t.passed}/${t.n}` : "—",
+          t.n === 0 ? paint("unknown", "yellow", color) : t.passed === 0 ? paint("never", "red", color) : t.flaky ? paint("flaky", "yellow", color) : paint("ok", "green", color),
+          t.failedSession ? (o.transcript ? o.transcript(t.failedSession) : t.failedSession) : t.passed < t.n && t.reason ? oneLine(t.reason, 60) : t.passed === t.n && t.unknownReason ? oneLine(t.unknownReason, 60) : "",
+        ]),
+        { color },
+      ),
+    );
+    if (r.rows.length > limit) out.push(paint(`… ${r.rows.length - limit} more (use --json for all)`, "dim", color));
+    out.push("");
+  }
   if (r.neverPassed.length) out.push(paint(`never passed: ${r.neverPassed.join(", ")}. Read its transcript or output first: a ${u} no trial passes is most often a broken ${u} or grader, not a weak agent.`, "yellow", color));
   if (r.flaky.length) out.push(paint(`flaky: ${r.flaky.join(", ")}. These pass some trials and fail others; pass^${r.k} counts them as failures.`, "yellow", color));
   if (r.saturated) out.push(paint(`saturated: ${pct(1 - r.rows.filter((x) => x.n && x.passed < x.n).length / Math.max(1, r.rows.filter((x) => x.n).length), 0)} of ${u}s pass every trial, so this suite can no longer show improvement. Set "purpose": "regression" in suite.json to keep it as a regression suite, and add harder ${u}s.`, "yellow", color));
@@ -191,7 +195,8 @@ export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
     const ungraded = r.rows.filter((x) => x.n === 0).map((x) => x.name);
     if (r.ok) out.push(paint(`regression suite: no ${u} fails most of its trials`, "green", color));
     if (r.failing.length) out.push(paint(`regression suite: ${r.failing.join(", ")} fail${r.failing.length === 1 ? "s" : ""} most trials`, "red", color));
-    if (ungraded.length) out.push(paint(`regression suite: ${ungraded.length} of ${plural(r.rows.length, u)} have no graded trial (grader or infrastructure errors), so it can't pass`, "red", color));
+    if (!r.trials) out.push(paint("regression suite: nothing was graded, so it can't pass", "red", color));
+    else if (ungraded.length) out.push(paint(`regression suite: ${ungraded.length} of ${plural(r.rows.length, u)} have no graded trial (grader or infrastructure errors), so it can't pass`, "red", color));
   }
   return out.join("\n").replace(/\n+$/, "");
 }
@@ -254,7 +259,7 @@ export function renderSuitesMarkdown(suites: readonly MarkdownSuite[], o: { tran
     const shown = [...r.rows].sort((a, b) => (a.rate || 0) - (b.rate || 0) || a.name.localeCompare(b.name)).slice(0, limit);
     for (const t of shown) {
       const status = t.n === 0 ? "unknown" : t.passed === 0 ? "never" : t.flaky ? "flaky" : "ok";
-      const first = t.failedSession ? `\`${(o.transcript ? o.transcript(t.failedSession) : t.failedSession).replace(/`/g, "")}\`` : t.passed < t.n && t.reason ? cell(t.reason, 80) : "";
+      const first = t.failedSession ? `\`${(o.transcript ? o.transcript(t.failedSession) : t.failedSession).replace(/`/g, "")}\`` : t.passed < t.n && t.reason ? cell(t.reason, 80) : t.passed === t.n && t.unknownReason ? cell(t.unknownReason, 80) : "";
       out.push(`| ${cell(t.name, 80)} | ${t.n ? `${t.passed}/${t.n}` : "—"} | ${status} | ${first} |`);
     }
     if (r.rows.length > limit) out.push("", `${r.rows.length - limit} more ${u}s: \`coding.sh eval run ${s.suite.replace(/`/g, "")} --json\` lists them all.`);

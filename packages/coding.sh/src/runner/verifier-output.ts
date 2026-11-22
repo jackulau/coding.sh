@@ -5,6 +5,7 @@
 // fragment the redactor no longer recognises.
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { RunResult, VerifierOutput } from "../core/types.ts";
+import { infraKind, type InfraKind } from "../jobs/retry.ts";
 
 /** The redactor capture uses (capture.redact and capture.redactPatterns), for the runs a command starts. */
 export function captureRedactor(config: { capture: { redact: readonly string[]; redactPatterns: readonly string[] } }, env?: NodeJS.ProcessEnv): Redactor {
@@ -115,6 +116,61 @@ export function failedRuns(runs: readonly RunResult[], redactor: Redactor = crea
 }
 
 const withAgent = (agent: FailedRun["agent"]): Pick<FailedRun, "agent"> => (agent ? { agent } : {});
+
+/** How a reason starts for an infrastructure failure the run recorded no error for. */
+const INFRA_REASON: Record<InfraKind, string> = {
+  setup: "setup failed",
+  auth: "agent login failed",
+  "rate-limit": "rate limited",
+  overloaded: "model API overloaded",
+  server: "model API server error",
+  network: "network error",
+  tempfail: "temporary failure",
+};
+
+/** A line of agent output that names an error. */
+const ERROR_WORD = /\b(?:error|errno|enoent|eacces|fatal|failed|refused|denied|not found|cannot|can't|unable)\b/i;
+
+/** In a JSON line (stream-json output), the first string value `test` accepts; else the line. */
+function saidIn(line: string, test: (s: string) => boolean): string {
+  if (!line.startsWith("{")) return line;
+  let found: string | undefined;
+  try {
+    JSON.parse(line, (_k, v: unknown) => {
+      if (found === undefined && typeof v === "string" && test(v)) found = v;
+      return v;
+    });
+  } catch {
+    // not JSON
+  }
+  return found ?? line;
+}
+
+/**
+ * Why a run failed, for the report's first-failure column: its error; for an
+ * infrastructure failure without one, the kind and the line of the agent's
+ * output the kind was read from; for an agent that exited non-zero, the exit
+ * code and the last line of its stderr that names an error; else the
+ * verifier's exit. Cleaned and redacted like the agent's stderr.
+ */
+export function runReason(r: RunResult, redactor: Redactor = createRedactor()): string | undefined {
+  const error = r.error ? cleanStream(r.error, redactor) : "";
+  if (error) return error;
+  if (r.pass) return undefined;
+  const a = r.agent as RunResult["agent"] | undefined;
+  const lines = (s: string | undefined) => (s ? cleanStream(uncut(s), redactor).split("\n").map((l) => l.trim()).filter(Boolean) : []);
+  if (r.infra) {
+    const kind = r.infra;
+    const line = [...lines(a?.stderrTail), ...lines(a?.stdoutTail)].findLast((l) => infraKind(l) === kind);
+    return line ? `${INFRA_REASON[kind]}: ${saidIn(line, (s) => infraKind(s) === kind)}` : INFRA_REASON[kind];
+  }
+  if (a && !a.timedOut && a.exitCode) {
+    const err = lines(a.stderrTail);
+    const line = err.findLast((l) => ERROR_WORD.test(l)) ?? err.at(-1);
+    return `agent exited ${a.exitCode}${line ? `: ${line}` : ""}`;
+  }
+  return r.verifierExit === null ? "verifier did not finish" : `verifier exit ${r.verifierExit}`;
+}
 
 /**
  * The human report's block for failed runs: up to `max` of them, each with why

@@ -154,7 +154,9 @@ share of all trials that passed.
   wants pass^k; a tool where one good answer is enough can use pass@k.
 - A **flaky** task passed some trials and failed others. It counts for pass@k and against pass^k.
 - **first failure** links the session of a failed trial (`coding.sh show <id>`, or the viewer), or
-  gives the grader's reason. Read failed transcripts before you change a prompt or a grader: a
+  gives the grader's reason, or the agent's exit code and error when it exited non-zero. A task
+  with no failed trial shows the error of a trial with no outcome, such as a setup step that
+  failed or a refused login. Read failed transcripts before you change a prompt or a grader: a
   task no trial ever passes is more often a broken task than a hard one.
 - **experiment** names the stored runs. For a tasks suite there is no experiment record, so
   `coding.sh exp show <id>` lists those runs per task, with the agent's cost at API prices
