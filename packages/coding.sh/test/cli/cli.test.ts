@@ -72,6 +72,9 @@ function tmpHome(): Home {
   return { root, home, data, env };
 }
 
+/** The CLI as the commands it runs name it: tmpHome sets no MSYSTEM or SHELL, so on Windows that is PowerShell or cmd. */
+const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+
 function cli(h: Home, args: string[], extra: NodeJS.ProcessEnv = {}, input?: string): SpawnSyncReturns<string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...h.env, ...extra })) if (v !== undefined) env[k] = v;
@@ -261,7 +264,8 @@ describe("cli exit codes", () => {
     assert.equal(e.reason, "confirmation_required");
     // An agent reading this must ask the user before it re-runs with --yes.
     assert.equal(e.askUser, true);
-    assert.deepEqual(e.next, ["With their approval:", "coding.sh init --yes"]);
+    // The command as given, with --yes: it sets up what the user named and nothing else.
+    assert.deepEqual(e.next, ["With their approval:", `${BIN} init --agent claude-code --json --yes`]);
     assert.equal(existsSync(join(h.home, ".claude", "settings.json")), false);
   });
 
@@ -458,6 +462,21 @@ describe("cli init/uninstall round trip", () => {
     assert.equal((parseJson(u2.stdout, "uninstall again") as { outcome: string }).outcome, "unchanged");
   });
 
+  it("without a terminal, uninstall --agent names a rerun that removes only that agent", () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["init", "--agent", "claude-code", "--agent", "codex", "--no-import", "--yes"]).status, 0);
+    const r = cli(h, ["uninstall", "--agent", "codex", "--json"], {}, "");
+    assert.equal(r.status, 2, r.stderr);
+    const rerun = (JSON.parse(r.stderr.trim().split("\n").at(-1)!) as { next: string[] }).next[1]!;
+    assert.equal(rerun, `${BIN} uninstall --agent codex --json --yes`);
+    // Run as printed: Codex loses its hooks and Claude Code keeps its own.
+    const u = cli(h, rerun.split(" ").slice(1));
+    assert.equal(u.status, 0, u.stderr);
+    const doc = parseJson(cli(h, ["doctor", "--json", "--agent", "claude-code", "--agent", "codex"]).stdout, "doctor") as { agents: { id: string; hooked: boolean }[] };
+    assert.equal(doc.agents.find((a) => a.id === "codex")?.hooked, false);
+    assert.equal(doc.agents.find((a) => a.id === "claude-code")?.hooked, true);
+  });
+
   it("captures a hook event end to end", () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
@@ -604,9 +623,11 @@ describe("cli zero setup", () => {
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
 
     // Started with npx (npm sets npm_command=exec), `coding.sh` is not on PATH: the next steps say npx.
+    // npx on Windows runs the command through cmd, where only the codingsh bin runs.
+    const npxBin = process.platform === "win32" ? "npx -p coding\\.sh codingsh" : "npx coding\\.sh";
     const npx = cli(h, ["init", "--yes", ...agentArgs], { npm_command: "exec" }).stderr;
-    assert.match(npx, /Open the viewer: npx coding\.sh ui$/m);
-    assert.match(npx, /see what to fix first: npx coding\.sh improve$/m);
+    assert.match(npx, new RegExp(`Open the viewer: ${npxBin} ui$`, "m"));
+    assert.match(npx, new RegExp(`see what to fix first: ${npxBin} improve$`, "m"));
 
     const again = cli(h, ["init", "--yes", "--json", ...agentArgs]);
     assert.equal((parseJson(again.stdout, "init again") as { outcome: string }).outcome, "unchanged", again.stderr);
