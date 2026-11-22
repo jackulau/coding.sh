@@ -419,6 +419,21 @@ describe("alert parts", () => {
     }
   });
 
+  it("a failed command's error keeps the last line of a long stderr, where a Python traceback names the problem", async () => {
+    const sb = sandbox();
+    try {
+      // A deep traceback, longer than one read of the pipe, then the message on its own write.
+      const frames = Array.from({ length: 3000 }, (_, i) => `  File "/work/demo/notify.py", line ${i + 1}, in step${i}\n`).join("");
+      const file = join(sb.root, "fail.js");
+      writeFileSync(file, `process.stderr.write(${JSON.stringify(`Traceback (most recent call last):\n${frames}`)}); setTimeout(() => { process.stderr.write("ValueError: no webhook set\\n"); process.exitCode = 1; }, 50);`);
+      const payload = { alert: "a", state: "ALERT" as const, previous: "OK" as const, value: 2, threshold: 1, window: "1d", at: new Date(0).toISOString() };
+      const d = await deliver({ kind: "command", command: `"${process.execPath}" "${file}"` }, payload, { backoffMs: 1, timeoutMs: 30_000 });
+      assert.equal(d.error, "command exited 1: Traceback (most recent call last): … ValueError: no webhook set");
+    } finally {
+      sb.cleanup();
+    }
+  });
+
   it("stderrLine keeps all of a short stderr, and the first and last lines of a long one", () => {
     // PowerShell 5.1's Write-Error: the message, then the error record.
     const ps = "Write-Error boom; exit 3 : boom\r\n    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n \r\n";

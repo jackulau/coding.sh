@@ -114,9 +114,13 @@ export function stderrLine(stderr: string): string {
   return `${lines[0]!.slice(0, 98)} … ${lines.at(-1)!.slice(0, 98)}`;
 }
 
+/** How much of a failed command's stderr is kept for its error: this much of its start, and of its end. */
+const STDERR_KEEP = 2000;
+
 function runOnce(command: string, body: string, o: DeliverOptions): Promise<string | undefined> {
   return new Promise((resolve) => {
-    let stderr = "";
+    let head = "";
+    let tail = "";
     let settled = false;
     const finish = (err: string | undefined) => {
       if (settled) return;
@@ -136,10 +140,14 @@ function runOnce(command: string, body: string, o: DeliverOptions): Promise<stri
       finish(`command timed out after ${ms}ms`);
     }, ms);
     child.stderr!.on("data", (d: Buffer) => {
-      if (stderr.length < 2000) stderr += d.toString();
+      if (head.length < STDERR_KEEP) head += d.toString();
+      else tail = (tail + d.toString()).slice(-STDERR_KEEP);
     });
     child.on("error", (e) => finish(`command failed to start: ${e.message}`));
-    child.on("close", (code) => finish(code === 0 ? undefined : `command exited ${code ?? "on a signal"}${stderrLine(stderr) ? `: ${stderrLine(stderr)}` : ""}`));
+    child.on("close", (code) => {
+      const line = stderrLine(tail ? `${head}\n${tail}` : head);
+      finish(code === 0 ? undefined : `command exited ${code ?? "on a signal"}${line ? `: ${line}` : ""}`);
+    });
     // A command that exits without reading stdin closes the pipe: that is not a failed delivery.
     child.stdin!.on("error", () => {});
     child.stdin!.end(body);
