@@ -178,8 +178,9 @@ type Reader = {
 };
 
 function reader(root: TomlTable, file: string): Reader {
+  // The value as TOML-ish JSON: "5" in quotes is a string, 5 a number. No JavaScript type name.
   const bad = (path: string, want: string, got: unknown): never => {
-    throw new ConfigError(`${path} must be ${want}, got ${Array.isArray(got) ? "array" : typeof got} ${JSON.stringify(got)}`, file);
+    throw new ConfigError(`${path} must be ${want}, got ${JSON.stringify(got)}`, file);
   };
   const r: Reader = {
     table(key) {

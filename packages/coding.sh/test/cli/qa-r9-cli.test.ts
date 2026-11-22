@@ -38,14 +38,14 @@ const cli = (sb: Sandbox, args: string[]) => {
 
 describe("--limit past the largest safe integer", () => {
   test("is a usage error naming the range, not a store crash", () => {
-    assert.throws(() => positiveInt(1e30, "limit"), (e: unknown) => e instanceof UsageError && /--limit must be an integer from 1 to 9007199254740991, got 1e\+30/.test(e.message));
+    assert.throws(() => positiveInt(1e30, "limit"), (e: unknown) => e instanceof UsageError && /--limit must be a whole number from 1 to 9007199254740991, got 1e\+30/.test(e.message));
     assert.equal(positiveInt(Number.MAX_SAFE_INTEGER, "limit"), Number.MAX_SAFE_INTEGER);
   });
 
   test("sessions --limit 1e30 exits 2", () => {
     const r = cli(box(), ["sessions", "--limit", "1e30"]);
     assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /--limit must be an integer from 1 to/);
+    assert.match(r.stderr, /--limit must be a whole number from 1 to 9007199254740991, got "1e30"/);
   });
 });
 
