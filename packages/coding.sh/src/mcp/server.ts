@@ -82,7 +82,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
     opened ??= openContext({ env, cwd }).catch((e: unknown) => {
       opened = undefined;
       // The next step follows what named the store (core/context.ts storeOpenNext).
-      const next = (e as { reason?: unknown }).reason === "no_fts5" ? "Install Node 22.16 or newer" : storeOpenNext(env).join(" ");
+      const next = (e as { reason?: unknown }).reason === "no_fts5" ? "Install Node 22.16 or newer" : storeOpenNext(env, e).join(" ");
       throw new ToolError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}. ${next}.`);
     });
     return opened;

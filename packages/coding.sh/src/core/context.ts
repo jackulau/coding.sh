@@ -2,7 +2,7 @@
 // effective config, paths, opened stores and sinks, and a single close().
 import { existsSync } from "node:fs";
 import type { BlobStore, Config, IndexStore, Sink } from "./types.ts";
-import { loadConfig } from "./config.ts";
+import { ConfigEnvError, loadConfig } from "./config.ts";
 import { paths } from "./paths.ts";
 import { clearIngestStopped } from "./ingest-health.ts";
 import { fileUrlPath, openStores, parseStoreUrl } from "../store/factory.ts";
@@ -55,8 +55,13 @@ export interface OpenContextOptions {
 /** The index store URL from --store / CODING_SH_STORE_URL, if one overrides the config. */
 const storeUrlOverride = (env: NodeJS.ProcessEnv): string | undefined => env.CODING_SH_STORE_URL?.trim() || undefined;
 
-/** The next step when the store does not open: check what named it (never echoing a URL, which may hold a password). */
-export function storeOpenNext(env: NodeJS.ProcessEnv): string[] {
+/**
+ * The next step when the store does not open: check what named it (never echoing a URL, which may
+ * hold a password). A `${NAME}` the config references but the environment lacks names that key,
+ * which may be a sink's header rather than the store.
+ */
+export function storeOpenNext(env: NodeJS.ProcessEnv, err?: unknown): string[] {
+  if (err instanceof ConfigEnvError) return [`Set ${err.variable} in the environment, or change ${err.where} in the config:`, "coding.sh config path"];
   return storeUrlOverride(env) ? ["Check the store URL given with --store or set in CODING_SH_STORE_URL"] : ["Check the [store] section of the config:", "coding.sh config path"];
 }
 

@@ -19,6 +19,7 @@ import { createLogger } from "../../src/server/log.ts";
 import { ServeMetrics } from "../../src/server/metrics.ts";
 import { SinkMirror } from "../../src/server/mirror.ts";
 import { startServe, type ServeHandle, type ServeOptions } from "../../src/server/serve.ts";
+import { sinceSink } from "../../src/sinks/since.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { iAttr, otlpSpan, otlpTraces, sAttr } from "../otel/_encode.ts";
 import { CLI } from "../_cli.ts";
@@ -568,6 +569,21 @@ describe("serve mirrors committed events to [[sinks]]", () => {
     assert.equal(refusing.batches.length, 0);
     assert.equal(metrics.sinkEvents.get({ sink: "refusing", result: "failed" }), 1);
     assert.equal(metrics.sinkEvents.get({ sink: "flaky", result: "sent" }), 1);
+    await mirror.close(100);
+    metrics.close();
+  });
+
+  it("a sink with since gets no session that started before it, and only what it got counts as sent", async () => {
+    const inner = fakeSink("team", "metadata");
+    const metrics = new ServeMetrics();
+    const mirror = new SinkMirror({ sinks: [sinceSink(inner, 1000)], blobs: new MemoryBlobStore(), metrics, log: quiet(), flushMs: 10, minBackoffMs: 10, maxBackoffMs: 50 });
+    const ev = (sessionId: string, ts: number): AgentEvent => ({ v: 0, id: `${sessionId}-${ts}`, sessionId, ts, agent: "sdk", kind: "notification", payload: {} });
+    const row = (id: string, startedAt: number) => ({ id, agent: "sdk", startedAt, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] }) as Session;
+    mirror.add([ev("old", 999), ev("old", 1001), ev("new", 1000)], [row("old", 999), row("new", 1000)]);
+    await mirror.flush();
+    assert.deepEqual(inner.batches.flatMap((b) => b.events.map((e) => e.id)), ["new-1000"]);
+    assert.deepEqual(inner.batches.flatMap((b) => b.sessions.map((s) => s.id)), ["new"]);
+    assert.equal(metrics.sinkEvents.get({ sink: "team", result: "sent" }), 1);
     await mirror.close(100);
     metrics.close();
   });

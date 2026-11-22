@@ -1014,7 +1014,7 @@ export async function run(c: CommandContext): Promise<number> {
           const loaded = await loadSpec(c, store, c.positionals[0], false);
           // X-11: both arms record, or both replay one source at one boundary (A is the control).
           const llmExp = await import("./exp-llm.ts");
-          const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
+          const llm = await llmExp.llmPlan(c, store, c.positionals[0], ctx.config.capture);
           const { result: ab, job } = await runArms(c, store, loaded, arms, "exp ab", {
             ...(llm ? { llm: llm.opts } : {}),
             ...(seed !== undefined ? { seed } : {}),
@@ -1056,7 +1056,7 @@ export async function run(c: CommandContext): Promise<number> {
           if (!baseline) throw new CliError(`Can't find a completed experiment ${JSON.stringify(baselineRef)} for --baseline`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         }
         // X-11: --replay runs the recorded config as a control arm next to this task, unless --no-control.
-        const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
+        const llm = await llmExp.llmPlan(c, store, c.positionals[0], ctx.config.capture);
         if (llm?.source && llm.control) {
           if (adaptive || baseline || seriesFlag(c) !== undefined || picked.length || c.flags.weights !== undefined) {
             throw new UsageError(`--replay with a control arm runs an A/B; pass --no-control to combine it with ${picked.length ? `--${picked[0]}` : c.flags.weights !== undefined ? "--weights" : "--samples, --stop-on-regression or --series"}`, { reason: "invalid_argument" });
