@@ -355,7 +355,8 @@ export const copilotCliAdapter: Adapter = {
   // 3 (0.1.5): hook events keep the OTel trace from the hook's traceparent (traceId, parentSpanId). A tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
-  parseVersion: 5,
+  // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
+  parseVersion: 6,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["copilot"]);
     const dir = copilotHome();

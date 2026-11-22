@@ -751,7 +751,8 @@ export const claudeCode: Adapter = {
   // 18 (0.1.8): a Notification after a new tool call is another firing even when its payload repeats one under
   //    2 s old (the same permission prompt for two tool calls in a row).
   // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
-  parseVersion: 19,
+  // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
+  parseVersion: 20,
 
   detect() {
     const dir = claudeConfigDir();
