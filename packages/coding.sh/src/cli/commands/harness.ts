@@ -364,14 +364,14 @@ export async function run(c: CommandContext): Promise<number> {
         if (mcpServers.length) bundle = { ...bundle, mcpServers };
       }
     }
-    // The id is the content, so the same setup snapshotted again is a bundle already stored: it
-    // keeps its creation time, and the record outside the id (MCP servers, note) is stored again,
-    // "updated" when it differs.
+    // The id is the content, so the same setup snapshotted again is a bundle already stored. It is
+    // stored again with this snapshot's time, as before, so its name picks it (a name means the
+    // newest bundle so named), and with the record outside the id (MCP servers, note): "updated"
+    // when that differs.
     const stored = await ctx.index.getBundle(bundle.id);
     const existed = stored?.id === bundle.id;
     const updated: string[] = [];
     if (stored && existed) {
-      bundle = { ...bundle, createdAt: stored.createdAt };
       if (canonicalJson(stored.mcpServers ?? []) !== canonicalJson(bundle.mcpServers ?? [])) updated.push("MCP servers");
       if ((stored.note ?? "") !== (bundle.note ?? "")) updated.push("note");
     }

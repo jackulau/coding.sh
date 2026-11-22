@@ -186,7 +186,6 @@ describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_
     const second = json(dir, cfg, "twice");
     assert.deepEqual([first.outcome, second.outcome], ["created", "unchanged"]);
     assert.equal(second.bundle.id, first.bundle.id);
-    assert.equal(second.bundle.createdAt, first.bundle.createdAt, "it keeps the time it was first stored");
     const text = run(dir, cfg, ["--name", "twice"]);
     assert.match(text.stderr + text.stdout, /twice already exists, unchanged: 1 file\b/);
     assert.ok(text.stdout.includes(first.bundle.id), text.stdout);
@@ -197,12 +196,22 @@ describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_
     assert.ok(mcp.stdout.includes(first.bundle.id), mcp.stdout);
     put(join(cfg, ".claude.json"), "{}");
     const gone = json(dir, cfg, "twice");
-    assert.deepEqual([gone.outcome, gone.bundle.id, gone.bundle.createdAt], ["updated", first.bundle.id, first.bundle.createdAt]);
+    assert.deepEqual([gone.outcome, gone.bundle.id], ["updated", first.bundle.id]);
     assert.equal(json(dir, cfg, "twice").outcome, "unchanged");
     put(join(dir, "CLAUDE.md"), "changed\n");
     const changed = run(dir, cfg, ["--name", "twice"]);
     assert.match(changed.stderr + changed.stdout, /twice: 1 file\b/);
     assert.doesNotMatch(changed.stderr + changed.stdout, /already exists/);
+    // Back to the first setup: the bundle already stored, snapshotted last, so the name picks it
+    // again (a name means the newest bundle so named), not the changed one.
+    put(join(dir, "CLAUDE.md"), "twice\n");
+    const back = json(dir, cfg, "twice");
+    assert.deepEqual([back.outcome, back.bundle.id], ["unchanged", first.bundle.id]);
+    const listed = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "list", "--json"], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd: dir, encoding: "utf8", timeout: 60_000 });
+    assert.equal(listed.status, 0, listed.stderr);
+    const named = (JSON.parse(listed.stdout) as { bundles: { id: string; name: string }[] }).bundles.filter((b) => b.name === "twice");
+    assert.equal(named.length, 2);
+    assert.equal(named[0]!.id, first.bundle.id, "harness list puts the setup snapshotted last first");
   });
 
   it("says a harness TOML whose note alone changed is the same bundle, its note updated", () => {
