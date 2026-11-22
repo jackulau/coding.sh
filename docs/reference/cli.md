@@ -1853,7 +1853,7 @@ coding.sh exp ab [spec] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits, else your last harness commit) |
 | `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
@@ -3886,7 +3886,7 @@ coding.sh refine check [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Before (default: git HEAD when B is omitted, else the repo's current files) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits) |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 
 ```sh

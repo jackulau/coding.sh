@@ -147,7 +147,7 @@ it says No sessions yet or Too early to tell. See [Did your last change help?](.
 | Flag | Default | What it does |
 |---|---|---|
 | `--a` | git HEAD | The baseline: a file, a directory, `git:REV` or `none`. |
-| `--b` | your uncommitted edits | The candidate. A file in the repo replaces the file at its path; a file outside the repo replaces the one with its name, so `--b ../drafts/AGENTS.md` tests a draft. |
+| `--b` | your uncommitted edits | The candidate. A file replaces the instructions, rule or skill file at its path in the repo, else the one with its name, so `--b drafts/AGENTS.md` tests a draft of AGENTS.md. |
 | `--behavior` | all | Only these kinds of decision point. |
 | `--since` | 14d | Sessions started since this time. |
 | `--repo` | this repo | Another directory, or `all`. |

@@ -169,8 +169,10 @@ export const sameFiles = (x: readonly ContextFile[], y: readonly ContextFile[]):
  * - `none`: no harness files;
  * - `git:<rev>`: the harness files committed at that revision;
  * - a directory: its CLAUDE.md, AGENTS.md, GEMINI.md, rules and skills;
- * - a file: `base` with that file swapped in (or added) under its repo path,
- *   or its name when it lives outside the repo;
+ * - a file: `base` with that file swapped in for the harness file it stands
+ *   for, as `refine test` reads it: the one at its repo path, else the one with
+ *   its name (`drafts/AGENTS.md` replaces AGENTS.md); any other file is added
+ *   under its repo path, or its name when it lives outside the repo;
  * - a harness bundle id or name (`coding.sh harness list`).
  */
 export async function resolveArm(v: string, o: { cwd: string; root: string; base: ContextFile[]; flag: string; ctx: Pick<Context, "index" | "blobs"> }): Promise<Arm> {
@@ -189,7 +191,9 @@ export async function resolveArm(v: string, o: { cwd: string; root: string; base
       return { label: v, files, watch: [{ dir: abs, recursive: true }] };
     }
     const rel = relative(o.root, abs).replace(/\\/g, "/");
-    const path = !rel.startsWith("..") && !isAbsolute(rel) ? rel : basename(abs);
+    const inside = !rel.startsWith("..") && !isAbsolute(rel);
+    const name = basename(abs);
+    const path = inside && isHarnessPath(rel) ? rel : o.base.some((f) => f.path === name) || isHarnessPath(name) ? name : inside ? rel : name;
     const text = readFileSync(abs, "utf8");
     return { label: v, files: [...o.base.filter((f) => f.path !== path), { path, text }].sort(byPath), watch: [{ dir: dirname(abs), recursive: false }] };
   }
