@@ -42,6 +42,10 @@ const BUDGET = {
     // check builds from a shallow checkout, which dates the page at the merge commit, and those
     // digits alone moved it a few bytes over. About 10% over.
     "/docs/config/": 28.6 * KB,
+    // The agents page gains a row with each adapter. In the 2026-11-22 build its date alone
+    // (dateModified, which a pull request's check takes from the merge commit) moves it between
+    // 26,521 and 26,630 bytes, across the 26KB other pages get. About 10% over.
+    "/docs/agents/": 28.6 * KB,
     // The front page in another language (/de, /ja, ...) is 24.5-24.8KB in the 2026-11-14
     // build: the same page as /, with longer words or wider characters. About 10% over.
     translated: 27.3 * KB,
