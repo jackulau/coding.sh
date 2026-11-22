@@ -63,6 +63,20 @@ describe("budgets.json", () => {
     assert.deepEqual(r.budgets.map((b) => b.id), ["day", "week-codex", "month-web", "month-web-2"]);
   });
 
+  test("one repo spelled two ways on Windows is one budget, as the sessions it counts are one set", () => {
+    let r = upsertBudget([], { period: "month", limitUsd: 8, repo: "C:\\Work\\Demo Repo" }, 0, "win32");
+    r = upsertBudget(r.budgets, { period: "month", limitUsd: 7, repo: "C:\\work\\demo repo" }, 0, "win32");
+    assert.equal(r.replaced, true);
+    assert.deepEqual(r.budgets.map((b) => [b.id, b.repo, b.limitUsd]), [["month-demo-repo", "C:\\Work\\Demo Repo", 7]], "the first spelling and id stay");
+    r = upsertBudget(r.budgets, { period: "month", limitUsd: 6, repo: "demo repo" }, 0, "win32");
+    r = upsertBudget(r.budgets, { period: "month", limitUsd: 5, repo: "Demo Repo" }, 0, "win32");
+    assert.deepEqual(r.budgets.map((b) => [b.id, b.limitUsd]), [["month-demo-repo", 7], ["month-demo-repo-2", 5]], "a repo name is not its path");
+    // Elsewhere case counts: /work/Web and /work/web are two folders.
+    r = upsertBudget([], { period: "day", limitUsd: 1, repo: "/work/Web" }, 0, "linux");
+    r = upsertBudget(r.budgets, { period: "day", limitUsd: 2, repo: "/work/web" }, 0, "linux");
+    assert.deepEqual(r.budgets.map((b) => [b.id, b.repo]), [["day-web", "/work/Web"], ["day-web-2", "/work/web"]]);
+  });
+
   test("written through a temp file and read back; a missing file is no budgets", () => {
     const env = home();
     assert.deepEqual(readBudgets(env), []);

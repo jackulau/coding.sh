@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { basename, dirname, isAbsolute } from "node:path";
 import type { IndexStore, Session } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
-import { matchesPlace, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
+import { matchesPlace, pathKey, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
 import { matchesSession } from "../query/match.ts";
 import { needsEvents, parseWhere, type Node } from "../query/where.ts";
 
@@ -122,10 +122,12 @@ export const whereSlug = (where: string): string => `w${createHash("sha256").upd
 
 /**
  * Adds a budget, or sets the limit of the one with the same period, agent, repo and where (it keeps its id).
+ * Repos compare as sessions match them (pathKey): on Windows, C:\Web and c:\web are one folder.
  * Returns the budget stored and whether it replaced one.
  */
-export function upsertBudget(list: readonly Budget[], b: Omit<Budget, "id" | "createdAt">, now = Date.now()): { budgets: Budget[]; budget: Budget; replaced: boolean } {
-  const same = list.find((x) => x.period === b.period && x.agent === b.agent && x.repo === b.repo && x.where === b.where);
+export function upsertBudget(list: readonly Budget[], b: Omit<Budget, "id" | "createdAt">, now = Date.now(), platform: string = process.platform): { budgets: Budget[]; budget: Budget; replaced: boolean } {
+  const sameRepo = (r: string | undefined) => r === b.repo || (r !== undefined && b.repo !== undefined && pathKey(r, platform) === pathKey(b.repo, platform));
+  const same = list.find((x) => x.period === b.period && x.agent === b.agent && sameRepo(x.repo) && x.where === b.where);
   if (same) {
     const budget = { ...same, limitUsd: b.limitUsd };
     return { budgets: list.map((x) => (x === same ? budget : x)), budget, replaced: true };
