@@ -30,7 +30,7 @@ import {
 } from "../../eval/trigger.ts";
 import { positiveInt, unknownAgent, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
-import { cliCommand, rerunWithYes } from "../next-steps.ts";
+import { cliCommand, nextStepBin, rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -142,7 +142,7 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
     if (!out.json) {
       out.note(`${skill} in ${skillsDirOf(agent)}/${skill}/ on ${agent}${siblings.length ? ` with ${plural(siblings.length, "sibling skill")} (${siblings.map((s) => s.name).join(", ")})` : ", no sibling skills"}`);
     }
-    if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so probes fall back to the agent's stdout. Run `coding.sh init` first.");
+    if ((await ensureHookBin(c.env)) === "unavailable") out.warn(`The coding.sh hook bin is missing and can't be written, so probes fall back to the agent's stdout. Run \`${nextStepBin(c.env)} init\` first.`);
 
     // Every probe starts from the same empty tree.
     const empty = join(paths(c.env).repos, "empty-start");

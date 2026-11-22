@@ -163,7 +163,9 @@ share of all trials that passed.
   gives the grader's reason, or the agent's exit code and error when it exited non-zero. A task
   with no failed trial shows the error of a trial with no outcome, such as a setup step that
   failed or a refused login. Read failed transcripts before you change a prompt or a grader: a
-  task no trial ever passes is more often a broken task than a hard one.
+  task no trial ever passes is more often a broken task than a hard one. In PowerShell and cmd,
+  this command and the others the report prints name `codingsh`, the bin that runs there
+  ([Windows](install.md#windows)).
 - **experiment** names the stored runs. For a tasks suite there is no experiment record, so
   `coding.sh exp show <id>` lists those runs per task, with the agent's cost at API prices
   (`--json`: `taskRuns`).

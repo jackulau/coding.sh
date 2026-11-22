@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { which } from "../../src/adapters/_shared/detect.ts";
-import { cliCommand } from "../../src/cli/next-steps.ts";
+import { commandsForShell } from "../../src/cli/commands/eval.ts";
+import { cliCommand, nextStepBin } from "../../src/cli/next-steps.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { fencePackageScope, pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
@@ -20,8 +21,9 @@ let home = "";
 let proj = "";
 let env: Record<string, string> = {};
 
-function cli(args: string[], cwd = proj) {
-  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd, encoding: "utf8", timeout: 120_000 });
+/** `extra` adds to the env: `{ npm_command: "exec" }` is a CLI started with npx, which prints npx's form. */
+function cli(args: string[], cwd = proj, extra: Record<string, string> = {}) {
+  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: { ...env, ...extra }, cwd, encoding: "utf8", timeout: 120_000 });
 }
 
 before(() => {
@@ -60,6 +62,24 @@ before(() => {
 });
 after(() => {
   if (root) rmSync(root, { recursive: true, force: true });
+});
+
+describe("commandsForShell", () => {
+  const note = "add reference.patch, then coding.sh eval validate <task>; or record it again with coding.sh run -- <agent> (coding.sh init)";
+  it("names each command as PowerShell or cmd runs it", () => {
+    assert.equal(commandsForShell(note, {}, "win32"), 'add reference.patch, then codingsh eval validate <task>; or record it again with codingsh run "--" <agent> (codingsh init)');
+  });
+  it("names npx's form under npx", () => {
+    assert.equal(commandsForShell(note, { npm_command: "exec" }, "linux"), "add reference.patch, then npx coding.sh eval validate <task>; or record it again with npx coding.sh run -- <agent> (npx coding.sh init)");
+  });
+  it("leaves the text alone where coding.sh runs as it is: sh, and Git Bash on Windows", () => {
+    assert.equal(commandsForShell(note, {}, "linux"), note);
+    assert.equal(commandsForShell(note, { MSYSTEM: "MINGW64" }, "win32"), note);
+  });
+  it("leaves a coding.sh that starts no command alone", () => {
+    const text = "The coding.sh hook bin is missing; ~/.coding.sh/spool and ./coding.sh build stay, as does coding.sh.";
+    assert.equal(commandsForShell(text, {}, "win32"), text);
+  });
 });
 
 describe("eval init + eval run: cases", () => {
@@ -190,6 +210,40 @@ describe("eval init --sessions: a session that just ended", () => {
   });
 });
 
+describe("eval init --sessions: the commands it prints", () => {
+  it("names the CLI as the user's shell runs it, in its notes too", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const repo = join(root, "named");
+    mkdirSync(repo);
+    writeFileSync(join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
+    writeFileSync(join(repo, "test.js"), 'if (require("./sum.js")(2, 3) !== 5) process.exit(1);\n');
+    const git = (...a: string[]) => assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, env }).status, 0, a.join(" "));
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "init");
+    // A wrong fix, and the agent exits 1: a failed session, so its diff is kept as a near miss
+    // and eval init says how to add the reference.
+    const quiet = { CODING_SH_NO_AUTO_INGEST: "1" };
+    const fix = 'require("fs").writeFileSync("sum.js","module.exports=(a,b)=>a*b;\\n");process.exitCode=1';
+    assert.equal(cli(["run", "--", process.execPath, "-e", fix, "make sum add"], repo, quiet).status, 1);
+    git("checkout", "-q", "sum.js");
+    // The plain env has no MSYSTEM or SHELL: on Windows that is PowerShell or cmd. npx's form shows on every platform.
+    for (const extra of [quiet, { ...quiet, npm_command: "exec" }]) {
+      const bin = nextStepBin({ ...env, ...extra });
+      const r = cli(["eval", "init", "named", "--session", "latest", "--verifier", "node test.js", "--force"], repo, extra);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(r.stderr.includes(`then ${bin} eval import evals/named/tasks/<task> loads it and ${bin} eval validate <task> checks`), r.stderr);
+      assert.ok(r.stderr.includes(`\n    ${bin} compare <before> <after> --tag suite:named --k 3\n`), r.stderr);
+      // --json too: an agent reads its notes and runs its command.
+      const j = cli(["eval", "init", "named", "--session", "latest", "--verifier", "node test.js", "--force", "--json"], repo, extra);
+      assert.equal(j.status, 0, j.stdout + j.stderr);
+      const doc = JSON.parse(j.stdout) as { notes: string[]; run: string };
+      assert.ok(doc.notes.some((n) => n.includes(`then ${bin} eval import evals/named/tasks/<task> loads it and ${bin} eval validate <task> checks`)), j.stdout);
+      assert.equal(doc.run, `${bin} eval run named`);
+    }
+  });
+});
+
 describe("eval run: repo tasks", () => {
   it("runs a tasks suite with one harness and reports per-task trials", (t) => {
     if (!gitBin) return t.skip("needs git");
@@ -247,7 +301,9 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     assert.equal(plan.status, 0, plan.stdout + plan.stderr);
     assert.match(plan.stdout, /baseline\s+skilled\s+2 reused, 0 to run/);
 
-    const bad = cli(["eval", "run", "scope", "--harness", "plain", "--yes"]);
+    // Started with npx: the commands under the report name npx's form.
+    const npx = { npm_command: "exec" };
+    const bad = cli(["eval", "run", "scope", "--harness", "plain", "--yes"], proj, npx);
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);
     assert.match(bad.stdout, /asks-for-scope\s+0\/2\s+never\s+verifier exit 1/, "the wrapper agent is not captured, so the reason stands in for a transcript");
     assert.match(bad.stdout, /harness plain/);
@@ -256,7 +312,8 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     const badJson = JSON.parse(cli(["eval", "run", "scope", "--harness", "plain", "--yes", "--json"]).stdout) as { failedRuns: { attempt: number; verifierOutput?: { stdout?: string; stderr?: string } }[] };
     assert.deepEqual(badJson.failedRuns.map((f) => f.attempt), [1, 2]);
     assert.ok(badJson.failedRuns.every((f) => f.verifierOutput), JSON.stringify(badJson.failedRuns));
-    assert.match(bad.stdout, /without a reference solution \(asks-for-scope\)/);
+    const bin = nextStepBin({ ...env, ...npx });
+    assert.ok(bad.stdout.includes(`without a reference solution (asks-for-scope): add reference.patch to the task dir, then ${bin} eval import <task dir> and ${bin} eval validate <task>`), bad.stdout);
     const tagged = JSON.parse(cli(["eval", "list", "--tag", "suite:scope", "--json"]).stdout) as { tasks: unknown[] };
     assert.equal(tagged.tasks.length, 1, "suite tasks carry suite:<name>, for compare --tag");
   });

@@ -35,12 +35,12 @@ import type { TriggerRunResult } from "./eval-trigger.ts";
 import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite } from "../../eval/suite-spec.ts";
 import { positiveInt, unknownAgent, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
-import { rerunWithYes } from "../next-steps.ts";
+import { nextStepBin, rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { infraStopNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
-import { importDir } from "./eval.ts";
+import { commandsForShell, importDir } from "./eval.ts";
 
 interface SuiteOutcome {
   suite: string;
@@ -61,10 +61,11 @@ interface SuiteOutcome {
   extra?: string[];
 }
 
-const transcript = (id: string) => `coding.sh show ${id.slice(0, 12)}`;
-
 export async function evalRun(c: CommandContext): Promise<number> {
   const { out } = c;
+  // The commands under the report, named as the user's shell runs them.
+  const bin = nextStepBin(c.env);
+  const transcript = (id: string) => `${bin} show ${id.slice(0, 12)}`;
   const trialsFlag = positiveInt(c.flags.trials, "trials");
   const root = (await repoRoot(c.cwd)) ?? c.cwd;
   let suites: LoadedSuite[];
@@ -94,8 +95,8 @@ export async function evalRun(c: CommandContext): Promise<number> {
   const summary = str(c.flags.summary);
   if (summary) {
     const md = renderSuitesMarkdown(
-      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o), ...(o.extra ?? []), ...metaLine(o)] })),
-      { transcript },
+      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o, bin), ...(o.extra ?? []), ...metaLine(o)] })),
+      { transcript, bin },
     );
     try {
       await appendFile(resolve(c.cwd, summary), md);
@@ -111,7 +112,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
       if (!o.report) continue;
       out.print("");
       out.print(renderSuiteReport(o.report, { color: out.color, transcript }));
-      for (const line of unverifiedLine(o)) out.print(line);
+      for (const line of unverifiedLine(o, bin)) out.print(line);
       const block = renderFailedRuns(o.failedRuns ?? [], { names: (id) => o.names?.get(id) ?? id, dim: (s) => paint(s, "dim", out.color) });
       if (block.length) out.print(["", ...block].join("\n"));
       for (const line of [...(o.extra ?? []), ...metaLine(o)]) out.print(line);
@@ -120,9 +121,9 @@ export async function evalRun(c: CommandContext): Promise<number> {
   return failed ? 1 : 0;
 }
 
-const unverifiedLine = (o: SuiteOutcome): string[] =>
+const unverifiedLine = (o: SuiteOutcome, bin: string): string[] =>
   o.unverified?.length
-    ? [`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`]
+    ? [`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then ${bin} eval import <task dir> and ${bin} eval validate <task>`]
     : [];
 
 function metaLine(o: SuiteOutcome): string[] {
@@ -167,12 +168,12 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
       await ctx.index.putTask(t);
       tasks.push(t);
     } catch (e) {
-      throw new CliError(`Couldn't read task ${d}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_file" });
+      throw new CliError(`Couldn't read task ${d}: ${commandsForShell(e instanceof Error ? e.message : String(e), c.env)}`, { reason: "invalid_file" });
     }
   }
   const bundle = await suiteHarness(c, ctx, s, root);
   if (!getAdapter(bundle.agent)?.run) throw new CliError(`Agent ${bundle.agent} has no headless driver, so suite ${s.spec.name} can't run`, { reason: "unsupported_agent" });
-  if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured. Run `coding.sh init` first.");
+  if ((await ensureHookBin(c.env)) === "unavailable") out.warn(`The coding.sh hook bin is missing and can't be written, so these runs won't be captured. Run \`${nextStepBin(c.env)} init\` first.`);
   const total = tasks.length * k;
   const spin = out.spin(`${s.spec.name}: 0/${total}…`);
   const timeoutMs = trialTimeout(c);
