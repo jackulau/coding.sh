@@ -309,6 +309,58 @@ describe("Vercel AI SDK", () => {
     assert.deepEqual(session.stats.usage, { inputTokens: 250, outputTokens: 40 });
     assert.equal(session.title, "List files");
   });
+
+  // Regression: a tool whose execute runs its own ai.streamText (the AI SDK's subagent pattern) stayed in
+  // the parent session, its loop a plain span, while invoke_agent and OpenInference AGENT spans get a child.
+  describe("an ai.streamText run by an ai.toolCall is a subagent", () => {
+    const T = "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4";
+    const op = (o: string, fn: string) => [sAttr("ai.operationId", o), sAttr("ai.telemetry.functionId", fn), sAttr("ai.model.id", "claude-haiku-4-5")];
+    const loop = (id: string, parent: string | undefined, fn: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "ai.streamText", [...op("ai.streamText", fn), sAttr("ai.prompt", JSON.stringify({ prompt: `task ${fn}` })), sAttr("ai.response.text", `done ${fn}`)], s, e);
+    const call = (id: string, parent: string, fn: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "ai.streamText.doStream", [...op("ai.streamText.doStream", fn), iAttr("ai.usage.inputTokens", 100), iAttr("ai.usage.outputTokens", 10)], s, e);
+    const toolCall = (id: string, parent: string, name: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "ai.toolCall", [sAttr("ai.operationId", "ai.toolCall"), sAttr("ai.toolCall.name", name), sAttr("ai.toolCall.id", `call_${name}`)], s, e);
+    // Children first, as a BatchSpanProcessor exports them.
+    const spans = [
+      call("d000000000000002", "d000000000000001", "supervisor", 10, 1000),
+      call("d000000000000012", "d000000000000011", "search", 1200, 3800),
+      loop("d000000000000011", "d000000000000010", "search", 1100, 3900),
+      toolCall("d000000000000010", "d000000000000001", "search_agent", 1050, 4000),
+      loop("d000000000000001", undefined, "supervisor", 0, 9000),
+    ];
+    const child = childSessionId(T, "d000000000000011");
+    const check = (events: AgentEvent[]) => {
+      const sub = ofKind(events, "subagent.start");
+      assert.equal(sub.length, 1);
+      assert.equal(sub[0]!.sessionId, T);
+      assert.equal(sub[0]!.payload.type, "search");
+      assert.equal(sub[0]!.payload.childSessionId, child);
+      const calls = ofKind(events, "llm.call");
+      assert.deepEqual(calls.map((e) => [e.spanId, e.sessionId]).sort(), [["d000000000000002", T], ["d000000000000012", child]]);
+      const start = ofKind(events, "session.start").find((e) => e.sessionId === child)!;
+      assert.equal(start.payload.parentSessionId, T);
+      assert.equal(ofKind(events, "user.message").find((e) => e.sessionId === child)?.payload.text, "task search");
+      assert.equal(ofKind(events, "tool.start").find((e) => e.sessionId === T)?.payload.tool, "search_agent", "the tool call stays in the parent");
+      assert.equal(ofKind(events, "span").length, 0);
+      assert.equal(buildSession(events.filter((e) => e.sessionId === child)).parent?.sessionId, T);
+    };
+
+    it("in one request", async () => check((await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", spans)), ctx())).events));
+
+    it("when the tool call came in an earlier request than the loop it ran", async () => {
+      const c = { ...ctx(), spanTree: new SpanTree() };
+      const first = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[3]!])), c);
+      const rest = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[0]!, spans[1]!, spans[2]!, spans[4]!])), c);
+      check([...first.events, ...rest.events]);
+    });
+
+    it("a top-level ai.streamText under a plain span is no subagent", async () => {
+      const top = [otlpSpan(T, "d000000000000020", undefined, "POST /api/chat", [], 0, 9500), loop("d000000000000001", "d000000000000020", "supervisor", 0, 9000)];
+      const events = (await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", top)), ctx())).events;
+      assert.equal(ofKind(events, "subagent.start").length, 0);
+    });
+  });
 });
 
 describe("Claude Code", () => {

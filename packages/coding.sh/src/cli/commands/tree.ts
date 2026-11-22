@@ -144,13 +144,23 @@ export async function run(c: CommandContext): Promise<number> {
     if (worst) {
       out.print();
       const w = worst.session;
-      const which = worst.depth === 0 ? "the top-level agent" : `subagent ${w.parent?.type ?? ""}`.trim();
+      const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
       out.print(`  ${which} ${w.id}: ${worstFirst(w.flags).join(", ")}`);
       out.next("Open it", `coding.sh show ${w.id}`);
     }
     return 0;
   }, { create: false });
+}
+
+/**
+ * Who the "Fix first" line names: the top-level agent, or "subagent" followed by the subagent's
+ * type when it has one other than "subagent" itself ("subagent Explore", never "subagent subagent").
+ */
+export function fixFirstRole(depth: number, type: string | undefined): string {
+  if (depth === 0) return "the top-level agent";
+  const t = type?.trim();
+  return t && t.toLowerCase() !== "subagent" ? `subagent ${t}` : "subagent";
 }
 
 /** A short label for a tree's root: its title, else its id. */

@@ -339,7 +339,8 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
   // agent's (Claude Code under T3 Code): --agent then counts the roots the plain audit counts.
   const window = await index.listSessions({ ...(o.since !== undefined ? { since: o.since } : {}) });
   const byId = new Map(window.map((s) => [s.id, s]));
-  const all = o.agent ? window.filter((s) => s.agent === o.agent) : window;
+  // --agent claude-code takes the Claude Code sessions a host app ran (T3 Code) too: they load its files.
+  const all = o.agent ? window.filter((s) => s.agent === o.agent || s.provider === o.agent) : window;
   const rootOf = (id: string): string => {
     let cur = id;
     for (let i = 0; i < 16; i++) {
@@ -354,7 +355,11 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
   const list: MemorySession[] = [];
   for (const s of all) {
     const root = rootOf(s.id);
-    const m: MemorySession = { id: s.id, agent: s.agent, startedAt: s.startedAt, events: events?.get(s.id) ?? [], ...(root !== s.id ? { rootId: root } : {}), ...(s.cwd ? { cwd: s.cwd } : {}), ...(s.repo?.root ? { repoRoot: s.repo.root } : {}) };
+    const m: MemorySession = { id: s.id, agent: s.agent, startedAt: s.startedAt, events: events?.get(s.id) ?? [] };
+    if (s.provider) m.provider = s.provider;
+    if (root !== s.id) m.rootId = root;
+    if (s.cwd) m.cwd = s.cwd;
+    if (s.repo?.root) m.repoRoot = s.repo.root;
     if (!events) m.uses = s.stats.memoryUse ?? [];
     list.push(m);
   }

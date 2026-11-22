@@ -60,7 +60,12 @@ interface Data {
 
 type Message = { type: "status"; status: IngestStatus } | { type: "error"; message: string };
 
-export function startBackgroundIngest(opts: BackgroundIngestOptions): BackgroundIngest {
+/**
+ * Starts the worker, or returns undefined with CODING_SH_NO_AUTO_INGEST=1 in `env`: that asks every read path not
+ * to ingest on its own (common.ts, init, workflows), and the viewer is one of them.
+ */
+export function startBackgroundIngest(opts: BackgroundIngestOptions): BackgroundIngest | undefined {
+  if (opts.env.CODING_SH_NO_AUTO_INGEST === "1") return undefined;
   let status: IngestStatus = { ingesting: false, filesPending: 0, lastIngestAt: null };
   const data: Data = { kind: KIND, cwd: opts.cwd, intervalMs: opts.intervalMs ?? 3000 };
   // The worker's process.env is `env`, so adapters that read process.env see the same as this command.

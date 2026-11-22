@@ -49,3 +49,34 @@ describe("statusline after init", () => {
     });
   }
 });
+
+// --json prints exactly one JSON document on stdout for every outcome, as other write commands do.
+describe("statusline install and uninstall with --json", () => {
+  let t: TmpEnv;
+  before(() => {
+    t = tmpEnv();
+  });
+  after(() => t.restore());
+  const settings = () => join(t.home, ".claude", "settings.json");
+  const runJson = async (action: string, flags: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+    const e: NodeJS.ProcessEnv = { HOME: t.home, CODING_SH_HOME: t.dataHome, CLAUDE_CONFIG_DIR: join(t.home, ".claude"), PATH: process.env.PATH };
+    let stdout = "";
+    const out = new Output({ json: true, env: e, stdout: { write: (s: string) => ((stdout += s), true), isTTY: false }, stderr: { write: () => true, isTTY: false }, stdin: { isTTY: false } });
+    const ctx: CommandContext = { action, flags: { json: true, ...flags }, positionals: [], rest: [], out, env: e, cwd: t.home, debug: false, signal: new AbortController().signal };
+    assert.equal(await run(ctx), 0);
+    const lines = stdout.trim().split("\n");
+    assert.equal(lines.length, 1, `one JSON document for ${action} ${JSON.stringify(flags)}: ${stdout}`);
+    return JSON.parse(lines[0]!) as Record<string, unknown>;
+  };
+
+  test("planned, installed, unchanged, removed", async () => {
+    assert.deepEqual(await runJson("install", { "dry-run": true }), { outcome: "planned", action: "install", path: settings() });
+    assert.ok(!existsSync(settings()), "a dry run writes nothing");
+    assert.deepEqual(await runJson("install"), { outcome: "installed", path: settings() });
+    assert.match(readFileSync(settings(), "utf8"), /coding\.sh statusline/);
+    assert.deepEqual(await runJson("install"), { outcome: "unchanged", path: settings() });
+    assert.deepEqual(await runJson("uninstall", { "dry-run": true }), { outcome: "planned", action: "uninstall", path: settings() });
+    assert.deepEqual(await runJson("uninstall"), { outcome: "removed", path: settings() });
+    assert.deepEqual(await runJson("uninstall"), { outcome: "unchanged", path: settings() });
+  });
+});

@@ -126,6 +126,8 @@ describe("usage --by mcp|skill|subagent edges", () => {
         session("kid1", { startedAt: now, endedAt: now + 4000, parent: { sessionId: "both" }, stats: usage(300, 0.1) }),
         session("kid2", { startedAt: now, endedAt: now + 2000, parent: { sessionId: "both", type: "Explore" }, stats: usage(50, 0.02) }),
         session("kid3", { startedAt: now, endedAt: now + 6000, parent: { sessionId: "both", type: "Explore" }, stats: usage(70, 0.03) }),
+        // A T3 Code thread that switched to Codex: the same conversation going on, not a subagent.
+        session("switched", { agent: "t3code", provider: "codex", startedAt: now, endedAt: now + 9000, parent: { sessionId: "both", type: "provider-switch" }, stats: usage(400, 0.2) }),
       ],
       events: [
         // 4000 bytes, no count: 1000 estimated tokens; a stored count wins over the bytes.
@@ -178,6 +180,16 @@ describe("usage --by mcp|skill|subagent edges", () => {
       ["Explore", 2, 120, 0.05, 4000],
     ]);
     assert.equal(r.total.sessions, 3, "the parents are not counted");
+  });
+
+  test("subagent: a provider switch is no subagent type; its cost stays in the total with the parent's", () => {
+    const r = json(["usage", "--by", "subagent"]);
+    assert.ok(!r.groups.some((g) => g.key === "provider-switch"), JSON.stringify(r.groups));
+    assert.equal(r.total.costUsd, 0.15, "the three subagents only");
+    // Every session's cost, the switched thread's included, as before.
+    const all = json(["usage"]);
+    assert.equal(all.total.costUsd, 0.85);
+    assert.equal(all.total.sessions, 6);
   });
 
   test("--limit caps the rows; an empty window says what it looked for", () => {

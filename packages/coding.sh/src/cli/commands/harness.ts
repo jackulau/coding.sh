@@ -85,6 +85,9 @@ export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; 
   return { ...out, id: bundleId(out) };
 }
 
+/** Under the audit's session count when subagents ran: what the count and the rows count them as. */
+export const AUDIT_ROLLUP_NOTE = "A subagent's or delegate's loads, reads and writes count on the top-level session that started it, which the count above includes.";
+
 /** coding.sh harness audit: which memory and instruction files sessions loaded, read and wrote. */
 async function audit(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -116,6 +119,8 @@ async function audit(c: CommandContext): Promise<number> {
     }
     const t = a.totals;
     out.note(`${plural(a.sessions, "session")} since ${sinceFlag}${agent ? ` (${agent})` : ""} · ${plural(t.files, "memory or instruction file")}${t.bytes ? ` · ${bytes(t.bytes)}` : ""}`);
+    // The rows count a subagent's or delegate's loads, reads and writes, and the count above its top-level session.
+    if (a.sessions && (await (await import("./stats.ts")).hasSubagents(ctx.index, since, Date.now(), undefined))) out.note(AUDIT_ROLLUP_NOTE);
     if (agentFiles.length) {
       out.row("Agents", `${plural(agentFiles.length, "subagent file")} ${agentFiles.length === 1 ? "gives" : "give"} \`tools:\` as a map; Claude Code reads a list of tool names, so ${agentFiles.length === 1 ? "that subagent gets" : "those subagents get"} no tools`, "warn");
       for (const f of agentFiles) out.note(`${f.path}: ${f.fix ? `use \`${f.fix}\`` : "drop the `tools:` map"}`);

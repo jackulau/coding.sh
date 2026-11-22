@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Session } from "../../src/core/types.ts";
 import { CACHE_BREAK_FIX } from "../../src/core/cache-breaks.ts";
-import { cacheFactor, commandHead, errorKey, failureRecords, rankIssues, type FailureRecord } from "../../src/improve/issues.ts";
+import { cacheFactor, commandHead, errorClass, errorKey, failureRecords, rankIssues, type FailureRecord } from "../../src/improve/issues.ts";
 import { modelProvider, NEEDS_MODEL, stepsFor } from "../../src/improve/report.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, failingSession, retrySession, sessionEvents } from "../helpers-decision.ts";
@@ -62,6 +62,48 @@ describe("failureRecords", () => {
     assert.equal(recs[0]!.key, "cmd:npm test");
     assert.equal(recs[0]!.tests, true);
     assert.equal(recs[0]!.beforeEdits, false);
+  });
+
+  it("keys a failure on its program or error class, so the same failure with different output shares one id", () => {
+    const one = (id: string, steps: Parameters<typeof sessionEvents>[2]) => failureRecords(sessionEvents(id, { cwd: CWD, startedAt: T0 }, steps));
+    const edit = (id: string, old: string) =>
+      one(id, [
+        ["tool.start", { tool: "Edit", toolUseId: `${id}1`, input: { file_path: `${CWD}/a.ts` } }],
+        ["tool.end", { tool: "Edit", toolUseId: `${id}1`, ok: false, output: `<tool_use_error>String to replace not found in file.\nString: ${old}</tool_use_error>` }],
+      ]);
+    const compound = (id: string, out: string) =>
+      one(id, [
+        ["tool.start", { tool: "Bash", toolUseId: `${id}1`, input: { command: "npm install && npm run build" } }],
+        ["tool.end", { tool: "Bash", toolUseId: `${id}1`, ok: false, output: `Exit code 1\n${out}` }],
+      ]);
+    const cmd = (id: string, out: string) =>
+      one(id, [
+        ["tool.start", { tool: "Bash", toolUseId: `${id}1`, input: { command: "npx tsc --noEmit" } }],
+        ["tool.end", { tool: "Bash", toolUseId: `${id}1`, ok: false, output: `Exit code 2\n${out}` }],
+      ]);
+    const keys = (recs: FailureRecord[][]) => recs.map((r) => r.map((x) => x.key));
+    assert.deepEqual(keys([edit("a", "const x = 1;"), edit("b", "export function go() {")]), [["tool:Edit:no match"], ["tool:Edit:no match"]]);
+    assert.deepEqual(keys([compound("a", "Error: ENOENT: no such file or directory, open '/work/demo/a.json'"), compound("b", "npm ERR! enoent Could not read package.json: no such file or directory")]), [["compound:not found"], ["compound:not found"]]);
+    assert.deepEqual(keys([cmd("a", "src/a.ts(3,1): error TS2304: Cannot find name 'x'."), cmd("b", "src/b.ts(9,4): error TS2304: Cannot find name 'yz'.")]), [["cmd:npx tsc"], ["cmd:npx tsc"]]);
+    // No class: the tool alone, and a compound line by its exit status; never the output's words.
+    const plain = one("c", [
+      ["tool.start", { tool: "WebFetch", toolUseId: "c1", input: { url: "https://example.test/" } }],
+      ["tool.end", { tool: "WebFetch", toolUseId: "c1", ok: false, output: "the page said something odd 42" }],
+    ]);
+    assert.deepEqual(plain.map((r) => r.key), ["tool:WebFetch"]);
+    assert.deepEqual(keys([compound("d", "something went wrong")]), [["compound:exit 1"]]);
+  });
+});
+
+describe("errorClass", () => {
+  it("names a fixed class, a compiler code or the error's type, and nothing from the output's own words", () => {
+    assert.equal(errorClass("bash: line 1: fooctl: command not found"), "command not found");
+    assert.equal(errorClass("fooctl : The term 'fooctl' is not recognized as the name of a cmdlet, function, script file"), "command not found");
+    assert.equal(errorClass("Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/work/demo/x.mjs'"), "module not found");
+    assert.equal(errorClass("npm error Missing script: \"biuld\""), "missing script");
+    assert.equal(errorClass("src/a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'."), "TS2322");
+    assert.equal(errorClass("TypeError: x is not a function"), "TypeError");
+    assert.equal(errorClass("Exit code 1\nsomething went wrong"), undefined);
   });
 });
 

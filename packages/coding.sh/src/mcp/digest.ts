@@ -21,6 +21,15 @@ export interface DigestOpts {
   from?: "head" | "tail";
   /** Clock for the running/idle call (default Date.now()). */
   now?: number;
+  /**
+   * The first event to read, from a tail cursor: the window an earlier page read, so paging back
+   * neither repeats nor skips entries while the session grows. 0 is the session's start.
+   */
+  windowStart?: number;
+  /** With windowStart: the turns before the window, to number its turns as in the whole session. */
+  turnShift?: number;
+  /** Filled in with the window read: its first event and turnShift, for the next tail cursor. */
+  window?: { start: number; turnShift: number };
 }
 
 export interface Digest extends Obj {
@@ -32,8 +41,10 @@ export interface Digest extends Obj {
 export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts): Promise<Digest> {
   // A session past the cap read from its end (tail, or turn -1) reads its last DIGEST_EVENT_CAP
   // events: the latest activity of a days-long run, not the middle of it.
-  const fromEnd = s.stats.events > DIGEST_EVENT_CAP && (o.turn !== undefined && o.turn !== 0 ? o.turn < 0 : o.from === "tail");
-  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP, ...(fromEnd ? { offset: s.stats.events - DIGEST_EVENT_CAP } : {}) });
+  const pinned = o.windowStart !== undefined;
+  const fromEnd = pinned ? o.windowStart! > 0 : s.stats.events > DIGEST_EVENT_CAP && (o.turn !== undefined && o.turn !== 0 ? o.turn < 0 : o.from === "tail");
+  const windowStart = pinned ? o.windowStart! : fromEnd ? s.stats.events - DIGEST_EVENT_CAP : 0;
+  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP, ...(windowStart > 0 ? { offset: windowStart } : {}) });
   const turns = splitTurns(events);
   const idx = turnIndex(turns, s.startedAt);
   // A turn still under way is listed and opens, but is not counted, as stats.turns does not count it.
@@ -41,8 +52,9 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
   if (open) idx[idx.length - 1]!.open = true;
   const closed = turns.length - (open ? 1 : 0);
   // Number the window's turns as in the whole session.
-  const shift = fromEnd ? Math.max(0, s.stats.turns - closed) : 0;
+  const shift = pinned ? (o.turnShift ?? 0) : fromEnd ? Math.max(0, s.stats.turns - closed) : 0;
   for (const t of idx) t.turn += shift;
+  if (o.window) [o.window.start, o.window.turnShift] = [windowStart, shift];
   let scope = events;
   let turnNo: number | undefined;
   if (o.turn !== undefined && o.turn !== 0) {
@@ -69,7 +81,7 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
     timeline: page,
     timelineTotal: all.length,
     ...(o.from !== "tail" && start + o.limit < all.length ? { nextCursor: String(start + o.limit) } : {}),
-    ...(events.length >= DIGEST_EVENT_CAP ? { eventsTruncated: true } : {}),
+    ...(events.length >= DIGEST_EVENT_CAP || windowStart > 0 ? { eventsTruncated: true } : {}),
     subagents: kids.length + subagentEvents ? { childSessions: kids.length, spawned: subagentEvents } : undefined,
     ...(skills.length ? { skills } : {}),
   };

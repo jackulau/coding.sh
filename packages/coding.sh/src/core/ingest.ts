@@ -79,6 +79,8 @@ import { listSpoolFiles, readSpoolFile, resolveRawFile, spoolFileDay, type Spool
 import { scrubRawFile, scrubSpoolFile } from "./spool-scrub.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { addDeferred, canDefer, readDeferred, settleDeferred } from "./ingest-deferred.ts";
+import { recordLastIngest } from "./ingest-health.ts";
+import { version } from "../cli/meta.ts";
 import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
 import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
@@ -259,7 +261,17 @@ export const childWaitKey = (parentId: string): string => `child-wait:${parentId
 /** Most children kept waiting on one named parent: a shell with a stale id can start any number. */
 const MAX_WAITING = 50;
 
+/**
+ * Reads the spool into the index. One that reads every file it lists, with no store write failing,
+ * records when it finished (core/ingest-health.ts), even when it found nothing new.
+ */
 export async function ingest(opts: IngestOptions): Promise<IngestResult> {
+  const r = await ingestSpool(opts);
+  if (!r.pendingFiles && r.storeWriteFailed === undefined) recordLastIngest(paths(opts.env ?? process.env).root, version());
+  return r;
+}
+
+async function ingestSpool(opts: IngestOptions): Promise<IngestResult> {
   const env = opts.env ?? process.env;
   const spoolDir = opts.spoolDir ?? paths(env).spool;
   // No spool dir = nothing to read; don't create one just to lock it.
@@ -1748,6 +1760,13 @@ interface SinkSource {
  * events it stores go to the sinks (see "backfill → sinks" above).
  */
 export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
+  const r = await backfillTranscripts(opts);
+  // Read every changed file, not turned away by another import: the index is as new as the transcripts.
+  if (!r.busy && !r.pendingFiles) recordLastIngest(paths(opts.env ?? process.env).root, version());
+  return r;
+}
+
+async function backfillTranscripts(opts: BackfillOptions): Promise<BackfillResult> {
   const env = opts.env ?? process.env;
   if (!opts.sinks?.length || opts.lock === false) return backfillLocked(opts, env, () => {});
   const lo = opts.lock ?? {};

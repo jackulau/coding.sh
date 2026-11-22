@@ -117,6 +117,8 @@ For an agent or app sending over OpenTelemetry or the SDK:
 
 ## Data looks incomplete
 
+- **`status` says `Index updated 3h ago`, or `work` says `waits and stalls are as of then`.** No
+  ingest has finished in 15 minutes. Run `coding.sh ingest`; if it fails, `status` says why.
 - **No model latency or tokens.** Hooks see tool calls, not model calls. Most adapters read model
   calls from the transcript after the session ends. For Claude Code latency, run
   `coding.sh collector` and turn on its [OpenTelemetry export](https://coding.sh/docs/otel#claude-code).

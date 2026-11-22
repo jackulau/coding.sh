@@ -299,6 +299,6 @@ describe("status work rows", () => {
     for (const i of items) for (const k of ["id", "bucket", "reason", "next", "rootId", "sessionId", "lastActivity"]) assert.ok(k in i, `item has ${k}`);
     const t = tools.find((x) => x.name === "status")!;
     assert.match(t.description, /top 5 items/);
-    assert.match(t.description, /coding\.sh work --json/);
+    assert.match(t.description, /the work tool has the rest/);
   });
 });

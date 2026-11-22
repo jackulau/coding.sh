@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { localDate, phaseLabel, sessionOutline, storedOutline } from "../../src/core/outline.ts";
-import { buildSession } from "../../src/core/sessions.ts";
+import { buildSession, isSyntheticPrompt } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind, SessionDerail } from "../../src/schema/index.ts";
 import { testCtx } from "../adapters/_helpers.ts";
 
@@ -158,5 +158,44 @@ describe("claude --resume capture", () => {
     assert.equal(a!.id, a2!.id, "fresh starts share the session's start key");
     assert.equal(r1!.payload.source, "resume");
     assert.equal(new Set([a!.id, r1!.id, r2!.id]).size, 3, "each resume is its own row");
+  });
+});
+
+describe("phase titles", () => {
+  it("skip harness notices and frame-only prompts, and title from the first real prompt", () => {
+    n = 0;
+    clock = T0;
+    const frame = "[Workflow harness — computed task] The task text below was computed at runtime by a workflow script.";
+    const events = [
+      ev("session.start", { source: "startup" }),
+      ev("user.message", { text: "Fix the cache" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>" }),
+      ev("user.message", { text: frame }),
+      ev("user.message", { text: "Now add the test" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: `${frame}\n  Project: demo\n  Rename the export command` }),
+    ];
+    const titles = sessionOutline(events).phases.map((p) => p.title);
+    assert.deepEqual(titles, ["Fix the cache", "Now add the test", "Rename the export command"]);
+    assert.deepEqual(buildSession(events).stats.phases?.map((p) => p.title), titles);
+  });
+
+  it("a T3 Code delegated-task result is a harness notice, not the phase's title", () => {
+    n = 0;
+    clock = T0;
+    const done = "Delegated task node:delegated-task:command%3Amcp%3Aabc%3Adelegate-task%3Adef (Research: cache gaps) [completed]:\nI wrote the report.";
+    const events = [
+      ev("session.start", { source: "startup" }),
+      ev("user.message", { text: "Fix the cache" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: done }),
+      ev("user.message", { text: "Now add the test" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: done }),
+    ];
+    assert.deepEqual(sessionOutline(events).phases.map((p) => p.title), ["Fix the cache", "Now add the test", undefined]);
+    assert.ok(isSyntheticPrompt(done));
+    assert.ok(!isSyntheticPrompt("Delegated task node ids look odd, fix them"));
   });
 });
