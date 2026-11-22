@@ -752,11 +752,19 @@ describe("coding.sh purge in llm-cache recordings and snapshot repos", () => {
     for (const v of [SECRET, QUOTED, SNAP]) for (const f of forms(v)) assert.ok(!text.includes(f), "a value was printed");
   };
 
+  /**
+   * The suite's git calls write under the temp folder, and with GIT_CONFIG_NOSYSTEM nothing sets
+   * core.longpaths: Git for Windows then fails on a path of 260 characters or more ("Filename too
+   * long"), which a deep temp folder reaches (the repack's pack temp file is 180 characters below
+   * it). src/core/snapshot.ts gives its own git calls the same flag. Other platforms ignore it.
+   */
+  const LONG_PATHS = ["-c", "core.longpaths=true"];
+
   /** A repo with one untracked file, snapshotted: the file's blob lands in the repo's shadow under repos/. */
   async function repo(name: string, notes: string): Promise<string> {
     const dir = join(env.root, name);
     mkdirSync(dir);
-    const init = spawnSync("git", ["init", "-q"], { cwd: dir, encoding: "utf8" });
+    const init = spawnSync("git", [...LONG_PATHS, "init", "-q"], { cwd: dir, encoding: "utf8" });
     assert.equal(init.status, 0, init.stderr);
     writeFileSync(join(dir, "notes.txt"), notes);
     const s = await snapshot(dir, { timeoutMs: 120_000 });
@@ -807,7 +815,7 @@ describe("coding.sh purge in llm-cache recordings and snapshot repos", () => {
     shadowA = await repo("repo-a", `token ${SNAP}\n`);
     shadowB = await repo("repo-b", `{"password": ${JSON.stringify(QUOTED)}}\n`);
     // Packed objects are read through git: a pack stores deltas.
-    const pack = spawnSync("git", ["--git-dir", shadowB, "repack", "-a", "-d", "-l", "-q"], { encoding: "utf8" });
+    const pack = spawnSync("git", [...LONG_PATHS, "--git-dir", shadowB, "repack", "-a", "-d", "-l", "-q"], { encoding: "utf8" });
     assert.equal(pack.status, 0, pack.stderr);
     assert.ok(readdirSync(join(shadowB, "objects", "pack")).some((f) => f.endsWith(".pack")), "repo-b's snapshot is packed");
     shadowC = await repo("repo-c", "nothing to see\n");
