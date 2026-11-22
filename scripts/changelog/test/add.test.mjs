@@ -3,10 +3,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { add } from "../add.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..", "..");
@@ -76,6 +77,7 @@ test("each rule refuses with exit 1, one reason, and leaves the file byte-identi
     { args: ["--section", "Fixed", "--area", "Area", "--text", "target ÷ reading", "--link", "guides/explore.md"], reason: /U\+00F7/ },
     { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/missing.md"], reason: /docs\/guides\/missing\.md, which does not exist/ },
     { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/explore.md#not-a-heading"], reason: /#not-a-heading/ },
+    { args: ["--section", "Fixed", "--area", "Area", "--text", "ok", "--link", "guides/explore.md#%E0"], reason: /link fragment #%E0 is not valid percent-encoding/ },
     { args: ["--section", "Misc", "--area", "Area", "--text", "ok", "--link", "guides/explore.md"], reason: /section "Misc"/ },
     { args: ["--section", "Fixed", "--area", "Viewer", "--text", "A folded turn opens on the first failure.", "--link", DOC], reason: /already in CHANGELOG\.md/ },
   ];
@@ -88,6 +90,15 @@ test("each rule refuses with exit 1, one reason, and leaves the file byte-identi
   }
   // 60 words is allowed.
   assert.equal(run(r, "--section", "Fixed", "--area", "Area", "--text", words(58), "--link", "guides/explore.md").status, 0);
+});
+
+test("a character the site font has outside CORE is refused; one it lacks, drawn by a system font, is not", () => {
+  const r = root();
+  const res = run(r, "--section", "Fixed", "--area", "A", "--text", "A café line.", "--link", "guides/explore.md");
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /U\+00E9/);
+  assert.equal(run(r, "--section", "Fixed", "--area", "A", "--text", "The κ statistic.", "--link", "guides/explore.md").status, 0, "kappa is not in the site font, so no -rest file loads for it");
+  assert.match(run(r, "--help").stdout, /no character the site font has outside its CORE subset/);
 });
 
 test("a fenced ## line is not a heading", () => {
@@ -123,6 +134,50 @@ test("two concurrent runs both land", async () => {
   const md = read(r);
   for (const i of [0, 1, 2, 3]) assert.ok(md.includes(`Concurrent line ${i}.`), `line ${i} is missing`);
   assert.deepEqual(parseChangelog(md).problems, []);
+});
+
+test("a CHANGELOG.md held by another program is tried again after 100, 200, 400 and 800 ms", () => {
+  const busy = () => Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+  const input = { section: "Fixed", area: "Work", text: "A held file is written on a later try.", link: "guides/explore.md" };
+  // Held for two tries, then free: the line lands on the third.
+  let r = root();
+  let fails = 2;
+  const waits = [];
+  const held = (from, to) => {
+    if (fails-- > 0) throw busy();
+    renameSync(from, to);
+  };
+  assert.deepEqual(add({ ...input, root: r, file: join(r, "CHANGELOG.md"), rename: held, sleep: (ms) => waits.push(ms) }), []);
+  assert.deepEqual(waits, [100, 200]);
+  assert.ok(read(r).includes("A held file is written on a later try."));
+  // Held on every try: the reason names it, and the file, with nothing left beside it, stays as it was.
+  r = root();
+  const before = read(r);
+  waits.length = 0;
+  const problems = add({ ...input, root: r, file: join(r, "CHANGELOG.md"), rename: () => { throw busy(); }, sleep: (ms) => waits.push(ms) });
+  assert.deepEqual(problems, ["CHANGELOG.md is held by another program (EBUSY); tried 5 times"]);
+  assert.deepEqual(waits, [100, 200, 400, 800]);
+  assert.equal(read(r), before);
+  assert.deepEqual(readdirSync(r).filter((f) => f.startsWith("CHANGELOG.md.")), []);
+});
+
+test("the wait before another try is real: a file held once is written at least 100 ms later", () => {
+  const r = root();
+  let fails = 1;
+  const held = (from, to) => {
+    if (fails-- > 0) throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+    renameSync(from, to);
+  };
+  const t = performance.now();
+  assert.deepEqual(add({ section: "Fixed", area: "Work", text: "Written after a wait.", link: "guides/explore.md", root: r, file: join(r, "CHANGELOG.md"), rename: held }), []);
+  assert.ok(performance.now() - t >= 95, "the second try came without a wait");
+});
+
+test("git ignores the lock and temp files a killed run leaves beside CHANGELOG.md", () => {
+  for (const name of ["CHANGELOG.md.lock", `CHANGELOG.md.${process.pid}.0.tmp`]) {
+    const res = spawnSync("git", ["check-ignore", "-q", "--no-index", name], { cwd: REPO, encoding: "utf8" });
+    assert.equal(res.status, 0, `${name} is not ignored${res.stderr ? `: ${res.stderr}` : ""}`);
+  }
 });
 
 test("--check names each unreleased problem by line and skips released versions", () => {

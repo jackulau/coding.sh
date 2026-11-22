@@ -64,6 +64,9 @@ src/store/sqlite.ts at 336aa247: 3 of 7 lines by 1 agent session
 
 SESSION                               AGENT        MODEL            LINES
 9887c95d-2739-4dae-8222-4471386def67  claude-code  claude-opus-4-8  3
+
+  Open the session that wrote the most of it:
+    coding.sh show 9887c95d-2739-4dae-8222-4471386def67
 ```
 
 Each line shows the commit that last changed it, as `git blame` does, and the session that wrote

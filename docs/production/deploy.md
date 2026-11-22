@@ -61,7 +61,8 @@ set -a; . ./.env; set +a
 curl -s http://127.0.0.1:4318/readyz      # {"ok":true,"store":"postgres",…}
 ```
 
-- `.env` holds `POSTGRES_PASSWORD`, `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (the blob store's
+- `.env` holds `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD` (used only with
+  `deploy/compose/clickhouse.yml`), `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (the blob store's
   credentials), `INGEST_KEY_DEMO`, `INGEST_KEY_FLOOD` and `READ_KEY`.
 - Running `gen-env.sh` again keeps the file, because Postgres takes its password only on first
   start. To start over: `docker compose down -v && deploy/compose/gen-env.sh --force`.

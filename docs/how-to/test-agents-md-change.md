@@ -17,8 +17,10 @@ a model writes the agent's next turn twice: with your committed AGENTS.md (A) an
 
 ## 1. Make the edit
 
-Edit AGENTS.md and leave it uncommitted. [`coding.sh improve`](../guides/improve.md) proposes a
-line for your most common problem, and `improve fix 1` adds it for you:
+Edit AGENTS.md and leave it uncommitted. Claude Code reads its own instructions file, not
+AGENTS.md: for its sessions, edit that file, or add a line `@AGENTS.md` to it so it loads AGENTS.md.
+[`coding.sh improve`](../guides/improve.md) proposes a line for your most common problem, and
+`improve fix 1` adds it to the file your agent reads:
 
 ```sh
 coding.sh improve fix 1
@@ -121,8 +123,8 @@ To see the cases A and B fixed and broke side by side in the viewer, see
 coding.sh exp ab --watch
 ```
 
-Each save of AGENTS.md reruns the A/B and prints one line. A's answers are cached, so only B is
-asked again. Ctrl-C stops it.
+It runs the A/B and prints the report from step 3, then reruns it on each save of your edit and
+prints one line. A's answers are cached, so only B is asked again. Ctrl-C stops it.
 
 ```text
 Watching . for changes to B; Ctrl-C to stop.
@@ -137,15 +139,15 @@ coding.sh improve check
 ```
 
 `improve check` compares the sessions after the commit with those before it, on real work. It makes
-no model calls and exits 1 when the change made things worse. It says Too early to tell until 5
-sessions ran with the change. See [Did your last change help?](../guides/improve.md#did-your-last-change-help)
+no model calls and exits 1 when the change made things worse. Until 5 sessions ran with the change,
+it says No sessions yet or Too early to tell. See [Did your last change help?](../guides/improve.md#did-your-last-change-help)
 
 ## Flags
 
 | Flag | Default | What it does |
 |---|---|---|
 | `--a` | git HEAD | The baseline: a file, a directory, `git:REV` or `none`. |
-| `--b` | your uncommitted edits | The candidate. A file replaces the file of the same path in A, so `--b drafts/AGENTS.md` tests a draft. |
+| `--b` | your uncommitted edits | The candidate. A file in the repo replaces the file at its path; a file outside the repo replaces the one with its name, so `--b ../drafts/AGENTS.md` tests a draft. |
 | `--behavior` | all | Only these kinds of decision point. |
 | `--since` | 14d | Sessions started since this time. |
 | `--repo` | this repo | Another directory, or `all`. |
@@ -165,7 +167,8 @@ it. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
 | Symptom | Check |
 |---|---|
 | `0 decision points` | The default reads 14 days of sessions in this repo. Try `--since 30d` or `--repo all`, or import history with `coding.sh ingest --backfill --since 30d`. |
-| `improve` says headless sessions were left out | Your sessions ran with `claude -p`, `codex exec` or an Agent SDK. Add `--headless` to `improve`, `improve fix` and `improve check`. |
+| `No arm difference: Claude Code does not load AGENTS.md` | Your sessions are Claude Code sessions, and Claude Code reads its own instructions file. Edit that file, or add a line `@AGENTS.md` to it. |
+| `improve` says headless sessions were left out, or `improve check` finds no sessions | Your sessions ran with `claude -p`, `codex exec` or an Agent SDK. Add `--headless` to `improve`, `improve fix` and `improve check`. |
 | It refuses to start | The estimate is over `--max-cost`. Lower `-n` or pick one `--behavior`. |
 | No API key and no login | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or log in to Claude Code or Codex. Without any, commit the change and let `improve check` judge it. |
 | `--watch needs B to be files on disk` | `--watch` follows files. Drop `--b git:…`. |
