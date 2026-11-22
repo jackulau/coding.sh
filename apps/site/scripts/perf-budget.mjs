@@ -22,6 +22,7 @@ const BUDGET = {
   // troubleshooting, which gains an entry per failure a new feature can show
   // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
   // Troubleshooting is 30.5KB after the docs rebuild of 2026-11-11, so 33KB.
+  // It is 33.0KB with the 2026-11-21 entries for a stale index and an unset ${NAME} in a store URL, so 36KB.
   // /docs/api/read is 30.3KB with the weight edit and checkpoint fields, so 33KB.
   // It is 33.0KB with stats.waiting and stats.endInferred and the star count in the header, so 36KB.
   // The front page names its translations (hreflang links, og:locale alternates and the
@@ -35,7 +36,7 @@ const BUDGET = {
     "/docs/api/": 30 * KB,
     "/docs/api/read/": 36 * KB,
     "/docs/api/read/search/": 30 * KB,
-    "/docs/troubleshooting/": 33 * KB,
+    "/docs/troubleshooting/": 36 * KB,
     // The config reference gains rows with each setting, like the CLI and API references. It
     // is 26.0KB in the 2026-11-21 build, right at the 26KB other pages get. A pull request's
     // check builds from a shallow checkout, which dates the page at the merge commit, and those
