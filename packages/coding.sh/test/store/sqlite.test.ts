@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync 
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { findSessions } from "../../src/query/run.ts";
 import { parseWhere } from "../../src/query/where.ts";
@@ -559,7 +560,9 @@ describe("SqliteIndexStore", () => {
     // The upgrade rewrites no rows: old ones keep search_extra and their inline cwd.
     assert.deepEqual(columns(), { extra: 2, cwd: 4, ids: 1 });
     assert.match(lines[0]!, /the index holds 5 events; upgrading it from schema v9 to v\d+\. This runs once\./);
-    assert.match(lines.at(-1)!, /index upgraded in [\d.]+s\. Run `coding\.sh gc --compact` to give back the space the old layout used\./);
+    assert.match(lines.at(-1)!, /index upgraded in [\d.]+s\. /);
+    // The command as the user's shell runs it: codingsh in PowerShell and cmd.
+    assert.ok(lines.at(-1)!.includes(`Run \`${cliCommand(process.env, ["gc", "--compact"])}\` to give back the space the old layout used.`), lines.at(-1));
     assert.equal(existsSync(`${path}.upgrade`), false, "the upgrade state file is removed");
 
     await s.compact();

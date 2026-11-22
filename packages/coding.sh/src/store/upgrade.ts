@@ -5,6 +5,8 @@
 // at most once a second; stdout is left to the command. The process running the
 // upgrade also keeps `<db>.upgrade` up to date, so another process that has to
 // wait for it (the CLI while the background ingest upgrades) can say how far it is.
+// A smaller store upgrades without progress; when the upgrade kept a copy of the
+// index, one line says where it is, through the writer setUpgradeNotice sets.
 //
 // Also here, because a migration is one-way: the copy of the index kept before
 // one (backupIndex, restoreBackup), the stamp that names the store's last writer
@@ -12,11 +14,24 @@
 import { constants, copyFileSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { nextStepBin } from "../cli/next-steps.ts";
+import { cliCommand, nextStepBin } from "../cli/next-steps.ts";
+import { upgradeStoreCommand } from "../core/store-guard.ts";
 import { ownerOnly } from "./sqlite-open.ts";
 
 /** Stores with at least this many events print upgrade progress (smaller ones upgrade in well under a second). */
 export const UPGRADE_PROGRESS_MIN_ROWS = 100_000;
+
+/**
+ * Where an upgrade that printed no progress names the copy of the index it kept
+ * (UpgradeProgress.end): the CLI sets it for a person at a terminal (cli/main.ts).
+ * Unset, the default, such an upgrade prints nothing.
+ */
+let quietNotice: ((line: string) => void) | undefined;
+
+/** Sets where the line after an upgrade without progress goes; undefined turns it off. */
+export function setUpgradeNotice(write: ((line: string) => void) | undefined): void {
+  quietNotice = write;
+}
 
 /** What `<db>.upgrade` holds while a process upgrades the index. */
 export interface UpgradeState {
@@ -94,12 +109,29 @@ export class UpgradeProgress {
     if (this.write) this.print(`coding.sh: upgrading the index: ${describeStep(this.state)}`);
   }
 
-  /** Removes the state file and, when anything was printed, says how long it took and what to run next. */
-  end(ok: boolean, hint?: string): void {
+  /**
+   * Removes the state file. When progress was printed, says how long the upgrade took and what
+   * to run next: `gc --compact` when it rewrote the events (`after.compact`), and where the copy
+   * of the index it kept is (`after.backup`), with the command that puts it back. An upgrade that
+   * printed nothing and kept a copy says where it is in one line, through setUpgradeNotice.
+   */
+  end(ok: boolean, after: { compact?: boolean; backup?: string } = {}): void {
     if (this.statePath) rmSync(this.statePath, { force: true });
-    if (!this.printed || !this.write) return;
+    // The command runs this install, which knows the copy's schema (core/store-guard.ts).
+    const kept = (backup: string) => `The index as it was is kept at ${backup}: \`${upgradeStoreCommand(["--restore"])}\` puts it back, and it is yours to delete.`;
+    if (!this.printed || !this.write) {
+      if (ok && after.backup && quietNotice) quietNotice(`coding.sh: index upgraded to schema v${this.state.to}. ${kept(after.backup)}`);
+      return;
+    }
     const secs = ((Date.now() - this.started) / 1000).toFixed(1);
-    this.write(ok ? `coding.sh: index upgraded in ${secs}s.${hint ? ` ${hint}` : ""}\n` : `coding.sh: the index upgrade stopped after ${secs}s; nothing was changed.\n`);
+    if (!ok) {
+      this.write(`coding.sh: the index upgrade stopped after ${secs}s; nothing was changed.\n`);
+      return;
+    }
+    const hints: string[] = [];
+    if (after.compact) hints.push(`Run \`${cliCommand(process.env, ["gc", "--compact"])}\` to give back the space the old layout used.`);
+    if (after.backup) hints.push(kept(after.backup));
+    this.write(`coding.sh: index upgraded in ${secs}s.${hints.length ? ` ${hints.join(" ")}` : ""}\n`);
   }
 
   private print(line: string): void {

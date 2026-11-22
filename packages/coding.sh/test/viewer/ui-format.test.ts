@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
+import { duration } from "../../src/cli/output.ts";
 
 const html = readFileSync(new URL("../../src/viewer/ui/index.html", import.meta.url), "utf8");
 
@@ -65,6 +66,18 @@ test("long durations roll up to days", () => {
   assert.equal(f.fmtDuration(23 * 3600e3 + 59 * 60e3), "23h 59m");
   assert.equal(f.fmtDuration(24 * 3600e3), "1d 0h");
   assert.equal(f.fmtDuration(1284 * 3600e3 + 12 * 60e3), "53d 12h");
+});
+
+test("durations round the whole value to the unit shown, as the CLI does, so a carry moves up a unit", () => {
+  assert.equal(f.fmtDuration(8_975_379), "2h 30m");
+  assert.equal(f.fmtDuration(119_600), "2m 0s");
+  assert.equal(f.fmtDuration(3_599_600), "1h 0m");
+  assert.equal(f.fmtDuration(23 * 3600e3 + 59 * 60e3 + 40e3), "1d 0h");
+  // Under a day the viewer prints the CLI's value in its own spacing: "2h 5m" where the CLI prints "2h05m".
+  const asCli = (s: string) => s.replace(/^(\d+)([hm]) (\d+)([ms])$/, (_, a: string, u: string, b: string, v: string) => a + u + b.padStart(2, "0") + v);
+  const values = [0, 999.4, 999.5, 9_949, 9_950, 59_499, 59_500, 119_600, 3_599_499, 3_599_500, 8_975_379, 86_369_999];
+  for (let ms = 0; ms < 86_000e3; ms += 7919) values.push(ms);
+  for (const ms of values) assert.equal(asCli(f.fmtDuration(ms)), duration(ms), `${ms} ms`);
 });
 
 test("long ids that differ at the end keep both ends", () => {

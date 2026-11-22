@@ -204,6 +204,6 @@ test("the command menu key is Ctrl K off a Mac, the fold toggle keeps one name, 
   assert.match(html, /keys: \[MOD_K\], label: "Command menu"/);
   assert.doesNotMatch(html, /"Expand all"/);
   assert.match(html, /function searchStored\(\)/);
-  assert.match(html, /announce\("Session loaded, " \+ plural\(items\.length, "step"\) \+ \(failIdx\.length \? ", " \+ plural\(failIdx\.length, "failure"\) : ""\)\);\n\s+loadOutline\(\)/);
+  assert.match(html, /announce\("Session loaded, " \+ plural\(items\.length, "step"\) \+ \(failIdx\.length \? ", " \+ plural\(failIdx\.length, "failed step"\) : ""\)\);\n\s+loadOutline\(\)/);
   assert.match(html, /"Include subagents"\)\)\n?\s*: null,/);
 });
