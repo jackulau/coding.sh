@@ -1,7 +1,7 @@
 // `coding.sh judge slop` end to end under a throwaway home: a backfilled
 // Claude Code session (diffs from its file.change events), a diff file, stored
 // runs of a compare experiment (their work-tree diffs, per arm), and
-// `judge grade` with an agent-slop spec and --diff. Exit 0 pass, 1 fail, 2 nothing to grade.
+// `judge grade` with an agent-slop spec and --diff. Exit 0 pass, 1 fail or nothing to grade, 2 usage error.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

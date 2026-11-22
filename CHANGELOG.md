@@ -342,6 +342,7 @@ grouped by area, with links to the docs for the details.
 - **Judges.** The calibrate command that `coding.sh judge sample --out` prints runs as printed: it is named for the user's shell (`codingsh` in PowerShell and cmd) and passes `--split` for a plan not drawn from `test`, and `judge calibrate --plan` reads the labels named after the plan's criterion. `judge calibrate --sample-passes` names the shell's CLI too. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#which-cases-to-label))
 - **Evals.** The `score_add`, `score_add_batch` and `score_list` MCP tools take a short session id, as the CLI does, and `latest` names the session `coding.sh score add latest` scores. Before, a short id was refused or listed nothing, and `latest` could be a newer session with no work in it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#scores))
 - **Judges.** `coding.sh judge slop` on a session with no captured diffs names the `git diff` command to grade instead with the CLI of the user's shell (`codingsh` in PowerShell and cmd). ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
+- **Docs.** The evals guide says `coding.sh judge slop` exits 1, not 2, when there is nothing to grade, and 2 on a usage error. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
 
 ## [0.1.7] - 2026-11-16
 

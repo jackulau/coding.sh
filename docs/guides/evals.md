@@ -1668,8 +1668,9 @@ coding.sh judge slop --list-rules
 
 It prints the score and one line per finding, with the rule, path and line. `--rules`,
 `--exclude`, `--max-errors` and `--max-warnings` work as in the spec, and `--json` prints the
-findings. It exits 0 on pass, 1 on fail, and 2 when there is nothing to grade (a session whose
-agent does not record diffs, an experiment with no stored runs). For an experiment it fails when
+findings. It exits 0 on pass and 1 on fail. It also exits 1 when there is nothing to grade (a
+session whose agent does not record diffs, an experiment with no stored runs), and 2 on a usage
+error, such as a `--diff` file that is not a unified diff. For an experiment it fails when
 any run fails, and per arm it prints the runs that pass, the findings, findings per 100 added
 lines and the mean score. A session's diffs are graded edit by edit, so a line one edit adds and
 a later edit removes still counts.

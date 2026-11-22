@@ -2,7 +2,8 @@
 // rules (src/graders/slop.ts) over captured work, without a grader file. A
 // session is graded on the diffs its file.change events carry (and its
 // subagents'), a run on its stored work-tree diff, an experiment run by run
-// with a rate per arm. Exit 0 on pass, 1 on fail, 2 when there is nothing to grade.
+// with a rate per arm. Exit 0 on pass, 1 on fail or when there is nothing to
+// grade, 2 on a usage error.
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
