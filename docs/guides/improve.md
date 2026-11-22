@@ -166,7 +166,7 @@ flag. `coding.sh improve` shows the same verdicts for up to three recent changes
 | Flag | Default | What it does |
 |---|---|---|
 | `--since` | 30d | Changes after this time. |
-| `--repo` | this repo | Also counts sessions in other checkouts or worktrees: a directory, or `all`. |
+| `--repo` | this checkout | Counts the sessions that ran in this folder or a folder under it: pass another checkout's folder, or `all`. `sessions --where repo:<name>` counts by repo name instead, so it also counts the repo's worktrees in other folders. |
 | `--sessions` | off | Lists every flagged session after each change, not five. |
 | `--watch` | off | Checks again every `--interval` seconds (60) and prints a line when a verdict moves. |
 | `--json` | off | The counts, tests and flagged sessions as JSON. |

@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { putSession, sessionEvents } from "../helpers-decision.ts";
 import { improveWorld, type World } from "../helpers-improve.ts";
 import { CLI } from "../_cli.ts";
 
@@ -36,6 +37,28 @@ function commitRule(w: World, line: string, subject: string) {
   appendFileSync(join(w.repo, "CLAUDE.md"), `${line}\n`);
   const r = spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qam", subject], { cwd: w.repo, env: w.env, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
+}
+
+/** Headless sessions (`claude -p`) that ran `npm test` in `dir` at git HEAD `head`; `main` when dir is a linked worktree of that repo. */
+async function headlessIn(w: World, rows: { id: string; dir: string; head: string; main?: string; daysAgo: number }[]) {
+  const { openContext } = await import("../../src/core/context.ts");
+  const ctx = await openContext({ env: w.env, cwd: w.repo });
+  try {
+    for (const r of rows) {
+      const repo: { root: string; head: string; main?: string } = { root: r.dir, head: r.head };
+      if (r.main) repo.main = r.main;
+      const events = sessionEvents(r.id, { cwd: r.dir, startedAt: Date.now() - r.daysAgo * 86_400_000 }, [
+        ["session.start", { entrypoint: "sdk-cli" }],
+        ["user.message", { text: `Task ${r.id}` }],
+        ["tool.start", { tool: "Bash", toolUseId: `${r.id}-t`, input: { command: "npm test" } }],
+        ["tool.end", { tool: "Bash", toolUseId: `${r.id}-t`, ok: true, output: "ok" }],
+        ["assistant.message", { text: "Done." }],
+      ]);
+      await putSession(ctx.index, events.map((e) => ({ ...e, repo })));
+    }
+  } finally {
+    await ctx.close();
+  }
 }
 
 describe("cli improve", () => {
@@ -228,6 +251,34 @@ describe("cli improve", () => {
     assert.ok(!text.stdout.includes(subject.slice(0, 101)));
     const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { subject: string }[] };
     assert.equal(j.changes[0]!.subject, subject);
+  });
+
+  it("improve check counts the headless sessions it left out in the folders it reads; sessions --where repo: counts by repo name", async () => {
+    const w = await world("headless-folders", { afterFlagged: 0, headless: 2 });
+    await headlessIn(w, [
+      // A repo nested in the checkout's folder, at a commit this repo does not have.
+      { id: "nested-0", dir: join(w.repo, "vendor", "lib"), head: "0".repeat(40), daysAgo: 3 },
+      // A linked worktree of the repo outside its folder: check reads it only with --repo.
+      { id: "worktree-0", dir: join(root, "headless-folders", "other"), head: w.commits.rule!, main: w.repo, daysAgo: 3 },
+      { id: "worktree-1", dir: join(root, "headless-folders", "other"), head: w.commits.rule!, main: w.repo, daysAgo: 2.5 },
+    ]);
+    const check = (args: string[]) => {
+      const r = cli(w, ["improve", "check", "--json", ...args]);
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout) as { headlessLeftOut?: number; changes: { commit: string; after: { sessions: number } }[] };
+    };
+    // Under the checkout's folder: its own 2 and the nested repo's 1, not the worktree's 2.
+    assert.equal(check([]).headlessLeftOut, 3);
+    // --headless reads the same folders: the checkout's 2 count after the change; the nested repo's commit is not in this history.
+    assert.equal(check(["--headless"]).changes.find((c) => c.commit === w.commits.rule)!.after.sessions, 8);
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stderr, /3 headless sessions under [^\n]+ since 30d left out \(--headless\)/);
+    // sessions counts by repo name: the checkout's 2 and the worktree's 2, not the nested repo (named lib).
+    const s = cli(w, ["sessions", "--where", "repo:repo", "--since", "30d", "--facets", "launch", "--json"]);
+    assert.equal(s.status, 0, s.stderr);
+    const launch = (JSON.parse(s.stdout) as { facets: { launch: { value: string; count: number }[] } }).facets.launch;
+    assert.equal(launch.find((f) => f.value === "headless")?.count, 4);
   });
 
   it("improve check exits 1 on a regression and 0 otherwise", async () => {

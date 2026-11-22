@@ -213,7 +213,7 @@ describe("improve", () => {
     assert.equal(j.error, undefined, String(j.error));
     assert.equal(j.json.headlessLeftOut, 3);
     const text = await runCmd(improve, sb, { action: "check", cwd: w.repo, platform: "linux" });
-    assert.match(text.stderr, /3 headless sessions left out \(--headless\)/);
+    assert.match(text.stderr, /3 headless sessions under [^\n]+ since 30d left out \(--headless\)/);
     assert.match(text.stderr, /Count the headless sessions too:\n\s+coding\.sh improve check --headless/);
     const wide = await runCmd(improve, sb, { action: "check", cwd: w.repo, json: true, flags: { headless: true } });
     assert.equal(wide.json.headlessLeftOut, undefined);

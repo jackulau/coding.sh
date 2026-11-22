@@ -386,13 +386,15 @@ async function check(c: CommandContext): Promise<number> {
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");
     const leftOut = first.leftOut;
-    // Headless sessions in the window, left out without --headless: plain improve says so, and so does check.
+    // Headless sessions in the window, left out without --headless: plain improve says so, and so does
+    // check. Counted in the folders the changes read (o.repo and under it, or every repo), as
+    // findChanges reads them: not every worktree of the repo, which plain improve counts (sessionsOf).
     let windowLeftOut = 0;
     if (!o.headless) {
       const scope: ImproveScope = { since: o.since, headless: false };
       if (o.repo) scope.repo = o.repo;
       if (o.agents.length) scope.agents = o.agents;
-      windowLeftOut = (await sessionsOf(ctx.index, o, scope)).headlessLeftOut;
+      windowLeftOut = (await readScope(ctx.index, scope)).headlessLeftOut;
     }
     if (out.json) {
       const changes = first.changes.map((e) => {
@@ -416,7 +418,8 @@ async function check(c: CommandContext): Promise<number> {
       printChange(c, e, { indent: "", flagged: shown, headlessInWindow: windowLeftOut > 0 && !leftOut.has(e.change.commit) });
       out.print("");
     }
-    if (windowLeftOut) out.note(`${plural(windowLeftOut, "headless session")} left out (--headless)`);
+    // Where it counted: a folder and the folders under it, which is not what sessions --where repo:<name> counts (every checkout named so).
+    if (windowLeftOut) out.note(`${plural(windowLeftOut, "headless session")} ${o.repo ? `under ${o.repo}` : "in every repo"} since ${o.sinceText} left out (--headless)`);
     if (!watch) {
       const after = regressed[0]?.after;
       const removal = first.changes.map(removalStep).find((s) => s !== undefined);
