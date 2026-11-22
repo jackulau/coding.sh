@@ -1,6 +1,7 @@
 // Prometheus text exposition for `coding.sh serve` (§1.7). Label values are
 // bounded: routes are a fixed set and projects come from the config.
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { SPAN_SOURCE } from "../otel/map.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 
 type Labels = Record<string, string>;
@@ -59,9 +60,11 @@ export class ServeMetrics {
   readonly forwardSpans = new Counter("coding_sh_forward_spans_total", "Spans forwarded to the OTLP collector, by result (sent, dropped, failed).");
   readonly sinkEvents = new Counter("coding_sh_sink_events_total", "Events mirrored to [[sinks]], by sink and result (sent, dropped, failed).");
   readonly sessionCost = new Counter("coding_sh_session_cost_usd_total", "Cost in USD of sessions, by agent and model (subagent sessions included), counted as each turn or session ends.");
-  readonly sessions = new Counter("coding_sh_sessions_total", "Top-level sessions serve saw end, by agent and outcome (failed: the session has a failure flag).");
-  readonly sessionFlags = new Counter("coding_sh_session_flags_total", "Failure flags (flags with no colon) on the top-level sessions serve saw end.");
+  readonly sessions = new Counter("coding_sh_sessions_total", "Top-level sessions serve saw end, by agent and outcome (failed: the session has a failure flag). A session of OTel traces that share a conversation id sends no end: it counts once, when serve stores its first trace.");
+  readonly sessionFlags = new Counter("coding_sh_session_flags_total", "Failure flags (flags with no colon) on the top-level sessions coding_sh_sessions_total counts, as each is counted.");
   private readonly seenEnded = new Set<string>();
+  /** Sessions with no session.end (OTel conversations) already counted in sessions; they leave when one ends. */
+  private readonly countedOpen = new Set<string>();
   /** The cost already counted per open session, so a turn that ends counts only what the session gained. */
   private readonly costCounted = new Map<string, number>();
   private readonly tickCounts = new Array<number>(TICK_BUCKETS.length + 1).fill(0);
@@ -95,19 +98,33 @@ export class ServeMetrics {
 
   /**
    * After a writer tick: counts the rebuilt sessions whose session.end the tick
-   * stored. Never throws; a metrics bug does not fail ingest.
+   * stored, and the OTel conversations whose first trace it stored. Never throws;
+   * a metrics bug does not fail ingest.
    */
   observeCommit(events: readonly AgentEvent[], sessions: readonly Session[]): void {
     try {
       const ended = new Set<string>();
       const turned = new Set<string>();
+      // Turn ends of OTel conversations by session, one per trace: such a session sends no session.end.
+      const traces = new Map<string, number>();
       for (const e of events) {
         if (e.kind === "session.end") ended.add(e.sessionId);
-        else if (e.kind === "turn.end") turned.add(e.sessionId);
+        else if (e.kind === "turn.end") {
+          turned.add(e.sessionId);
+          if (e.source === SPAN_SOURCE && e.turnId !== undefined) traces.set(e.sessionId, (traces.get(e.sessionId) ?? 0) + 1);
+        }
       }
       if (ended.size) this.observeSessions(sessions.filter((s) => ended.has(s.id)));
+      if (!turned.size) return;
       // A session that never ends (an OTel conversation's root: one turn per trace) counts its cost per turn.
-      if (turned.size) this.observeTurns(sessions.filter((s) => turned.has(s.id) && !ended.has(s.id)));
+      const open = sessions.filter((s) => turned.has(s.id) && !ended.has(s.id));
+      this.observeTurns(open);
+      // It counts as a session once, in the tick that stored its first trace: every turn it has is in this tick.
+      // A restarted serve does not count a conversation again when its next trace comes.
+      for (const s of open) {
+        const n = traces.get(s.id);
+        if (n !== undefined && s.stats.turns <= n) this.observeOpenSession(s);
+      }
     } catch {
       // The counters are best effort.
     }
@@ -125,12 +142,27 @@ export class ServeMetrics {
       if (this.seenEnded.size > MAX_SEEN) this.seenEnded.delete(this.seenEnded.values().next().value!);
       this.countCost(s, key);
       this.costCounted.delete(key);
-      if (s.parent) continue;
-      const agent = String(s.agent);
-      const failures = s.flags.filter((f) => !f.includes(":"));
-      this.sessions.inc(bounded(this.sessions, { agent, outcome: failures.length ? "failed" : "ok" }));
-      for (const flag of new Set(failures)) this.sessionFlags.inc(bounded(this.sessionFlags, { flag }));
+      // An OTel conversation that a hook ends later was counted with its first trace.
+      if (this.countedOpen.delete(key)) continue;
+      this.countSession(s);
     }
+  }
+
+  /** Counts a top-level session that sends no session.end (an OTel conversation) once, with the outcome it has now. */
+  private observeOpenSession(s: Session): void {
+    const key = sessionKey(s);
+    if (s.parent || this.seenEnded.has(key) || this.countedOpen.has(key)) return;
+    this.countedOpen.add(key);
+    if (this.countedOpen.size > MAX_SEEN) this.countedOpen.delete(this.countedOpen.values().next().value!);
+    this.countSession(s);
+  }
+
+  private countSession(s: Session): void {
+    if (s.parent) return;
+    const agent = String(s.agent);
+    const failures = s.flags.filter((f) => !f.includes(":"));
+    this.sessions.inc(bounded(this.sessions, { agent, outcome: failures.length ? "failed" : "ok" }));
+    for (const flag of new Set(failures)) this.sessionFlags.inc(bounded(this.sessionFlags, { flag }));
   }
 
   /** When a turn of these sessions ends: counts the cost each gained since it was last counted. Ended sessions are skipped. */
