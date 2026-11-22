@@ -818,7 +818,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       // Failures: the session opens on the failed command; ] goes on to the rate-limited model call.
       const first = await page.waitFor(`${selected}?.classList.contains('is-fail') && ${selected}.textContent`, "first failure");
       assert.match(first, /Bash/);
-      assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failures/);
+      assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failed steps/);
       // A step pressed within 80 ms of the last paint shows its pane on the trailing timer.
       const pane: string = await page.waitFor("/npm test/.test(document.querySelector('#event-pane').innerText) && document.querySelector('#event-pane').innerText", "pane of the failed command");
       assert.match(pane, /npm test/);

@@ -114,6 +114,28 @@ describe("work against a seeded store", () => {
   });
 });
 
+describe("work snooze in text", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      sess("asks", 5 * MIN, { endedAt: undefined, stats: { latency: { wallMs: 4 * MIN }, waiting: { kind: "permission", at: now - 2 * MIN, toolUseId: "t1" } } as Extra["stats"] }),
+      sess("changed", 30 * MIN, { stats: { filesChanged: 1 } }),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("a blocked item says nothing brings it back sooner; a review item names the buckets that do", async () => {
+    const b = await runCmd(work, sb, { action: "snooze", positionals: ["asks", "2h"] });
+    assert.equal(b.error, undefined, b.error?.stack);
+    assert.match(b.stdout + b.stderr, /Nothing is more urgent than blocked on you, so it stays hidden until then, even if it waits on you again\./);
+    assert.doesNotMatch(b.stdout + b.stderr, /more urgent bucket than/);
+    const r = await runCmd(work, sb, { action: "snooze", positionals: ["changed", "2h"] });
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.match(r.stdout + r.stderr, /It comes back sooner if it moves to a more urgent bucket than ready for review\./);
+  });
+});
+
 describe("work --stage", () => {
   let sb: Sandbox;
   const running = (id: string, extra: Extra = {}) => sess(id, 5 * MIN, { endedAt: undefined, ...extra, stats: { latency: { wallMs: 4 * MIN }, ...extra.stats } as Extra["stats"] });

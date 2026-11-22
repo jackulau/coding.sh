@@ -180,7 +180,14 @@ a second:
 ```text
 coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v11. This runs once.
 coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
-coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
+coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
+```
+
+A smaller store upgrades without progress. When a person runs the command at a terminal, one dim
+line then names the copy of the index it kept (not with `--json`, and not when stderr is piped):
+
+```text
+coding.sh: index upgraded to schema v11. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
 ```
 
 - **Another command waits.** A command that opens the index while another process upgrades it
@@ -254,8 +261,13 @@ stderr:
 ```
 
 When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
-`--force`, `purge`, a rollback), the message says it needs your approval, and the JSON has
-`askUser: true`. An AI agent that hits such an error asks you before it runs `next`.
+`--force`, `purge`, a rollback), the JSON has `askUser: true`. An AI agent that hits such an error
+asks you before it runs `next`.
+
+The message says it needs your approval when an agent may be reading: without a terminal, or when
+a variable that agents set is present (`CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`). At a terminal with none of them set, you approve the step yourself, so the
+message leaves that out.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
