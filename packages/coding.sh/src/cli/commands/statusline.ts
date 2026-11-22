@@ -1,9 +1,9 @@
 // coding.sh statusline: Claude Code runs the configured status line command on
-// every turn with session JSON on stdin; we print one line (model, this
-// session's cost, today's cost, the worst flag, a stopped ingest) and exit 0
+// every turn with session JSON on stdin; we print one line (model, context fill, this
+// session's cost, today's cost, the worst flag, a stopped ingest, plan usage) and exit 0
 // even on error, so a missing store or bad input never disrupts the agent. `install`/`uninstall`
 // wire settings.statusLine, backed up and restored byte-for-byte.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { CLAUDE_AGENT, claudeConfigDir } from "../../adapters/claude-code.ts";
@@ -17,16 +17,18 @@ import {
 } from "../../adapters/_shared/files.ts";
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
+import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
+import { fileUrlPath, parseStoreUrl } from "../../store/factory.ts";
 import { budgetPart, highest, readBudgets, statuslineStatuses, type BudgetStatus } from "../../budget/index.ts";
 import type { Context } from "../../core/context.ts";
 import type { IndexStore, Session } from "../../core/types.ts";
 import { needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
 import { readOverlay } from "../../core/work-overlay.ts";
-import { claudeRateLimits, quotaPart, saveClaudeQuota } from "../../quota/index.ts";
+import { claudeRateLimits, quotaPart, round4, saveClaudeQuota, spendJson } from "../../quota/index.ts";
 import { autoIngest, readBudgetMs, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
-import { ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
+import { contextPart, ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
 
 // The command Claude Code runs. coding.sh is on PATH after a global install.
@@ -50,17 +52,31 @@ export const STATUSLINE_INGEST_BUDGET_MS = 400;
 export const MAX_STATUSLINE_STDIN = 1 << 20;
 
 /**
+ * How long the status line waits for stdin to close. Claude Code writes a few kB and closes the
+ * pipe at once; with a writer that keeps it open, the line prints from what arrived by then.
+ * 1 s plus the 400 ms ingest budget keeps such a render under 2 s.
+ */
+export const STATUSLINE_STDIN_MS = 1000;
+
+/**
  * Stdin, read without blocking the event loop so Ctrl-C still stops it (undefined then), and at
  * most `max` bytes: endless input (`</dev/zero`, a stuck pipe writer) ends the read, never memory.
- * A TTY (manual run with no pipe) returns "".
+ * A stdin still open after `limitMs` ends the read with what arrived. A TTY (manual run with no
+ * pipe) returns "".
  */
-export function readStdin(signal: AbortSignal, stdin: Readable & { isTTY?: boolean } = process.stdin, max = MAX_STATUSLINE_STDIN): Promise<string | undefined> {
+export function readStdin(
+  signal: AbortSignal,
+  stdin: Readable & { isTTY?: boolean } = process.stdin,
+  max = MAX_STATUSLINE_STDIN,
+  limitMs = STATUSLINE_STDIN_MS,
+): Promise<string | undefined> {
   if (stdin.isTTY) return Promise.resolve("");
   if (signal.aborted) return Promise.resolve(undefined);
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let total = 0;
     const finish = (v: string | undefined) => {
+      clearTimeout(timer);
       stdin.off("data", onData).off("end", onEnd).off("error", onError);
       signal.removeEventListener("abort", onAbort);
       resolve(v);
@@ -79,6 +95,11 @@ export function readStdin(signal: AbortSignal, stdin: Readable & { isTTY?: boole
       stdin.destroy();
       finish(undefined);
     };
+    // A writer that never closes stdin: stop reading, so the process can exit, and use what came.
+    const timer = setTimeout(() => {
+      stdin.destroy();
+      onEnd();
+    }, limitMs);
     stdin.on("data", onData).on("end", onEnd).on("error", onError);
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -90,6 +111,13 @@ function stdinModel(payload: unknown): string | undefined {
   if (typeof m.display_name === "string") return m.display_name;
   if (typeof m.id === "string") return m.id;
   return undefined;
+}
+
+/** How full the context window is (`context_window.used_percentage`), when it is a number from 0 to 100. */
+export function stdinContextPercent(payload: unknown): number | undefined {
+  if (!isObject(payload) || !isObject(payload.context_window)) return undefined;
+  const p = payload.context_window.used_percentage;
+  return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 100 ? p : undefined;
 }
 
 /** The budget part over the sessions the line already read for its `today` figure, so the two agree. */
@@ -112,16 +140,28 @@ async function print(c: CommandContext): Promise<number> {
   }
   const sid = isObject(payload) && typeof payload.session_id === "string" ? payload.session_id : undefined;
   const model = stdinModel(payload);
-  // Plan usage (`5h 62% 7d 41%`), when this Claude Code sends rate_limits; saved for `coding.sh quota`.
+  const contextPercent = stdinContextPercent(payload);
+  const contextField = contextPercent === undefined ? {} : { contextPercent: round4(contextPercent) };
+  // Plan usage (`5h 62% 7d 41% spend 63%`), when this Claude Code sends rate_limits; saved for `coding.sh quota`.
   const quota = claudeRateLimits(payload);
   const quotaSuffix = quota.length ? `  ·  ${quotaPart(quota)}` : "";
-  const quotaField = quota.length ? { quota: quota.map((w) => ({ window: w.window, usedPercent: w.usedPercent, resetsAt: w.resetsAt === undefined ? null : new Date(w.resetsAt).toISOString() })) } : {};
+  const quotaField = quota.length
+    ? { quota: quota.map((w) => ({ window: w.window, usedPercent: round4(w.usedPercent), resetsAt: w.resetsAt === undefined ? null : new Date(w.resetsAt).toISOString(), ...spendJson(w) })) }
+    : {};
   try {
     saveClaudeQuota(paths(c.env).quota, quota);
   } catch {
     // a reading not saved is only a stale `coding.sh quota`
   }
   try {
+    // Rendering the line never makes a store: with no SQLite file and nothing spooled for one,
+    // the line has the model and plan usage from stdin and no costs yet.
+    if (sqliteStoreMissing(c)) {
+      const stopped = readIngestStopped(paths(c.env).ingestStopped);
+      if (c.out.json) c.out.data({ model: model ?? null, ...contextField, sessionCostUsd: null, todayCostUsd: 0, worstFlag: null, ...ingestStoppedField(stopped), ...quotaField });
+      else c.out.print(statuslineLine({ model, contextPercent, todayCostUsd: 0, ingestStoppedSince: stopped?.since }) + quotaSuffix);
+      return 0;
+    }
     return await withContext(c, async (ctx) => {
       // The hook spools events; without reading them the "need you" count lags until some other
       // command ingests (a new permission prompt missed, an answered one still counted).
@@ -142,19 +182,20 @@ async function print(c: CommandContext): Promise<number> {
       // Spend budgets (`budget 82%`), once the highest passes 80%. A budget problem never breaks the line.
       const budget = await budgetPartOf(ctx.index, c.env, today).catch(() => undefined);
       const budgetSuffix = budget ? `  ·  ${budget.part}` : "";
-      const budgetField = budget ? { budget: { id: budget.status.budget.id, percent: budget.status.percent, over: budget.status.over } } : {};
+      const budgetField = budget ? { budget: { id: budget.status.budget.id, percent: round4(budget.status.percent), over: budget.status.over } } : {};
       const need = await needYouCount(ctx);
       if (c.out.json) {
         const doc: Record<string, unknown> = {
           model: model ?? session?.model ?? null,
-          sessionCostUsd: sessionCostUsd ?? null,
-          todayCostUsd,
+          ...contextField,
+          sessionCostUsd: sessionCostUsd === undefined ? null : round4(sessionCostUsd),
+          todayCostUsd: round4(todayCostUsd),
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
         };
         if (need) doc.needYou = need;
         c.out.data({ ...doc, ...ingestStoppedField(stopped), ...quotaField, ...budgetField });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since, needYou: need }) + quotaSuffix + budgetSuffix);
+        c.out.print(statuslineLine({ model: model ?? session?.model, contextPercent, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since, needYou: need }) + quotaSuffix + budgetSuffix);
       }
       return 0;
     });
@@ -163,12 +204,29 @@ async function print(c: CommandContext): Promise<number> {
     // to show, but a stopped ingest is the one thing worth saying about it.
     try {
       const stopped = readIngestStopped(paths(c.env).ingestStopped);
-      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped), ...quotaField });
-      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}${quotaSuffix}`);
+      if (stopped && c.out.json) c.out.data({ model: model ?? null, ...contextField, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped), ...quotaField });
+      else if (stopped) {
+        const ctxPart = contextPercent === undefined ? undefined : contextPart(contextPercent);
+        c.out.print([model, ctxPart, ingestStoppedPart(stopped.since)].filter(Boolean).join("  ·  ") + quotaSuffix);
+      }
     } catch {
       // nothing to print
     }
     return 0;
+  }
+}
+
+/**
+ * Whether the configured index is a SQLite file that does not exist yet (opening it would create
+ * it) and the hook has spooled nothing to ingest into one.
+ */
+function sqliteStoreMissing(c: CommandContext): boolean {
+  if (existsSync(paths(c.env).spool)) return false;
+  try {
+    const { scheme, rest } = parseStoreUrl(loadConfig({ env: c.env, cwd: c.cwd }).store.index);
+    return scheme === "sqlite" && rest !== ":memory:" && !existsSync(fileUrlPath(rest, { env: c.env }));
+  } catch {
+    return false; // a config problem is withContext's to report (and the catch below swallows it)
   }
 }
 

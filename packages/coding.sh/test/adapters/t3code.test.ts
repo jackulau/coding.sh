@@ -730,6 +730,41 @@ describe("T3 store-built model calls", () => {
     assert.equal(link.payload.title, undefined);
     assert.equal(link.payload.message, "T3 Code thread");
   });
+
+  it("judges a Codex exec cell as Codex does: a finished or running script is ok, a nonzero chunk or a stale tool request is not", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(dir, "statev2.sqlite"), { force: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-x", { provider: "codex", title: "Run the tests", created: T(0) });
+    // No rollout on disk for this native id: the session is built from T3's own rows.
+    providerThread(db, "pt-x", "thr-x", "codex", "0193bbbb-1111-7222-8333-444455556666", 1);
+    const item = db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, 'thr-x', NULL, 'node-1', 'pt-x', NULL, NULL, ?, 'dynamic_tool', 'failed', ?, ?)");
+    const text = (...t: string[]) => t.map((s) => ({ type: "inputText", text: s }));
+    const cell = (id: string, n: number, output: unknown) =>
+      item.run(id, n, T(1, n), J({ id, status: "failed", toolName: "exec", input: { code: "text(await tools.exec_command({ cmd: 'npm test' }))" }, output, startedAt: T(1), completedAt: T(1, n) }));
+    cell("x-ok", 1, text("Script completed\nWall time: 1.2 seconds\nOutput:", J({ exit_code: 0, output: "2 passing" })));
+    cell("x-run", 2, text("Script running with cell ID 7\nWall time: 30.0 seconds\nOutput:"));
+    cell("x-fail", 3, text("Script completed\nWall time: 0.8 seconds\nOutput:", J({ exit_code: 2, output: "1 failing" })));
+    cell("x-stale", 4, text("Script failed\nError: tool call failed: Codex app-server has no active turn for this tool request."));
+    db.close();
+    const events = await collect(backfillT3(testCtx().ctx));
+    const ends = events.filter((e) => e.kind === "tool.end");
+    assert.deepEqual(
+      ends.map((e) => [e.payload.toolUseId, e.payload.ok, e.payload.interrupted]),
+      [
+        ["x-ok", true, undefined],
+        ["x-run", true, undefined],
+        ["x-fail", false, undefined],
+        ["x-stale", false, true],
+      ],
+    );
+    const s = buildSession(events.filter((e) => e.sessionId === "0193bbbb-1111-7222-8333-444455556666"));
+    assert.equal(s.stats.toolErrors, 1);
+    assert.equal(s.stats.interruptedToolCalls, 1);
+  });
 });
 
 describe("T3 requests to the user", () => {

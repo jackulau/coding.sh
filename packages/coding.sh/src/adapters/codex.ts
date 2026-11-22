@@ -365,6 +365,19 @@ function cellChunkFailed(output: unknown): boolean {
 }
 
 /**
+ * Codex's verdict on a Code Mode `exec` cell from its output (a string, content items, or content items as JSON
+ * text, as T3 Code stores them): true when the script completed with no chunk exiting nonzero, or still runs; false
+ * for any other "Script …" status; undefined when the output is not a cell's.
+ */
+export function codeModeCellOk(output: unknown): boolean | undefined {
+  const v = parseMaybeJson(output);
+  const items = Array.isArray(v) ? v : output;
+  const status = statusLine(items);
+  if (!/^Script \w/.test(status)) return undefined;
+  return /^Script (completed|running)\b/.test(status) && !cellChunkFailed(items);
+}
+
+/**
  * Code mode: Codex runs commands through an `exec` call, a JS cell whose tool
  * calls are nested calls with their own ids (`exec-<uuid>`) and item_completed
  * records, written between the exec call and its output (the last one can land
@@ -784,7 +797,7 @@ export class CodexRolloutConverter {
       // A cell is ok when its script finished (or still runs) and every tool it called succeeded:
       // no failed nested record (now or later, see failCell) and no printed result with a nonzero exit.
       const ok = wrapper
-        ? /^Script (completed|running)\b/.test(statusLine(p.output)) && !this.failedCells.has(id) && !cellChunkFailed(p.output)
+        ? codeModeCellOk(p.output) === true && !this.failedCells.has(id)
         : (exit ?? 0) === 0 && obj(p.output).success !== false;
       const text = (isObj(parsed) && typeof parsed.output === "string" ? parsed.output : outputText(parsed)) ?? "";
       // What the model got, cut by Codex or not: on this tool.end, or on the item's when that came first.

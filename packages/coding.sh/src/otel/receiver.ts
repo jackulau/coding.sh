@@ -492,6 +492,33 @@ export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], 
   }
 }
 
+/**
+ * mergeAgentCopies for a writer that puts several requests' events at once and is not told which
+ * ids the put inserted (serve's ingest queue). Call before the put with each request's events, in
+ * arrival order; it reads which candidate ids are stored already and returns the step to run after
+ * the put. Each id counts as inserted by the first request that carries it and was not stored
+ * before, as the put inserts it. Reads nothing when no request has a Claude Code model call or prompt.
+ */
+export async function mergeAgentCopiesAfterPut(store: IndexStore, requests: AgentEvent[][]): Promise<() => Promise<void>> {
+  const sessions = new Set<string>();
+  for (const events of requests) for (const e of events) if (e.agent === "claude-code" && (e.kind === "llm.call" || e.kind === "user.message")) sessions.add(e.sessionId);
+  if (!store.replaceSessionEvents || !sessions.size) return async () => {};
+  // Only these kinds of these sessions are looked up as inserted (copies and their session.start).
+  const seen = new Set<string>();
+  for (const id of sessions) for (const e of await store.listEvents(id, { kinds: ["llm.call", "user.message", "session.start"] })) seen.add(e.id);
+  return async () => {
+    for (const events of requests) {
+      const inserted = new Set<string>();
+      for (const e of events) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        inserted.add(e.id);
+      }
+      await mergeAgentCopies(store, events, inserted);
+    }
+  };
+}
+
 /** Spans or log records in a decoded request (serve's admission cost). */
 export function countOtlpItems(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[] | undefined): number {
   let n = 0;

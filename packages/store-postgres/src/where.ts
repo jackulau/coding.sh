@@ -45,6 +45,17 @@ const stat = (path: string) => jnum("s.stats", path);
 const jarr = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json #> '{${path}}') = 'array' THEN ${col}::json #> '{${path}}' ELSE '[]'::json END)`;
 /** A repo's name as coding.sh's repoName: the text after the last / or \ (empty after a trailing slash), "tmp" for the macOS temp dir. */
 const base = (x: string) => `(CASE WHEN replace(${x}, chr(92), '/') ~ '/var/folders/.*/T$' THEN 'tmp' ELSE regexp_replace(replace(${x}, chr(92), '/'), '^.*/', '') END)`;
+/**
+ * The repo a session's worktree belongs to, as coding.sh's repoGroup: RepoState.main (`main` of
+ * the stored repo JSON), else a worktree path an agent makes (Claude Code `<repo>/.claude/worktrees/<name>`,
+ * T3 Code `.t3/worktrees/<repo>/<name>`, Codex `.codex/worktrees/<id>/<repo>`), else the repo root or cwd.
+ */
+const DIR = "coalesce(s.repo_root, s.cwd)";
+const MAIN = jstr("s.repo", "main");
+const slashed = (x: string) => `replace(${x}, chr(92), '/')`;
+const claudeRepo = (x: string) => `(CASE WHEN ${slashed(x)} ~ '.+/[.]claude/worktrees/.' THEN substr(${x}, 1, strpos(${slashed(x)}, '/.claude/worktrees/') - 1) END)`;
+const groupPath = `coalesce(${MAIN}, ${claudeRepo(DIR)})`;
+const groupName = `(CASE WHEN ${MAIN} IS NOT NULL THEN ${base(MAIN)} WHEN ${claudeRepo(DIR)} IS NOT NULL THEN ${base(claudeRepo(DIR))} WHEN ${slashed(DIR)} ~ '/[.]t3/worktrees/.+/.' THEN substring(${slashed(DIR)} from '/[.]t3/worktrees/([^/]*)/') WHEN ${slashed(DIR)} ~ '/[.]codex/worktrees/.+/.' THEN substring(${slashed(DIR)} from '/[.]codex/worktrees/[^/]*/([^/]*)') ELSE ${base(DIR)} END)`;
 const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].map((k) => `coalesce(${stat(`usage,${k}`)}, 0)`).join(" + ");
 
 /** SQL over `s` (sessions) or `e` (events) per key; a clause matches when any expression does. List-valued keys (flags, weights.checkpoint) use `f.v`, an item of MULTI_FROM. */
@@ -53,7 +64,8 @@ export const KEY_SQL: Record<string, string[]> = {
   model: ["s.model"],
   provider: [jstr("s.stats", "provider")],
   launch: [jstr("s.stats", "launch")],
-  repo: ["s.repo_root", base("coalesce(s.repo_root, s.cwd)")],
+  // A worktree's sessions match its main repo's path and name too.
+  repo: ["s.repo_root", groupPath, base(DIR), groupName],
   branch: [jstr("s.repo", "branch")],
   dir: ["s.cwd"],
   title: ["s.title"],
@@ -99,7 +111,7 @@ export const KEY_SQL: Record<string, string[]> = {
   release: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "release")} END)`],
 };
 /** Facet value when it differs from the key's first expression. */
-const FACET_SQL: Record<string, string> = { repo: base("coalesce(s.repo_root, s.cwd)") };
+const FACET_SQL: Record<string, string> = { repo: groupName };
 
 /** has:/is: over `s`; never NULL. */
 export const HAS_SQL: Record<string, string> = {

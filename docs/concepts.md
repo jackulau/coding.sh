@@ -137,8 +137,8 @@ estimate.
 
 ### Alert
 
-A threshold on failure rate, cost, session count or one flag over a recent window. Only a change of
-state notifies. See the [CLI reference](https://coding.sh/docs/cli/alert).
+A threshold on failure rate, cost, session count, one flag or a score over a recent window. Only a
+change of state notifies. See the [CLI reference](https://coding.sh/docs/cli/alert).
 
 ## Testing changes
 

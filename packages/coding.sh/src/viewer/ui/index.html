@@ -195,21 +195,24 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-mono); font-size: 13px; font-weight: 560; letter-spacing: -0.01em; }
 .brand svg { width: 18px; height: 18px; flex: none; }
 .brand .p1 { fill: var(--text); } .brand .p2 { fill: var(--text-muted); } .brand .p3 { fill: var(--text-2); }
-.nav { display: flex; gap: 2px; min-width: 0; }
-/* The tabs are the one part of the bar that can give: in a font wider than the ones the
-   widths were tuned for (no Geist on Linux), a label ends in an ellipsis instead of the bar
-   pushing the page past the screen. The label clips, not the link, so its hit area stays. */
-.nav a, .nav a > span { min-width: 0; }
-.nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Six tabs fit a phone only with short names. */
+/* The tabs are the one part of the bar that can give: where they do not all fit (a phone, or a
+   font wider than the ones the widths were tuned for), the row of tabs scrolls sideways and
+   every name stays whole. The row is as tall as the bar, so each tab's 44px hit area fits in it. */
+.nav { display: flex; align-items: center; align-self: stretch; gap: 2px; min-width: 0; padding: 0 3px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { flex: none; }
+.nav a > span { white-space: nowrap; }
+/* Seven tabs with their full names need about 1080px; below that they take short names. */
 .nav-short { display: none; }
-@media (max-width: 640px) { .nav-long { display: none; } .nav-short { display: inline; } }
+@media (max-width: 1080px) { .nav-long { display: none; } .nav-short { display: inline; } }
 .nav a {
   display: inline-flex; align-items: center; height: 28px; padding: 0 0.65rem;
   border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);
   transition: background-color var(--dur-hover-out) ease-out, color var(--dur-hover-out) ease-out;
 }
 .nav a[aria-current="page"] { color: var(--text); background: var(--raised); }
+/* Review shows only where the server has review queues; at every width it is a tab like the others. */
+.nav a.nav-opt[hidden] { display: none; }
 .topbar .spacer { flex: 1; }
 .cmdk {
   display: inline-flex; align-items: center; gap: 0.6rem; height: 30px; padding: 0 0.4rem 0 0.7rem; min-width: 13rem;
@@ -237,20 +240,26 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .topbar:has(> .update-pill:not([hidden])) :is(.cmdk span, .cmdk kbd) { display: none; }
 }
 @media (max-width: 980px) { #update .long, #indexing > :not(.dot) { display: none; } }
-@media (max-width: 820px) {
-  .topbar { gap: 0.75rem; }
+/* Seven tabs with short names fit beside the folded search box down to 821px, and down to
+   641px once the brand word goes too. */
+@media (max-width: 960px) {
   .cmdk { min-width: 0; width: 32px; padding: 0; justify-content: center; }
   .cmdk span, .cmdk kbd { display: none; }
-  .topbar:has(> .update-pill:not([hidden])) .brand span { display: none; }
+}
+@media (max-width: 820px) {
+  .topbar { gap: 0.75rem; }
+  .brand span { display: none; }
 }
 @media (max-width: 640px) {
   .topbar { gap: 0.5rem; }
-  /* Six tabs fit a phone: the cube stays, the word goes. */
+  /* On a phone the tabs scroll sideways: the cube stays, the word goes. */
   .brand span { display: none; }
   .nav { gap: 0; }
   .nav a { padding: 0 0.4rem; font-size: 12.5px; }
   #help, .topbar > .update-pill { display: none; }
 }
+/* One column (phones, narrow windows): the step list scrolls under the bar, so the bar is opaque. */
+@media (max-width: 860px) { .topbar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (max-width: 380px) { .brand span { display: none; } }
 .cmdk:active { transform: scale(var(--press-scale)); }
 .icon-btn {
@@ -498,6 +507,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   /* One height for every row, badges or not, so the list reads as an even grid. */
   .list > .row { min-height: 52px; contain-intrinsic-size: auto 52px; }
   .row-title { min-width: 0; }
+  /* Tool calls over failures, as agent over model, so "5,050 tools · 45 failed" is not cut short. */
+  .act-cell:has(> .err) { display: grid; line-height: 1.3; }
+  .act-cell > .err { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .act-cell .sep { display: none; }
   .row-badges { height: 18px; flex: none; }
   .row-badges .badge, .row-badges .sub-toggle { height: 18px; font-size: 10.5px; padding: 0 0.4rem; }
   .table.one-repo { --c-repo: ; }
@@ -594,11 +607,14 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .rt-worst { font-size: 12px; color: var(--text-2); }
 .rt-worst a { color: var(--fail-ink); }
 .rt-nodes { display: grid; gap: 1px; }
-.rt-node { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0.4rem; border-radius: 4px; font-size: 12px; min-width: 0; }
+/* Name first: where the numbers do not fit beside a name of 8rem, they wrap under it (a phone). */
+.rt-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.5rem; padding: 0.25rem 0.4rem; border-radius: 4px; font-size: 12px; min-width: 0; }
+.rt-node .rt-name { flex: 1 1 8rem; }
 .rt-node.current { background: var(--raised); box-shadow: inset 2px 0 0 var(--text); }
 .rt-node .rt-name { font-family: var(--font-mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rt-node .rt-role { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex: none; }
-.rt-node .rt-nums { margin-left: auto; display: flex; gap: 0.8rem; color: var(--text-2); flex: none; font-variant-numeric: tabular-nums; }
+.rt-node .rt-nums { margin-left: auto; display: flex; flex-wrap: wrap; gap: 0 0.8rem; color: var(--text-2); flex: 0 1 auto; min-width: 0; max-width: 100%; font-variant-numeric: tabular-nums; }
+.rt-node .rt-nums > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rt-node .rt-nums .fail { color: var(--fail-ink); }
 /* Durable workflow run: one lane per step, a bar per attempt, waits hatched, resumes ticked. */
 .wf-run { flex: none; display: grid; gap: 0.45rem; padding: 0.6rem var(--gutter) 0.7rem; box-shadow: inset 0 -1px 0 var(--line); }
@@ -1604,6 +1620,38 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .work-sessions summary { cursor: pointer; width: fit-content; }
 .work-sessions ul { margin: 0.35rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.2rem; font-size: 12px; }
 .work-actions, .work-more { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.work-stages { margin-top: 0.1rem; }
+.work-stage[data-stage="review"], .work-stage[data-stage="approval"] { color: var(--warn-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
+.work-stage[data-stage="done"] { color: var(--pass-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pass) 35%, transparent); }
+.seg[hidden], .meta[hidden] { display: none; }
+.work-stage-seg { flex-wrap: wrap; max-width: 100%; }
+
+/* ---------- review queues ---------- */
+.review-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.review-row { display: grid; gap: 0.45rem; min-width: 0; padding: 0.85rem 1rem; }
+.review-row-head, .review-item-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; min-width: 0; }
+.review-row h2, .review-item h2 { min-width: 0; font-size: 14px; font-weight: 540; overflow-wrap: anywhere; }
+.review-row h2 a, .review-item h2 a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.review-bar { max-width: 28rem; }
+.review-progress { max-width: 46rem; margin: -0.4rem 0 1rem; }
+.review-progress .review-bar { max-width: none; }
+.review-item { display: grid; gap: 0.8rem; min-width: 0; max-width: 46rem; padding: 1rem 1.1rem; }
+.review-facts { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; min-width: 0; }
+.review-score { display: grid; gap: 0.4rem; min-width: 0; }
+.review-label { font-size: 12.5px; font-weight: 500; color: var(--text); }
+.review-num { width: 12rem; max-width: 100%; padding-right: 0.75rem; }
+.review-err { color: var(--fail-ink); font-size: 12.5px; }
+.review-err:empty { display: none; }
+.review-note { max-width: 46rem; margin-bottom: 0.6rem; font-size: 12.5px; color: var(--text-2); }
+.review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+@media (max-width: 640px) { .review-item { padding: 0.85rem; } }
+/* On a phone or a touch screen every Review control is a full 44px target, with a gap between
+   neighbours, so a tap does not land on the one beside it. */
+@media (max-width: 640px), (pointer: coarse) {
+  .review .review-opts { gap: 0.5rem; }
+  .review :is(.review-opts, .review-actions) :is(.btn, .chip) { height: 44px; padding: 0 1rem; font-size: 14px; }
+  .review .page-head .back, .review-row .btn { min-height: 44px; }
+}
 @media (max-width: 640px) {
   .work-filters { flex: 1 1 100%; }
   .work-filters .field { flex: 1 1 8rem; width: auto; min-width: 0; }
@@ -1629,9 +1677,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
   }
   .cmdk, .icon-btn, .brand { flex: none; }
-  /* The six tabs tighten in steps as the screen narrows. In Arial every step leaves at
-     least 3.5px to spare, so in Arial, Segoe UI or Tahoma every name stays whole from 320
-     to 640px. A wider font (DejaVu Sans, Verdana) still ends some names in an ellipsis. */
+  /* The tabs tighten in steps as the screen narrows, so more of them show at once; the
+     ones that do not fit are a sideways scroll away, each name whole. */
   @media (max-width: 442px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.3rem; font-size: 12px; } }
   @media (max-width: 398px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.2rem; font-size: 11.5px; } }
   @media (max-width: 367px) { .topbar { gap: 0; } .nav a { padding: 0 0.15rem; letter-spacing: -0.01em; } }
@@ -1702,6 +1749,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   <nav class="nav" aria-label="Primary">
     <a href="#/" data-nav="sessions"><span>Sessions</span></a>
     <a href="#/work" data-nav="work"><span>Work</span></a>
+    <a href="#/review" data-nav="review" class="nav-opt"><span>Review</span></a>
     <a href="#/explore" data-nav="explore"><span>Explore</span></a>
     <a href="#/experiments" data-nav="experiments"><span><span class="nav-long">Experiments</span><span class="nav-short">Exps</span></span></a>
     <a href="#/benchmarks" data-nav="benchmarks"><span><span class="nav-long">Benchmarks</span><span class="nav-short">Bench</span></span></a>
@@ -1874,8 +1922,10 @@ function fmtDuration(ms) {
   if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
   return hr + "h " + (m % 60) + "m";
 }
-/** An axis tick: a round duration without its zero tail, so a minute reads "1m", not "1m 0s". */
-function fmtDurationTick(ms) {
+/** An axis tick: a round duration without its zero tail, so a minute reads "1m", not "1m 0s". Zero takes the unit of the axis's first other tick: 0s, 25s, 50s. */
+function fmtDurationTick(ms, ticks) {
+  const step = ms === 0 && ticks ? ticks.find((t) => t > 0) : 0;
+  if (step) return "0" + /[a-z]+$/.exec(fmtDurationTick(step))[0];
   return fmtDuration(ms).replace(/ 0[smh]$/, "");
 }
 /** A subagent's header badge: "subagent", then its type when that says more (t3code's type is "subagent"). */
@@ -2099,11 +2149,19 @@ function preload(path) {
   preloaded.set(path, { at: Date.now(), promise });
   return promise;
 }
+/** A session record by id; ?missing=null makes a missing one a null body, not a 404 the console reports. */
+function sessionRecordPath(id) { return "/api/sessions/" + encodeURIComponent(id) + "?missing=null"; }
+/** The session record, or a 404 ApiError when the id is not in the index. */
+async function sessionRecord(path) {
+  const s = await api(path);
+  if (!s) throw new ApiError(404, "session not found");
+  return s;
+}
 /** Everything opening a session reads first (see showSession), so the click needs no request. */
 function preloadSession(id) {
   if (navigator.connection && navigator.connection.saveData) return;
   const base = "/api/sessions/" + encodeURIComponent(id);
-  preload(base).then((s) => { if (s && s.parent && s.parent.sessionId) preload("/api/sessions/" + encodeURIComponent(s.parent.sessionId)); }, () => {});
+  preload(sessionRecordPath(id)).then((s) => { if (s && s.parent && s.parent.sessionId) preload(sessionRecordPath(s.parent.sessionId)); }, () => {});
   preload(base + "/events" + qs({ limit: EVENTS_PAGE }));
   preload("/api/labels" + qs({ sessionId: id }));
   preload("/api/sessions" + qs({ parent: id, limit: 500 }));
@@ -2252,14 +2310,24 @@ function parseHash() {
   const parts = path.split("/").map((p) => { try { return decodeURIComponent(p); } catch { return ""; } });
   return { parts, query, hasQuery: qi >= 0 };
 }
+/** Where the tabs scroll sideways (a phone), the current one is scrolled into the row. */
+function showCurrentTab() {
+  const nav = document.querySelector(".topbar .nav");
+  const a = nav && nav.querySelector("[aria-current=page]");
+  if (!a || nav.scrollWidth <= nav.clientWidth) return;
+  const n = nav.getBoundingClientRect(), r = a.getBoundingClientRect();
+  if (r.left < n.left) nav.scrollLeft -= n.left - r.left + 8;
+  else if (r.right > n.right) nav.scrollLeft += r.right - n.right + 8;
+}
 function route() {
   const seq = ++navSeq;
   clearAnnouncement();
   const { parts, query, hasQuery } = parseHash();
-  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
+  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" || parts[0] === "review" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
+  showCurrentTab();
   if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX),
     /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0, query.get("view") || "");
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
@@ -2271,6 +2339,8 @@ function route() {
   if (parts[0] === "workflows") return showWorkflows(seq);
   if (parts[0] === "explore" || parts[0] === "metrics") return showExplore(seq, query);
   if (parts[0] === "work") return showWork(seq, query);
+  if (parts[0] === "review" && parts[1]) return showReviewQueue(seq, parts[1]);
+  if (parts[0] === "review") return showReviews(seq);
   if (parts[0] === "playground" && parts[1]) return showPlayground(seq, parts[1], (query.get("session") || "").slice(0, 200));
   return showSessions(seq, hasQuery ? query : null, parts[0] === "events" ? "events" : "sessions");
 }
@@ -2293,6 +2363,8 @@ const KEYMAP = [
   { scope: "global", id: "go-benchmarks", keys: ["g", "b"], label: "Go to benchmarks", chord: true },
   { scope: "global", id: "go-explore", keys: ["g", "x"], label: "Go to explore", chord: true },
   { scope: "global", id: "go-work", keys: ["g", "w"], label: "Go to work", chord: true },
+  { scope: "global", id: "go-review", keys: ["g", "r"], label: "Go to review queues", chord: true },
+  { scope: "global", id: "go-workflows", keys: ["g", "f"], label: "Go to workflow runs", chord: true },
   { scope: "sessions", id: "search", keys: ["/"], label: "Filter or search" },
   { scope: "sessions", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next session" },
   { scope: "sessions", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous session" },
@@ -2359,8 +2431,14 @@ const KEYMAP = [
   { scope: "work", id: "open", keys: ["Enter"], label: "Open the item's session" },
   { scope: "work", id: "ack", keys: ["a"], label: "Acknowledge the item" },
   { scope: "work", id: "snooze", keys: ["z"], label: "Snooze the item for an hour" },
+  { scope: "review", id: "done", keys: ["Enter"], label: "Done: save the score, then the next item" },
+  { scope: "review", id: "skip", keys: ["s"], label: "Skip the item" },
+  { scope: "review", id: "session", keys: ["o"], label: "Open the item's session" },
+  { scope: "review", id: "yes", keys: ["y"], label: "Yes (a yes or no score)" },
+  { scope: "review", id: "no", keys: ["n"], label: "No (a yes or no score)" },
+  { scope: "review", id: "pick", keys: ["1–9"], alt: ["1", "2", "3", "4", "5", "6", "7", "8", "9"], label: "Pick a category" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark", work: "Work" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark", work: "Work", review: "Review queue" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -2375,6 +2453,8 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "b") { e.preventDefault(); location.hash = "#/benchmarks"; return; }
     if (e.key === "x") { e.preventDefault(); location.hash = "#/explore"; return; }
     if (e.key === "w") { e.preventDefault(); location.hash = "#/work"; return; }
+    if (e.key === "r") { e.preventDefault(); location.hash = "#/review"; return; }
+    if (e.key === "f") { e.preventDefault(); location.hash = "#/workflows"; return; }
   }
   chordAt = 0;
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
@@ -2450,7 +2530,8 @@ function openPalette() {
     { group: "Go to", label: "Experiments", hint: KEYBOARD.matches ? "g e" : "", run: () => { location.hash = "#/experiments"; } },
     { group: "Go to", label: "Benchmarks", hint: KEYBOARD.matches ? "g b" : "", run: () => { location.hash = "#/benchmarks"; } },
     { group: "Go to", label: "Explore", hint: KEYBOARD.matches ? "g x" : "", run: () => { location.hash = "#/explore"; } },
-    { group: "Go to", label: "Workflow runs", run: () => { location.hash = "#/workflows"; } },
+    reviewOn ? { group: "Go to", label: "Review queues", hint: KEYBOARD.matches ? "g r" : "", run: () => { location.hash = "#/review"; } } : null,
+    { group: "Go to", label: "Workflow runs", hint: KEYBOARD.matches ? "g f" : "", run: () => { location.hash = "#/workflows"; } },
     { group: "Commands", label: theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme", run: () => theme.toggle() },
     KEYBOARD.matches ? { group: "Commands", label: "Keyboard shortcuts", hint: "?", run: () => setTimeout(openHelp, 0) } : null,
     ...(viewKeys.palette || []),
@@ -3732,7 +3813,7 @@ function sessionList(view) {
       h("div", { class: "row-cells" },
         h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
         h("span", { class: "cell muted repo-cell" + (repoLabel(s) ? "" : " is-none"), title: repoDir(s) }, repoLabel(s) || "—"),
-        h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
+        h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, h("span", { class: "sep" }, " · "), actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
         h("span", { class: "cell num muted dur-cell" }, dur),
@@ -4283,6 +4364,8 @@ function weightsCheckpointText(p) {
   const note = typeof p.note === "string" && p.note ? " · " + p.note : "";
   return "checkpoint " + shortWeights(file) + (base ? " ← " + shortWeights(base) : "") + note;
 }
+/** A file change, named alike in the step list and in its detail pane: "Added", "Deleted" or "Changed". */
+function changeVerb(op) { return op === "add" ? "Added" : op === "delete" ? "Deleted" : "Changed"; }
 function eventView(ev) {
   const p = ev.payload || {};
   switch (ev.kind) {
@@ -4305,7 +4388,7 @@ function eventView(ev) {
       // The recorded result of an edit, so it reads in the past tense and its line counts
       // sit where a tool call shows its duration.
       const delta = [p.additions !== undefined ? "+" + p.additions : "", p.deletions !== undefined ? "−" + p.deletions : ""].filter(Boolean).join(" ");
-      const verb = p.op === "add" ? "Added" : p.op === "delete" ? "Deleted" : "Changed";
+      const verb = changeVerb(p.op);
       const path = relPath(p.path) || basename(p.path);
       return { name: verb, arg: path, meta: delta, adds: p.additions, dels: p.deletions, label: verb + " " + path + (delta ? " " + delta : ""), tone: "text", kindText: ev.kind };
     }
@@ -4377,14 +4460,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   fromList = "";
   const replaceBody = (node) => keepFocus(view, () => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); });
   let session, events, labels, children, parent = null;
-  const sessionPath = "/api/sessions/" + encodeURIComponent(id);
-  // The session record is asked for once and first: an id that is not in the index is a 404 here and
-  // costs no other request, and a record the hit check already read is not read again.
+  const sessionPath = sessionRecordPath(id);
+  // The session record is asked for once and first: an id that is not in the index is a null body here
+  // (not a 404 the console reports), costs no other request, and a record the hit check read is not read again.
   let first = null, firstError = null;
   if (viaHit) {
     // A hit's session can still be importing: wait out one ingest pass before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { first = await api(sessionPath); firstError = null; break; } catch (e) {
+      try { first = await sessionRecord(sessionPath); firstError = null; break; } catch (e) {
         firstError = e;
         if (e.status !== 404 || attempt === 1 || !current(seq)) break;
         replaceBody(h("div", { class: "panel empty", "aria-busy": "true" },
@@ -4399,14 +4482,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   try {
     if (firstError) throw firstError;
-    session = first || await api(sessionPath);
+    session = first || await sessionRecord(sessionPath);
     [events, labels, children] = await Promise.all([
       api(eventsPath + qs({ limit: EVENTS_PAGE })),
       api("/api/labels" + qs({ sessionId: id })),
       api("/api/sessions" + qs({ parent: id, limit: 500 })).catch((e) => { if (e.status === 401) throw e; return { items: [] }; }),
     ]);
     if (session.parent && session.parent.sessionId) {
-      parent = await api("/api/sessions/" + encodeURIComponent(session.parent.sessionId)).catch((e) => { if (e.status === 401) throw e; return null; });
+      parent = await api(sessionRecordPath(session.parent.sessionId)).catch((e) => { if (e.status === 401) throw e; return null; });
     }
   } catch (e) {
     if (!current(seq)) return;
@@ -4650,7 +4733,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   const more = h("div", { class: "timeline-more" });
   const findInput = h("input", { class: "field", id: "find", type: "search", placeholder: "Find in steps", "aria-label": "Find in steps", autocomplete: "off", spellcheck: "false", maxlength: "200" });
   const findCount = h("span", { class: "meta count", "aria-live": "polite" });
-  const onlyBox = h("input", { type: "checkbox", "aria-label": "Show only matching steps" });
+  const onlyBox = h("input", { type: "checkbox", id: "find-only", name: "only", "aria-label": "Show only matching steps" });
   const failNav = h("div", { class: "fail-nav", role: "group", "aria-label": "Failures" });
   const derailNav = h("div", { class: "fail-nav derail-nav", role: "group", "aria-label": "Derails" });
   const queryNav = h("div", { class: "fail-nav query-nav", role: "group", "aria-label": "Query matches", hidden: true });
@@ -4671,7 +4754,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   // The URL keeps the view when it differs from the default (steps) or from what this browser remembers.
   const here = (eventId) => sessionHref(session.id, eventId, where, chatOn ? "chat" : prefs.get("chat", false) ? "steps" : "");
   const tools = h("div", { class: "tl-tools" }, viewSeg, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
-    h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
+    h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only", for: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
   // The ‹ › buttons are built once and only their label changes, so a click never loses hover or focus to a rebuild.
   const navPair = (nav, noun, move, keys) => {
     const lbl = h("span", { class: "lbl" });
@@ -5273,12 +5356,12 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   const rpNext = h("button", { class: "btn btn-sm", type: "button", "aria-label": "Next step", title: "Next step (→)", onclick: () => rpGo(rp.n + 1) }, "›");
   const rpPlay = h("button", { class: "btn btn-sm rp-play", type: "button", "aria-keyshortcuts": "Space", title: "Play (Space)", onclick: () => rpToggle() }, "Play");
   const rpSpeed = h("div", { class: "seg", role: "group", "aria-label": "Speed" });
-  const rpScrub = h("input", { class: "rp-scrub", type: "range", min: "1", max: "1", step: "1", value: "1", "aria-label": "Step" });
+  const rpScrub = h("input", { class: "rp-scrub", id: "rp-scrub", name: "step", type: "range", min: "1", max: "1", step: "1", value: "1" });
   const rpMarks = h("div", { class: "rp-marks", "aria-hidden": "true" });
   const rpPos = h("span", { class: "meta rp-pos", "aria-live": "off" });
   const rpExit = h("button", { class: "btn btn-sm btn-ghost rp-exit", type: "button", title: "Leave replay (Esc)", onclick: () => exitReplay() }, "Done");
   const rpBar = h("div", { class: "rp-bar", role: "toolbar", "aria-label": "Replay", hidden: true },
-    h("div", { class: "rp-ctl" }, rpPrev, rpPlay, rpNext, rpSpeed), h("div", { class: "rp-track" }, rpMarks, rpScrub), rpPos, rpExit);
+    h("div", { class: "rp-ctl" }, rpPrev, rpPlay, rpNext, rpSpeed), h("div", { class: "rp-track" }, h("label", { class: "sr-only", for: "rp-scrub" }, "Step"), rpMarks, rpScrub), rpPos, rpExit);
   rpScrub.addEventListener("input", () => rpGo(Number(rpScrub.value)));
   function rpSpeedPref() { try { const v = Number(localStorage.getItem("csh-rpspeed")); return v === 4 || v === 16 ? v : 1; } catch { return 1; } }
   function renderSpeed() {
@@ -6865,7 +6948,7 @@ function renderPane(pane, item, session, ctx) {
         nodes.push(p.text ? section(fmtNum(String(p.text).length) + " chars", clipped(p.text, (x) => mdView(x), { lines: 300 }), copyBtn(() => String(p.text), "Copy the original text", "text", "Copy text")) : h("p", { class: "note" }, "No inline text."));
         break;
       case "file.change": {
-        nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "tool" }, p.op === "add" ? "Add" : p.op === "delete" ? "Delete" : "Edit"), h("span", { class: "arg" }, relPath(String(p.path || "")))));
+        nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "tool" }, changeVerb(p.op)), h("span", { class: "arg" }, relPath(String(p.path || "")))));
         nodes.push(h("div", { class: "badges" },
           p.additions !== undefined ? h("span", { class: "badge pass" }, "+" + fmtNum(p.additions)) : null,
           p.deletions !== undefined ? h("span", { class: "badge fail" }, "−" + fmtNum(p.deletions)) : null));
@@ -7765,14 +7848,22 @@ function exploreTable(st, m, color) {
 const WORK_BUCKETS = [["blocked", "Blocked on you"], ["failed", "Failed"], ["stalled", "Stalled"], ["turn", "Your turn"], ["review", "Ready for review"]];
 const WORK_HIDDEN = { running: "running", done: "done", acked: "acknowledged", snoozed: "snoozed" };
 const WORK_SINCE = ["1d", "7d", "30d"];
+// core/work.ts STAGES, in order: where each item stands, apart from what needs you.
+const WORK_STAGES = ["planning", "executing", "review", "approval", "done"];
 const WORK_LIMIT = 200;
 const WORK_POLL_MS = 10_000;
 function workState(q) {
   const clip = (v, n) => (v || "").trim().slice(0, n);
-  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1" };
+  const stage = q.get("stage") || "";
+  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1", stage: WORK_STAGES.includes(stage) ? stage : "" };
 }
 function workHref(st) {
-  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "" });
+  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage });
+}
+/** "1 planning · 2 review", as the CLI's stages line says it (stagesLine in core/work.ts). */
+function workStages(stages) {
+  const parts = WORK_STAGES.filter((st) => stages[st]).map((st) => stages[st] + " " + st);
+  return parts.length ? parts.join(" · ") : "no items";
 }
 /** "2 blocked on you · 1 failed", as the CLI's header line says it. */
 function workCounts(counts) {
@@ -7821,12 +7912,16 @@ async function showWork(seq, query) {
   for (const el of [agentIn, repoIn]) el.addEventListener("keydown", (e) => { if (e.key === "Escape" && el.value) { e.preventDefault(); e.stopPropagation(); el.value = ""; form.requestSubmit(); } });
   const sinceOpts = WORK_SINCE.includes(st.since) ? WORK_SINCE : WORK_SINCE.concat(st.since);
   const hiddenBtn = h("button", { class: "btn btn-sm", type: "button", "aria-pressed": String(st.all), onclick: () => go({ all: !st.all }) }, "Show hidden");
+  // Shown once the server says it knows stages (an older one sends none).
+  const stageSeg = h("div", { class: "seg work-stage-seg", role: "group", "aria-label": "Stage", hidden: true },
+    ["", ...WORK_STAGES].map((v) => h("button", { type: "button", "aria-pressed": String(st.stage === v), onclick: () => go({ stage: v }) }, v || "any stage")));
+  const stagesMeta = h("p", { class: "meta work-stages", hidden: true });
   const controls = h("div", { class: "mx-controls" },
     h("div", { class: "seg", role: "group", "aria-label": "Sessions started in the last" },
       sinceOpts.map((v) => h("button", { type: "button", "aria-pressed": String(st.since === v), onclick: () => go({ since: v }) }, v))),
-    hiddenBtn, form);
+    stageSeg, hiddenBtn, form);
   const notes = h("div", { class: "work-notes" });
-  append(view, [h("div", { class: "page-head" }, h("div", null, h("h1", { id: "work-h" }, "Work"), meta)), controls, notes]);
+  append(view, [h("div", { class: "page-head" }, h("div", null, h("h1", { id: "work-h" }, "Work"), meta, stagesMeta)), controls, notes]);
   const slot = h("div", { class: "work-body" });
   view.append(slot);
   setView(view, false, keys);
@@ -7837,7 +7932,7 @@ async function showWork(seq, query) {
     return row;
   }))), 250);
 
-  const path = "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", limit: WORK_LIMIT });
+  const path = "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", stage: st.stage, limit: WORK_LIMIT });
   let d;
   try { d = await api(path); } catch (e) {
     clearTimeout(skel);
@@ -7854,6 +7949,8 @@ async function showWork(seq, query) {
   const draw = (doc, quiet) => {
     const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
     meta.textContent = workCounts(doc.counts) + " · since " + st.since;
+    stageSeg.hidden = stagesMeta.hidden = !doc.stages;
+    if (doc.stages) stagesMeta.textContent = "Stages: " + workStages(doc.stages);
     hiddenBtn.textContent = doc.hidden ? "Show hidden (" + fmtNum(doc.hidden) + ")" : "Show hidden";
     const lines = [];
     if (hidden && !st.all && doc.items.length) lines.push(h("p", { class: "meta" }, hidden + "."));
@@ -7932,7 +8029,7 @@ function workError(e, go) {
 function workBody(doc, st, go, act) {
   const items = doc.items || [];
   if (!items.length) {
-    const filtered = !!(st.agent || st.repo);
+    const filtered = !!(st.agent || st.repo || st.stage);
     if (doc.hidden && !st.all) {
       return h("div", { class: "panel empty" },
         h("h2", { text: "Nothing needs you" }),
@@ -7941,9 +8038,9 @@ function workBody(doc, st, go, act) {
     }
     return h("div", { class: "panel empty" },
       h("h2", { text: filtered ? "No work items match these filters" : "No agent sessions since " + st.since }),
-      h("p", { text: filtered ? "Clear the agent or repo filter, or widen the window." : "Items come from the sessions coding.sh captured in the window. Widen it, or run an agent and come back." }),
+      h("p", { text: filtered ? "Clear the agent, repo or stage filter, or widen the window." : "Items come from the sessions coding.sh captured in the window. Widen it, or run an agent and come back." }),
       h("div", { class: "work-actions" },
-        filtered ? h("button", { class: "btn", type: "button", onclick: () => go({ agent: "", repo: "" }) }, "Clear the filters") : null,
+        filtered ? h("button", { class: "btn", type: "button", onclick: () => go({ agent: "", repo: "", stage: "" }) }, "Clear the filters") : null,
         st.since !== "30d" ? h("button", { class: "btn", type: "button", onclick: () => go({ since: "30d" }) }, "Widen to 30 days") : null));
   }
   const members = doc.members || {};
@@ -7982,6 +8079,9 @@ function workItemEl(i, ids, act, now = Date.now()) {
   return h("li", { class: "panel work-item", "data-item": i.id, "data-bucket": i.bucket || "hidden" },
     h("div", { class: "work-head" },
       h("h3", null, h("a", { class: "work-title", href: sessionHref(i.sessionId) }, oneLine(i.title) || "(untitled)")),
+      // Where the item stands and what kind of work it is, with the evidence as the title.
+      i.stage ? h("span", { class: "badge work-stage", "data-stage": i.stage, title: i.stageWhy || null }, i.stage) : null,
+      i.kind ? h("span", { class: "badge work-kind", title: i.stageWhy || null }, i.kind) : null,
       i.probablyClosed ? h("span", { class: "badge warn" }, "probably closed") : null,
       i.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[i.hidden] || i.hidden) : null),
     h("p", { class: "work-reason" }, h("span", { class: "dot " + tone, "aria-hidden": "true" }), h("span", null, i.reason)),
@@ -7996,6 +8096,219 @@ function workItemEl(i, ids, act, now = Date.now()) {
       i.bucket ? h("button", { class: "btn btn-sm", type: "button", "data-act": "ack", "aria-label": "Acknowledge " + i.id, title: ackCmd, onclick: (e) => act(i, "ack", e.currentTarget) }, "Ack") : null,
       h("button", { class: "btn btn-sm", type: "button", "data-act": "snooze", "aria-label": "Snooze " + i.id + " for an hour", title: snoozeCmd, onclick: (e) => act(i, "snooze", e.currentTarget) }, "Snooze 1h"),
       copyBtn(i.bucket ? ackCmd : snoozeCmd, "Copy the CLI command for " + i.id, "command", "Copy CLI")));
+}
+
+// ------------------------------------------------------------ review
+
+// Review queues (docs/guides/evals.md#review-queues): `coding.sh review create` fills a queue from a
+// --where query; this page works through it one item at a time with the queue's score config, as
+// `review next` and `review done` do. The server checks each value against the config.
+let reviewOn = true;
+const REVIEW_CREATE = "coding.sh review create <name> --where <query> --config <config>";
+// A server without review queues (404) or a store without them (501) loses the tab and the menu entry.
+async function loadReviewNav() {
+  try {
+    const res = await fetch("/api/review", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    if (res.status === 404 || res.status === 501) { reviewOn = false; $("[data-nav=review]").hidden = true; }
+  } catch { /* the tab stays */ }
+}
+function reviewCounts(q) {
+  return fmtNum(q.done || 0) + " done · " + fmtNum(q.skipped || 0) + " skipped · " + fmtNum(q.total || 0) + " in all";
+}
+function reviewBar(q) {
+  const seen = (q.done || 0) + (q.skipped || 0), total = q.total || 0;
+  const bar = h("div", { class: "bar review-bar", role: "progressbar", "aria-label": q.queue + ": " + fmtNum(seen) + " of " + fmtNum(total) + " reviewed", "aria-valuemin": "0", "aria-valuemax": String(total), "aria-valuenow": String(seen) }, h("i"));
+  bar.firstChild.style.width = (total ? Math.min(100, (seen / total) * 100) : 0) + "%";
+  return bar;
+}
+function reviewError(e, name) {
+  if (e.status === 404 && name) {
+    return h("div", { class: "panel empty" }, h("h2", { text: "No review queue named " + name }), h("p", { text: e.message }),
+      h("a", { class: "btn", href: "#/review" }, "All review queues"));
+  }
+  if (e.status === 404 || e.status === 501) {
+    return h("div", { class: "panel empty" }, h("h2", { text: "Review queues are not available here" }), h("p", { text: e.message }));
+  }
+  return errorPanel(e, () => route());
+}
+function reviewHead(title, meta, back) {
+  return h("div", { class: "page-head" }, h("div", null,
+    back ? h("a", { class: "back", href: "#/review" }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Review queues") : null,
+    h("h1", { id: "review-h" }, title), meta));
+}
+async function showReviews(seq) {
+  const meta = h("p", { class: "meta" }, "Loading…");
+  const slot = h("div", { class: "review-body", "aria-busy": "true" });
+  setView(h("section", { class: "wrap view review", "aria-labelledby": "review-h" }, reviewHead("Review", meta), slot), false, { scope: "reviews", actions: {} });
+  let d;
+  try { d = await api("/api/review"); } catch (e) {
+    if (!current(seq)) return;
+    meta.textContent = "";
+    slot.removeAttribute("aria-busy");
+    swap(slot, reviewError(e));
+    announce("Review queues did not load");
+    return;
+  }
+  if (!current(seq)) return;
+  slot.removeAttribute("aria-busy");
+  const items = (d && d.items) || [];
+  meta.textContent = items.length ? plural(items.length, "queue") : "";
+  if (!items.length) {
+    swap(slot, h("div", { class: "panel empty" },
+      h("h2", { text: "No review queues yet" }),
+      h("p", { text: "A queue holds the sessions a --where query matched, for a person to score one at a time with a score config. Make one from the CLI:" }),
+      cmdBlock(REVIEW_CREATE, "Copy the review create command")));
+    announce("No review queues");
+    return;
+  }
+  swap(slot, h("ul", { class: "review-list" }, items.map((q) => h("li", { class: "panel review-row" },
+    h("div", { class: "review-row-head" },
+      h("h2", null, h("a", { href: "#/review/" + encodeURIComponent(q.queue) }, q.queue)),
+      h("span", { class: "badge", title: "Score config" }, q.config)),
+    reviewBar(q),
+    h("p", { class: "meta" }, reviewCounts(q)),
+    q.where ? h("p", { class: "meta mono truncate", title: q.where }, q.where) : null))));
+  announce(plural(items.length, "review queue"));
+}
+/** The score control for a config: the value it holds (undefined while none is given), and the y, n and 1 to 9 keys. */
+function reviewControl(cfg, values) {
+  const type = cfg ? cfg.dataType : "text";
+  const choice = type === "boolean" || type === "categorical";
+  // Buttons take their group's name from a plain heading: a <label> needs a field to point at.
+  const label = h(choice ? "p" : "label", { class: "review-label", for: choice ? null : "rv-value", id: "rv-label" }, cfg ? cfg.name : "Score", cfg && cfg.description ? h("span", { class: "meta" }, " · " + cfg.description) : null);
+  if (choice) {
+    const opts = type === "boolean" ? [[true, "Yes", "y"], [false, "No", "n"]] : (cfg.categories || []).map((c, i) => [c, c, i < 9 ? String(i + 1) : ""]);
+    let picked;
+    const pick = (v) => { picked = v; opts.forEach(([o], i) => btns[i].setAttribute("aria-pressed", String(o === v))); };
+    const btns = opts.map(([v, text, key]) => h("button", { class: type === "boolean" ? "btn btn-label " + (v ? "is-pass" : "is-fail") : "chip", type: "button", "aria-pressed": "false", "aria-keyshortcuts": key || null,
+      title: key ? text + " (" + key + ")" : null, onclick: () => pick(v) }, key && type === "categorical" ? h("span", { class: "count" }, key) : null, text));
+    const byKey = (k) => { const i = opts.findIndex((o) => o[2] === k); if (i < 0) return false; pick(opts[i][0]); };
+    return { type, el: [label, h("div", { class: "chips review-opts", role: "group", "aria-labelledby": "rv-label" }, btns)], value: () => picked, byKey, need: "Pick a value first" };
+  }
+  if (type === "numeric") {
+    const has = (n) => typeof n === "number";
+    const range = has(cfg.min) && has(cfg.max) ? cfg.min + " to " + cfg.max : has(cfg.min) ? "at least " + cfg.min : has(cfg.max) ? "at most " + cfg.max : "";
+    const input = h("input", { class: "field review-num", type: "number", id: "rv-value", name: "value", inputmode: "decimal", step: "any", min: has(cfg.min) ? cfg.min : null, max: has(cfg.max) ? cfg.max : null, placeholder: range || "A number", autocomplete: "off" });
+    if (range) label.append(h("span", { class: "meta" }, " (" + range + ")"));
+    return { type, el: [label, input], value: () => { const t = input.value.trim(); return t === "" ? undefined : Number(t); }, byKey: () => false, need: "Enter a number" + (range ? ", " + range : "") };
+  }
+  const input = h("textarea", { class: "cmt-input", id: "rv-value", name: "value", rows: "3", placeholder: cfg ? "Your score, in words" : values || "Your score" });
+  return { type, el: [label, input], value: () => (input.value.trim() ? input.value : undefined), byKey: () => false, need: "Write the score first" };
+}
+async function showReviewQueue(seq, name) {
+  const keys = { scope: "review", actions: {} };
+  const meta = h("p", { class: "meta" }, "Loading…");
+  const barSlot = h("div", { class: "review-progress" });
+  const slot = h("div", { class: "review-body", "aria-busy": "true" });
+  setView(h("section", { class: "wrap view review", "aria-labelledby": "review-h" }, reviewHead(name, meta, true), barSlot, slot), true, keys);
+  const path = "/api/review/" + encodeURIComponent(name);
+  let configs = null;
+  const item = (it, s, cfg) => {
+    const ctl = reviewControl(cfg, it.values);
+    const err = h("p", { class: "review-err", role: "alert" });
+    const comment = h("textarea", { class: "cmt-input", id: "rv-comment", name: "comment", rows: "2", placeholder: "Why, for whoever reads the score later" });
+    const href = it.sessionId ? sessionHref(it.sessionId, it.target === "event" ? it.targetId : undefined) : null;
+    let sending = false;
+    const send = async (body, btn) => {
+      if (sending) return;
+      sending = true;
+      err.textContent = "";
+      doneBtn.disabled = skipBtn.disabled = true;
+      try {
+        await fetchJson(path + "/" + encodeURIComponent(String(it.item)), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      } catch (e) {
+        // Refused because the item was done elsewhere (the CLI, another tab): the queue has moved on,
+        // so the page does too, says so in plain words, and leaves no button to send it again.
+        if (e.status >= 400 && e.status < 500 && e.status !== 401) {
+          const now = await api(path + "/next").catch(() => undefined);
+          if (!current(seq)) return;
+          if (now !== undefined && (!now || now.item !== it.item)) {
+            await load("Item " + it.item + " was already reviewed somewhere else, so it is off this page. " + (now ? "This is the next open item." : "No open items are left."));
+            if (!slot.contains(document.activeElement) || document.activeElement === doneBtn || document.activeElement === skipBtn) main.focus({ preventScroll: true });
+            return;
+          }
+        }
+        // What the person typed stays where it is.
+        sending = false;
+        doneBtn.disabled = skipBtn.disabled = false;
+        err.textContent = e.message || "That did not save";
+        if (btn.isConnected) btn.focus();
+        return;
+      }
+      toast(body.skip ? "Skipped item " + it.item : "Saved item " + it.item);
+      await load();
+    };
+    const done = () => {
+      const v = ctl.value();
+      if (v === undefined || (typeof v === "number" && !Number.isFinite(v))) { err.textContent = ctl.need; return; }
+      const body = { value: v };
+      if (comment.value.trim()) body.comment = comment.value;
+      void send(body, doneBtn);
+    };
+    const doneBtn = h("button", { class: "btn btn-primary", type: "button", "aria-keyshortcuts": "Enter", title: "Done (Enter)", onclick: done }, "Done");
+    const skipBtn = h("button", { class: "btn", type: "button", "aria-keyshortcuts": "s", title: "Skip (s)", onclick: () => send({ skip: true }, skipBtn) }, "Skip");
+    keys.actions.done = done;
+    keys.actions.skip = () => { void send({ skip: true }, skipBtn); };
+    keys.actions.session = () => { if (!href) return false; location.hash = href; };
+    keys.actions.yes = () => (ctl.type === "boolean" ? ctl.byKey("y") : false);
+    keys.actions.no = () => (ctl.type === "boolean" ? ctl.byKey("n") : false);
+    keys.actions.pick = (e) => (ctl.type === "categorical" ? ctl.byKey(e.key) : false);
+    const u = s ? usageCost(s.stats && s.stats.usage, s.model) : null;
+    const repo = s ? repoLabel(s) : "";
+    const agent = it.agent || (s && s.agent);
+    const flags = (it.flags && it.flags.length ? it.flags : s && s.flags) || [];
+    return h("article", { class: "panel review-item", "aria-labelledby": "rv-title", "data-item": String(it.item) },
+      h("div", { class: "review-item-head" },
+        h("h2", { id: "rv-title" }, href ? h("a", { href }, oneLine(it.title || (s && s.title)) || "Untitled session") : it.targetId),
+        h("span", { class: "meta" }, "Item " + it.item + " · " + plural(it.pending, "item") + " to go")),
+      h("p", { class: "meta review-facts" },
+        agent ? h("span", null, agent) : null,
+        repo ? h("span", { class: "truncate", title: repoDir(s) }, repo) : null,
+        s && s.startedAt ? h("span", { title: new Date(s.startedAt).toLocaleString() }, "started " + fmtDate(s.startedAt)) : null,
+        u && !u.none ? h("span", { title: u.title }, u.text) : null,
+        it.assignee ? h("span", null, "for " + it.assignee) : null),
+      flags.length ? h("div", { class: "badges" }, flagBadges(flags)) : null,
+      h("div", { class: "review-score" }, ctl.el, err),
+      h("div", { class: "review-score" }, h("label", { class: "review-label", for: "rv-comment" }, "Comment ", h("span", { class: "meta" }, "(optional)")), comment),
+      h("div", { class: "review-actions" }, doneBtn, skipBtn,
+        href ? h("a", { class: "btn btn-ghost", href, "aria-keyshortcuts": "o", title: "Open the session (o)" }, "Open session") : null,
+        copyBtn(it.command, "Copy the CLI command for this item", "command", "Copy CLI")));
+  };
+  /** Loads the queue and its next item; `note` (plain words) goes above the item, as the person should know why it changed. */
+  async function load(note) {
+    let st, it, s = null;
+    try {
+      [st, it, configs] = await Promise.all([api(path), api(path + "/next"), configs || api("/api/score-configs").then((b) => b.items || [])]);
+      if (it && it.sessionId) s = await api(sessionRecordPath(it.sessionId), null, true).catch(() => null);
+    } catch (e) {
+      if (!current(seq)) return;
+      meta.textContent = "";
+      slot.removeAttribute("aria-busy");
+      swap(slot, reviewError(e, name));
+      announce("The review queue did not load");
+      return;
+    }
+    if (!current(seq)) return;
+    slot.removeAttribute("aria-busy");
+    meta.textContent = reviewCounts(st) + " · score config " + st.config;
+    swap(barSlot, reviewBar(st));
+    for (const k of Object.keys(keys.actions)) delete keys.actions[k];
+    // The control that had focus goes with the old item: the page takes it, so the keys go on working.
+    if (slot.contains(document.activeElement)) main.focus({ preventScroll: true });
+    const noted = (el) => (note ? [h("p", { class: "review-note", role: "status" }, note), el] : [el]);
+    if (!it) {
+      // 204: nothing is left for this reviewer.
+      swap(slot, ...noted(h("div", { class: "panel empty" },
+        h("h2", { text: "This queue is finished" }),
+        h("p", { text: "No items are left to review: " + reviewCounts(st) + "." }),
+        h("a", { class: "btn", href: "#/review" }, "Back to review queues"))));
+      announce(note ? note : "Review queue finished");
+      return;
+    }
+    swap(slot, ...noted(item(it, s, configs.find((c) => c.name === it.config))));
+    announce((note ? note + " " : "") + "Item " + it.item + ", " + plural(it.pending, "item") + " to go");
+  }
+  await load();
 }
 
 // ------------------------------------------------------------ workflows
@@ -8482,7 +8795,7 @@ function lineChart(o) {
     }
   }
   const yl = h("div", { class: "ch-y", "aria-hidden": "true" }, o.ticks.map((t) => {
-    const s = h("span", null, o.fmtTick(t));
+    const s = h("span", null, o.fmtTick(t, o.ticks));
     s.style.top = Y(t) + "%";
     return s;
   }));
@@ -9125,6 +9438,7 @@ function touchTitles() {
 route();
 loadUpdate();
 loadStar();
+loadReviewNav();
 loadIngest();
 touchTitles();
 </script>

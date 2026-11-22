@@ -911,7 +911,8 @@ const conversationOf = (a: Attrs): string | undefined => str(a, ...SESSION_KEYS)
 /**
  * Who and where a session ran, as Langfuse's trace attributes and the OTel semconv name them:
  * payload.user, payload.environment and payload.release on its session.start (the --where keys
- * user:, env: and release:). A span attribute wins over a resource attribute.
+ * user:, env: and release:). A span attribute wins over a resource attribute. Langfuse's trace
+ * tags go to payload.tags (traceTags), which the fold turns into tag:<name> flags.
  */
 const START_META: readonly (readonly [key: string, attrs: readonly string[]])[] = [
   ["user", ["langfuse.user.id", "user.id", "enduser.id"]],
@@ -921,17 +922,50 @@ const START_META: readonly (readonly [key: string, attrs: readonly string[]])[] 
 /** Longest user, environment or release kept, in UTF-16 code units. */
 export const START_META_CHARS = 200;
 
+/** Longest Langfuse trace tag kept, in UTF-16 code units, and the most tags a span gives. */
+export const TRACE_TAG_CHARS = 64;
+export const TRACE_TAGS_MAX = 20;
+
+/** `v` cut to `max` UTF-16 code units, never leaving a lone high surrogate at the cut. */
+function cutChars(v: string, max: number): string {
+  let cut = v.slice(0, max);
+  if (cut.length < v.length && /[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut;
+}
+
+/**
+ * Langfuse's trace tags (langfuse.trace.tags), from the span, else its resource: an array of
+ * strings, a string that holds a JSON array of strings, or any other string as one tag. Trimmed,
+ * without empty ones and repeats, at most TRACE_TAGS_MAX of at most TRACE_TAG_CHARS each.
+ */
+export function traceTags(a: Attrs, resource: Attrs): string[] | undefined {
+  const read = (v: OtelValue | undefined): unknown[] | undefined => {
+    if (Array.isArray(v)) return v;
+    if (typeof v !== "string" || !v.trim()) return undefined;
+    const parsed = maybeJson(v);
+    return Array.isArray(parsed) ? parsed : [v];
+  };
+  const list = read(a["langfuse.trace.tags"]) ?? read(resource["langfuse.trace.tags"]);
+  if (!list) return undefined;
+  const tags: string[] = [];
+  for (const t of list) {
+    if (typeof t !== "string") continue;
+    const tag = cutChars(t.trim(), TRACE_TAG_CHARS).trim();
+    if (tag && !tags.includes(tag)) tags.push(tag);
+    if (tags.length === TRACE_TAGS_MAX) break;
+  }
+  return tags.length ? tags : undefined;
+}
+
 function startMeta(d: Draft, a: Attrs, resource: Attrs): Draft {
+  d.set("tags", traceTags(a, resource));
   // The Restate server's version is not the app's (as for agentVersion).
   const restate = str(resource, "service.namespace") === "Restate";
   for (const [key, names] of START_META) {
     const fromResource = restate && key === "release" ? names.filter((n) => n !== "service.version") : names;
     const v = (str(a, ...names) ?? str(resource, ...fromResource))?.trim();
     if (!v) continue;
-    let cut = v.slice(0, START_META_CHARS);
-    // Don't leave a lone high surrogate at the cut.
-    if (cut.length < v.length && /[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
-    d.set(key, cut);
+    d.set(key, cutChars(v, START_META_CHARS));
   }
   return d;
 }

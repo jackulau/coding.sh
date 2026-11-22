@@ -18,6 +18,7 @@
     "gate": "node scripts/gate.mjs",
     "lint:test": "node --test \"scripts/lint/test/*.test.mjs\" \"scripts/hooks/test/*.test.mjs\"",
     "perf:test": "node --no-warnings --test \"scripts/perf/test/*.test.mjs\"",
+    "changelog:test": "node --test \"scripts/changelog/test/*.test.mjs\"",
     "hooks:install": "node scripts/hooks/install.mjs"
   },
   "engines": {

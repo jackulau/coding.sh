@@ -70,7 +70,11 @@ Docs index: [docs/README.md](docs/README.md). Start with [docs/design/architectu
 - **Redact before writing.** Anything that persists or sends event content goes through the
   redactor first. Remote sinks default to metadata only.
 - **Docs claim only what the code does.** If you add or change a command, update its help in
-  `src/cli/registry.ts`, the README and `CHANGELOG.md`.
+  `src/cli/registry.ts`, the README and `CHANGELOG.md`. Add the changelog line with
+  `node scripts/changelog/add.mjs --section <S> --area <A> --text <T> --link <docs path[#id]>`:
+  it refuses a line over 60 words, a glyph outside the site font's CORE subset, a duplicate, and
+  a link to a missing doc or heading. `--check` runs the same checks over the unreleased lines,
+  and `npm run changelog:test` runs its tests.
 
 ## Lint and git hooks
 

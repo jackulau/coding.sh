@@ -162,8 +162,12 @@ async function tools(c: CommandContext): Promise<number> {
     if (d.callsWithoutTools) notes.push(`${plural(d.callsWithoutTools, "proxy call")} sent tools without storing them (capture mode metadata), so ${d.callsWithoutTools === 1 ? "it is" : "they are"} not counted`);
     if (sub === "pin") {
       const written = d.tools.length ? writeToolPins(d.tools, c.env) : pins;
+      // A removed tool is not pinned: writeToolPins drops its pin.
+      const dropped = d.tools.filter((t) => t.changed === "removed").length;
+      const pinned = d.tools.length - dropped;
       if (out.json) {
-        const doc: Record<string, unknown> = { outcome: d.tools.length ? "pinned" : "unchanged", pinned: d.tools.length, pins: Object.keys(written).length, since: new Date(since).toISOString() };
+        const doc: Record<string, unknown> = { outcome: d.tools.length ? "pinned" : "unchanged", pinned, pins: Object.keys(written).length, since: new Date(since).toISOString() };
+        if (dropped) doc.dropped = dropped;
         if (notes.length) doc.notes = notes;
         out.data({ ...doc, ...pendingField(backlog) });
         return 0;
@@ -173,7 +177,7 @@ async function tools(c: CommandContext): Promise<number> {
         out.note(`No tools in proxy calls since ${sinceFlag}; nothing pinned`);
         return 0;
       }
-      out.ok(`Pinned ${plural(d.tools.length, "tool")}`);
+      out.ok(`Pinned ${plural(pinned, "tool")}${dropped ? `; dropped the pins of ${plural(dropped, "removed tool")}` : ""}`);
       return 0;
     }
     const rows = changedOnly ? d.tools.filter((t) => t.changed) : d.tools;
@@ -201,7 +205,7 @@ async function tools(c: CommandContext): Promise<number> {
       out.ok(changedOnly ? "No tool changed" : "No tools");
       return 0;
     }
-    const why = (t: (typeof rows)[number]) => (t.changed === "pin" ? "differs from pin" : t.changed === "new" ? "new since pin" : t.changed === "variants" ? "changed" : t.pinned ? "pinned" : "");
+    const why = (t: (typeof rows)[number]) => (t.changed === "pin" ? "differs from pin" : t.changed === "new" ? "new since pin" : t.changed === "removed" ? "removed since pin" : t.changed === "variants" ? "changed" : t.pinned ? "pinned" : "");
     out.table(
       ["SERVER", "TOOL", "DESC", "SCHEMA", "VARIANTS", "SESSIONS", "LAST SEEN", "STATUS"],
       rows.map((t) => [t.server, t.tool, t.descSha, t.schemaSha, String(t.variants), String(t.sessions), ago(t.lastSeen), why(t)]),

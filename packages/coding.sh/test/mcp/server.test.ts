@@ -385,11 +385,14 @@ describe("tools", () => {
       assert.equal(r.status, 0, r.stderr);
       return r.stdout;
     };
-    // No session in the server's folder: a structured not_found pointing at the CLI.
+    // No session in the server's folder: a not_found pointing at the CLI, its details in _meta
+    // (an error has no structuredContent: that must match the outputSchema of an answer).
     const none = await c.call("exp_session_summary", {});
     assert.equal(none.isError, true);
-    assert.deepEqual((none.structuredContent as { error: { reason: string; next: string } }).error.reason, "not_found");
-    assert.equal((none.structuredContent as { error: { next: string } }).error.next, "coding.sh exp session new --name <topic>");
+    assert.equal(none.structuredContent, undefined);
+    const details = (none as { _meta?: Record<string, { reason?: string; next?: string }> })._meta?.["sh.coding/error"];
+    assert.equal(details?.reason, "not_found");
+    assert.equal(details?.next, "coding.sh exp session new --name <topic>");
     assert.match(none.content[0]!.text, /coding\.sh exp session new --name <topic>/);
     assert.match(await callError("exp_session_note", { text: "x" }), /No experiment session/);
 

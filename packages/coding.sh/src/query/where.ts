@@ -162,6 +162,89 @@ export const repoName = (p: string | undefined): string | undefined => {
   return /\/var\/folders\/[\s\S]*\/T$/.test(n) ? "tmp" : n.slice(n.lastIndexOf("/") + 1);
 };
 
+/** The repo a worktree an agent made belongs to, read from the worktree's path (worktreeRepo). */
+export interface WorktreeRepo {
+  /** The repo's folder name. */
+  name: string;
+  /** The repo's root, when the path holds it (Claude Code's layout). */
+  path?: string;
+}
+
+const CLAUDE_WT = "/.claude/worktrees/";
+const T3_WT = "/.t3/worktrees/";
+const CODEX_WT = "/.codex/worktrees/";
+
+/**
+ * The repo a worktree an agent made for a task belongs to, from the folder's path alone (a
+ * folder inside the worktree counts too; / or \ separators). It names the repo when git cannot:
+ * the worktree was removed, or the session was stored before RepoState.main.
+ * - Claude Code: <repo>/.claude/worktrees/<name>: the repo's path and name.
+ * - T3 Code: ~/.t3/worktrees/<repo>/<name>: the repo's name.
+ * - Codex: ~/.codex/worktrees/<id>/<repo>: the repo's name.
+ * sqlWorktree* below is the same rule in SQL; the two must agree.
+ */
+export function worktreeRepo(p: string | undefined): WorktreeRepo | undefined {
+  if (p === undefined) return undefined;
+  const n = p.replace(/\\/g, "/");
+  if (/.\/\.claude\/worktrees\/./s.test(n)) {
+    const path = p.slice(0, n.indexOf(CLAUDE_WT));
+    return { name: repoName(path)!, path };
+  }
+  if (/\/\.t3\/worktrees\/.+\/./s.test(n)) {
+    const rest = n.slice(n.indexOf(T3_WT) + T3_WT.length);
+    return { name: rest.slice(0, rest.indexOf("/")) };
+  }
+  if (/\/\.codex\/worktrees\/.+\/./s.test(n)) {
+    const rest = n.slice(n.indexOf(CODEX_WT) + CODEX_WT.length);
+    const tail = rest.slice(rest.indexOf("/") + 1);
+    const end = tail.indexOf("/");
+    return { name: end >= 0 ? tail.slice(0, end) : tail };
+  }
+  return undefined;
+}
+
+/** What repoGroup reads: a session's repo state and cwd. */
+type RepoPlace = { repo?: { root: string; main?: string } | undefined; cwd?: string | undefined };
+
+/**
+ * The repo a session counts under: a worktree's main repo (RepoState.main, else worktreeRepo of
+ * its root or cwd), else its repo root, else its cwd. `path` is unknown when only the name is
+ * (T3 Code's and Codex's layouts). The repo key, the repo facet and usage --by repo read it.
+ */
+export function repoGroup(s: RepoPlace): { name?: string; path?: string } {
+  if (s.repo?.main !== undefined) return { name: repoName(s.repo.main)!, path: s.repo.main };
+  const dir = s.repo?.root ?? s.cwd;
+  const w = worktreeRepo(dir);
+  if (w) return w;
+  return dir === undefined ? {} : { name: repoName(dir)!, path: dir };
+}
+
+/** The path a repo key compares besides the root: RepoState.main, else the Claude Code worktree's repo. */
+const groupPath = (s: RepoPlace): string | undefined => s.repo?.main ?? worktreeRepo(s.repo?.root ?? s.cwd)?.path;
+
+// The same in SQL, over `dir` (the root, else the cwd) and `main` (RepoState.main).
+const SQL_DIR = "coalesce(s.repo_root, s.cwd)";
+const SQL_MAIN = "json_extract(s.repo, '$.main')";
+const slashed = (x: string) => `replace(${x}, '\\', '/')`;
+const after = (n: string, marker: string) => `substr(${n}, instr(${n}, '${marker}') + ${marker.length})`;
+const beforeSlash = (x: string) => `substr(${x}, 1, instr(${x}, '/') - 1)`;
+const sqlClaudeWt = (dir: string) => `${slashed(dir)} GLOB '?*${CLAUDE_WT}?*'`;
+const sqlClaudeRepo = (dir: string) => `substr(${dir}, 1, instr(${slashed(dir)}, '${CLAUDE_WT}') - 1)`;
+/** worktreeRepo(dir).name and the fallback name, in SQL. */
+const sqlGroupName = (dir: string, main: string): string => {
+  const n = slashed(dir);
+  const t3 = after(n, T3_WT);
+  const codex = `substr(${after(n, CODEX_WT)}, instr(${after(n, CODEX_WT)}, '/') + 1)`;
+  return [
+    `CASE WHEN ${main} IS NOT NULL THEN ${sqlRepoName(main)}`,
+    `WHEN ${sqlClaudeWt(dir)} THEN ${sqlRepoName(sqlClaudeRepo(dir))}`,
+    `WHEN ${n} GLOB '*${T3_WT}?*/?*' THEN ${beforeSlash(t3)}`,
+    `WHEN ${n} GLOB '*${CODEX_WT}?*/?*' THEN (CASE WHEN instr(${codex}, '/') > 0 THEN ${beforeSlash(codex)} ELSE ${codex} END)`,
+    `ELSE ${sqlRepoName(dir)} END`,
+  ].join(" ");
+};
+const sqlGroupPath = (dir: string, main: string): string => `coalesce(${main}, CASE WHEN ${sqlClaudeWt(dir)} THEN ${sqlClaudeRepo(dir)} END)`;
+
 const stat = (path: string) => `json_extract(s.stats, '$.${path}')`;
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const tokensTotal = (s: Session): number | undefined => {
@@ -189,11 +272,11 @@ const KEY_LIST: KeyDef[] = [
     name: "repo",
     level: "session",
     type: "text",
-    doc: "Repo root path, or its name (else the working directory's name; tmp for the macOS temp dir)",
+    doc: "Repo root path, or its name (else the working directory's name; tmp for the macOS temp dir). A worktree's sessions match its main repo's path and name too",
     example: "repo:coding-sh",
-    sql: ["s.repo_root", sqlRepoName("coalesce(s.repo_root, s.cwd)")],
-    get: (s) => [s.repo?.root, repoName(s.repo?.root ?? s.cwd)],
-    facet: { sql: sqlRepoName("coalesce(s.repo_root, s.cwd)"), get: (s) => [repoName(s.repo?.root ?? s.cwd)] },
+    sql: ["s.repo_root", sqlGroupPath(SQL_DIR, SQL_MAIN), sqlRepoName(SQL_DIR), sqlGroupName(SQL_DIR, SQL_MAIN)],
+    get: (s) => [s.repo?.root, groupPath(s), repoName(s.repo?.root ?? s.cwd), repoGroup(s).name],
+    facet: { sql: sqlGroupName(SQL_DIR, SQL_MAIN), get: (s) => [repoGroup(s).name] },
   },
   { name: "launch", level: "session", type: "text", doc: "How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive", example: "launch:headless", sql: [stat("launch")], get: (s) => [s.stats?.launch], facet: {} },
   { name: "branch", level: "session", type: "text", doc: "Git branch", example: "branch:main", sql: ["json_extract(s.repo, '$.branch')"], get: (s) => [s.repo?.branch], facet: {} },

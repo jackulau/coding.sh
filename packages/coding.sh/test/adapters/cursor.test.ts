@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { CURSOR_HOOK_EVENTS, cursor, cursorVersionHasHooks } from "../../src/adapters/cursor.ts";
@@ -8,6 +8,7 @@ import { PROBE_TIMEOUT_MS } from "../../src/adapters/_shared/detect.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { nodeBin } from "../_bin.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
 
 const CID = "c0ffee00-1111-4222-8333-444455556666";
 
@@ -173,5 +174,22 @@ describe("cursor backfill", () => {
     assert.ok(events.every((e, i) => i === 0 || e.ts >= events[i - 1]!.ts));
     // Messages say by when they were written (the file's mtime), for matching hook copies.
     assert.ok(events.slice(1).every((e) => typeof e.payload.untimed === "number"));
+  });
+});
+
+describe("cursor run", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("ends the options before the instruction, so one that starts with a dash stays the prompt", async () => {
+    const bin = join(env.root, "bin");
+    fakeBinary(bin, "cursor-agent", "");
+    const cwd = join(env.root, "work");
+    mkdirSync(cwd, { recursive: true });
+    await cursor.run!(runSpec(cwd, bin, { instruction: "- fix the bug" }));
+    assert.deepEqual(readArgv(bin, "cursor-agent").argv.slice(-2), ["--", "- fix the bug"]);
   });
 });

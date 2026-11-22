@@ -10,7 +10,7 @@ const TOOLS: [string, string][] = [
   ["harness_audit", "Each memory file, AGENTS.md, rule and skill with its load tokens and the sessions that used it, unused first. With check: true, whether uncommitted edits deleted, reworded or relaxed a protected line."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and flags. Filter with flag or where."],
-  ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
+  ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls. With tail it starts at the end, and nextCursor pages back toward the start."],
   ["session_replay", "A session as numbered steps, with the files as of any step, and a step's or a range's diff. With fork, a step's model call sent again with changed files."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
   ["failures", "The raw data behind improve: flagged sessions, frequent tool errors, prompts where the user pushed back."],
@@ -30,7 +30,7 @@ const TOOLS: [string, string][] = [
   ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, with filters."],
   ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
   ["score_add_batch", "Store up to 100 scores in one call, each checked as score_add checks one. If one is invalid, none is stored."],
-  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error, 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the first 10 items, each with a reason and a next step."],
+  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error, 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
 ];
 
 // The skills follow packages/coding.sh/skills/<name>/SKILL.md.
@@ -125,7 +125,14 @@ const gemini = `// ~/.gemini/settings.json
   <p>
     A tool answer stays under 25,000 characters. When the rows asked for would be longer, the answer has fewer rows and a
     <code>limitUsed</code> field. A tool with a <code>cursor</code> argument also returns <code>nextCursor</code>, which starts at the
-    first row left out. Rows are dropped, not cut.
+    first row left out. Rows are dropped, not cut. With <code>tail</code>, <code>session_get</code> pages the other way: its
+    <code>nextCursor</code> gives the entries before the page, back to the first.
+  </p>
+  <p>
+    A tool error is a result with <code>isError: true</code> and the message as its text, such as a <code>since</code> later
+    than its <code>until</code>, which names both times. An error has no <code>structuredContent</code>, because that must match
+    the tool's <code>outputSchema</code>, which describes an answer. A reason and next step for a program, where the tool has
+    them, are in <code>_meta["sh.coding/error"]</code>.
   </p>
   <p>
     <code>session_replay</code> pages the files of a step, of a range and of the step list with <code>limit</code> and
@@ -145,8 +152,12 @@ const gemini = `// ~/.gemini/settings.json
   <h2 id="protocol">Protocol</h2>
   <p>
     The server speaks MCP over stdio. It accepts the stateless 2026-07-28 revision (<code>server/discover</code>, no handshake) and
-    the <code>initialize</code> handshake for 2025-11-25, 2025-06-18 and 2025-03-26. An <code>initialize</code> that asks for another
-    version gets 2025-11-25. In a 2025-03-26 session it accepts JSON-RPC batches; in later versions batches are an error.
+    the <code>initialize</code> handshake for 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. An <code>initialize</code> that asks for
+    another version gets 2025-11-25. In a 2025-03-26 session it accepts JSON-RPC batches; in later versions batches are an error.
+  </p>
+  <p>
+    A session before 2025-06-18 gets what its version defines: tools without <code>outputSchema</code> or <code>title</code>, and
+    tool results with the answer as JSON text and no <code>structuredContent</code>. A 2024-11-05 session also gets no tool annotations.
   </p>
   <p>
     In 2026-07-28, list and read results carry <code>ttlMs</code> and <code>cacheScope</code>: the tool, prompt and template lists

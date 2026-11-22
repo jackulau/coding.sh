@@ -1,4 +1,4 @@
-// coding.sh budget set <day|week|month> <usd> [--agent a] [--repo r] | list | rm <id> | status
+// coding.sh budget set <day|week|month> <usd> [--agent a] [--repo r] [--where q] | list | rm <id> | status
 //
 // Spend budgets over the sessions coding.sh captured. Spend is the estimated cost of
 // the sessions that started in the current period (local day, ISO week from Monday,
@@ -8,7 +8,7 @@ import { budgetStatuses, ESTIMATED_NOTE, isPeriod, PERIODS, readBudgets, repoPla
 import { userHome } from "../../core/paths.ts";
 import { parsePlace } from "../../mcp/data.ts";
 import { suggest, UsageError } from "../args.ts";
-import { autoIngest, pendingField, readIngest, str, withContext } from "../common.ts";
+import { autoIngest, pendingField, readIngest, str, whereFlag, withContext } from "../common.ts";
 import { CliError, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -27,7 +27,7 @@ function load(c: CommandContext): Budget[] {
   }
 }
 
-const scopeText = (b: Budget): string => [b.agent ? `agent ${b.agent}` : "", b.repo ? `repo ${b.repo}` : ""].filter(Boolean).join(", ") || "every session";
+const scopeText = (b: Budget): string => [b.agent ? `agent ${b.agent}` : "", b.repo ? `repo ${b.repo}` : "", b.where ? `where ${b.where}` : ""].filter(Boolean).join(", ") || "every session";
 
 /** `5h 20m`, `2d 4h`, `12m`: how long until `at`. */
 export function until(at: number, now = Date.now()): string {
@@ -43,7 +43,7 @@ function set(c: CommandContext): number {
   const [period, raw] = c.positionals;
   if (!isPeriod(period)) {
     const near = period ? suggest(period, PERIODS) : undefined;
-    const scope = (["agent", "repo"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f} ${str(c.flags[f])}`] : []));
+    const scope = (["agent", "repo", "where"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f} ${f === "where" ? JSON.stringify(str(c.flags[f])) : str(c.flags[f])}`] : []));
     throw new UsageError(`The period must be one of ${PERIODS.join(", ")}, got ${JSON.stringify(period ?? "")}`, {
       reason: "invalid_argument",
       suggestion: near ? ["coding.sh budget set", near, raw ?? "<USD>", ...scope].join(" ") : undefined,
@@ -58,7 +58,9 @@ function set(c: CommandContext): number {
   const place = repoFlag !== undefined ? parsePlace(repoFlag, c.cwd, userHome(c.env)) : undefined;
   const repo = place ? (place.path ?? place.name) : undefined;
   if (repoFlag !== undefined && !repo) throw new UsageError("--repo needs a path or a repo name", { reason: "invalid_argument" });
-  const r = upsertBudget(load(c), { period, limitUsd: usdLimit, agent: agent || undefined, repo: repo || undefined });
+  whereFlag(c); // a bad query fails now (exit 2), not at the first status
+  const where = str(c.flags.where)?.trim();
+  const r = upsertBudget(load(c), { period, limitUsd: usdLimit, agent: agent || undefined, repo: repo || undefined, where: where || undefined });
   writeBudgets(r.budgets, c.env);
   if (out.json) {
     out.data({ outcome: r.replaced ? "updated" : "added", budget: r.budget });
@@ -82,8 +84,8 @@ function list(c: CommandContext): number {
     return 0;
   }
   out.table(
-    ["ID", "PERIOD", "LIMIT", "AGENT", "REPO"],
-    budgets.map((b) => [b.id, b.period, usd(b.limitUsd), b.agent ?? "-", b.repo ?? "-"]),
+    ["ID", "PERIOD", "LIMIT", "AGENT", "REPO", "WHERE"],
+    budgets.map((b) => [b.id, b.period, usd(b.limitUsd), b.agent ?? "-", b.repo ?? "-", b.where ?? "-"]),
   );
   return 0;
 }

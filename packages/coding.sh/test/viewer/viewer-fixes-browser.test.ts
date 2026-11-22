@@ -91,7 +91,7 @@ describe("viewer fixes in a browser", { skip: chrome ? false : "no Chrome/Chromi
     const p = await open("#/s/no-such-session");
     await p.waitFor("document.querySelector('.panel.empty h2')?.textContent === 'Session not found'", "not found");
     await pause(300);
-    assert.deepEqual((await apiCalls(p)).filter((u) => u.includes("no-such-session")), ["/api/sessions/no-such-session"]);
+    assert.deepEqual((await apiCalls(p)).filter((u) => u.includes("no-such-session")), ["/api/sessions/no-such-session?missing=null"]);
     assert.deepEqual(p.errors, []);
   });
 

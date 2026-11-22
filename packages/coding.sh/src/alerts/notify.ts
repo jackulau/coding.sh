@@ -17,6 +17,8 @@ export interface AlertPayload {
   previous: AlertState;
   value: number | null;
   threshold: number;
+  /** Only for an alert that fires below its threshold (--under). */
+  direction?: "under";
   window: string;
   by?: { agent: string };
   /** ISO time of the check. */

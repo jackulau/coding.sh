@@ -3,8 +3,9 @@
 // from the store at most every 30 s (and again once a period has reset).
 //
 // The proxy knows a call's agent from its headers (Claude Code, Codex, else
-// "proxy", as linkCall records it) but not its repo, so a budget with a repo
-// never blocks a call; budgets for every session or for an agent do.
+// "proxy", as linkCall records it) but not its repo or the session a --where
+// query would match, so a budget with a repo or a where never blocks a call;
+// budgets for every session or for an agent do.
 import type { IncomingHttpHeaders } from "node:http";
 import type { BudgetStatus } from "../budget/index.ts";
 import { detectClient } from "./link.ts";
@@ -64,7 +65,7 @@ export function budgetGuard(o: {
       let worst: BudgetStatus | undefined;
       for (const s of statuses) {
         const b = s.budget;
-        if (!s.over || s.resetsAt <= t || b.repo || (b.agent && b.agent !== agent)) continue;
+        if (!s.over || s.resetsAt <= t || b.repo || b.where || (b.agent && b.agent !== agent)) continue;
         // Of several budgets over their limit, name the one that resets last: the call waits for it.
         if (!worst || s.resetsAt > worst.resetsAt) worst = s;
       }
