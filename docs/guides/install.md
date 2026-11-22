@@ -119,8 +119,8 @@ background at most once a day, and commands never wait on it. `coding.sh update`
 release: the latest GitHub release, which running the install script again also installs (npm's
 latest when GitHub can't be reached). Then the new version refreshes the hook and MCP launcher in
 `~/.coding.sh/bin`. If `~/.coding.sh/bin/cli-path` names another coding.sh install that is still
-there, hooks keep running that one: `update` says so and names `coding.sh upgrade-store`, which asks
-before it moves them.
+there, hooks keep running that one: `update` and `doctor` say so and name `coding.sh upgrade-store`,
+which asks before it moves them.
 
 The check is off when `CI` is set, or with `NO_UPDATE_NOTIFIER=1`, `CODING_SH_NO_UPDATE_CHECK=1`
 or `[update] check = false` in `~/.coding.sh/config.toml`.

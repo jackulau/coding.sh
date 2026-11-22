@@ -7,6 +7,8 @@
 // here. This migrates the index, keeping a copy of it as it was next to it
 // (index.db.v<N>.bak), and makes the running CLI the owner: bin/cli-path names
 // it and the hook bin is refreshed, so hooks start a coding.sh that can open it.
+// A store plugin migrates its own schema when it opens: then this only moves the
+// hooks to the running CLI, after asking, when another install still runs them.
 //
 // --restore puts that copy back. The index it replaces is kept
 // (index.db.v<N>.undone), and the store is stamped so that this build does not
@@ -19,6 +21,7 @@ import { acquireLock, type Lock } from "../../core/lock.ts";
 import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import { storeOwner } from "../../core/store-guard.ts";
+import { maskUrlsIn } from "../../core/store-url.ts";
 import { runningCli } from "../../mcp/launch.ts";
 import { canonicalScheme, parseStoreUrl } from "../../store/factory.ts";
 import { loadSqlite } from "../../store/sqlite-open.ts";
@@ -92,6 +95,18 @@ export async function run(c: CommandContext): Promise<number> {
   // Only the SQLite index migrates here; a plugin migrates its own schema when it opens.
   const scheme = otherIndex(c);
   if (scheme) {
+    // Hooks can still run another install that is still there: moving them to this one is all
+    // there is to do here, and it asks first, as it does for the SQLite index.
+    const cli = c.flags.restore === true ? undefined : runningCli();
+    const other = cli === undefined ? undefined : storeOwner(paths(env).root);
+    if (cli !== undefined && other !== undefined && other.cli !== cli) {
+      // The command line can hold the store URL: its password stays out of the printed rerun.
+      await requireConsent(c, `Have hooks run this coding.sh ${version()} instead of the coding.sh${other.version ? ` ${other.version}` : ""} at ${other.cli}?`, maskUrlsIn(rerunWithYes(c, ["upgrade-store"])));
+      const bin = await ownBin(env, cli);
+      if (out.json) out.data({ status: "owned", scheme, cli, previousOwner: other.cli, bin, cliPath: readTrimmed(paths(env).cliPointer) ?? null });
+      else out.ok(`${bin === "not_installed" ? "This store is now owned by" : "Hooks now run"} coding.sh ${version()} (${cli}). The ${scheme} store migrates its own schema when it opens.`);
+      return 0;
+    }
     if (out.json) out.data({ status: "plugin", scheme });
     else out.ok(`The ${scheme} store is not the SQLite index: coding.sh migrates it when it opens it, so there is nothing to upgrade or restore here`);
     return 0;
