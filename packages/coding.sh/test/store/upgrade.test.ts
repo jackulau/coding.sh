@@ -10,9 +10,10 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
-import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
-import { backupIndex, backupPath, BackupSpaceError, listBackups, parseWriter, restoreBackup, StoreNewerError, undonePath, WRITER_KEY, type BackupIo, type StoreWriter } from "../../src/store/upgrade.ts";
+import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore, type SqliteIndexOptions } from "../../src/store/sqlite.ts";
+import { backupIndex, backupPath, BackupSpaceError, listBackups, parseWriter, restoreBackup, setUpgradeNotice, StoreNewerError, undonePath, WRITER_KEY, type BackupIo, type StoreWriter } from "../../src/store/upgrade.ts";
 import { nextStepBin } from "../../src/cli/next-steps.ts";
+import { upgradeStoreCommand } from "../../src/core/store-guard.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-upgrade-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -250,6 +251,106 @@ describe("upgrade progress counts events", () => {
     await (await SqliteIndexStore.open(file, { progress: (l) => lines.push(l), progressMinRows: 1 })).close();
     assert.match(lines[0]!, /the index holds 4 events; upgrading it from schema v\d+ to v\d+/);
     for (const l of lines) assert.doesNotMatch(l, /\b10\b events|of 10 events/, l);
-    assert.match(lines.at(-1)!, new RegExp(`index upgraded in [\\d.]+s\\..*kept at .*index\\.db\\.v${OLD}\\.bak.*coding\\.sh upgrade-store --restore`));
+    assert.match(lines.at(-1)!, new RegExp(`index upgraded in [\\d.]+s\\..*kept at .*index\\.db\\.v${OLD}\\.bak`));
+    assert.ok(lines.at(-1)!.includes(`\`${upgradeStoreCommand(["--restore"])}\` puts it back`), lines.at(-1));
   });
 });
+
+describe("an upgrade too small to print progress says where it kept the index", () => {
+  // A store under UPGRADE_PROGRESS_MIN_ROWS events upgrades without progress. The CLI sets the
+  // notice for a person at a terminal (cli/main.ts, test/cli/upgrade-notice.test.ts).
+  const restore = (): string => `\`${upgradeStoreCommand(["--restore"])}\` puts it back, and it is yours to delete.`;
+  const open = async (file: string, opts: SqliteIndexOptions = {}): Promise<void> => (await SqliteIndexStore.open(file, opts)).close();
+
+  /** The lines the notice got while `fn` ran. */
+  async function noticed(fn: () => Promise<unknown>): Promise<string[]> {
+    const lines: string[] = [];
+    setUpgradeNotice((line) => lines.push(line));
+    try {
+      await fn();
+    } finally {
+      setUpgradeNotice(undefined);
+    }
+    return lines;
+  }
+
+  it("names the copy and the command that puts it back in one line, with no progress", async () => {
+    const file = dbPath();
+    await storeAt(file, OLD);
+    const progress: string[] = [];
+    const lines = await noticed(() => open(file, { progress: (l) => progress.push(l) }));
+    assert.deepEqual(lines, [`coding.sh: index upgraded to schema v${SQLITE_SCHEMA_VERSION}. The index as it was is kept at ${backupPath(file, OLD)}: ${restore()}`]);
+    assert.deepEqual(progress, []);
+    assert.ok(existsSync(backupPath(file, OLD)));
+  });
+
+  it("prints nothing when no notice is set, as for a library caller", async () => {
+    const file = dbPath();
+    await storeAt(file, OLD);
+    const written: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => (written.push(String(chunk)), true)) as typeof process.stderr.write;
+    try {
+      await open(file);
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.deepEqual(written, []);
+    assert.ok(existsSync(backupPath(file, OLD)), "the copy is still kept");
+  });
+
+  it("says nothing for a new store, a store at this schema, an upgrade that kept no copy, or one that failed", async () => {
+    const fresh = dbPath();
+    assert.deepEqual(await noticed(() => open(fresh)), []);
+    assert.deepEqual(await noticed(() => open(fresh)), []);
+    const uncopied = dbPath();
+    await storeAt(uncopied, OLD);
+    assert.deepEqual(await noticed(() => open(uncopied, { backup: false })), []);
+    // The failing migration of "a migration that fails removes the copy it made".
+    const failed = dbPath();
+    await storeAt(failed, 10);
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(failed);
+    db.exec("CREATE INDEX events_duration ON events(ts)");
+    db.close();
+    assert.deepEqual(await noticed(() => assert.rejects(open(failed), /already exists/)), []);
+  });
+
+  it("a store big enough for progress names the copy in its last progress line, not twice", async () => {
+    const file = dbPath();
+    await storeAt(file, OLD);
+    const progress: string[] = [];
+    assert.deepEqual(await noticed(() => open(file, { progress: (l) => progress.push(l), progressMinRows: 1 })), []);
+    assert.ok(progress.at(-1)!.includes(`kept at ${backupPath(file, OLD)}: ${restore()}`), progress.at(-1));
+  });
+
+  it("names the command as Git Bash, and PowerShell or cmd, run it", async () => {
+    // Git Bash sets MSYSTEM and SHELL; PowerShell and cmd set neither, and on Windows their bin is codingsh.
+    const shells: Record<string, Record<string, string>> = { "Git Bash": { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }, PowerShell: {} };
+    for (const [shell, vars] of Object.entries(shells)) {
+      const file = dbPath();
+      await storeAt(file, OLD);
+      const lines = await withEnv({ MSYSTEM: undefined, SHELL: undefined, npm_command: undefined, ...vars }, () => noticed(() => open(file)));
+      const bin = shell === "PowerShell" && process.platform === "win32" ? "codingsh" : "coding.sh";
+      assert.equal(lines.length, 1, shell);
+      assert.ok(lines[0]!.endsWith(`: \`${bin} upgrade-store --restore\` puts it back, and it is yours to delete.`), `${shell}: ${lines[0]}`);
+    }
+  });
+});
+
+/** Runs `fn` with these process.env values (undefined unsets one), then puts the old values back. */
+async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const saved = Object.keys(vars).map((k) => [k, process.env[k]] as const);
+  const apply = (entries: Iterable<readonly [string, string | undefined]>): void => {
+    for (const [k, v] of entries) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  apply(Object.entries(vars));
+  try {
+    return await fn();
+  } finally {
+    apply(saved);
+  }
+}
