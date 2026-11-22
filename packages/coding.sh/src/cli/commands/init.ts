@@ -25,7 +25,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
-import { nextStepBin, rerunWithYes, runCommand } from "../next-steps.ts";
+import { cliCommand, nextStepBin, rerunWithYes, runCommand } from "../next-steps.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -335,12 +335,19 @@ function reportImport(out: Output, r: ImportOutcome, bin: string): void {
   for (const e of r.errors.slice(0, 3)) out.note(e);
 }
 
+/** A dry run's command line without --dry-run and --diff: the run that applies its plan. */
+function applyArgv(argv: readonly string[]): string[] {
+  return argv.filter((a) => !/^--(no-)?(dry-run|diff)(=|$)/.test(a));
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   // How the user's shell runs this CLI, for every command init names.
   const bin = nextStepBin(env);
   const named = list(c.flags.agent);
   const scope = (str(c.flags.scope) ?? "user") as "user" | "project";
+  // The command line the commands init names start from. Run in-process with none, the scope stands in for it.
+  const given = c.argv ?? (scope === "project" ? ["init", "--scope", "project"] : ["init"]);
   const dryRun = c.flags["dry-run"] === true;
   // MCP servers are registered per user; project scope stays hooks-only.
   const withMcp = c.flags.mcp !== false && scope === "user";
@@ -452,7 +459,11 @@ export async function run(c: CommandContext): Promise<number> {
         for (const pl of plans) printChanges(out, agentChanges(pl), pl.adapter.id);
       }
       if (own.length + total === 0) out.ok("Nothing to change");
-      else out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
+      else {
+        out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
+        // The same command, flags included, minus the dry run.
+        out.next("Apply the plan", cliCommand(env, applyArgv(given)));
+      }
     }
     return failed ? 1 : 0;
   }
@@ -461,7 +472,7 @@ export async function run(c: CommandContext): Promise<number> {
   renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err", importFrom);
 
   if (total) {
-    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, rerunWithYes(c, scope === "project" ? ["init", "--scope", "project"] : ["init"]), {
+    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, rerunWithYes(c, given), {
       defaultYes: true,
     });
   }
