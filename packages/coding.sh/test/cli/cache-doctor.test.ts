@@ -326,4 +326,17 @@ describe("cache doctor (CLI)", () => {
   test("an unknown action is a usage error", () => {
     assert.equal(cli(["cache", "nope"]).status, 2);
   });
+
+  test("with no subcommand it runs doctor, with doctor's options", () => {
+    // A fixed --since: the JSON names the window's start.
+    const args = ["--agent", "claude-code", "--since", "2020-01-01", "--json"];
+    assert.deepEqual(JSON.parse(ok(["cache", ...args]).stdout), JSON.parse(ok(["cache", "doctor", ...args]).stdout));
+    const r = cli(["cache", "--agent", "claude-code"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^Prompt cache: \d+% hit rate, grade [A-F] \(\d+\/100\)\n/);
+    const help = ok(["cache", "--help"]).stdout;
+    assert.match(help, /coding\.sh cache \[action\] \[options\]/);
+    assert.match(help, /--since <WHEN>/);
+    assert.match(help, /With no subcommand it runs doctor/);
+  });
 });

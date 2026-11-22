@@ -3,7 +3,7 @@
 // or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary (CI does,
 // and then a missing binary fails the run instead of skipping the tests).
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -237,6 +237,18 @@ export function chromeArgs(dir: string): string[] {
   ];
 }
 
+/**
+ * The environment launchBrowser starts Chrome with, for a profile in `dir`: `env`, with TEMP and
+ * TMP naming a folder inside the profile. Chrome on Windows writes `<GUID>.tmp` files to its temp
+ * folder and does not always remove them; inside the profile, they go when the profile does.
+ * TMPDIR stays: Chrome on Linux makes its singleton socket under it and stops at start on a socket
+ * path of 108 characters or more, which a folder inside the profile can reach.
+ */
+export function chromeEnv(dir: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const tmp = join(dir, "tmp");
+  return { ...env, TEMP: tmp, TMP: tmp };
+}
+
 /** Chrome prints this when it will not open DevTools, and then never says where they listen. */
 const DEBUGGING_REFUSED = "requires a non-default data directory";
 
@@ -313,7 +325,10 @@ async function startChrome(chrome: string): Promise<{ child: ChildProcess; cdp: 
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-"));
   let child: ChildProcess | undefined;
   try {
-    child = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"] });
+    const env = chromeEnv(dir);
+    // Chrome takes its temp folder as named: Windows' GetTempPath does not check that it exists.
+    mkdirSync(env.TMP!);
+    child = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"], env });
     const cdp = await Cdp.connect(await devToolsUrl(child));
     return { child, cdp, dir };
   } catch (e) {
