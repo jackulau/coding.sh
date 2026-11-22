@@ -13,19 +13,88 @@
 //      that knows a newer schema is not the release that follows it;
 //    - a store with no stamp (written before 0.1.6) is never migrated by a run
 //      from a source checkout.
-//    Each refusal changes nothing and names `coding.sh upgrade-store`, which
-//    migrates on request, keeps a copy of the index and can put it back.
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+//    Each refusal changes nothing and names `upgrade-store` as a command that
+//    runs the install that refused (upgradeStoreCommand): it migrates on
+//    request, keeps a copy of the index and can put it back.
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { version } from "../cli/meta.ts";
+import { cliCommand, quoteArg, windowsShell } from "../cli/next-steps.ts";
 import { runningCli } from "../mcp/launch.ts";
 import type { StoreWriter } from "../store/upgrade.ts";
 import { isNewer } from "../update/semver.ts";
 import { dataHome } from "./paths.ts";
 
-/** The command that migrates a store owned by another install (see ownerGuard). */
-export const UPGRADE_STORE = "coding.sh upgrade-store";
+/** The first `n` bytes of `file` as text ("" when it can't be read). */
+function head(file: string, n = 8192): string {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, "r");
+    const buf = Buffer.alloc(n);
+    return buf.toString("utf8", 0, readSync(fd, buf, 0, n, 0));
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * The CLI that the user's shell starts for the bin nextStepBin names, or
+ * undefined when no directory on PATH has that bin. It is the bin's real path:
+ * npm links it to dist/cli.mjs on macOS and Linux, and on Windows writes
+ * shims that run node on dist/cli.mjs, codingsh.cmd for PowerShell and cmd
+ * (and npx) and the extensionless sh script `coding.sh` for Git Bash.
+ */
+export function pathCli(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const win = platform === "win32";
+  const p = win ? win32 : posix;
+  const cmd = win && (windowsShell(env, platform) || env.npm_command === "exec");
+  const value = env.PATH ?? env.Path ?? Object.entries(env).find(([k]) => k.toUpperCase() === "PATH")?.[1] ?? "";
+  for (const dir of value.split(win ? ";" : ":")) {
+    if (!dir) continue;
+    const bin = p.join(dir, cmd ? "codingsh.cmd" : "coding.sh");
+    let link: boolean;
+    try {
+      if (!statSync(bin).isFile()) continue;
+      link = lstatSync(bin).isSymbolicLink();
+    } catch {
+      continue;
+    }
+    if (link) return realpathOr(bin);
+    // npm's shims, read here rather than with spawn.ts cmdShimTarget, which loads node:child_process:
+    //   codingsh.cmd  "%_prog%"  "%dp0%\node_modules\coding.sh\dist\cli.mjs" %*
+    //   coding.sh     exec node  "$basedir/node_modules/coding.sh/dist/cli.mjs" "$@"
+    const shim = cmd ? /"%_prog%"[^"\r\n]*"%dp0%\\([^"\r\n]+)"\s+%\*/i.exec(head(bin)) : /^#!\/bin\/sh\n[\s\S]*?\bexec node\b[^"\n]*"\$basedir\/([^"\n]+)"\s+"\$@"/.exec(head(bin));
+    if (shim?.[1]) return realpathOr(p.join(p.dirname(bin), shim[1]));
+    return cmd ? undefined : realpathOr(bin);
+  }
+  return undefined;
+}
+
+/**
+ * `upgrade-store` with `args`, as a command that runs this install: through the
+ * bin on PATH (cliCommand) when that bin starts `cli`, the running CLI, and as
+ * `node <cli> upgrade-store` when it starts another install or there is none,
+ * so the command migrates with the build that printed it. From source (`cli`
+ * undefined) there is no install to name: cliCommand. `o.onPath` replaces
+ * pathCli (tests).
+ */
+export function upgradeStoreCommand(
+  args: readonly string[] = [],
+  o: { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; cli?: string; onPath?: string } = {},
+): string {
+  const env = o.env ?? process.env;
+  const platform = o.platform ?? process.platform;
+  const cli = "cli" in o ? o.cli : runningCli();
+  const command = ["upgrade-store", ...args];
+  if (cli === undefined) return cliCommand(env, command, platform);
+  const onPath = "onPath" in o ? o.onPath : pathCli(env, platform);
+  const same = (a: string, b: string) => (platform === "win32" ? win32.normalize(a).toLowerCase() === win32.normalize(b).toLowerCase() : a === b);
+  if (onPath !== undefined && same(onPath, cli)) return cliCommand(env, command, platform);
+  return ["node", ...[cli, ...command].map((a) => quoteArg(a, env, platform))].join(" ");
+}
 
 function realpathOr(p: string): string {
   try {
@@ -116,12 +185,16 @@ export class StoreOwnerError extends Error {
   readonly ownerVersion?: string;
   /** The message without the command to run (the CLI prints that as its next step). */
   readonly detail: string;
-  constructor(o: { path: string; from: number; to: number; version: string; owner: string; ownerVersion?: string }) {
+  /** The command that migrates the store with this install (upgradeStoreCommand). */
+  readonly command: string;
+  constructor(o: { path: string; from: number; to: number; version: string; owner: string; ownerVersion?: string; command?: string }) {
     const named = o.ownerVersion ? `coding.sh ${o.ownerVersion}` : "coding.sh";
     const detail = `${o.path} is at index schema v${o.from}, and this coding.sh ${o.version} would migrate it to v${o.to}. Your hooks run the ${named} at ${o.owner}, which may not open v${o.to}.`;
-    super(`${detail} To migrate it and make this install the one hooks run: ${UPGRADE_STORE}`);
+    const command = o.command ?? upgradeStoreCommand();
+    super(`${detail} To migrate it and make this install the one hooks run: ${command}`);
     this.name = "StoreOwnerError";
     this.detail = detail;
+    this.command = command;
     this.path = o.path;
     this.from = o.from;
     this.to = o.to;
@@ -141,14 +214,18 @@ export class StoreVersionError extends Error {
   readonly writer?: string;
   /** The message without the command to run (the CLI prints that as its next step). */
   readonly detail: string;
-  constructor(o: { path: string; from: number; to: number; version: string; writer?: string }) {
+  /** The command that migrates the store with this build (upgradeStoreCommand). */
+  readonly command: string;
+  constructor(o: { path: string; from: number; to: number; version: string; writer?: string; command?: string }) {
     const why = o.writer
       ? `It was last written by coding.sh ${o.writer}, and this coding.sh ${o.version} is not a newer release, so it would migrate it to v${o.to} only when asked.`
       : `This coding.sh ${o.version} runs from a source checkout, so it would migrate it to v${o.to} only when asked.`;
     const detail = `${o.path} is at index schema v${o.from}. ${why} A migration is one-way: a coding.sh that knows only v${o.from} can't open the store after.`;
-    super(`${detail} To migrate it with this build (a copy of the index is kept): ${UPGRADE_STORE}`);
+    const command = o.command ?? upgradeStoreCommand();
+    super(`${detail} To migrate it with this build (a copy of the index is kept): ${command}`);
     this.name = "StoreVersionError";
     this.detail = detail;
+    this.command = command;
     this.path = o.path;
     this.from = o.from;
     this.to = o.to;
@@ -165,22 +242,25 @@ export class StoreVersionError extends Error {
  *   running one; undefined from source);
  * - a StoreVersionError when the store holds data and this build is not newer
  *   than its last writer, or it has no stamp and this is a source checkout.
- * `at` replaces the running version and whether this is a source checkout (tests).
+ * Each names upgradeStoreCommand for `cli`. `at` replaces the running version,
+ * whether this is a source checkout and the environment the command is built
+ * for (tests).
  */
 export function ownerGuard(
   home: string,
   file: string,
   cli: string | undefined = runningCli(),
-  at: { version?: string; source?: boolean } = {},
+  at: { version?: string; source?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): ((from: number, to: number, writer?: StoreWriter) => void) | undefined {
   if (resolve(file) !== resolve(home, "index.db")) return undefined;
   return (from, to, writer) => {
     const running = at.version ?? version();
     const owner = storeOwner(home);
-    if (owner && owner.cli !== cli) throw new StoreOwnerError({ path: file, from, to, version: running, owner: owner.cli, ...(owner.version ? { ownerVersion: owner.version } : {}) });
+    const command = () => upgradeStoreCommand([], { cli, ...(at.env ? { env: at.env } : {}) });
+    if (owner && owner.cli !== cli) throw new StoreOwnerError({ path: file, from, to, version: running, owner: owner.cli, ...(owner.version ? { ownerVersion: owner.version } : {}), command: command() });
     if (from === 0) return; // a new index: nothing to strand
     if (writer ? !isNewer(running, writer.version) : (at.source ?? sourceCheckout() !== undefined)) {
-      throw new StoreVersionError({ path: file, from, to, version: running, writer: writer?.version });
+      throw new StoreVersionError({ path: file, from, to, version: running, writer: writer?.version, command: command() });
     }
   };
 }
