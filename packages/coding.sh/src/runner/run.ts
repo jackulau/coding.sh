@@ -142,6 +142,20 @@ function emptyAgent(note = ""): AgentRunOutput {
   return { exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: note };
 }
 
+/**
+ * Why the agent's program never started, or undefined when it did. A spawn
+ * error is what runHeadless (adapters/_shared/run.ts) reports as exit 127 with
+ * the error's message, `spawn claude ENOENT`, at the end of stderr. A 127 the
+ * agent exited with itself (a command it ran was not found) is not one.
+ */
+export function agentNotStarted(out: Pick<AgentRunOutput, "exitCode" | "timedOut" | "stderrTail">): string | undefined {
+  if (out.exitCode !== 127 || out.timedOut) return undefined;
+  const m = /^spawn (.+) (ENOENT|EACCES)$/.exec(out.stderrTail.trimEnd().split("\n").at(-1)?.trim() ?? "");
+  if (!m) return undefined;
+  const [, bin, code] = m;
+  return code === "ENOENT" ? `${bin} was not found; install it or put it on PATH (spawn ${bin} ENOENT)` : `${bin} is not executable (spawn ${bin} EACCES)`;
+}
+
 /** Sum of the JSONL rows `judge grade` appended ({costUsd?, inputTokens?, outputTokens?} per model call). */
 export async function readGraderUsage(file: string): Promise<RunResult["graderUsage"]> {
   const text = await readFile(file, "utf8").catch(() => "");
@@ -356,6 +370,13 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     result.agent = first.out;
     if (first.error) result.error = first.error;
     checkpoint();
+    // The agent's program never started, so the run says nothing about the harness: infra,
+    // like a failed setup step. No session exists, and the verifier would only grade the start.
+    const unstarted = agentNotStarted(first.out);
+    if (unstarted) {
+      delete result.agent.sessionId;
+      return setupFailed(`the agent could not start: ${unstarted}`);
+    }
     result.sessionId = result.agent.sessionId;
     if (result.agent.timedOut) result.error ??= "agent timed out";
 

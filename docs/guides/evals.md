@@ -1018,11 +1018,13 @@ rounds as a run that was never interrupted.
   rate up. Each run records its attempts. A trial still failing on infrastructure after its
   retries counts as unknown, not as a failure: it is left out of the pass rate, the run ends
   `incomplete`, and `--resume` runs those trials again.
-- Two more failures are infrastructure, not the task. An agent that is not logged in (`Not logged
-  in`, `Invalid API key · Please run /login`, an HTTP 401) is never retried: a backoff does not
-  bring a login back. A setup step that failed before the agent started (the work folder could
-  not be made, a setup command exited non-zero) is retried once. Either way the trial is unknown,
-  not a fail.
+- Three more failures are infrastructure, not the task. An agent that is not logged in (`Not
+  logged in`, `Invalid API key · Please run /login`, an HTTP 401) is never retried: a backoff does
+  not bring a login back. A setup step that failed before the agent started (the work folder could
+  not be made, a setup command exited non-zero) is retried once, and so is an agent program that
+  could not be started, counted as `setup`. Its trial's reason names the program: `the agent could
+  not start: claude was not found; install it or put it on PATH (spawn claude ENOENT)`, and the
+  verifier does not run. In each case the trial is unknown, not a fail.
 - `--stop-after-infra N` (default 5) stops the run once N trials in a row ended on infrastructure
   after their retries: no new trial starts. The output says `Stopped: 5 trials in a row failed on
   infrastructure (login 5), so the rest did not run and this is no quality verdict`, with what to
@@ -1974,7 +1976,7 @@ output.
 
 When the agent itself exited non-zero or timed out, the failed run says so before the verifier's
 lines, with the last 8 lines of the agent's stderr (cleaned and redacted the same way), and
-`--json` adds `agent: {exitCode, timedOut, stderr}`. An agent that can't start fails every run in
+`--json` adds `agent: {exitCode, timedOut, stderr}`. An agent that exits at once fails every run in
 seconds, and this is where its error shows:
 
 ```
@@ -1983,6 +1985,9 @@ Failed runs:
     the agent exited 1, its stderr ends:
     ! --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons
 ```
+
+A program that could not be started at all (not installed, not on PATH) is an infrastructure
+failure instead, so it is left out here ([retries](#long-runs-resume-retries-status)).
 
 ### Claude Code plugins
 
