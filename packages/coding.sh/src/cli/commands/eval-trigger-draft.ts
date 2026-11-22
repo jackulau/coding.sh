@@ -64,8 +64,10 @@ export async function evalTriggerDraft(c: CommandContext, current: SkillSource, 
     else if (!traced) out.note(`No captured session ${repo === ALL_REPOS ? "" : `${repoFlag ? `under ${repo}` : "in this repo"} `}in the last ${Math.round(since / 86_400_000)} days loaded ${current.name} or a sibling skill, so every prompt is model-drafted${repo === ALL_REPOS ? "" : " (--repo all reads every repo's sessions)"}`);
     if (dryRun) return 0;
     out.ok(`Wrote ${relative(c.cwd, file) || file}: ${d.should.length} should and ${d.shouldNot.length} should_not prompts, ${traced} from captured sessions`);
+    const runArgs = [target];
     const spec = str(flags.spec);
-    out.next("Read and fix the prompts, then run them", [nextStepBin(c.env), "eval", "trigger", ...[target, ...(spec ? ["--spec", spec] : []), "-k", "3"].map(shellQuote)].join(" "));
+    if (spec) runArgs.push("--spec", spec);
+    out.next("Read and fix the prompts, then run them", [nextStepBin(c.env), "eval", "trigger", ...[...runArgs, "-k", "3"].map(shellQuote)].join(" "));
     return 0;
   };
 

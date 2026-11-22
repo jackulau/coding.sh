@@ -80,7 +80,9 @@ async function headOnly(cwd: string): Promise<RepoState | undefined> {
   const lay = await layout(cwd);
   if (!lay) return undefined;
   const [sha, br] = await Promise.all([head(lay.root), branch(lay.root)]);
-  return { root: lay.root, head: sha, ...(br ? { branch: br } : {}) };
+  const state: RepoState = { root: lay.root, head: sha };
+  if (br) state.branch = br;
+  return state;
 }
 
 /** Run `cmd` under capture and return its exit code (128 + signo when killed by a signal; 127 when it couldn't start). */

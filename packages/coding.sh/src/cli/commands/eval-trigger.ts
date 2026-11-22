@@ -60,7 +60,9 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
   const specText = await readFile(specPath, "utf8").catch(() => undefined);
   if (specText === undefined) {
     // The draft goes where this run looks: --spec when given.
-    const draft = [nextStepBin(c.env), "eval", "trigger", ...[target, ...(specFlag ? ["--spec", specFlag] : [])].map(shellQuote), "--draft"].join(" ");
+    const draftArgs = [target];
+    if (specFlag) draftArgs.push("--spec", specFlag);
+    const draft = [nextStepBin(c.env), "eval", "trigger", ...draftArgs.map(shellQuote), "--draft"].join(" ");
     throw new UsageError(`No trigger spec at ${specPath}. Draft one with --draft${specFlag ? "" : ", pass --spec <FILE>"}, or write one with should and should_not prompts:\n${SPEC_EXAMPLE}`, { reason: "missing_argument", suggestion: draft });
   }
   let spec;

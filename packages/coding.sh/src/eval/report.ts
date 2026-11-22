@@ -93,7 +93,7 @@ export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonl
     const passed = known.filter((x) => x.pass).length;
     const failed = known.find((x) => !x.pass);
     const unknownReason = t.trials.find((x) => x.unknown && x.reason)?.reason;
-    return {
+    const row: TaskRow = {
       id: t.id,
       name: t.name,
       passed,
@@ -101,10 +101,11 @@ export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonl
       unknown: t.trials.length - known.length,
       rate: known.length ? passed / known.length : NaN,
       flaky: passed > 0 && passed < known.length,
-      ...(failed?.sessionId ? { failedSession: failed.sessionId } : {}),
-      ...(failed?.reason ? { reason: failed.reason } : {}),
-      ...(unknownReason ? { unknownReason } : {}),
     };
+    if (failed?.sessionId) row.failedSession = failed.sessionId;
+    if (failed?.reason) row.reason = failed.reason;
+    if (unknownReason) row.unknownReason = unknownReason;
+    return row;
   });
   const graded = rows.filter((r) => r.n > 0);
   const k = graded.length ? Math.min(...graded.map((r) => r.n)) : 0;
