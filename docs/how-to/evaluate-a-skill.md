@@ -141,7 +141,7 @@ item gate k=1 τ=.34 m=2: KEEP · G=8.00 net +8 runs D=0 fired 12/12 · S=12 tas
 | `Ship it` | The skill won enough tasks and broke none the agent solved without it. |
 | `Hold` | Not enough evidence. With no losses, the gate needs 8 wins. |
 | `Don't ship` | The skill broke tasks the agent solved without it; they are listed. |
-| Runs that errored | They have no outcome and are left out. Rerun them with `--experiment <id> --retry-errors`. |
+| Runs that errored | They have no outcome and are left out. Rerun them with `compare no-skill with-skill --experiment <id> --retry-errors`, where the id is the `exp_…` line the report ends with. |
 | `item gate … fired 12/12` | The gate scores only the tasks where the skill reached the agent's context. It loaded in all 12 runs that had it. |
 | `RERUN` with `fired 0/12` | The skill never loaded, so no task measures it. Fix its description, not its body. |
 
