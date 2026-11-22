@@ -243,6 +243,6 @@ describe("doctor and a status line PowerShell can't run", () => {
     assert.deepEqual(rows, [{ check: "statusline", message: `Claude Code's status line runs coding.sh statusline, which PowerShell and cmd can't run (${stale.settings})`, next: stale.next }]);
 
     const human = doctor(OLD, false);
-    assert.match(human.stderr, new RegExp(`^! Status line +runs coding\\.sh statusline, which PowerShell and cmd can't run \\(${esc(human.settings)}\\); run ${esc(human.next)}$`, "m"));
+    assert.match(human.stdout, new RegExp(`^! Status line +runs coding\\.sh statusline, which PowerShell and cmd can't run \\(${esc(human.settings)}\\); run ${esc(human.next)}$`, "m"));
   });
 });
