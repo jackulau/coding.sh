@@ -39,7 +39,7 @@ import {
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
-import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Node, type Query } from "../query/where.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, timeBounds, type Node, type Query } from "../query/where.ts";
 import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
@@ -549,6 +549,22 @@ async function hiddenChildren(index: Context["index"], q: ScanQuery, where: Quer
   }
 }
 
+/**
+ * The time bounds a sessions_list read, as `coding.sh sessions --json` reports them: since and until
+ * and the where's since:/until: clauses, the tighter of each. Undefined when it read all time.
+ * Without since the list starts at the first session (the default is all time, not 7 days).
+ */
+function listWindow(q: ScanQuery, where: Query | undefined): Obj | undefined {
+  const t = timeBounds(where);
+  const since = Math.max(q.since ?? -Infinity, t.since ?? -Infinity);
+  const until = Math.min(q.until ?? Infinity, t.until ?? Infinity);
+  if (!Number.isFinite(since) && !Number.isFinite(until)) return undefined;
+  const out: Obj = {};
+  if (Number.isFinite(since)) out.since = iso(since);
+  if (Number.isFinite(until)) out.until = iso(until);
+  return out;
+}
+
 // ------------------------------------------------------------ tools
 
 export function buildTools(): ToolDef<ToolCtx>[] {
@@ -577,7 +593,7 @@ function toolDefs(): PagedTool[] {
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
-      outputSchema: out({ sessions: arr(SESSION_OUT), facets: { type: "object" }, nextCursor: S, truncated: B, hiddenChildren: I }, ["sessions"]),
+      outputSchema: out({ sessions: arr(SESSION_OUT), facets: { type: "object" }, nextCursor: S, truncated: B, hiddenChildren: I, window: { type: "object" } }, ["sessions"]),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
@@ -604,6 +620,8 @@ function toolDefs(): PagedTool[] {
             ...(p.hasMore ? { nextCursor: String(offset + limit) } : {}),
             ...(p.truncated ? { truncated: true } : {}),
           };
+          const win = listWindow(q, where);
+          if (win) page.window = win;
           if (hidden) {
             page.hiddenChildren = hidden;
             page.note = `${hidden} child ${hidden === 1 ? "session" : "sessions"} not shown: pass includeSubagents: true to list them.`;

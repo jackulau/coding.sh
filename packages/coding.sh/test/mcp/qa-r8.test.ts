@@ -203,6 +203,18 @@ describe("a window given only its end", () => {
   });
 });
 
+describe("sessions_list window", () => {
+  it("says which window it read: until alone starts at the first session, a where clause narrows it", async () => {
+    const r = await ok("sessions_list", { until: "25h", includeSubagents: true, limit: 100 });
+    assert.deepEqual(r.window, { until: new Date(w.now - 25 * 3_600e3).toISOString() }, "no since: sessions_list reads all time before until");
+    assert.ok((r.sessions as Obj[]).some((s) => s.id === SEED.b), "the session 26 hours old is listed");
+    const both = await ok("sessions_list", { since: "40d", until: "1h", where: "until:25h", includeSubagents: true });
+    assert.deepEqual(both.window, { since: new Date(w.now - 40 * DAY).toISOString(), until: new Date(w.now - 25 * 3_600e3).toISOString() });
+    const plain = await ok("sessions_list", {});
+    assert.equal(plain.window, undefined, "no bounds, no window");
+  });
+});
+
 describe("status", () => {
   it("carries the index's age", async () => {
     const r = await ok("status");
