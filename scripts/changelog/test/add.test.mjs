@@ -164,6 +164,13 @@ test("the wait before another try is real: a file held once is written at least 
   assert.ok(performance.now() - t >= 95, "the second try came without a wait");
 });
 
+test("git ignores the lock and temp files a killed run leaves beside CHANGELOG.md", () => {
+  for (const name of ["CHANGELOG.md.lock", `CHANGELOG.md.${process.pid}.0.tmp`]) {
+    const res = spawnSync("git", ["check-ignore", "-q", "--no-index", name], { cwd: REPO, encoding: "utf8" });
+    assert.equal(res.status, 0, `${name} is not ignored${res.stderr ? `: ${res.stderr}` : ""}`);
+  }
+});
+
 test("--check names each unreleased problem by line and skips released versions", () => {
   const r = root();
   const file = join(r, "CHANGELOG.md");
