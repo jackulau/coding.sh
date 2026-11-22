@@ -95,16 +95,26 @@ describe("doctor and status: capture problems", () => {
     assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^✓ Spool/m);
   });
 
-  test("a stored model call at 9,000 tok/s is a Stats warning naming its session; one at 120 tok/s is not", async () => {
-    const call = (sid: string, n: number, outputTokens: number, durationMs: number) => event(sid, n, { kind: "llm.call", durationMs, usage: { inputTokens: 10, outputTokens }, payload: { ok: true } });
+  test("a stored model call at 9,000 tok/s is a Stats warning naming its session; one at 120 tok/s is not, nor a fast model's at 2,200", async () => {
+    const call = (sid: string, n: number, outputTokens: number, durationMs: number, model?: string) => {
+      const e = event(sid, n, { kind: "llm.call", durationMs, usage: { inputTokens: 10, outputTokens }, payload: { ok: true } });
+      if (model) e.model = model;
+      return e;
+    };
     await seed(env.dataHome, {
-      events: [call("fast", 1, 9000, 1000), call("fast", 2, 120, 1000), call("sane", 1, 120, 1000)],
-      sessions: [session("fast", { startedAt: T0 + 1000 }), session("sane")],
+      events: [
+        call("fast", 1, 9000, 1000), call("fast", 2, 120, 1000), call("sane", 1, 120, 1000),
+        // A model whose calls usually top 500 tok/s, as on a fast host, is held to 10,000 tok/s.
+        call("host", 1, 1800, 1000, "fast-model"), call("host", 2, 2200, 1000, "fast-model"), call("host", 3, 2600, 1000, "fast-model"),
+        // A slower model's call far past its usual speed is still past the limit.
+        call("odd", 1, 60, 1000, "slow-model"), call("odd", 2, 70, 1000, "slow-model"), call("odd", 3, 3750, 1000, "slow-model"),
+      ],
+      sessions: [session("fast", { startedAt: T0 + 1000 }), session("sane"), session("host"), session("odd", { startedAt: T0 - 1000 })],
     });
     const doc = JSON.parse(run(["doctor", "--agent", "claude-code", "--json"]).stdout) as Doc;
     const w = doc.warnings.filter((x) => x.check === "stats");
-    assert.deepEqual(w.map((x) => [x.message, x.next]), [[`1 model call past physical limits (over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s 1); most in fast`, `${nextStepBin(process.env)} show fast`]]);
-    assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^! Stats\s+1 model call past physical limits/m);
+    assert.deepEqual(w.map((x) => [x.message, x.next]), [[`2 model calls past physical limits (over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s 2); most in fast`, `${nextStepBin(process.env)} show fast`]]);
+    assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^! Stats\s+2 model calls past physical limits/m);
   });
 
   test("status and doctor print the store URL with its password masked", () => {
@@ -152,6 +162,15 @@ describe("plausibility limits", () => {
     assert.deepEqual(implausible(call({ usage: { costUsd: -0.5 } })), ["cost"]);
     assert.deepEqual(implausible(call({ usage: { costUsd: 900 } })), ["cost"]);
     assert.deepEqual(implausible(call({ usage: { costUsd: 0.4 } })), []);
+  });
+
+  test("a model whose calls usually top 500 tok/s is held to 10,000", () => {
+    const quick = call({ durationMs: 1000, usage: { outputTokens: 2000 } });
+    assert.deepEqual(implausible(quick), ["speed"], "no usual speed given");
+    assert.deepEqual(implausible(quick, 60), ["speed"], "a model that usually streams 60 tok/s");
+    assert.deepEqual(implausible(quick, 1800), [], "a model that usually streams 1,800 tok/s");
+    assert.deepEqual(implausible(call({ payload: { tokensPerSec: PLAUSIBLE_LIMITS.maxFastTokensPerSec } }), 1800), []);
+    assert.deepEqual(implausible(call({ payload: { tokensPerSec: 12_000 } }), 1800), ["speed"], "past the limit for any model");
   });
 });
 
