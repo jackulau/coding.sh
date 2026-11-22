@@ -95,7 +95,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
   const summary = str(c.flags.summary);
   if (summary) {
     const md = renderSuitesMarkdown(
-      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o, bin), ...(o.extra ?? []), ...metaLine(o)] })),
+      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o, c.env), ...(o.extra ?? []), ...metaLine(o)] })),
       { transcript, bin },
     );
     try {
@@ -112,7 +112,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
       if (!o.report) continue;
       out.print("");
       out.print(renderSuiteReport(o.report, { color: out.color, transcript }));
-      for (const line of unverifiedLine(o, bin)) out.print(line);
+      for (const line of unverifiedLine(o, c.env)) out.print(line);
       const block = renderFailedRuns(o.failedRuns ?? [], { names: (id) => o.names?.get(id) ?? id, dim: (s) => paint(s, "dim", out.color) });
       if (block.length) out.print(["", ...block].join("\n"));
       for (const line of [...(o.extra ?? []), ...metaLine(o)]) out.print(line);
@@ -121,9 +121,10 @@ export async function evalRun(c: CommandContext): Promise<number> {
   return failed ? 1 : 0;
 }
 
-const unverifiedLine = (o: SuiteOutcome, bin: string): string[] =>
+// The text names coding.sh as the docs' sample does (the site's docs-samples test reads it here); commandsForShell names the user's.
+const unverifiedLine = (o: SuiteOutcome, env: NodeJS.ProcessEnv): string[] =>
   o.unverified?.length
-    ? [`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then ${bin} eval import <task dir> and ${bin} eval validate <task>`]
+    ? [commandsForShell(`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`, env)]
     : [];
 
 function metaLine(o: SuiteOutcome): string[] {
