@@ -46,6 +46,8 @@ function bounded(c: Counter, labels: Labels): Labels {
   return Object.fromEntries(Object.keys(labels).map((k) => [k, "other"]));
 }
 
+const sessionKey = (s: Session) => `${s.project ?? ""}\0${s.id}`;
+
 const TICK_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
 export class ServeMetrics {
@@ -56,10 +58,12 @@ export class ServeMetrics {
   readonly storeErrors = new Counter("coding_sh_store_errors_total", "Writer ticks that failed on a store error.");
   readonly forwardSpans = new Counter("coding_sh_forward_spans_total", "Spans forwarded to the OTLP collector, by result (sent, dropped, failed).");
   readonly sinkEvents = new Counter("coding_sh_sink_events_total", "Events mirrored to [[sinks]], by sink and result (sent, dropped, failed).");
-  readonly sessionCost = new Counter("coding_sh_session_cost_usd_total", "Cost in USD of the sessions serve saw end, by agent and model (subagent sessions included).");
+  readonly sessionCost = new Counter("coding_sh_session_cost_usd_total", "Cost in USD of sessions, by agent and model (subagent sessions included), counted as each turn or session ends.");
   readonly sessions = new Counter("coding_sh_sessions_total", "Top-level sessions serve saw end, by agent and outcome (failed: the session has a failure flag).");
   readonly sessionFlags = new Counter("coding_sh_session_flags_total", "Failure flags (flags with no colon) on the top-level sessions serve saw end.");
   private readonly seenEnded = new Set<string>();
+  /** The cost already counted per open session, so a turn that ends counts only what the session gained. */
+  private readonly costCounted = new Map<string, number>();
   private readonly tickCounts = new Array<number>(TICK_BUCKETS.length + 1).fill(0);
   private tickSum = 0;
   private tickCount = 0;
@@ -96,31 +100,56 @@ export class ServeMetrics {
   observeCommit(events: readonly AgentEvent[], sessions: readonly Session[]): void {
     try {
       const ended = new Set<string>();
-      for (const e of events) if (e.kind === "session.end") ended.add(e.sessionId);
+      const turned = new Set<string>();
+      for (const e of events) {
+        if (e.kind === "session.end") ended.add(e.sessionId);
+        else if (e.kind === "turn.end") turned.add(e.sessionId);
+      }
       if (ended.size) this.observeSessions(sessions.filter((s) => ended.has(s.id)));
+      // A session that never ends (an OTel conversation's root: one turn per trace) counts its cost per turn.
+      if (turned.size) this.observeTurns(sessions.filter((s) => turned.has(s.id) && !ended.has(s.id)));
     } catch {
       // The counters are best effort.
     }
   }
 
   /**
-   * Counts ended sessions, each once. Cost or flags a session gains after it is
-   * counted are not added.
+   * Counts ended sessions, each once, with the cost they gained since a turn of
+   * theirs was last counted. Cost or flags a session gains after it ends are not added.
    */
   observeSessions(sessions: readonly Session[]): void {
     for (const s of sessions) {
-      const key = `${s.project ?? ""}\0${s.id}`;
+      const key = sessionKey(s);
       if (this.seenEnded.has(key)) continue;
       this.seenEnded.add(key);
       if (this.seenEnded.size > MAX_SEEN) this.seenEnded.delete(this.seenEnded.values().next().value!);
-      const agent = String(s.agent);
-      const cost = s.stats.usage?.costUsd;
-      if (cost !== undefined && Number.isFinite(cost) && cost > 0) this.sessionCost.inc(bounded(this.sessionCost, { agent, model: s.model || "unknown" }), cost);
+      this.countCost(s, key);
+      this.costCounted.delete(key);
       if (s.parent) continue;
+      const agent = String(s.agent);
       const failures = s.flags.filter((f) => !f.includes(":"));
       this.sessions.inc(bounded(this.sessions, { agent, outcome: failures.length ? "failed" : "ok" }));
       for (const flag of new Set(failures)) this.sessionFlags.inc(bounded(this.sessionFlags, { flag }));
     }
+  }
+
+  /** When a turn of these sessions ends: counts the cost each gained since it was last counted. Ended sessions are skipped. */
+  observeTurns(sessions: readonly Session[]): void {
+    for (const s of sessions) {
+      const key = sessionKey(s);
+      if (!this.seenEnded.has(key)) this.countCost(s, key);
+    }
+  }
+
+  private countCost(s: Session, key: string): void {
+    const cost = s.stats.usage?.costUsd;
+    const prev = this.costCounted.get(key) ?? 0;
+    if (cost === undefined || !Number.isFinite(cost) || cost <= prev) return;
+    this.sessionCost.inc(bounded(this.sessionCost, { agent: String(s.agent), model: s.model || "unknown" }), cost - prev);
+    // Set again at the end, so past MAX_SEEN the session counted longest ago is forgotten first.
+    this.costCounted.delete(key);
+    this.costCounted.set(key, cost);
+    if (this.costCounted.size > MAX_SEEN) this.costCounted.delete(this.costCounted.keys().next().value!);
   }
 
   close(): void {

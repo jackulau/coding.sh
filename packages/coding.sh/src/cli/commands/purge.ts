@@ -11,6 +11,9 @@
 //
 // Snapshot repos (repos/) are never rewritten: purge names the ones that hold a
 // value, and exits 1 until they are deleted.
+//
+// A recording job (exp run --record or --replay) holds its model calls in memory until it ends.
+// Purge waits for live jobs up to CODING_SH_PURGE_WAIT_MS, then exits 1 naming the experiment.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { loadConfig } from "../../core/config.ts";
@@ -152,8 +155,10 @@ export async function run(c: CommandContext): Promise<number> {
     return 0;
   }
 
+  // One recording job holds a lock per case and trial: name each job once.
+  if (r.recordingsLive) r.recordingsLive = liveJobs(r.recordingsLive);
   // A snapshot repo that holds a value is left as it is, so a purge (not a dry run) ends with exit 1 until it is deleted.
-  const left = r.oldBytesKept?.length || r.copiesKept?.length || r.recordingsKept?.length || (!dryRun && r.snapshotRepos?.length);
+  const left = r.oldBytesKept?.length || r.copiesKept?.length || r.recordingsKept?.length || (!dryRun && (r.snapshotRepos?.length || r.recordingsLive?.length));
   if (out.json) {
     out.data({ outcome: dryRun ? "planned" : "purged", values: literals.length, ...(matched ? { ruleMatches: matched.values } : {}), ...(matched?.short ? { shortMatches: matched.short } : {}), ...r });
     return r.integrity === false || left ? 1 : 0;
@@ -170,6 +175,10 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("Recordings", `${verb} ${plural(r.recordings, "recording")} of model calls (llm-cache)`, "ok");
   if (r.recordingsDeleted) out.row("Recordings", `${dryRun ? "would delete" : "deleted"} ${plural(r.recordingsDeleted, "torn or leftover file")} that no replay reads (llm-cache)`, "ok");
   for (const f of r.recordingsKept ?? []) out.row("Recordings", `couldn't rewrite or delete ${f}, which holds ${them}. Delete it yourself`, "fail");
+  for (const j of r.recordingsLive ?? []) {
+    const job = `a job recording experiment ${j.experiment} (pid ${j.pid})`;
+    out.row("Recordings", dryRun ? `${job} is running: a purge waits for it to end` : `${job} is still running, and writes its model calls when it ends. Run the same purge again after it ends`, dryRun ? "warn" : "fail");
+  }
   if (r.filesSkipped) out.row("Skipped", `${plural(r.filesSkipped, "file or snapshot object", "files or snapshot objects")} over ${MAX_FILE_BYTES / 1024 / 1024} MB, not read`, "warn");
   if (r.foldsDropped) out.row("Folds", `${dryRun ? "would drop" : "dropped"} ${plural(r.foldsDropped, "saved fold")} (rebuilt on the next ingest)`, "ok");
   if (r.integrity !== undefined) out.row("Integrity", r.integrity ? "index and search ok, file compacted" : "check failed: run coding.sh doctor", r.integrity ? "ok" : "fail");
@@ -191,4 +200,15 @@ export async function run(c: CommandContext): Promise<number> {
   else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub; that cannot be undone, so an agent asks the user first");
   else out.note("Rotate the secret too: copies outside coding.sh (agent transcripts, shell history, git) are not touched");
   return r.integrity === false ? 1 : 0;
+}
+
+/** The recording jobs still running, one per experiment and pid (store/purge.ts finds one per case-trial lock). */
+export function liveJobs<T extends { experiment: string; pid: number }>(live: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return live.filter((j) => {
+    const k = `${j.experiment}|${j.pid}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }

@@ -54,6 +54,25 @@ function nullTable(tasks: number, k: number, seed: number): SignalRow[] {
   return rows;
 }
 
+/**
+ * `tasks` tasks × 2 arms × 4 attempts, 2 passes and 2 fails per task and arm. `flip` is 1 on
+ * arm A's failed runs and on arm B's passed runs, so it points opposite ways in the two arms;
+ * `same` is 1 on every failed run in both arms.
+ */
+function oppositeArms(tasks = 12): SignalRow[] {
+  const rows: SignalRow[] = [];
+  for (let t = 0; t < tasks; t++) {
+    for (const arm of ["A", "B"]) {
+      for (let a = 0; a < 4; a++) {
+        const pass = a % 2 === 0;
+        const flip = arm === "A" ? (pass ? 0 : 1) : pass ? 1 : 0;
+        rows.push({ runId: `t${t}-${arm}-${a}`, taskId: `t${t}`, arm, pass, scores: { flip, same: pass ? 0 : 1 } });
+      }
+    }
+  }
+  return rows;
+}
+
 describe("signalValidity", () => {
   it("a within-task-constant score: 0.5 within task and arm, tracks-difficulty when pooled ≥ 0.6", () => {
     const v = signalValidity(fixture());
@@ -217,6 +236,45 @@ describe("signalValidity", () => {
     assert.ok(positive <= 20, `${positive} of 200 coin-flip tables got adds-run-signal`);
   });
 
+  it("a signal pointing opposite ways in two arms is differs-by-arm, not no-signal", () => {
+    const r = get(signalValidity(oppositeArms()), "flip");
+    assert.ok(Math.abs(r.pooled - 0.5) <= 0.1, `pooled ${r.pooled}`);
+    assert.ok(r.withinTaskArm.ci[0] <= 0.5 && r.withinTaskArm.ci[1] >= 0.5, `pooled ci ${r.withinTaskArm.ci}`);
+    assert.ok(r.byArm, "byArm");
+    assert.ok(r.byArm.A!.ci[0] > 0.5, `A ci ${r.byArm.A!.ci}`);
+    assert.ok(r.byArm.B!.ci[1] < 0.5, `B ci ${r.byArm.B!.ci}`);
+    assert.deepEqual(r.byArm.A, { auroc: 1, pairs: 48, tasks: 12, ci: [1, 1] });
+    assert.deepEqual(r.byArm.B, { auroc: 0, pairs: 48, tasks: 12, ci: [0, 0] });
+    assert.equal(r.verdict, "differs-by-arm");
+  });
+
+  it("arms that agree keep the old verdict", () => {
+    const v = signalValidity(oppositeArms());
+    const same = get(v, "same");
+    assert.equal(same.verdict, "adds-run-signal");
+    assert.deepEqual(same.byArm!.A!.ci, [1, 1]);
+    assert.deepEqual(same.byArm!.B!.ci, [1, 1]);
+    // The fixture's verdicts are unchanged: noise stays no-signal, taskLevel tracks-difficulty.
+    const f = signalValidity(fixture());
+    assert.equal(get(f, "noise").verdict, "no-signal");
+    assert.equal(get(f, "taskLevel").verdict, "tracks-difficulty");
+    assert.ok(f.every((r) => r.verdict !== "differs-by-arm"));
+  });
+
+  it("differs-by-arm needs each arm past the pair and task thresholds", () => {
+    // 6 tasks: below the 8-task floor no row has a verdict; with minTasks 6 the flip is called.
+    assert.equal(get(signalValidity(oppositeArms(6)), "flip").verdict, "too-few-pairs");
+    assert.equal(get(signalValidity(oppositeArms(6), { minTasks: 6 }), "flip").verdict, "differs-by-arm");
+    // 96 pairs across both arms but 48 in each: each arm is below minPairs 49, so no flip is called.
+    const few = get(signalValidity(oppositeArms(12), { minPairs: 49 }), "flip");
+    assert.notEqual(few.verdict, "differs-by-arm");
+  });
+
+  it("one arm: no byArm", () => {
+    const rows = oppositeArms().filter((r) => r.arm === "A");
+    assert.equal(get(signalValidity(rows), "flip").byArm, undefined);
+  });
+
   it("no task with two runs → empty", () => {
     assert.deepEqual(signalValidity([{ runId: "a", taskId: "t", arm: "A", pass: true, scores: { s: 1 } }]), []);
   });
@@ -268,6 +326,17 @@ describe("formatSignalValidity", () => {
     assert.match(lines[at + 1]!, /difficulty\(loo\) \(ref\)/);
     assert.match(text, /planted .* adds-run-signal/);
     assert.doesNotMatch(text, /needs 8 tasks/);
+  });
+
+  it("prints one indented line per arm under a row that has byArm", () => {
+    const text = formatSignalValidity(signalValidity(oppositeArms()));
+    assert.match(text, /flip .* differs-by-arm/);
+    assert.match(text, /\n {4}arm A {2}task\+arm 1\.00 {2}\[1\.00, 1\.00\] {2}48 pairs, 12 tasks\n/);
+    assert.match(text, /\n {4}arm B {2}task\+arm 0\.00 {2}\[0\.00, 0\.00\] {2}48 pairs, 12 tasks/);
+    // Reference rows get no arm lines.
+    const lines = text.split("\n");
+    const ref = lines.findIndex((l) => /difficulty\(loo\) \(ref\)/.test(l));
+    assert.doesNotMatch(lines[ref + 1]!, /^ {4}arm /);
   });
 
   it("one task: a dash where the CI was, and a line that says how many tasks a verdict needs", () => {

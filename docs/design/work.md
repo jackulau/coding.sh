@@ -34,6 +34,17 @@ are derived from those sessions on read. Nothing is filed.
   children group under the parent's id. The item's id does not change when the root arrives.
 - Items are built in `src/core/work.ts`. Everything there is pure except the store read and the
   `.git` file check described under Surfaces.
+- `prs` is the union of the item's sessions' `stats.prs` (see the
+  [API reference](../reference/api.md)): one entry per PR with the newest state any session saw,
+  oldest first. A later `linked` never replaces `opened`, `merged` or `closed`, and an entry with
+  no repo joins the item's one PR of that number. A PR the item's sessions only linked (viewed,
+  commented on) in a repo other than the item's is left out: the item's repo is one its sessions
+  opened, merged or closed a PR in, or whose name matches its checkout's folder. Each PR then takes
+  the newest state any session in the queue saw for its URL, so a merge that another item's session
+  ran shows on every item that lists the PR. Absent when no session touched a PR.
+  `coding.sh work` prints them on the item's line ("PR #12 merged", "PRs #12, #14 open"),
+  `work show` lists each with its URL, `work --json` and the MCP `work` tool carry them, and the
+  Work page shows each as a link to its URL.
 
 ## Workflow runs
 
@@ -127,7 +138,9 @@ through T3's store, whichever agent it runs.
 4. **Your turn**: the main session waits for the next prompt (`waiting.kind` is `turn`). Oldest
    first.
 5. **Ready for review**: no session in the item is running or waiting, and the item changed files.
-   Grouped by repo and branch, newest first.
+   An item whose sessions opened, merged or closed PRs, or pushed to them or linked them to their
+   thread (`stats.prs.own`), that have all merged is not here: it is done, and its reason names
+   the merged PRs. A merge another session ran counts. A PR the item only viewed does not. Grouped by repo and branch, newest first.
 
 A session is running when it has no end and was active in the last 30 minutes, or when its end is
 only its last event seen (`stats.endInferred`) and that event is under 15 minutes old. A session

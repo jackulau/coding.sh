@@ -27,6 +27,8 @@ export interface IngestStatus {
   importing?: boolean;
   /** `coding.sh init` has set up capture (the empty list then says to start a new agent session). Set by `coding.sh ui`. */
   captureSetUp?: boolean;
+  /** The sessions are being folded again after an upgrade (common.ts refolding): some still show an older build's stats and flags. Absent when not. */
+  refolding?: true;
 }
 
 export interface BackgroundIngest {
@@ -56,6 +58,8 @@ interface Data {
   kind: typeof KIND;
   cwd: string;
   intervalMs: number;
+  /** The CLI this process runs (its argv[1]). A worker's own argv[1] is this file, so ingestCli would find no CLI to start the refold an upgrade needs. */
+  argv1: string | undefined;
 }
 
 type Message = { type: "status"; status: IngestStatus } | { type: "error"; message: string };
@@ -67,7 +71,7 @@ type Message = { type: "status"; status: IngestStatus } | { type: "error"; messa
 export function startBackgroundIngest(opts: BackgroundIngestOptions): BackgroundIngest | undefined {
   if (opts.env.CODING_SH_NO_AUTO_INGEST === "1") return undefined;
   let status: IngestStatus = { ingesting: false, filesPending: 0, lastIngestAt: null };
-  const data: Data = { kind: KIND, cwd: opts.cwd, intervalMs: opts.intervalMs ?? 3000 };
+  const data: Data = { kind: KIND, cwd: opts.cwd, intervalMs: opts.intervalMs ?? 3000, argv1: process.argv[1] };
   // The worker's process.env is `env`, so adapters that read process.env see the same as this command.
   const worker = new Worker(new URL(import.meta.url), { workerData: data, env: { ...opts.env } });
   worker.on("message", (m: Message) => {
@@ -195,12 +199,15 @@ async function runWorker(d: Data): Promise<void> {
     stop.abort();
     wake?.();
   });
-  const [{ openContext }, { autoIngest }] = await Promise.all([import("../core/context.ts"), import("./common.ts")]);
+  // ingestCli (common.ts) names the CLI a background ingest runs from argv[1]: the main thread's, not this file.
+  if (d.argv1) process.argv[1] = d.argv1;
+  const [{ openContext }, { autoIngest, refolding }] = await Promise.all([import("../core/context.ts"), import("./common.ts")]);
   const ctx = await openContext({ env: process.env, cwd: d.cwd });
   let status: IngestStatus = { ingesting: false, filesPending: 0, lastIngestAt: null };
   const set = (s: Partial<IngestStatus>) => {
     const next = { ...status, ...s };
-    if (next.ingesting === status.ingesting && next.filesPending === status.filesPending && next.lastIngestAt === status.lastIngestAt) return;
+    if (!next.refolding) delete next.refolding;
+    if (next.ingesting === status.ingesting && next.filesPending === status.filesPending && next.lastIngestAt === status.lastIngestAt && next.refolding === status.refolding) return;
     status = next;
     post({ type: "status", status });
   };
@@ -214,7 +221,9 @@ async function runWorker(d: Data): Promise<void> {
       } catch (e) {
         post({ type: "error", message: e instanceof Error ? e.message : String(e) });
       }
-      set({ ingesting: false, filesPending: 0, lastIngestAt: Date.now() });
+      // The pass starts the refold an upgrade needs (kickReparse); while it runs, the viewer says so.
+      const refold = await refolding(ctx, process.env);
+      set({ ingesting: false, filesPending: 0, lastIngestAt: Date.now(), refolding: refold || undefined });
       // Monitors score new sessions, each at most once a minute (src/monitor); their errors go to monitors.json.
       if (!stop.signal.aborted && existsSync(ctx.paths.monitors)) {
         const { monitorsAfterIngest } = await import("../monitor/run.ts");

@@ -7,7 +7,7 @@ Each run of your agent is a session. A session has turns: a turn starts with a p
 until the agent hands control back. A turn has events, such as a prompt, a model call, a tool call
 or a file change. When the agent starts a subagent, the subagent's work is a child session.
 
-If you use OpenTelemetry: one trace becomes one session, and a span becomes an event. Traces that
+With OpenTelemetry, one trace becomes one session, and a span becomes an event. Traces that
 share a conversation id become turns of one session.
 
 ![At the top, one session drawn as two turns, each a row of events (prompt, model call, tool call, file change), with a subagent as a child session. Below, a dataset of cases runs twice, before and after a change; each case is graded and the two runs are compared case by case.](diagram:concepts "A session is made of turns and events. A dataset runs before and after a change, and the two runs are compared.")
@@ -20,10 +20,13 @@ One run of your agent, from the first prompt to the end: a Claude Code conversat
 thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 
 - In the viewer: a row in the session list, a link to its timeline.
-- A session with a failure opens on its first failing step. First failure in the session header,
-  or `F`, goes back to it.
+- A session with a failure opens on its first failing step. First failure in the header, or
+  `F`, goes back to it.
 - A session with no failure opens on its first prompt. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
+- `stats.prs` lists the PRs it opened, merged, closed or linked.
+- `<id>` may be a prefix or `latest`; coding.sh prints the shortest id that works.
+- Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
 ### Turn
 
@@ -38,13 +41,13 @@ One prompt and everything the agent does until it hands control back to you.
 - A turn with a failure and the last turn stay open. Enter or a click unfolds a turn; Enter or `←`
   on an open turn's row folds it.
 - `z` shows every step; the viewer remembers it.
-- In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in order and in
-  full. The choice is remembered and kept in the link (`?view=chat`).
+- In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in full.
+  It is remembered and kept in the link (`?view=chat`).
 - In Chat, `}` and `{` move between prompts, and `j` and `k` between messages.
 - In Chat, one line per turn counts its other steps ("4 steps · read 2 files, 1 command") and
   opens Steps at that turn.
 - The viewer formats markdown in prompts and replies, such as headings, lists and code. A link
-  shows as its text and its address, HTML shows as written, and Copy text copies the original.
+  shows its text and address, HTML shows as written, and Copy text copies the original.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event
@@ -53,19 +56,19 @@ One thing that happened in a session: a prompt, a reply, a model call with its t
 tool call with its input and output, or a file change.
 
 - In the viewer: one step on the timeline. Press `e` for the Events list across sessions.
-- In the viewer, tool output is shown without terminal escape codes; the stored output keeps them.
-- In the CLI: `coding.sh show <id>` prints one line per event, and `coding.sh search` finds text in
+- The viewer shows tool output without terminal escape codes; the stored output keeps them.
+- In the CLI: `coding.sh show <id>` prints one line per event, and `coding.sh search` searches
   them.
-- The CLI strips terminal escape sequences and control characters from captured text, except in
-  `--json` output and in CSV or JSONL written to a file or a pipe, which keep the text as stored.
+- The CLI strips escape sequences and control characters from captured text, except in
+  `--json`, CSV and JSONL output to a file or pipe.
 
 ### Subagent
 
-A child agent that a session started, such as Claude Code's Task tool. Its work is stored as its
-own session, linked to its parent.
+A child agent that a session started, such as Claude Code's Task tool. Its work is its own
+session, linked to its parent.
 
-- In the viewer: subagents fold under their parent in the session list, and the parent's page shows
-  the whole run as a tree.
+- In the viewer: subagents fold under their parent in the list, and its page shows the run
+  as a tree.
 - In the CLI: `coding.sh tree <id>` shows the run with what each part cost, and
   `coding.sh sessions --subagents` lists them.
 - Agents of one workflow run share `parent.workflowId`;
@@ -74,10 +77,11 @@ own session, linked to its parent.
 ### Flag
 
 A failure pattern coding.sh found in a session, such as `no-verification` when files changed but no
-test ran, or `api-stall` when rate limits or an overloaded API held the session up. A flag with a
-colon, such as `skill:pdf`, is a tag, not a failure.
+test ran, `api-stall` when rate limits or an overloaded API held the session up, or `llm-error`
+when a model call failed and the session never got past it. A flag with a colon, such as
+`skill:pdf`, is a tag, not a failure.
 
-A session's files changed count each file once, whether an edit tool or a shell command such as
+Files changed counts each file once, whether an edit tool or a shell command such as
 `sed -i` wrote it.
 
 - In the viewer: a row shows its first flag and a count of the rest, the session page shows them
@@ -107,9 +111,8 @@ of the file the edits started from. It links an edit's hashes, which cover one t
 whole-file hash that `coding.sh exp run --weights` records. A session that recorded one has the `weights:checkpoint` tag and lists the hashes in
 `stats.weightEdits.checkpoints`.
 
-- In the viewer: a `Saved weights` row on the session page, a `ran in <name>` link in its header
-  for each experiment that ran the file, and a link to the session next to an experiment's
-  weights stamp.
+- In the viewer: a `Saved weights` row on the session page, a `ran in <name>` header link per
+  experiment that ran the file, and a session link beside an experiment's weights stamp.
 - In the CLI: `coding.sh sessions --where 'weights.checkpoint:58899f90572c*'` finds the session
   that saved a file, and `coding.sh show <id>` prints `checkpoint 58899f90572c ← 0496e5111097`
   and the experiments that ran that file.
@@ -118,14 +121,14 @@ whole-file hash that `coding.sh exp run --weights` records. A session that recor
   [Compare an edited model with its base](https://coding.sh/docs/experiments#weights).
 - Recorded by the Python SDK's `coding_sh.weights_checkpoint()`, the TypeScript SDK's
   `weightsCheckpoint()`, or any OpenTelemetry SDK as a span named `weights.checkpoint`. You compute
-  the hash; coding.sh hashes nothing.
+  the hash.
 
 ### Cost
 
 What a session's model calls cost, from their token counts and each model's price. A `~` marks an
 estimate.
 
-- In the viewer: the cost of each session in the list, and cost per day on Explore
+- In the viewer: each session's cost in the list, and cost per day on Explore
   (`g x`).
 - In the CLI: `coding.sh usage` shows tokens and cost by agent, model, day, MCP server, skill or
   subagent. See [Track cost](https://coding.sh/docs/cost).
@@ -133,7 +136,7 @@ estimate.
   dropped. See the [API reference](https://coding.sh/docs/api).
 - Budgets: `coding.sh budget set` sets a spend limit per day, week or month. See
   [Track cost](https://coding.sh/docs/cost#set-a-budget).
-- Plan usage: `coding.sh quota` shows how much of a plan's 5-hour and weekly windows is used. See
+- Plan usage: `coding.sh quota` shows the use of a plan's 5-hour and weekly windows. See
   the [CLI reference](https://coding.sh/docs/cli/quota).
 
 ### Alert
@@ -153,7 +156,7 @@ One input to test, with the answer you expect when you know it.
 
 ### Dataset
 
-A named list of cases. Each change makes a new version, so an experiment records exactly what it ran
+A named list of cases. Each change makes a new version, so an experiment records what it ran
 on.
 
 - In the viewer: the Experiments page lists each experiment with its dataset and pass rate.
@@ -162,10 +165,10 @@ on.
 ### Experiment
 
 One run of your task over a dataset, with every case graded. Two experiments are compared case by
-case, and the result is better, worse or inconclusive.
+case: better, worse or inconclusive.
 
-- In the viewer: Experiments (`g e`). Select two with `x` and press
-  `c` to compare them.
+- In the viewer: Experiments (`g e`). `x` selects two, and `c`
+  compares them.
 - In the CLI: `coding.sh exp run` makes one, and `coding.sh exp compare` compares two. See
   [Experiments](https://coding.sh/docs/experiments).
 
@@ -181,8 +184,8 @@ A check that scores one output: an exact match, a regex, a JSON schema, your own
 
 A grader that asks a model. Trust it only after you check it against your own pass or fail labels.
 
-- In the viewer: mark a session Pass (`p`) or Fail (`f`) on its page. It is stored as a human
-  score; press it again to clear it.
+- In the viewer: mark a session Pass (`p`) or Fail (`f`) on its page. It is a human score; press
+  again to clear it.
 - In the CLI: `coding.sh judge calibrate` measures how often the judge agrees with human labels. See
   [Judges](https://coding.sh/docs/judges).
 
@@ -202,5 +205,5 @@ A judge rubric or a command that scores each new session once, after it ends. Se
 
 Start with [Evals](https://coding.sh/docs/evals),
 [Experiments](https://coding.sh/docs/experiments) or
-[Test an AGENTS.md change](https://coding.sh/docs/how-to/test-agents-md-change). How the numbers
-are computed, from paired comparisons to pass@k: [How evals are computed](https://coding.sh/docs/eval-methods).
+[Test an AGENTS.md change](https://coding.sh/docs/how-to/test-agents-md-change). The math, from
+paired comparisons to pass@k: [How evals are computed](https://coding.sh/docs/eval-methods).

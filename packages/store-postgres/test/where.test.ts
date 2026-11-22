@@ -32,12 +32,14 @@ describe("postgres --where compiler", () => {
   it("compiles to one condition with numbered placeholders", () => {
     const c = compile("agent:codex -title:Fix cost>0.5 tool:Bash ok:false");
     const cost = "(CASE WHEN json_typeof(s.stats::json #> '{usage,costUsd}') = 'number' THEN (s.stats::json #>> '{usage,costUsd}')::float8 END)";
+    // agent: matches the agent that ran or the host app that drove it (stats.host).
+    const host = "coalesce((CASE WHEN json_typeof(s.stats::json #> '{host}') = 'string' THEN s.stats::json #>> '{host}' END), '')";
     assert.equal(
       c.sql,
-      `(EXISTS (SELECT 1 FROM "t".events e WHERE e.session_id = s.id AND (e.tool = $1 AND e.ok = $2)) AND s.agent = $3` +
-        ` AND NOT (coalesce(translate(s.title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') LIKE $4, false)) AND ${cost} > $5)`,
+      `(EXISTS (SELECT 1 FROM "t".events e WHERE e.session_id = s.id AND (e.tool = $1 AND e.ok = $2)) AND (s.agent = $3 OR ${host} = $4)` +
+        ` AND NOT (coalesce(translate(s.title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') LIKE $5, false)) AND ${cost} > $6)`,
     );
-    assert.deepEqual(c.params, ["Bash", false, "codex", "%fix%", 0.5]);
+    assert.deepEqual(c.params, ["Bash", false, "codex", "codex", "%fix%", 0.5]);
     assert.equal(orderBy(p("sort:-cost").sort), `(${cost}) IS NULL, (${cost}) DESC, s.started_at DESC, s.id`);
     assert.equal(orderBy(undefined), "s.started_at DESC, s.id");
   });

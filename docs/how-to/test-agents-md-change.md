@@ -97,7 +97,7 @@ Full comparison: coding.sh exp compare exp_01M75267AHHFRD8E72E9G619N2 exp_01M752
 | `Hold … (no decision point changed outcome)` with `A 0/N -> B 0/N` | Nothing changed, or the judge failed on every run. `exp ab` does not say which. | Run the `Full comparison` command. |
 
 The noise floor line says how often A's replayed turn differs from the recorded one. A change in B
-smaller than that may be noise.
+no larger than that may be noise.
 
 When the judge fails, `exp compare` names the runs it could not grade and leaves them out:
 

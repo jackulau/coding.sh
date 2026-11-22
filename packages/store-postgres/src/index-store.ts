@@ -96,6 +96,15 @@ function rowToEvent(r: Row): AgentEvent {
   return e;
 }
 
+/** The stats JSON as stored: provider and host have no column, so they ride inside it (rowToSession takes them out). */
+function storedStats(s: Session): Session["stats"] & { provider?: string; host?: string } {
+  if (!s.provider && !s.host) return s.stats;
+  const out: Session["stats"] & { provider?: string; host?: string } = { ...s.stats };
+  if (s.provider) out.provider = s.provider;
+  if (s.host) out.host = s.host;
+  return out;
+}
+
 function rowToSession(r: Row): Session {
   const s: Session = {
     id: r.id as string,
@@ -104,9 +113,11 @@ function rowToSession(r: Row): Session {
     stats: parse<Session["stats"]>(r.stats)!,
     flags: parse<string[]>(r.flags) ?? [],
   };
-  // provider rides in the stats JSON, as in the SQLite store.
-  const { provider, ...stats } = s.stats as Session["stats"] & { provider?: string };
-  if (typeof provider === "string") (s.stats = stats), (s.provider = provider);
+  // provider and host ride in the stats JSON, as in the SQLite store.
+  const { provider, host, ...stats } = s.stats as Session["stats"] & { provider?: string; host?: string };
+  if (typeof provider === "string" || typeof host === "string") s.stats = stats;
+  if (typeof provider === "string") s.provider = provider;
+  if (typeof host === "string") s.host = host;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) s[k] = v;
   };
@@ -163,7 +174,8 @@ class Where {
 /** WHERE parts for a SessionFilter; `p` prefixes column names ("s." when sessions is aliased). */
 function sessionFilter(w: Where, f: Omit<SessionFilter, "limit" | "offset">, p = ""): Where {
   if (f.project) w.add(`${p}project_id = ?`, f.project);
-  if (f.agent) w.add(`${p}agent = ?`, f.agent);
+  // The agent that ran, or the host app that drove it (Session.host), as in the SQLite store.
+  if (f.agent) w.add(`(${p}agent = ? OR ${p}stats::json ->> 'host' = ?)`, f.agent, f.agent);
   if (f.parentSessionId === null) w.add(`${p}parent_session_id IS NULL`);
   else if (f.parentSessionId !== undefined) w.add(`${p}parent_session_id = ?`, f.parentSessionId);
   if (f.repoRoot) w.add(`${p}repo_root = ?`, f.repoRoot);
@@ -426,7 +438,7 @@ export class PgIndexStore implements IndexStore {
          parse_version = coalesce(excluded.parse_version, cur.parse_version)`,
       [
         txt(s.id), txt(projectOf(s.project)), txt(s.agent), txt(s.agentVersion), txt(s.model), txt(s.cwd), json(s.repo), txt(s.repo?.root),
-        txt(s.title), s.startedAt, s.endedAt ?? null, JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats),
+        txt(s.title), s.startedAt, s.endedAt ?? null, JSON.stringify(storedStats(s)),
         JSON.stringify(s.flags ?? []), txt(s.runId), txt(s.endSnapshot), json(s.parent), txt(s.parent?.sessionId),
         s.traceIds?.length ? JSON.stringify(s.traceIds) : null, s.parseVersion ?? null,
       ],

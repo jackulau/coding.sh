@@ -171,7 +171,8 @@ try {
     tarball = join(root, packed.stdout.trim().split(/\r?\n/).pop());
   }
   log(`installing ${tarball} and ${CLAUDE_PKG}`);
-  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", tarball, CLAUDE_PKG], { env, cwd: root, timeoutMs: 600_000 });
+  // npm 12 runs no install script it is not told to; Claude Code's fetches its native binary. npm 11 and older accept the flag too.
+  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", "--allow-scripts=@anthropic-ai/claude-code", tarball, CLAUDE_PKG], { env, cwd: root, timeoutMs: 600_000 });
   if (install.code !== 0) throw new Error("npm install -g failed");
   log(`claude ${(await run("claude", ["--version"], { env, cwd: root })).stdout.trim()}`);
 

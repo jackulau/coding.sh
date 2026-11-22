@@ -134,7 +134,8 @@ if (isWin) {
 if (process.env.npm_config_cache) env.npm_config_cache = process.env.npm_config_cache;
 
 try {
-  execFileSync("npm", ["install", "-g", "--no-fund", "--no-audit", PKG], { env, cwd: root, stdio: "inherit" });
+  // npm 12 runs no install script it is not told to; Claude Code's fetches its native binary. npm 11 and older accept the flag too.
+  execFileSync("npm", ["install", "-g", "--no-fund", "--no-audit", "--allow-scripts=@anthropic-ai/claude-code", PKG], { env, cwd: root, stdio: "inherit" });
   console.error(`claude ${execFileSync("claude", ["--version"], { env, cwd: project }).trim()}`);
   // Async: the stub answers from this process, so a sync spawn would deadlock it. Three prompts in one
   // process (stream-json input): the task, /compact (which restores the invoked skill), one more check.

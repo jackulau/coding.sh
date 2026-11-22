@@ -79,7 +79,7 @@ describe("list empty states name the next step", () => {
       await b.seed([]);
       const r = await runCmd(mod as never, b, { action: "list", flags: { import: false } });
       assert.equal(r.error, undefined, String(r.error?.message));
-      assert.match(r.stderr, new RegExp(`:\\n {4}${cmd.replace(/\./g, "\\.")}`));
+      assert.match(r.stderr, new RegExp(`:\\n {4}(?:coding\\.sh|codingsh)${cmd.slice("coding.sh".length).replace(/\./g, "\\.")}`));
     });
   }
 });

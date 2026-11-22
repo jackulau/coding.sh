@@ -97,12 +97,12 @@ describe("a build that is not newer than the store's last writer", () => {
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, new RegExp(`index schema v${OLD}\\b`));
     assert.ok(r.stderr.includes(`last written by coding.sh ${VERSION}`), r.stderr);
-    assert.match(r.stderr, /coding\.sh upgrade-store/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
     const j = run(CLI, ["sessions", "--json"], h);
     const err = JSON.parse(j.stderr) as { reason: string; askUser?: boolean; next: string[]; data: { from: number; to: number; writer: string } };
     assert.equal(err.reason, "store_version");
     assert.equal(err.askUser, true, "an agent asks the user before a one-way migration");
-    assert.ok(err.next.includes("coding.sh upgrade-store"));
+    assert.ok(err.next.some((l) => /^(?:coding\.sh|codingsh) upgrade-store$/.test(l)), err.next.join(" | "));
     assert.deepEqual([err.data.from, err.data.to, err.data.writer], [OLD, SQLITE_SCHEMA_VERSION, VERSION]);
     assert.equal(await schemaOf(h.index), OLD, "the store was not migrated");
     assert.deepEqual(files(h.data), ["index.db"], "no copy, no bin/, nothing else");
@@ -329,13 +329,13 @@ describe("a store one schema ahead of this coding.sh", () => {
     assert.match(r.stderr, /Your captures are safe: 2 capture files wait in the spool/);
     assert.ok(r.stderr.includes(join(h.data, "spool")), "names the spool");
     assert.match(r.stderr, /coding\.sh 9\.9\.9 or newer/);
-    assert.match(r.stderr, /coding\.sh update/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) update/);
     assert.doesNotMatch(r.stderr, /config path/, "the next step is not the config file");
 
     const j = run(CLI, ["sessions", "--json"], h);
     const err = JSON.parse(j.stderr) as { reason: string; next: string[]; data: { schema: number; known: number; writer: string; spool: { files: number } } };
     assert.equal(err.reason, "store_newer");
-    assert.ok(err.next.includes("coding.sh update"));
+    assert.ok(err.next.some((l) => /^(?:coding\.sh|codingsh) update$/.test(l)), err.next.join(" | "));
     assert.deepEqual([err.data.schema, err.data.known, err.data.writer, err.data.spool.files], [SQLITE_SCHEMA_VERSION + 1, SQLITE_SCHEMA_VERSION, "9.9.9", 2]);
   });
 
@@ -360,12 +360,12 @@ describe("a store one schema ahead of this coding.sh", () => {
     assert.equal(doc.storeError, "store_newer");
     assert.equal(doc.spool.files, 2);
     assert.equal(doc.ingestStopped.reason, "store_newer");
-    assert.equal(doc.ingestStopped.next, "coding.sh update");
+    assert.match(doc.ingestStopped.next, /^(?:coding\.sh|codingsh) update$/);
     assert.ok(Date.now() - Date.parse(doc.ingestStopped.since) < 60_000);
     assert.equal((JSON.parse(s.stderr) as { reason: string }).reason, "store_newer", "and the error is still the answer on stderr");
 
     const text = run(CLI, ["status"], h);
-    assert.match(text.stderr, /Ingest\s+stopped (just now|\d+s ago): .*run coding\.sh update/);
+    assert.match(text.stderr, /Ingest\s+stopped (just now|\d+s ago): .*run (?:coding\.sh|codingsh) update/);
     assert.match(text.stderr, /Spool\s+2 files/);
 
     const line = run(CLI, ["statusline"], h, { input: JSON.stringify({ model: { display_name: "Fable" } }) });
@@ -386,7 +386,7 @@ describe("a store one schema ahead of this coding.sh", () => {
     const h = await ahead();
     // The copy the newer coding.sh kept when it migrated.
     await storeAt(`${h.index}.v${SQLITE_SCHEMA_VERSION}.bak`, SQLITE_SCHEMA_VERSION);
-    assert.match(run(CLI, ["sessions"], h).stderr, /coding\.sh upgrade-store --restore puts back the index from before the migration/);
+    assert.match(run(CLI, ["sessions"], h).stderr, /(?:coding\.sh|codingsh) upgrade-store --restore puts back the index from before the migration/);
     run(CLI, ["ingest", "--background"], h);
     assert.ok(existsSync(join(h.data, "ingest-stopped.json")));
 

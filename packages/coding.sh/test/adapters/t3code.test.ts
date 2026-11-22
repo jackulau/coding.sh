@@ -172,15 +172,24 @@ describe("t3code adapter", () => {
     assert.equal(turnUsage({ usageStatus: "unavailable" }), undefined);
   });
 
-  it("imports one session per provider thread, attributed to t3code", async () => {
+  it("imports one session per provider thread, attributed to the agent that ran with T3 Code as host", async () => {
     const { index } = await run([t3code]);
     const all = await index.listSessions({});
     const top = await index.listSessions({ parentSessionId: null });
     // Listed T3 threads: codex, claude, grok (+ v1-only thread); subagent and provider switch are children; deleted is gone.
     assert.deepEqual(top.map((s) => s.id).sort(), [CLAUDE_ID, CODEX_ID, "grok-session-1", "v1-codex-thread-not-on-disk"].sort());
     assert.deepEqual(all.map((s) => s.id).sort(), [CLAUDE_ID, CODEX_ID, "grok-session-1", "muse-session-1", "t3code-thr-sub", "v1-codex-thread-not-on-disk"].sort());
-    for (const s of all) assert.equal(s.agent, "t3code", s.id);
     const by = Object.fromEntries(all.map((s) => [s.id, s]));
+    // The agent is the one that ran; T3 Code is the host. A thread that never reached a provider stays T3 Code's, with no host.
+    const ran = Object.fromEntries(all.map((s) => [s.id, [s.agent, s.host]]));
+    assert.deepEqual(ran, {
+      [CLAUDE_ID]: ["claude-code", "t3code"],
+      [CODEX_ID]: ["codex", "t3code"],
+      "grok-session-1": ["grok", "t3code"],
+      "muse-session-1": ["muse", "t3code"],
+      "t3code-thr-sub": ["t3code", undefined],
+      "v1-codex-thread-not-on-disk": ["codex", "t3code"],
+    });
     assert.equal(by[CODEX_ID]!.provider, "codex");
     assert.equal(by[CLAUDE_ID]!.provider, "claude-code");
     assert.equal(by["grok-session-1"]!.provider, "grok");
@@ -240,7 +249,8 @@ describe("t3code adapter", () => {
       const b = (await nativeFirst.index.listEvents(id)).map((e) => e.id).sort();
       assert.deepEqual(b, a, `same events for ${id} whichever adapter ran first`);
       const s = await nativeFirst.index.getSession(id);
-      assert.equal(s?.agent, "t3code");
+      assert.equal(s?.agent, id === CODEX_ID ? "codex" : "claude-code");
+      assert.equal(s?.host, "t3code");
       assert.equal(new Set(a).size, a.length);
     }
     // No session appears twice under another id.
@@ -250,7 +260,8 @@ describe("t3code adapter", () => {
   it("attributes a T3-originated Codex rollout even without the T3 store", async () => {
     const { index } = await run([codex]);
     const s = await index.getSession(CODEX_ID);
-    assert.equal(s?.agent, "t3code");
+    assert.equal(s?.agent, "codex");
+    assert.equal(s?.host, "t3code");
     assert.equal(s?.provider, "codex");
   });
 
@@ -273,7 +284,8 @@ describe("t3code adapter", () => {
     const some = mine(await collect(backfillT3(testCtx().ctx, { since })));
     assert.deepEqual(some.map((e) => e.id).sort(), all.map((e) => e.id).sort());
     const s = buildSession(some);
-    assert.equal(s.agent, "t3code");
+    assert.equal(s.agent, "claude-code");
+    assert.equal(s.host, "t3code");
     assert.equal(s.title, "Add sum");
     // A session with nothing inside the window stays out.
     assert.deepEqual(await collect(backfillT3(testCtx().ctx, { since: Date.now() + 86_400_000 })), []);
@@ -297,7 +309,7 @@ describe("T3 live capture", () => {
     assert.equal(hostOf({}), undefined);
   });
 
-  it("claude-code hook lines under T3 become a t3code session, and backfill adds no duplicate prompts", async () => {
+  it("claude-code hook lines under T3 become a claude-code session hosted by t3code, and backfill adds no duplicate prompts", async () => {
     const { claude } = nativeTranscripts(env.home);
     const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8")
       .split("\n")
@@ -314,26 +326,30 @@ describe("T3 live capture", () => {
     const r = await ingest({ config, index, blobs, env: cenv, adapters: new Map(ADAPTERS.map((a) => [a.id, a])), lock: false });
     assert.deepEqual(r.errors, []);
     const live = await index.getSession(CLAUDE_ID);
-    assert.equal(live?.agent, "t3code");
+    assert.equal(live?.agent, "claude-code");
+    assert.equal(live?.host, "t3code");
     assert.equal(live?.provider, "claude-code");
     const hostThread = (await index.listEvents(CLAUDE_ID)).find((e) => e.payload.hostThreadId);
     assert.equal(hostThread?.payload.hostThreadId, "thr-claude");
     await backfill({ config, index, blobs, env: cenv, adapters: [t3code, claudeCode] });
     const prompts = (await index.listEvents(CLAUDE_ID, { kinds: ["user.message"] })).filter((e) => String(e.payload.text).startsWith("Add a sum function"));
     assert.equal(prompts.length, 1);
-    assert.equal((await index.getSession(CLAUDE_ID))?.agent, "t3code");
+    assert.equal((await index.getSession(CLAUDE_ID))?.agent, "claude-code");
+    assert.equal((await index.getSession(CLAUDE_ID))?.host, "t3code");
   });
 });
 
 describe("host attribution", () => {
   const ev = (o: Partial<AgentEvent>): AgentEvent => ({ id: Math.random().toString(16).slice(2).padEnd(64, "0"), v: 0, sessionId: "s1", ts: 1, agent: "codex", kind: "notification", payload: {}, ...o });
 
-  it("gives the session to the host and keeps the provider", () => {
+  it("keeps the agent that ran and names the host", () => {
     const s = buildSession([ev({ kind: "session.start", ts: 1 }), ev({ agent: "t3code", ts: 2, payload: { type: "host-link", via: "t3code" } })]);
-    assert.equal(s.agent, "t3code");
+    assert.equal(s.agent, "codex");
+    assert.equal(s.host, "t3code");
     assert.equal(s.provider, "codex");
     const plain = buildSession([ev({ kind: "session.start" })]);
     assert.equal(plain.agent, "codex");
+    assert.equal(plain.host, undefined, "a direct session has no host");
     assert.equal(plain.provider, undefined);
   });
 
@@ -345,14 +361,16 @@ describe("host attribution", () => {
     assert.equal(untitled.title, "Context handoff (full_thread_summary): Provider context handoff.");
   });
 
-  it("persists provider in sqlite", async () => {
+  it("persists host and provider in sqlite", async () => {
     const store = await SqliteIndexStore.open(":memory:");
     const s = buildSession([ev({ kind: "session.start", payload: { via: "t3code" } })]);
     await store.upsertSession(s);
     const back = await store.getSession("s1");
-    assert.equal(back?.agent, "t3code");
+    assert.equal(back?.agent, "codex");
+    assert.equal(back?.host, "t3code");
     assert.equal(back?.provider, "codex");
     assert.equal((back?.stats as Record<string, unknown>).provider, undefined);
+    assert.equal((back?.stats as Record<string, unknown>).host, undefined);
     await store.close();
   });
 
@@ -970,7 +988,8 @@ describe("T3 provider instances", () => {
     const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
     assert.deepEqual(r.errors, []);
     const s = await index.getSession("hub-session-not-on-disk");
-    assert.equal(s?.agent, "t3code");
+    assert.equal(s?.agent, "claude-code");
+    assert.equal(s?.host, "t3code");
     assert.equal(s?.provider, "claude-code");
     assert.equal((await index.listEvents("hub-session-not-on-disk", { kinds: ["user.message"] })).length, 1);
   });

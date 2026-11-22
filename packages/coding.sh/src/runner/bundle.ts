@@ -186,24 +186,38 @@ export interface BundleFromDirOpts {
    * or a plugin directory (relative to `dir`). Their files are stored whole.
    */
   plugins?: string[];
-  /** Where installed plugins are looked up (default: $CLAUDE_CONFIG_DIR or ~/.claude; read-only). */
+  /**
+   * Claude Code's config dir: where installed plugins are looked up, and where "~/.claude/…"
+   * includes and files are read from, their keys left as "~/.claude/…" (default for plugins:
+   * $CLAUDE_CONFIG_DIR or ~/.claude; for files: <home>/.claude; read-only).
+   */
   claudeDir?: string;
   now?: number;
+}
+
+/** A "~/…" path's file under `home`, or under `claudeDir` for one in "~/.claude/" ($CLAUDE_CONFIG_DIR). */
+export function userFile(rel: string, home: string, claudeDir: string): string {
+  if (rel === ".claude" || rel.startsWith(".claude/")) return join(claudeDir, rel.slice(".claude".length + 1));
+  return join(home, rel);
 }
 
 export async function bundleFromDir(o: BundleFromDirOpts): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
   const home = o.home ?? userHome();
+  const claudeDir = o.claudeDir ?? join(home, ".claude");
   for (const inc of o.include) {
     const user = inc.startsWith("~/");
-    const base = user ? home : o.dir;
-    const pat = user ? inc.slice(2) : inc;
+    // "~/.claude/…" is Claude Code's config dir, which $CLAUDE_CONFIG_DIR moves; the key stays "~/.claude/…".
+    const claude = user && inc.startsWith("~/.claude/");
+    const base = claude ? claudeDir : user ? home : o.dir;
+    const pat = claude ? inc.slice("~/.claude/".length) : user ? inc.slice(2) : inc;
+    const key = claude ? "~/.claude/" : user ? "~/" : "";
     for (const rel of await collect(base, pat)) {
-      files[user ? `~/${rel}` : rel] = await o.blobs.put(await readFile(join(base, rel)));
+      files[key + rel] = await o.blobs.put(await readFile(join(base, rel)));
     }
   }
   for (const [target, src] of Object.entries(o.files ?? {})) {
-    const abs = resolve(o.dir, src.startsWith("~/") ? join(home, src.slice(2)) : src);
+    const abs = resolve(o.dir, src.startsWith("~/") ? userFile(src.slice(2), home, claudeDir) : src);
     files[target] = await o.blobs.put(await readFile(abs));
   }
   const plugins: HarnessPlugin[] = [];
@@ -309,7 +323,11 @@ export interface ApplyResult {
  * runDir/.coding.sh-home) — never the real home. Paths that are absolute,
  * climb out, touch .git, or pass through a symlink are refused. Plugin files
  * land at <home>/.coding.sh-plugins/<name>/ (their executable bits restored)
- * and don't make the run export HOME.
+ * and don't make the run export HOME. A bundle's mcpServers are a record only:
+ * nothing here installs them. A project-scope server's .mcp.json is written
+ * into runDir like any other file the bundle carries. User- and local-scope
+ * servers live in ~/.claude.json, which a snapshot does not carry, and a trial
+ * runs Claude Code with its own config dir, so it does not load them.
  */
 export async function applyBundle(bundle: HarnessBundle, runDir: string, blobs: BlobStore, opts: { home?: string } = {}): Promise<ApplyResult> {
   const home = resolve(opts.home ?? join(runDir, ".coding.sh-home"));

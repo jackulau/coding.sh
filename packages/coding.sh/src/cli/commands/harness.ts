@@ -2,13 +2,14 @@
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { claudeUserJson } from "../../adapters/claude-code.ts";
 import { getAdapter } from "../../adapters/index.ts";
 import { agentFileProblems } from "../../core/agent-files.ts";
 import { IMPORT_HOPS, IMPORTING, importPaths } from "../../core/memory-audit.ts";
 import { userHome } from "../../core/paths.ts";
-import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
+import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE, userFile, type BundleFromDirOpts } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
-import type { BlobRef, BlobStore, HarnessBundle } from "../../core/types.ts";
+import type { BlobRef, BlobStore, HarnessBundle, HarnessMcpServer } from "../../core/types.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, list, str, withContext, pendingField, readIngest } from "../common.ts";
 import { ago, bytes, CliError, plural, tokens } from "../output.ts";
@@ -17,7 +18,7 @@ import type { CommandContext } from "../types.ts";
 export { importPaths };
 
 export function bundleJson(b: HarnessBundle): Record<string, unknown> {
-  return {
+  const json: Record<string, unknown> = {
     id: b.id,
     name: b.name,
     agent: b.agent,
@@ -29,6 +30,8 @@ export function bundleJson(b: HarnessBundle): Record<string, unknown> {
     createdAt: new Date(b.createdAt).toISOString(),
     note: b.note ?? null,
   };
+  if (b.mcpServers?.length) json.mcpServers = b.mcpServers;
+  return json;
 }
 
 /** A bundle path under a dot dir of Claude Code's skills dir (its `.trash` of deleted skills), which Claude Code does not load. */
@@ -38,14 +41,16 @@ const HIDDEN_SKILL = /^(?:~\/)?\.claude\/skills\/\.[^/]+\//;
  * The bundle with what Claude Code loads that the include globs miss or wrongly take: the files
  * CLAUDE.md and rules pull in with `@path` imports (followed up to 5 hops, relative to the
  * importing file, `~/` from the home), and without dot dirs under skills/. An import inside
- * `dir` is stored repo-relative, one in the home as `~/…`; one elsewhere is left out.
+ * `dir` is stored repo-relative, one in Claude Code's config dir (`claudeDir`, $CLAUDE_CONFIG_DIR)
+ * as `~/.claude/…`, one in the home as `~/…`; one elsewhere is left out.
  */
-export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; home: string; blobs: BlobStore }): Promise<HarnessBundle> {
+export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; home: string; claudeDir?: string; blobs: BlobStore }): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
   for (const [k, v] of Object.entries(bundle.files)) if (!HIDDEN_SKILL.test(k)) files[k] = v;
-  const local = (key: string) => (key.startsWith("~/") ? join(o.home, key.slice(2)) : join(o.dir, key));
+  const claudeDir = o.claudeDir ?? join(o.home, ".claude");
+  const local = (key: string) => (key.startsWith("~/") ? userFile(key.slice(2), o.home, claudeDir) : join(o.dir, key));
   const keyOf = (abs: string): string | undefined => {
-    for (const [base, prefix] of [[o.dir, ""], [o.home, "~/"]] as const) {
+    for (const [base, prefix] of [[o.dir, ""], [claudeDir, "~/.claude/"], [o.home, "~/"]] as const) {
       const rel = relative(base, abs);
       if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return prefix + rel.split(sep).join("/");
     }
@@ -83,6 +88,74 @@ export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; 
   for (const k of keys) sorted[k] = files[k]!;
   const out = { ...bundle, files: sorted };
   return { ...out, id: bundleId(out) };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A path as ~/.claude.json keys a project: resolved, no trailing slash; on Windows any slash and any case. */
+const projectKey = (p: string) => {
+  const r = resolve(p).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? r.replace(/\//g, "\\").toLowerCase() : r;
+};
+
+/** A URL without its query string, fragment or user info, where tokens are often kept. */
+function bareUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.username = "";
+    u.password = "";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    // Not a URL yet (an ${ENV} reference): cut the same parts by hand.
+    return url.replace(/[?#].*$/s, "").replace(/^([a-z][\w+.-]*:\/\/)[^/@]*@/i, "$1");
+  }
+}
+
+/** One configured server as a bundle records it: never the values of its env or headers, nor its arguments. */
+function mcpServer(name: string, scope: HarnessMcpServer["scope"], cfg: Record<string, unknown>): HarnessMcpServer {
+  const command = typeof cfg.command === "string" && cfg.command ? cfg.command : undefined;
+  const url = typeof cfg.url === "string" && cfg.url ? bareUrl(cfg.url) : undefined;
+  const keys = (v: unknown) => (isObject(v) && Object.keys(v).length ? Object.keys(v).sort() : undefined);
+  const envKeys = keys(cfg.env);
+  const headerKeys = keys(cfg.headers);
+  const server: HarnessMcpServer = { name, scope, transport: typeof cfg.type === "string" && cfg.type ? cfg.type : command ? "stdio" : "unknown" };
+  if (command) server.command = command;
+  if (url) server.url = url;
+  if (envKeys) server.envKeys = envKeys;
+  if (headerKeys) server.headerKeys = headerKeys;
+  return server;
+}
+
+/**
+ * The MCP servers Claude Code loads in `dir`: user scope (mcpServers) and local scope
+ * (projects[dir].mcpServers) from ~/.claude.json, or $CLAUDE_CONFIG_DIR/.claude.json, and project
+ * scope from dir's .mcp.json. A name in more than one scope is the one Claude Code uses: local,
+ * then project, then user. A file that is missing or not JSON adds none.
+ */
+export async function claudeMcpServers(env: NodeJS.ProcessEnv, dir: string): Promise<HarnessMcpServer[]> {
+  const json = async (path: string): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const v: unknown = JSON.parse(await readFile(path, "utf8"));
+      return isObject(v) ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const user = await json(claudeUserJson(env));
+  const project = await json(join(dir, ".mcp.json"));
+  const found: HarnessMcpServer[] = [];
+  const add = (servers: unknown, scope: HarnessMcpServer["scope"]) => {
+    if (!isObject(servers)) return;
+    for (const [name, cfg] of Object.entries(servers)) if (isObject(cfg) && !found.some((s) => s.name === name)) found.push(mcpServer(name, scope, cfg));
+  };
+  const want = projectKey(dir);
+  if (user && isObject(user.projects)) for (const [k, v] of Object.entries(user.projects)) if (isObject(v) && projectKey(k) === want) add(v.mcpServers, "local");
+  if (project) add(project.mcpServers, "project");
+  if (user) add(user.mcpServers, "user");
+  const rank = { local: 0, project: 1, user: 2 } as const;
+  return found.sort((a, b) => rank[a.scope] - rank[b.scope] || a.name.localeCompare(b.name));
 }
 
 /** Under the audit's session count when subagents ran: what the count and the rows count them as. */
@@ -239,7 +312,7 @@ export async function run(c: CommandContext): Promise<number> {
         out.next("Snapshot the current harness", "coding.sh harness snapshot --agent claude-code");
         return 0;
       }
-      out.table(["ID", "NAME", "AGENT", "FILES", "CREATED"], all.map((b) => [b.id.slice(0, 16), b.name, b.agent, String(Object.keys(b.files).length), ago(b.createdAt)]));
+      out.table(["ID", "NAME", "AGENT", "FILES", "MCP", "CREATED"], all.map((b) => [b.id.slice(0, 16), b.name, b.agent, String(Object.keys(b.files).length), b.mcpServers?.length ? b.mcpServers.map((m) => m.name).join(", ") : "-", ago(b.createdAt)]));
       return 0;
     }
     if (c.action !== "snapshot") throw new UsageError(`Unknown harness command ${c.action}`);
@@ -272,27 +345,30 @@ export async function run(c: CommandContext): Promise<number> {
       const include = hf ? [...hf.project, ...hf.user] : [...DEFAULT_INCLUDE];
       const model = str(c.flags.model);
       try {
-        bundle = await bundleFromDir({
-          name: str(c.flags.name) ?? `${agent}-${new Date().toISOString().slice(0, 10)}`,
-          agent,
-          dir,
-          include,
-          blobs: ctx.blobs,
-          ...(model ? { model } : {}),
-          // A plugin dir is relative to where the command runs, not --dir.
-          ...(plugins.length ? { plugins: plugins.map((p) => (isPluginPath(p) && !p.startsWith("~") ? resolve(c.cwd, p) : p)), claudeDir } : {}),
-        });
+        const opts: BundleFromDirOpts = { name: str(c.flags.name) ?? `${agent}-${new Date().toISOString().slice(0, 10)}`, agent, dir, include, blobs: ctx.blobs };
+        if (model) opts.model = model;
+        // "~/.claude/…" is read from $CLAUDE_CONFIG_DIR when it is set; plugins (claude-code only) are looked up there too.
+        if (agent === "claude-code") opts.claudeDir = claudeDir;
+        // A plugin dir is relative to where the command runs, not --dir.
+        if (plugins.length) opts.plugins = plugins.map((p) => (isPluginPath(p) && !p.startsWith("~") ? resolve(c.cwd, p) : p));
+        bundle = await bundleFromDir(opts);
       } catch (e) {
         if (!plugins.length) throw e;
         throw new CliError(e instanceof Error ? e.message : String(e), { reason: "invalid_argument" });
       }
-      if (agent === "claude-code") bundle = await claudeCodeBundle(bundle, { dir, home: userHome(), blobs: ctx.blobs });
+      if (agent === "claude-code") {
+        bundle = await claudeCodeBundle(bundle, { dir, home: userHome(), claudeDir, blobs: ctx.blobs });
+        const mcpServers = await claudeMcpServers(c.env, dir);
+        // A record, outside the id: two snapshots of the same files stay one bundle.
+        if (mcpServers.length) bundle = { ...bundle, mcpServers };
+      }
     }
     await ctx.index.putBundle(bundle);
     if (out.json) out.data({ outcome: "created", bundle: bundleJson(bundle) });
     else {
       const pl = bundle.plugins?.length ? `, ${plural(bundle.plugins.length, "plugin")} (${bundle.plugins.map((p) => p.name).join(", ")})` : "";
-      out.ok(`${bundle.name}: ${plural(Object.keys(bundle.files).length, "file")}${pl}`);
+      const mcp = bundle.mcpServers?.length ? `, ${plural(bundle.mcpServers.length, "MCP server")} recorded (${bundle.mcpServers.map((m) => m.name).join(", ")})` : "";
+      out.ok(`${bundle.name}: ${plural(Object.keys(bundle.files).length, "file")}${pl}${mcp}`);
       out.print(bundle.id);
     }
     return 0;

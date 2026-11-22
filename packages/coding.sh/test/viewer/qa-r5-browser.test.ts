@@ -134,6 +134,6 @@ describe("viewer QA round 5 fixes in a browser", { skip: chrome ? false : "no Ch
     assert.equal(await p.eval(`${card}.querySelector('.work-age').textContent`), `${age} ago`);
     const next = `${card}.querySelector('.work-next')`;
     assert.doesNotMatch(await p.eval(`${next}.textContent`), /`/);
-    assert.match(await p.eval(`${next}.querySelector('code').textContent`), /^coding\.sh show failed-30h$/);
+    assert.match(await p.eval(`${next}.querySelector('code').textContent`), /^coding\.sh show failed-3\S*$/);
   });
 });

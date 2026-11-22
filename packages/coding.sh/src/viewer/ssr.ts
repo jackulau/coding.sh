@@ -18,7 +18,7 @@ export function sessionBootPaths(id: string): string[] {
   const base = "/api/sessions/" + encodeURIComponent(id);
   return [
     base + "?missing=null",
-    base + "/events?" + new URLSearchParams({ limit: "5000" }).toString(),
+    base + "/events?" + new URLSearchParams({ limit: "5000", rows: "1" }).toString(),
     "/api/labels?" + new URLSearchParams({ sessionId: id }).toString(),
     "/api/sessions?" + new URLSearchParams({ parent: id, limit: "500" }).toString(),
     base + "/outline",

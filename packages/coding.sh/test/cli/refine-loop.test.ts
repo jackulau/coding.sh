@@ -181,7 +181,7 @@ describe("cli refine loop", () => {
     assert.equal(applied.status, 0, applied.stderr + applied.stdout);
     assert.match(applied.stderr, new RegExp(`Applied ${r.id} to CLAUDE\\.md`));
     // A success's undo hint is advice, not a request for consent: no askUser line.
-    assert.match(applied.stderr, new RegExp(`Undo it:\\s+coding\\.sh refine rollback ${r.id}`));
+    assert.match(applied.stderr, new RegExp(`Undo it:\\s+(?:coding\\.sh|codingsh) refine rollback ${r.id}`));
     assert.ok(!applied.stderr.includes(ASK_USER), applied.stderr);
     assert.equal(readFileSync(join(e.repo, "CLAUDE.md"), "utf8"), `${BASE}${TEST_RULE}\n`);
     const again = await cli(e, ["refine", "apply", r.id]);
@@ -311,7 +311,7 @@ describe("cli refine loop", () => {
     const err = JSON.parse(p.stderr) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "missing_key");
     assert.equal(err.message, "refine asks a model to write the edit: set ANTHROPIC_API_KEY");
-    assert.ok(err.next.includes("coding.sh improve"));
+    assert.ok(err.next.some((n: string) => /^(?:coding\.sh|codingsh) improve$/.test(n)), err.next.join("\n"));
   });
 
   it("run loops over --candidate files, applies keeps and stops when they run out", async () => {

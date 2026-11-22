@@ -163,9 +163,10 @@ describe("OpenInference", () => {
     assert.ok(llm.every((e) => e.model === "gpt-4o-mini" && e.payload.provider === "openai"));
     // prompt 50 includes the 5 cached tokens.
     assert.deepEqual(llm.find((e) => e.spanId === "c000000000000002")!.usage, { inputTokens: 45, outputTokens: 10, cacheReadTokens: 5 });
-    // The first call only produced a tool call: no assistant text (the subagent's result is its own reply).
-    const answers = ofKind(childEvents, "assistant.message").filter((e) => e.spanId !== "c000000000000001");
-    assert.deepEqual(answers.map((e) => e.payload.text), ["README describes coding.sh."]);
+    // The first call only produced a tool call: no assistant text. The subagent's result repeats the last
+    // call's answer, so the child shows it once (the call's copy).
+    const answers = ofKind(childEvents, "assistant.message");
+    assert.deepEqual(answers.map((e) => [e.spanId, e.payload.text]), [["c000000000000004", "README describes coding.sh."]]);
 
     const start = ofKind(childEvents, "tool.start")[0]!;
     assert.equal(start.payload.tool, "read_file");
@@ -194,7 +195,6 @@ describe("OpenInference", () => {
 
     // The nested agent span's own session, linked to its parent, holds the subagent's work.
     assert.deepEqual(kinds(childEvents), [
-      "assistant.message",
       "assistant.message",
       "llm.call",
       "llm.call",
@@ -353,6 +353,21 @@ describe("Vercel AI SDK", () => {
       const first = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[3]!])), c);
       const rest = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[0]!, spans[1]!, spans[2]!, spans[4]!])), c);
       check([...first.events, ...rest.events]);
+    });
+
+    // Regression: the loop ends before its tool call, so an exporter can send it in an earlier request.
+    it("when the loop came in an earlier request than the tool call that ran it", async () => {
+      const c = { ...ctx(), spanTree: new SpanTree() };
+      const first = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[0]!, spans[1]!, spans[2]!])), c);
+      assert.equal(ofKind(first.events, "subagent.start").length, 0, "nothing says it is a subagent yet");
+      const rest = await mapTraces(decodeTraceJson(otlpTraces("qa-vercel", [spans[3]!, spans[4]!])), c);
+      // The loop is mapped again as a subagent; its events replace the stored ones, and its model call moves.
+      const r = rest.rehome?.find((x) => x.from === T);
+      assert.ok(r?.replace?.some((e) => e.kind === "subagent.start" && e.spanId === "d000000000000011"));
+      const byId = new Map(first.events.map((e) => [e.id, e]));
+      for (const e of rest.events) byId.set(e.id, e);
+      const moved = [...byId.values()].map((e) => (e.spanId === "d000000000000012" ? { ...e, sessionId: child, subagentId: "d000000000000011" } : e));
+      check(moved.filter((e) => !(e.kind === "span" && e.spanId === "d000000000000011")));
     });
 
     it("a top-level ai.streamText under a plain span is no subagent", async () => {
@@ -795,6 +810,33 @@ describe("GenAI semconv chat content under an invoke_agent root", () => {
   it("gives one prompt per turn, the earliest model call's", async () => {
     const events = await run([chat("f000000000000003", "later", "b", 1200, 1900), chat("f000000000000002", "first", "a", 100, 1100), root()]);
     assert.deepEqual(ofKind(events, "user.message").map((u) => u.payload.text), ["first"]);
+  });
+
+  // Regression: only the root took a chat span's prompt, only when the root was in the same request,
+  // and the prompt sat at the call's start, after the call's own llm.call.
+  it("gives an invoke_agent subagent its first chat's prompt, at the agent's start", async () => {
+    const SUB = "f000000000000010";
+    const sub = otlpSpan(T, SUB, ROOT, "invoke_agent researcher", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "researcher")], 200, 1800);
+    const inner = { ...chat("f000000000000011", "research it", "found", 300, 1700), parentSpanId: SUB };
+    const events = await run([inner, sub, root()]);
+    const child = events.filter((e) => e.sessionId === childSessionId(T, SUB));
+    const prompt = ofKind(child, "user.message");
+    assert.deepEqual(prompt.map((u) => [u.id, u.payload.text]), [[spanEventId(T, SUB, 8), "research it"]]);
+    assert.ok(prompt[0]!.ts <= ofKind(child, "llm.call")[0]!.ts);
+    const s = buildSession(child);
+    assert.equal(s.title, "research it");
+    assert.equal(s.stats.turns, 1);
+    assert.deepEqual(ofKind(child, "assistant.message").map((e) => e.payload.text), ["found"]);
+  });
+
+  it("gives the root its chat's prompt when the root comes in a later request", async () => {
+    const c = { ...ctx(), spanTree: new SpanTree() };
+    const first = await mapTraces(decodeTraceJson(otlpTraces("qa", [chat("f000000000000002", "LATE question", "a", 100, 1100)])), c);
+    assert.equal(ofKind(first.events, "user.message").length, 0, "held until its agent is known");
+    const later = await mapTraces(decodeTraceJson(otlpTraces("qa", [root()])), c);
+    const users = ofKind(later.events, "user.message");
+    assert.deepEqual(users.map((u) => [u.id, u.payload.text, u.ts]), [[spanEventId(T, ROOT, 2), "LATE question", ofKind(later.events, "session.start")[0]!.ts]]);
+    assert.equal(buildSession([...first.events, ...later.events]).title, "LATE question");
   });
 
   it("reads messages from the gen_ai.client.inference.operation.details event", async () => {

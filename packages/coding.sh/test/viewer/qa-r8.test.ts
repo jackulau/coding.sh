@@ -33,6 +33,6 @@ test("a failed subagent's next step resumes the session that ran it", async () =
   assert.ok(failed, `a failed item: ${JSON.stringify(doc.items.map((i) => i.reason))}`);
   assert.match(failed.next, new RegExp("`claude --resume " + ROOT + "`"));
   assert.doesNotMatch(failed.next, /--resume [^`]*:sub:/);
-  // `coding.sh show` takes coding.sh's own id, so it keeps the subagent's.
-  assert.match(failed.next, /`coding\.sh show [^`]+:sub:a7e2b9c4d1f8a3e65`/);
+  // `coding.sh show` takes coding.sh's own id: the subagent's, as the shortest id that resolves.
+  assert.match(failed.next, /`coding\.sh show (?:[^`]+:sub:)?a7e2b9c4[^`]*`/);
 });

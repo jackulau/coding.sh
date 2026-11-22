@@ -228,7 +228,8 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
       s = undefined;
     }
     if (typeof s === "number" && Number.isFinite(s)) scores.set(run.id, s);
-    await o.store.putRun(run, tree.nodes, { outputs: tree.outputs, runOutput: res.output ?? tree.runOutput, ...(res.sources?.script !== undefined ? { script: res.sources.script } : {}) });
+    // Outputs are kept, redacted, in metadata mode too: `workflows score` grades them again later.
+    await o.store.putRun(run, tree.nodes, { outputs: tree.outputs, runOutput: res.output ?? tree.runOutput, redactor, ...(res.sources?.script !== undefined ? { script: res.sources.script } : {}) });
     runs.push(run);
     // Append, never rewrite the record: a rewrite from this in-memory copy would
     // erase a `workflows score` written meanwhile, and concurrent jobs' rewrites

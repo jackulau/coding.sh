@@ -385,10 +385,15 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
       } finally {
         blobs = opts.blobs;
       }
+      const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
+      // A span mapped again replaces its stored events with the redacted copies the put stores.
+      if (redactor && mapped.rehome?.some((r) => r.replace)) {
+        const redacted = new Map(mapped.events.map((e, i) => [e, events[i]!]));
+        for (const r of mapped.rehome) if (r.replace) r.replace = r.replace.map((e) => redacted.get(e) ?? redactEventCounted(redactor, e));
+      }
       const deferred = mapOpts?.deferRehome && mapped.rehome?.length ? mapped.rehome : undefined;
       if (mapped.rehome?.length && !deferred) await rehomeStored(opts.store, mapCtx.spanTree!, mapped.rehome);
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
-      const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
       const outcome: OtlpMapOutcome = { events, rejected: mapped.rejected, errors: mapped.errors };
       if (deferred) outcome.rehome = deferred;
       return outcome;
@@ -407,6 +412,7 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
  * (Rehome.to), which then has no session.end of that trace; a trace session left empty is deleted
  * (with deleteSessions). Needs replaceSessionEvents (a store without it leaves them where they are).
  * A subagent.start that moves takes its child session with it: that session names the session that started it.
+ * A stored event whose id is in Rehome.replace is replaced by that event.
  */
 async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[]): Promise<void> {
   if (!store.replaceSessionEvents) return;
@@ -414,7 +420,16 @@ async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[])
     const moves = new Map<string, { target: string; events: AgentEvent[] }>();
     const ids: string[] = [];
     const stored = await store.listEvents(r.from);
+    const replace = new Map(r.replace?.map((e) => [e.id, e]));
     for (const e of stored) {
+      // A span mapped again (a Vercel AI SDK loop stored before its ai.toolCall): its new events replace the stored ones.
+      const again = replace.get(e.id);
+      if (again) {
+        ids.push(e.id);
+        const m = moves.get(again.sessionId) ?? moves.set(again.sessionId, { target: again.sessionId, events: [] }).get(again.sessionId)!;
+        m.events.push(again);
+        continue;
+      }
       const t = rehomeTarget(tree, e, r);
       if (!t) continue;
       ids.push(e.id);

@@ -2,14 +2,15 @@
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace } from "../../mcp/data.ts";
-import type { Session } from "../../schema/index.ts";
+import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
 import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
-import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
+import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
+import { MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
 import type { CommandContext } from "../types.ts";
 
 /** How far back items are read unless --since says otherwise. */
@@ -62,7 +63,8 @@ async function list(c: CommandContext): Promise<number> {
     const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at });
+    // Next steps name sessions by the shortest id that resolves (core/session-ref.ts).
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at, shortId: await shortener(ctx.index) });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
     await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
@@ -136,11 +138,37 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const badge = i.probablyClosed ? `${out.style("probably closed", "yellow")}  ` : "";
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
-  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined].filter(Boolean).join("  ");
+  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
   if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
   out.print(`          ${out.style("next:", "faint")} ${nextText(i.next)}`);
+}
+
+/** How a PR's state reads: an opened PR is open. */
+export const prStateText = (state: PullRequestRef["state"]): string => (state === "opened" ? "open" : state);
+
+/**
+ * How a PR is named next to an item: "#12" for a PR of the item's own repo, "owner/name#12" for one of
+ * another repo. A PR repo is the item's own when its name is the item folder's name. When none is (a
+ * clone can sit in a folder of another name), the PRs are its own while they all share one repo and the
+ * sessions opened, merged or closed them: a PR only linked, such as one read for research, is not.
+ */
+export function prRef(p: PullRequestRef, prs: readonly PullRequestRef[], itemRepo?: string): string {
+  if (!p.repo) return `#${p.number}`;
+  const name = (r: string) => r.replace(/[\\/]+$/, "").split(/[\\/]/).pop()!.toLowerCase();
+  const folder = itemRepo ? name(itemRepo) : undefined;
+  const named = folder !== undefined && prs.some((x) => x.repo !== undefined && name(x.repo) === folder);
+  const own = named ? name(p.repo) === folder : new Set(prs.map((x) => x.repo ?? "")).size === 1 && p.state !== "linked";
+  return own ? `#${p.number}` : `${p.repo}#${p.number}`;
+}
+
+/** "PR #12 merged", "PRs #12, #14 open", "PRs #12 merged; #14 open": an item's PRs by state, in the order first seen. */
+export function prsText(prs: readonly PullRequestRef[], itemRepo?: string): string {
+  const byState = new Map<string, string[]>();
+  for (const p of prs) byState.set(prStateText(p.state), [...(byState.get(prStateText(p.state)) ?? []), prRef(p, prs, itemRepo)]);
+  const groups = [...byState].map(([state, ns]) => `${ns.slice(0, 5).join(", ")}${ns.length > 5 ? ` +${ns.length - 5}` : ""} ${state}`);
+  return `${prs.length === 1 ? "PR" : "PRs"} ${groups.join("; ")}`;
 }
 
 /** "build: 2 running, 1 failed, 3 done", the agents of one phase of a workflow run by state. */
@@ -165,34 +193,46 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 
 // ------------------------------------------------------------ one item
 
-/** The item an id names: an item id (w + 6 hex), else a session id in one. Unknown: exit 1. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[] }> {
+/**
+ * The item an id names: an item id (w + 6 hex), else a session in one, by any reference `show` takes
+ * (cli/common.ts resolveSession: a prefix, a subagent id, latest). Unknown: exit 1; an ambiguous prefix
+ * lists its candidates. `shortId` is how the item's next step names a session.
+ */
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
   const w = windowOf(c);
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
-  const pick = (ss: Session[]) => {
-    const q = buildWorkQueue(ss, { all: true, overlay, now });
+  const shortId = await shortener(ctx.index);
+  const pick = (ss: Session[], id: string) => {
+    const q = buildWorkQueue(ss, { all: true, overlay, now, shortId });
     // A session id names the item it is in before a run item it started (whose rootId it is).
-    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref)) ?? q.items.find((i) => i.rootId === ref);
+    return q.items.find((i) => i.id === id) ?? q.items.find((i) => i.sessionIds.includes(id)) ?? q.items.find((i) => i.rootId === id);
   };
-  let item = pick(sessions);
+  let item = pick(sessions, ref);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
-    // A session outside the window: add it and its stored parents, then group again.
-    const s = await ctx.index.getSession(ref);
+    // Any other reference to a session: its full id, then the item it is in. A session outside the
+    // window is added with its stored parents, and the sessions grouped again.
+    const s = await resolveSession(ctx, ref).catch((e: unknown) => {
+      if (e instanceof CliError && e.reason === "not_found") return undefined;
+      throw e;
+    });
     if (s) {
+      item = pick(sessions, s.id);
       const have = new Set(sessions.map((x) => x.id));
-      let cur: Session | undefined = s;
+      let cur: Session | undefined = item ? undefined : s;
       for (let n = 0; cur && n < 20 && !have.has(cur.id); n++) {
         sessions.push(cur);
         have.add(cur.id);
         cur = cur.parent ? await ctx.index.getSession(cur.parent.sessionId) : undefined;
       }
-      item = pick(sessions);
+      item ??= pick(sessions, s.id);
     }
   }
   if (!item) {
-    throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
+    // A session reference too short to look up says so, as `show` does.
+    const short = ref.length < MIN_ID_PREFIX && ref !== "latest" && ref !== "last" ? ` (a session id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+    throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
-  return { item, sessions };
+  return { item, sessions, shortId };
 }
 
 function idArg(c: CommandContext): string {
@@ -209,7 +249,7 @@ async function show(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
     const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
-    const { item, sessions } = await findItem(c, ctx, ref, overlay, stale?.at);
+    const { item, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
@@ -256,17 +296,32 @@ async function show(c: CommandContext): Promise<number> {
         const inPhase = agents.filter((a) => a.phase === p.name);
         for (const a of inPhase.slice(0, 20)) {
           const cost = a.costUsd !== undefined ? usd(a.costUsd) : "";
-          out.print(`      ${a.sessionId}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
+          out.print(`      ${shortId(a.sessionId)}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
         }
         if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
       }
     }
+    if (item.prs) {
+      const prs = item.prs;
+      const ref = (p: PullRequestRef) => prRef(p, prs, item.repo ?? item.cwd);
+      out.row(prs.length === 1 ? "PR" : "PRs", prs.map((p) => `${ref(p)} ${prStateText(p.state)}`).join(", "), "none", true);
+      for (const p of prs) out.print(`    ${ref(p)}  ${prStateText(p.state)}  ${p.url ?? "(no URL: the sessions named it by number only)"}  ${out.style(ago(p.at), "faint")}`);
+    }
     out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));
-    out.row("Sessions", `${item.primaryId}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
-    for (const s of children.slice(0, 10)) out.print(`    ${s.id}  ${s.agent}  ${oneLine(s.title, 50)}`);
-    if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${item.primaryId}`, "faint"));
+    if (item.workflow) {
+      // A workflow run's agents are siblings under its orchestrator, not children of the first one, and the
+      // orchestrator's tree holds every run it made: the item's own --json lists exactly these.
+      const members = [byId.get(item.primaryId), ...children].filter((s): s is Session => !!s);
+      out.row("Sessions", `${plural(item.sessionIds.length, "agent")} of run ${item.workflow.id}`, "none", true);
+      for (const s of members.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
+      if (members.length > 10) out.print(out.style(`    and ${members.length - 10} more: ${out.command(`coding.sh work show ${item.id} --json`)}`, "faint"));
+    } else {
+      out.row("Sessions", `${shortId(item.primaryId)}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
+      for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
+      if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${shortId(item.primaryId)}`, "faint"));
+    }
     out.row("Next", nextText(item.next), "none", true);
     return 0;
   });

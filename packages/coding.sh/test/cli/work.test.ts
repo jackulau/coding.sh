@@ -64,7 +64,7 @@ describe("work against a seeded store", () => {
     assert.match(r.stdout, /Blocked on you\n {2}w[0-9a-f]{6} {2}publish the package/);
     assert.match(r.stdout, /waiting on a permission prompt for 2m/);
     assert.match(r.stdout, /Ready for review/);
-    assert.match(r.stdout + r.stderr, new RegExp(`coding\\.sh work show ${workItemId("blocked")}`));
+    assert.match(r.stdout + r.stderr, new RegExp(`(?:coding\\.sh|codingsh) work show ${workItemId("blocked")}`));
   });
 
   test("show gives the item by its id or a member session's id, with the files it changed", async () => {
@@ -110,7 +110,7 @@ describe("work against a seeded store", () => {
     assert.equal(left.json.needYou, 0);
     const text = await runCmd(work, sb, {});
     assert.match(text.stdout, /Nothing needs you\. 3 items running, done, acknowledged or snoozed\./);
-    assert.match(text.stdout + text.stderr, /coding\.sh work --all/);
+    assert.match(text.stdout + text.stderr, /(?:coding\.sh|codingsh) work --all/);
   });
 });
 

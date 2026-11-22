@@ -43,14 +43,17 @@ describe("usage errors exit 2 on a TTY and off one", () => {
     for (const [typed, cmd] of Object.entries(want)) {
       const r = cli([typed], false);
       assert.equal(r.status, 2, r.stdout + r.stderr);
-      assert.match(r.stderr, new RegExp(`Unknown command "${typed}"\\n    Did you mean coding\\.sh ${cmd.replace("-", "\\-")}\\?\\n$`), typed);
+      assert.match(r.stderr, new RegExp(`Unknown command "${typed}"\\n    Did you mean (?:coding\\.sh|codingsh) ${cmd.replace("-", "\\-")}\\?\\n$`), typed);
     }
     // --json carries it in next, in the same words.
     const j = cli(["waste", "--json"], false);
     assert.equal(j.status, 2);
-    assert.deepEqual(JSON.parse(j.stderr).next, ["Did you mean:", "coding.sh usage --cache"]);
+    const next = JSON.parse(j.stderr).next as string[];
+    assert.equal(next.length, 2);
+    assert.equal(next[0], "Did you mean:");
+    assert.match(next[1]!, /^(?:coding\.sh|codingsh) usage --cache$/);
     // A close spelling still comes first; a name no intent covers gets no guess (not even Object's own keys).
-    assert.match(cli(["usge"], false).stderr, /Did you mean coding\.sh usage\?/);
+    assert.match(cli(["usge"], false).stderr, /Did you mean (?:coding\.sh|codingsh) usage\?/);
     for (const typed of ["constructor", "toString"]) {
       const r = cli([typed], false);
       assert.equal(r.status, 2, r.stdout + r.stderr);

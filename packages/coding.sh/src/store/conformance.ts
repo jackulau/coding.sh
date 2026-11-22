@@ -321,6 +321,26 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.getSession("full"), full);
     }));
 
+    it("keeps a session's host app, and --agent matches the agent that ran or the host that drove it", withStore(async (s) => {
+      await s.upsertSession(fixtureSession({ id: "h-claude", startedAt: 1, agent: "claude-code", host: "t3code", provider: "claude-code" }));
+      await s.upsertSession(fixtureSession({ id: "h-codex", startedAt: 2, agent: "codex", host: "t3code", provider: "codex" }));
+      await s.upsertSession(fixtureSession({ id: "h-bare", startedAt: 3, agent: "t3code" }));
+      await s.upsertSession(fixtureSession({ id: "h-direct", startedAt: 4, agent: "claude-code" }));
+      const hosted = await s.getSession("h-claude");
+      assert.equal(hosted?.host, "t3code");
+      assert.equal(hosted?.provider, "claude-code");
+      assert.equal((hosted?.stats as Record<string, unknown>).host, undefined, "host is not a stat");
+      assert.equal((await s.getSession("h-direct"))?.host, undefined);
+      const ids = async (agent: string) => (await s.listSessions({ agent })).map((x) => x.id);
+      assert.deepEqual(await ids("t3code"), ["h-bare", "h-codex", "h-claude"]);
+      assert.deepEqual(await ids("claude-code"), ["h-direct", "h-claude"]);
+      assert.deepEqual(await ids("codex"), ["h-codex"]);
+      const where = async (q: string) => (await findSessions(s, parseWhere(q))).sessions.map((x) => x.id).sort();
+      assert.deepEqual(await where("agent:t3code"), ["h-bare", "h-claude", "h-codex"]);
+      assert.deepEqual(await where("agent:claude-code"), ["h-claude", "h-direct"]);
+      assert.deepEqual(await where("-agent:t3code"), ["h-direct"]);
+    }));
+
     it("cursors default to 0 and persist", withStore(async (s) => {
       assert.equal(await s.getCursor("codex/a.jsonl"), 0);
       await s.setCursor("codex/a.jsonl", 123);

@@ -145,12 +145,14 @@ describe("subagents", () => {
     const r = await call("subagents", { sessionId: IDS.parent });
     assert.equal(r.count, 3);
     const nodes = r.subagents as Node[];
+    // Each child by the shortest id that resolves (core/session-ref.ts): 8 characters, or the short subagent form.
+    const short = { cc: "qa-paren:sub:a66d", cx: "qa-codex", bySub: "qa-bysub" };
     const byId = Object.fromEntries(nodes.map((x) => [x.sessionId, x]));
-    const cc = byId[IDS.cc]!;
+    const cc = byId[short.cc]!;
     assert.deepEqual({ d: cc.durationMs, ok: cc.ok, desc: cc.description, type: cc.type, sub: cc.subagentId }, { d: 624_716, ok: true, desc: "Independent source review", type: "general-purpose", sub: "a66d" });
     // No durationMs from the parent and no end on the child: the child's last activity.
-    assert.deepEqual({ d: byId[IDS.cx]!.durationMs, ok: byId[IDS.cx]!.ok, type: byId[IDS.cx]!.type }, { d: 700_000, ok: false, type: "explorer" });
-    assert.deepEqual({ d: byId[IDS.bySub]!.durationMs, ok: byId[IDS.bySub]!.ok, desc: byId[IDS.bySub]!.description }, { d: 10_000, ok: true, desc: "Find callers" });
+    assert.deepEqual({ d: byId[short.cx]!.durationMs, ok: byId[short.cx]!.ok, type: byId[short.cx]!.type }, { d: 700_000, ok: false, type: "explorer" });
+    assert.deepEqual({ d: byId[short.bySub]!.durationMs, ok: byId[short.bySub]!.ok, desc: byId[short.bySub]!.description }, { d: 10_000, ok: true, desc: "Find callers" });
     assert.ok(!nodes.some((x) => !x.sessionId), "linked subagents are not listed twice as in-session nodes");
   });
 

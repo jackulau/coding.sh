@@ -12,10 +12,19 @@ import { autoIngest, pendingField, readIngest, oneLine, sessionJson, withContext
 import { ago, bytes, CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { noSessionsNext } from "../first-session.ts";
+import { cliCommand } from "../next-steps.ts";
 
 /** "stopped 4h ago: why; run coding.sh update" */
 export function ingestStoppedText(s: IngestStopped, now = Date.now()): string {
   return `stopped ${ago(s.since, { now })}: ${s.why}${s.next ? `; run ${s.next}` : ""}`;
+}
+
+/**
+ * The marker with its next step named for this shell (Output.command): the background ingest that
+ * wrote it ran in the agent's environment, not the user's.
+ */
+function forShell(out: Output, s: IngestStopped | undefined): IngestStopped | undefined {
+  return s?.next ? { ...s, next: out.command(s.next) } : s;
 }
 
 function ingestRow(out: Output, stopped: IngestStopped | undefined, answer = false): void {
@@ -31,7 +40,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (!(e instanceof CliError) || !/^store_/.test(e.reason)) throw e;
     const p = paths(c.env);
     const spool = spoolSize(p.spool);
-    const stopped = readIngestStopped(p.ingestStopped);
+    const stopped = forShell(out, readIngestStopped(p.ingestStopped));
     if (out.json) out.data({ home: p.root, spool, ...ingestStoppedField(stopped), storeError: e.reason });
     else {
       out.row("Home", p.root);
@@ -47,7 +56,7 @@ async function status(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     // Read after the ingest above: one that ran has removed the marker.
-    const stopped = readIngestStopped(ctx.paths.ingestStopped);
+    const stopped = forShell(out, readIngestStopped(ctx.paths.ingestStopped));
     // A store named by --store or CODING_SH_STORE_URL is filled elsewhere: this home's record says nothing about it.
     const age = ctx.storeOverridden ? undefined : indexAge(ctx.paths.root);
     const day = Date.now() - 86400e3;
@@ -69,8 +78,8 @@ async function status(c: CommandContext): Promise<number> {
     const waiting = backlog.pendingFiles ? `, ${plural(backlog.pendingFiles, "file")} not yet ingested${backlog.indexing ? " (ingest running)" : ""}` : "";
     out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}${waiting}`, "none", true);
     ingestRow(out, stopped, true);
-    if (age) out.row("Index", `${indexUpdatedText(age)}${age.stale ? "; run coding.sh ingest" : ""}`, age.stale ? "warn" : "none", true);
-    out.row("Work", `${countsLine(queue.counts)}${needYou(queue) ? " (coding.sh work)" : ""}`, needYou(queue) ? "warn" : "none", true);
+    if (age) out.row("Index", `${indexUpdatedText(age)}${age.stale ? `; run ${cliCommand(c.env, ["ingest"])}` : ""}`, age.stale ? "warn" : "none", true);
+    out.row("Work", `${countsLine(queue.counts)}${needYou(queue) ? ` (${cliCommand(c.env, ["work"])})` : ""}`, needYou(queue) ? "warn" : "none", true);
     if (latest) {
       out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {

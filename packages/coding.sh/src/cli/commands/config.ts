@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, defaultConfigToml, loadConfig, readUserConfigTable } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
-import { parseToml, stringifyToml } from "../../core/toml.ts";
+import { parseToml, stringifyToml, TomlError } from "../../core/toml.ts";
 import { upstreamProblem } from "../../proxy/state.ts";
 import { section as refineSection } from "../../refine/config.ts";
 import { UsageError } from "../args.ts";
@@ -230,6 +230,15 @@ export async function run(c: CommandContext): Promise<number> {
     throw new UsageError(`Can't set ${JSON.stringify(key)}. Settable keys: ${SETTABLE.join(", ")}`, { reason: "unknown_key", suggestion: s ? `coding.sh config set ${s} ${raw}` : undefined });
   }
   const before = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+  // A file that is not TOML at all: say so about the user's file, as `config get` does, not about the value.
+  if (before !== undefined) {
+    try {
+      parseToml(before, file);
+    } catch (e) {
+      if (e instanceof TomlError) throw new CliError(`Can't read config: invalid TOML: ${e.message}`, { reason: "invalid_config", next: ["Fix the file at:", file] });
+      throw e;
+    }
+  }
   // What the key read before this edit (the default when the file did not set it), for the confirmation.
   let previous: unknown;
   try {
@@ -249,16 +258,27 @@ export async function run(c: CommandContext): Promise<number> {
   try {
     const probe = join(dir, "config.toml");
     let was: unknown;
+    let wasError: string | undefined;
     if (before !== undefined) {
       await writeFile(probe, before);
       try {
         was = loadConfig({ env: fileEnv, file: probe });
-      } catch {
+      } catch (e) {
         was = undefined; // already invalid: nothing to compare against
+        if (e instanceof ConfigError) wasError = e.message;
       }
     }
     await writeFile(probe, after);
-    const now = loadConfig({ env: fileEnv, file: probe });
+    let now;
+    try {
+      now = loadConfig({ env: fileEnv, file: probe });
+    } catch (e) {
+      // The same error the file gave before the edit: another key is wrong, not this value. Name the user's file.
+      if (e instanceof ConfigError && wasError === e.message) {
+        throw new CliError(`Can't read config: ${e.message.split(probe).join(file)}`, { reason: "invalid_config", next: ["Fix the file at:", file] });
+      }
+      throw e;
+    }
     // Keys the loader does not carry are checked where the commands that use them read them.
     if (key === "serve.forward.endpoint" && !/^https?:\/\/[^\s/]+/i.test(raw.trim())) throw new ConfigError("serve.forward.endpoint must be an http:// or https:// URL", probe);
     if (key === "proxy.port") {

@@ -198,6 +198,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   stalled: { typeIds: ["rt.provider-unavailable"], nature: "inefficiency" },
   // Rate limits or overload held the session up: capacity, not the agent.
   "api-stall": { typeIds: ["rt.resource-exhaustion", "rt.provider-unavailable"], nature: "inefficiency" },
+  // The session's last model call failed and it never got past it: the provider or its setup, not the agent.
+  "llm-error": { typeIds: ["rt.provider-unavailable", "rt.auth-config"], nature: "defect" },
   "context-thrash": { typeIds: ["ctx.context-limit", "eff.context-bloat"], nature: "inefficiency" },
   // A vendor token passed through the agent to its model provider; misuse not observed.
   "secret:exposed": { typeIds: ["sec.disclosure"], nature: "risk", reach: 0.6 },
@@ -208,6 +210,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "cache:low": "context-only",
   // coding.sh could not fold the session's events: a bug in coding.sh, nothing the agent did.
   "fold:error": "context-only",
+  // The session's source records model calls only, so its tools were not seen: a fact about the capture.
+  "tools:unseen": "context-only",
   // The session recorded a weight edit: a fact about the run, not a behaviour.
   "weights:edited": "context-only",
   // The session recorded the hash of a weights file it saved: a fact about the run too.
