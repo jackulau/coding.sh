@@ -109,4 +109,7 @@ describe("viewer page", () => {
     assert.match(page, /sessionHref\(r\.sessionId\)/);
     assert.match(page, /api\("\/api\/workflows\/" \+ encodeURIComponent\(id\) \+ "\/gantt"\)/);
   });
+  it("shows a failed run's error as text in the existing alert style", () => {
+    assert.match(page, /run\.error \? h\("div", \{ class: "alert", role: "note" \}, h\("b", null, "Run error"\), h\("span", \{ class: "run-error" \}, String\(run\.error\)\)\) : null/);
+  });
 });
