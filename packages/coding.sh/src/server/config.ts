@@ -325,15 +325,19 @@ export function checkExposure(c: ServeConfig): void {
   const ingest = c.credentials.ingest.size > 0;
   const read = c.credentials.read.size > 0 || !!c.credentials.basic;
   if ((c.role === "viewer" || ingest) && read) return;
-  const missing = [
-    ...(c.role !== "viewer" && !ingest ? ["an ingest key (CODING_SH_INGEST_KEYS, or [[serve.projects]] ingest_keys)"] : []),
-    ...(!read ? ["a read key or basic auth (CODING_SH_READ_KEYS or CODING_SH_BASIC_AUTH)"] : []),
-  ];
+  const missing: string[] = [];
+  // Name the command for each missing key: keygen without --read makes an ingest key.
+  const keygen: string[] = [];
+  if (c.role !== "viewer" && !ingest) {
+    missing.push("an ingest key (CODING_SH_INGEST_KEYS, or [[serve.projects]] ingest_keys)");
+    keygen.push("an ingest key with `coding.sh serve keygen --project <id>`");
+  }
+  if (!read) {
+    missing.push("a read key or basic auth (CODING_SH_READ_KEYS or CODING_SH_BASIC_AUTH)");
+    keygen.push("a read key with `coding.sh serve keygen --project '*' --read`");
+  }
   const where = loopback ? `behind a reverse proxy (CODING_SH_TRUST_PROXY / serve.trust_proxy is set) on ${c.host}` : `on ${c.host}`;
   // Behind a proxy, --insecure would open the server to everyone the proxy serves: not offered there.
   const orOpen = loopback ? "" : ", or pass --insecure (CODING_SH_INSECURE=1) to run open";
-  throw new ServeRefusal(
-    `refusing to listen ${where} without auth: set ${missing.join(" and ")}${orOpen}. ` +
-      "Generate keys with `coding.sh serve keygen --project <id>`.",
-  );
+  throw new ServeRefusal(`refusing to listen ${where} without auth: set ${missing.join(" and ")}${orOpen}. Generate ${keygen.join(" and ")}.`);
 }

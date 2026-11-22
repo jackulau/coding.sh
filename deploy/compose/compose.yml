@@ -3,8 +3,8 @@
 #   docker compose -f deploy/compose/compose.yml up -d --wait
 #   docker compose -f deploy/compose/compose.yml logs coding-sh    # the keys and how to connect
 #
-# Compose pulls the image; until ghcr.io/jackulau/coding.sh is published (with the first tagged
-# release), the pull fails and Compose builds it from this checkout instead.
+# Compose pulls ghcr.io/jackulau/coding.sh:latest, the newest release. If the pull fails, it builds
+# the image from this checkout instead. To pin a release, set CODING_SH_IMAGE in .env.
 # Postgres or ClickHouse instead of SQLite: compose.postgres.yml, compose.clickhouse.yml.
 # Optional settings: copy .env.example to .env next to this file.
 

@@ -689,8 +689,8 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
     - `CODING_SH_BLOB_URL=s3://coding-sh/blobs?endpoint=http://minio:9000`
     - `CODING_SH_INGEST_KEYS=demo:${INGEST_KEY_DEMO},flood:${INGEST_KEY_FLOOD}`
     - `CODING_SH_READ_KEYS=*:${READ_KEY}`
-  - It also mounts `deploy/compose/config.toml`, which pins `[pricing."mock-gpt"] input=1 output=2`
-    and `[pricing."mock-claude"] input=3 output=15`.
+  - It also mounts `deploy/compose/config.toml`, which pins `[prices."mock-gpt"] input=1 output=2`
+    and `[prices."mock-claude"] input=3 output=15`.
 - **`deploy/fly.toml`:** `internal_port = 4318`, an HTTP check on `/readyz`, and a `[mounts]` volume
   at `/data` for sqlite mode. Keys are made on first start and kept on the volume, or set with
   `fly secrets set`.
