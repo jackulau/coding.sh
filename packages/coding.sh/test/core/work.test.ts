@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { buildSession, FLAGS } from "../../src/core/sessions.ts";
-import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
+import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, settleWorkFiles, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
 import { addAck, addSnooze, emptyOverlay, readOverlay, writeOverlay } from "../../src/core/work-overlay.ts";
 import type { AgentEvent, Session, Waiting } from "../../src/schema/index.ts";
 import { mkSession } from "../cli/_cmd.ts";
@@ -444,7 +444,13 @@ describe("stages and kinds", () => {
     const s = sess("a", 5 * MIN, { stats: { filesChanged: 1 } });
     assert.deepEqual(workStage([s], s, NOW), { stage: "review", kind: "change", why: "changed 1 file, stopped 4m ago" });
     assert.equal(workStage([s], s, NOW, undefined, () => true).stage, "done");
-    assert.deepEqual([...STAGES], ["planning", "executing", "review", "approval", "done"]);
+    // A long failure is cut to make room; the file count and the age after it are never cut.
+    const big = sess("b", 5 * MIN, { stats: { filesChanged: 73 } });
+    const failure = "3 failed agents (4 failing tests, 12 failing tests, 2 failing tests)";
+    const why = workStage([big], big, NOW, [{ bucket: "failed", sessionId: "b", at: ago(4 * MIN), fingerprint: "f", failure }]).why;
+    assert.match(why, /…, changed 73 files, stopped 4m ago$/);
+    assert.ok(why.length <= STAGE_WHY_MAX, why);
+    assert.deepEqual([...STAGES],["planning", "executing", "review", "approval", "done"]);
   });
 });
 
@@ -455,6 +461,31 @@ test("BUCKETS is the documented order", () => {
 describe("a worktree nested in its repo", () => {
   const repo = (root: string, branch: string) => ({ root, head: "", branch }) as never;
   const fc = (sessionId: string, path: string) => ({ id: `${sessionId}${path}`, v: 0, sessionId, ts: ago(4 * MIN), agent: "claude-code", kind: "file.change", payload: { path } }) as AgentEvent;
+
+  test("a review item whose files are all outside its repo names them, not an empty git diff", async () => {
+    const agent = sess("out", 5 * MIN, { cwd: "C:/work/demo", repo: repo("C:/work/demo", "main"), stats: { filesChanged: 1 } });
+    const item = queue([agent]).items[0]!;
+    assert.match(item.next, /git -C C:\/work\/demo diff/);
+    const events: Record<string, AgentEvent[]> = { out: [fc("out", "C:/home/user/.tool/state.json")] };
+    await workFiles({ listEvents: async (id: string) => events[id] ?? [] }, item, [agent], NOW);
+    assert.equal(item.next, "review: `C:/home/user/.tool/state.json` (outside C:/work/demo), then `coding.sh work ack " + item.id + "`");
+    // One file inside the repo keeps the diff.
+    const inside = queue([agent]).items[0]!;
+    await workFiles({ listEvents: async () => [fc("out", "src/a.ts"), fc("out", "C:/home/user/.tool/state.json")] }, inside, [agent], NOW);
+    assert.match(inside.next, /git -C C:\/work\/demo diff/);
+  });
+
+  test("settleWorkFiles gives the list the review step work show gives: a single-session item names its outside files", async () => {
+    const agent = sess("out", 5 * MIN, { cwd: "C:/work/demo", repo: repo("C:/work/demo", "main"), stats: { filesChanged: 1 } });
+    const listed = queue([agent]).items[0]!;
+    const shown = queue([agent]).items[0]!;
+    const read = { listEvents: async () => [fc("out", "C:/home/user/.tool/state.json")] };
+    await settleWorkFiles(read, [listed], [agent], NOW);
+    await workFiles(read, shown, [agent], NOW);
+    assert.equal(listed.next, shown.next);
+    assert.match(listed.next, /outside C:\/work\/demo/);
+    assert.equal(listed.filesChanged, shown.filesChanged);
+  });
 
   test("names the worktree and diffs it when its branch is not the main checkout's", async () => {
     const wt = "C:/work/demo/data/worktrees/fix-ui";
@@ -478,4 +509,9 @@ describe("a worktree nested in its repo", () => {
     // With no session at the root to compare branches with, the root stays.
     assert.equal(items.find((i) => i.primaryId === "alone")!.repo, "/work/other");
   });
+});
+
+test("a subagent's resume step names the session Claude Code can resume, not coding.sh's child id", () => {
+  assert.equal(resumeCommand({ id: "1f2e3d4c-0000-4000-8000-000000000001:sub:a7e2b9c4d1f8a3e65", agent: "claude-code" }), "claude --resume 1f2e3d4c-0000-4000-8000-000000000001");
+  assert.equal(resumeCommand({ id: "thr:sub:x", agent: "codex" }), "codex resume thr");
 });

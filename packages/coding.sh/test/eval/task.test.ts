@@ -175,6 +175,16 @@ describe("draftTaskFromSession", () => {
     assert.equal(t.start.snapshot, "start");
     assert.ok(t.meta.notes.some((n) => /--hidden-test tests\/check_\*\.py matched no file/.test(n)), t.meta.notes.join("; "));
   });
+  it("with no end snapshot, names the commands that add a reference patch", async () => {
+    const { index, blobs, git, session } = await fixture();
+    const { endSnapshot: _, ...noEnd } = session;
+    await index.upsertSession(noEnd);
+    const t = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", verifierCommand: "x", setup: [] });
+    assert.equal(t.referencePatch, undefined);
+    const note = t.meta.notes.find((n) => /no end snapshot; no reference patch/.test(n)) ?? "";
+    assert.ok(note.includes(`coding.sh eval export ${t.id} -o <dir>`), t.meta.notes.join("; "));
+    assert.match(note, /<dir>\/reference\.patch.*coding\.sh eval import <dir>.*coding\.sh eval validate /);
+  });
   it("refuses a session whose start snapshot equals its end snapshot", async () => {
     const { index, blobs, git, session } = await fixture();
     await index.upsertSession({ ...session, endSnapshot: "start" });

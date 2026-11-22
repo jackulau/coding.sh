@@ -5,14 +5,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix, win32 } from "node:path";
+import { basename, join, posix, win32 } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { Adapter, IndexStore } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
-import { mainWorktree } from "../../src/core/git.ts";
-import { currentByCwd, matchesPlace, parsePlace, pathKey, scanSessions } from "../../src/mcp/data.ts";
-import { parseWhere, repoGroup, worktreeRepo } from "../../src/query/where.ts";
+import { isBare, mainWorktree, repoPath, worktreeRoots } from "../../src/core/git.ts";
+import { checkoutRepo, currentByCwd, matchesPlace, parsePlace, pathKey, scanSessions, usage } from "../../src/mcp/data.ts";
+import { parseWhere, repoGroup, windowsSpelling, worktreeRepo } from "../../src/query/where.ts";
 import { facetCounts, findSessions } from "../../src/query/run.ts";
 import type { EventKind, Session } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -243,9 +243,20 @@ describe("a git worktree's sessions belong to its main repo", () => {
       const j = cli(cwd, ["sessions", "--repo", repo, "--json"]) as { sessions: { id: string }[] };
       assert.deepEqual(j.sessions.map((s) => s.id).sort(), ["in-main", "in-worktree"], `--repo ${repo} from ${cwd}`);
     }
-    // A folder that is no checkout's root keeps the exact match.
+    // A folder that is no checkout's root matches sessions at or under it only.
     const j = cli(base, ["sessions", "--repo", join(main, "sub"), "--json"]) as { sessions: unknown[] };
     assert.equal(j.sessions.length, 0);
+  });
+
+  it("sessions --repo and export --repo take a repo name: the main checkout and every worktree", () => {
+    const j = cli(base, ["sessions", "--repo", "demo", "--json"]) as { sessions: { id: string }[] };
+    assert.deepEqual(j.sessions.map((s) => s.id).sort(), ["in-main", "in-removed-t3", "in-worktree"]);
+    const w = cli(base, ["sessions", "--repo", "demo-feature", "--json"]) as { sessions: { id: string }[] };
+    assert.deepEqual(w.sessions.map((s) => s.id), ["in-worktree"]);
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "export", "sessions", "--repo", "demo"], { cwd: base, env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const ids = r.stdout.split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { id: string }).id).sort();
+    assert.deepEqual(ids, ["in-main", "in-removed-t3", "in-worktree"]);
   });
 
   it("usage --by repo counts the worktree and the removed worktree under the main repo", () => {
@@ -300,5 +311,219 @@ describe("a git worktree's sessions belong to its main repo", () => {
     } finally {
       await c.close();
     }
+  });
+});
+
+// ------------------------------------------------------------ one spelling per repo
+
+describe("windowsSpelling: the spelling a typed repo: value gets without the disk", () => {
+  it("an upper-case drive letter and backslashes; anything else as is", () => {
+    assert.equal(windowsSpelling("c:/w/demo"), "C:\\w\\demo");
+    assert.equal(windowsSpelling("d:\\w\\demo"), "D:\\w\\demo");
+    assert.equal(windowsSpelling("c:"), "C:");
+    assert.equal(windowsSpelling("/w/demo"), "/w/demo");
+    assert.equal(windowsSpelling("coding-sh"), "coding-sh");
+  });
+  it("repo: compares a typed Windows path in the stored spelling", async () => {
+    const index = new MemoryIndexStore();
+    const s: Session = { id: "w1", agent: "fake", startedAt: T0, cwd: "C:\\w\\demo", repo: { root: "C:\\w\\demo", head: "" }, stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] };
+    await index.upsertSession(s);
+    for (const q of ['repo:"c:/w/demo"', "repo:c:/w/*", 'repo:"C:\\w\\demo"']) {
+      const got = (await findSessions(index, parseWhere(q, { now: T0 }), {})).sessions.map((x) => x.id);
+      assert.deepEqual(got, ["w1"], q);
+    }
+  });
+});
+
+/** A git that reads no user or system config. */
+function isolatedGit(base: string) {
+  const cfg = join(base, "gitconfig-none");
+  writeFileSync(cfg, "");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: "1" };
+  return (cwd: string, ...args: string[]) => {
+    const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...args], { cwd, env, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+}
+
+/** The 8.3 short spelling of an existing path, or undefined when the volume makes none. */
+function shortName(p: string): string | undefined {
+  const r = spawnSync("cmd.exe", [`/d /s /c "for %I in ("${p}") do @echo %~sI"`], { encoding: "utf8", windowsVerbatimArguments: true });
+  const s = r.status === 0 ? r.stdout.trim() : "";
+  return s && s.toLowerCase() !== p.toLowerCase() ? s : undefined;
+}
+
+describe("one repo, one spelling: a lower-case drive, an 8.3 short name and a junction name the long path's repo", { skip: process.platform !== "win32" && "drive letters, 8.3 short names and junctions are Windows spellings" }, () => {
+  let base = "";
+  let main = "";
+  let wt = "";
+  before(() => {
+    // Under the temp dir: its volume makes 8.3 short names where any does (RUNNER~1 on CI).
+    base = realpathSync.native(mkdtempSync(join(tmpdir(), "csh-repo-spelling-")));
+    const git = isolatedGit(base);
+    main = join(base, "demo-checkout");
+    wt = join(base, "demo-checkout-feature");
+    mkdirSync(main);
+    writeFileSync(join(main, "README.md"), "demo\n");
+    git(main, "init", "-q");
+    git(main, "add", "-A");
+    git(main, "commit", "-qm", "init");
+    git(main, "worktree", "add", "-q", "-b", "feature", wt);
+    symlinkSync(base, join(base, "..", `${basename(base)}-link`), "junction");
+  });
+  after(() => {
+    rmSync(join(base, "..", `${basename(base)}-link`), { recursive: false, force: true });
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const spellings = (p: string): [string, string | undefined][] => [
+    ["lower-case drive", p[0]!.toLowerCase() + p.slice(1)],
+    ["forward slashes", p.replace(/\\/g, "/")],
+    ["junction", join(`${base}-link`, p.slice(base.length + 1))],
+    ["8.3 short name", shortName(p)],
+  ];
+
+  it("usage by repo counts c:\\w and C:\\w as one repo (sessions stored before the one spelling)", async () => {
+    const index = new MemoryIndexStore();
+    for (const [id, root] of [["lower", "c:\\w\\demo"], ["upper", "C:\\w\\demo"]] as const) {
+      await index.upsertSession({ id, agent: "fake", startedAt: T0, cwd: root, repo: { root, head: "" }, stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+    }
+    const r = (await usage(index, { topLevel: false }, "repo", 10)) as { groups: { key: string; sessions: number }[] };
+    assert.deepEqual(r.groups.map((g) => [g.key, g.sessions]), [["C:\\w\\demo", 2]]);
+  });
+
+  for (const which of ["main checkout", "linked worktree"] as const) {
+    it(`${which}: worktreeRoots and checkoutRepo answer the long spelling`, async (t) => {
+      const long = which === "main checkout" ? main : wt;
+      const want = await worktreeRoots(long);
+      assert.equal(want?.root, repoPath(long));
+      assert.equal(want?.main, which === "main checkout" ? undefined : repoPath(main));
+      assert.equal(checkoutRepo(long), repoPath(main));
+      for (const [name, p] of spellings(long)) {
+        if (p === undefined) {
+          t.diagnostic(`${name}: this volume makes no 8.3 short names`);
+          continue;
+        }
+        assert.deepEqual(await worktreeRoots(p), want, `${name}: ${p}`);
+        assert.equal(checkoutRepo(p), repoPath(main), `${name}: ${p}`);
+        assert.equal(parsePlace(p, base, base).repo, repoPath(main), `${name}: ${p}`);
+      }
+    });
+  }
+});
+
+describe("a bare repo kept at proj/.git has no main checkout", () => {
+  let base = "";
+  let proj = "";
+  let seed = "";
+  before(() => {
+    base = realpathSync.native(mkdtempSync(join(tmpdir(), "csh-repo-bare-")));
+    const git = isolatedGit(base);
+    seed = join(base, "seed");
+    proj = join(base, "proj");
+    mkdirSync(seed);
+    writeFileSync(join(seed, "README.md"), "seed\n");
+    git(seed, "init", "-q");
+    git(seed, "add", "-A");
+    git(seed, "commit", "-qm", "init");
+    git(base, "clone", "-q", "--bare", seed, join(proj, ".git"));
+    git(join(proj, ".git"), "worktree", "add", "-q", join(proj, "m"));
+  });
+  after(() => rmSync(base, { recursive: true, force: true }));
+
+  it("isBare reads core.bare from the config file", () => {
+    assert.equal(isBare(join(proj, ".git")), true);
+    assert.equal(isBare(join(seed, ".git")), false);
+    assert.equal(isBare(join(base, "nowhere")), false);
+  });
+
+  it("a worktree of it has a root and no main; proj is no checkout", async () => {
+    const m = join(proj, "m");
+    assert.deepEqual(await worktreeRoots(m), { root: repoPath(m) });
+    assert.equal(checkoutRepo(m), undefined);
+    assert.equal(checkoutRepo(proj), undefined);
+    assert.equal(parsePlace(m, base, base).repo, undefined);
+    // A plain checkout still stands for its repo.
+    assert.equal(checkoutRepo(seed), repoPath(seed));
+  });
+});
+
+// ------------------------------------------------------------ the child sessions a list leaves out
+
+describe("sessions says how many child sessions it does not show", () => {
+  let base = "";
+  let env: Record<string, string> = {};
+  const session = (id: string, cwd: string, parent?: string): Session => ({
+    id,
+    agent: "fake",
+    startedAt: Date.now() - 60_000,
+    cwd,
+    title: id,
+    stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 },
+    flags: [],
+    parent: parent ? { sessionId: parent } : undefined,
+  });
+  const run = (args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "sessions", ...args], { cwd: base, env, encoding: "utf8" });
+    assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`);
+    return r;
+  };
+  const json = (args: string[]) => JSON.parse(run([...args, "--json"]).stdout) as { sessions: { id: string }[]; hiddenChildren?: number };
+  const lastLine = (args: string[]) => run(args).stderr.trim().split("\n").at(-1)!.trim();
+  const seed = async (sessions: Session[]) => {
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const s of sessions) await index.upsertSession(s);
+    } finally {
+      await index.close();
+    }
+  };
+
+  before(async () => {
+    base = realpathSync.native(mkdtempSync(join(tmpdir(), "csh-hidden-children-")));
+    const home = join(base, "home");
+    env = {
+      PATH: process.env.PATH ?? "",
+      HOME: home,
+      USERPROFILE: home,
+      CODING_SH_HOME: join(home, ".coding.sh"),
+      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_DATA_HOME: join(home, ".local", "share"),
+      NO_COLOR: "1",
+      TZ: "UTC",
+      CODING_SH_NO_UPDATE_CHECK: "1",
+      CODING_SH_NO_AUTO_INGEST: "1",
+    };
+    mkdirSync(env.CODING_SH_HOME!, { recursive: true });
+    await seed([session("top-alpha", join(base, "alpha")), session("top-beta", join(base, "beta"))]);
+  });
+  after(() => rmSync(base, { recursive: true, force: true }));
+
+  it("nothing hidden: no hiddenChildren and no line", () => {
+    const j = json([]);
+    assert.deepEqual(j.sessions.map((s) => s.id).sort(), ["top-alpha", "top-beta"]);
+    assert.equal("hiddenChildren" in j, false);
+    assert.doesNotMatch(run([]).stderr, /child session/);
+  });
+
+  it("child sessions hidden: counted in hiddenChildren and named on the last line, for the same filters", async () => {
+    await seed([session("kid-alpha-1", join(base, "alpha"), "top-alpha"), session("kid-alpha-2", join(base, "alpha"), "top-alpha")]);
+    assert.equal(json([]).hiddenChildren, 2);
+    assert.equal(lastLine([]), "2 child sessions not shown (--subagents)");
+    assert.equal(json(["--repo", "alpha"]).hiddenChildren, 2);
+    assert.equal(lastLine(["--repo", "alpha"]), "2 child sessions not shown (--subagents)");
+    // Filters the children do not match: nothing is hidden from this list.
+    for (const args of [["--repo", "beta"], ["--repo", join(base, "beta")], ["--agent", "codex"]]) {
+      const j = json(args);
+      assert.equal("hiddenChildren" in j, false, args.join(" "));
+    }
+    // --subagents shows them, and --where is:child picks them itself.
+    const all = json(["--subagents"]);
+    assert.equal("hiddenChildren" in all, false);
+    assert.equal(all.sessions.length, 4);
+    assert.equal("hiddenChildren" in json(["--where", "is:child"]), false);
+    // No match at all still says what was left out.
+    assert.equal(lastLine(["--where", "title:kid"]), "2 child sessions not shown (--subagents)");
   });
 });

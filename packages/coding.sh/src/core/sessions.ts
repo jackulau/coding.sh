@@ -150,25 +150,57 @@ export function isVerifyToolStart(e: AgentEvent): boolean {
 export const byTime = (events: AgentEvent[]): AgentEvent[] =>
   events.map((e, i) => ({ e, i })).sort((a, b) => a.e.ts - b.e.ts || a.i - b.i).map((x) => x.e);
 
+/** A workflow harness's frame line, and the `Project:` header a frame's task starts with. */
+const HARNESS_FRAME = /^[ \t]*\[Workflow harness\b/;
+const PROJECT_HEADER = /^[ \t]*Project:/;
 /**
- * Lines a title skips: a workflow harness's frame line and a `Project:` preamble header. Each is
- * anchored at the start of a line (the harness indents what it wraps), so a prompt that only
- * mentions them keeps them.
+ * Lines a title skips: a workflow harness's frame line, and a `Project:` preamble header in a
+ * prompt that has a frame line (with no frame, a task that starts with "Project:" is the task).
+ * Each is anchored at the start of a line (the harness indents what it wraps), so a prompt that
+ * only mentions them keeps them.
  */
-export const TITLE_SKIP: readonly RegExp[] = [/^[ \t]*\[Workflow harness\b/, /^[ \t]*Project:/];
+export const TITLE_SKIP: readonly RegExp[] = [HARNESS_FRAME, PROJECT_HEADER];
 const PASTED = /<pasted_content\b[^>]*>([\s\S]*?)(?:<\/pasted_content>|$)/g;
 
-/** The task line of a prompt: outside any pasted block, without skipped lines; else the paste's first line. */
-function titleText(text: string): string {
+/** The task of a prompt: outside any pasted block, without skipped lines; else the paste's first line; else undefined. */
+function taskText(text: string): string | undefined {
   const pastes: string[] = [];
   const outside = text.replace(PASTED, (_, body: string) => { pastes.push(body); return "\n"; });
-  const kept = outside.split("\n").filter((l) => !TITLE_SKIP.some((re) => re.test(l))).join("\n");
+  const lines = outside.split("\n");
+  const framed = lines.some((l) => HARNESS_FRAME.test(l));
+  const kept = lines.filter((l) => !HARNESS_FRAME.test(l) && !(framed && PROJECT_HEADER.test(l))).join("\n");
   if (kept.trim()) return kept;
   for (const p of pastes) {
     const line = p.split("\n").find((l) => l.trim());
     if (line) return line;
   }
-  return text;
+  return undefined;
+}
+
+/** The task line of a prompt (taskText); a prompt that is only skipped lines keeps its text. */
+const titleText = (text: string): string => taskText(text) ?? text;
+
+/** True for a title that is a harness frame (a prompt that was only frame lines). */
+const isFrameTitle = (title: string): boolean => HARNESS_FRAME.test(title);
+
+/**
+ * A workflow agent (parent.workflowId) whose title would be a harness frame or empty is titled
+ * "<phase> · <label>" from its parent link, or whichever of the two it names.
+ */
+function workflowAgentTitle(title: string | undefined, parent: Session["parent"] | undefined): string | undefined {
+  if (!parent?.workflowId || (title?.trim() && !isFrameTitle(title))) return title;
+  const named = [parent.phase, parent.label].filter((x): x is string => !!x?.trim()).join(" · ");
+  return named ? makeTitle(named) : title;
+}
+
+/**
+ * A phase's title (core/outline.ts) from one of its user.message texts: the prompt's task, or
+ * undefined for a harness notice (isSyntheticPrompt) or a prompt that is only frame lines.
+ */
+export function phasePromptTitle(text: string): string | undefined {
+  if (!text.trim() || isSyntheticPrompt(text)) return undefined;
+  const t = taskText(text)?.replace(/\s+/g, " ").trim();
+  return t ? t.slice(0, 120) : undefined;
 }
 
 /** A trace tag's flag prefix (tag:prod), and the most tags one session keeps. */
@@ -196,12 +228,17 @@ function makeTitle(text: string): string {
  * task completions, local command echoes, reminders). Not something the user typed.
  */
 const SYNTHETIC_PROMPT = /^\s*<(task-notification|local-command-(?:stdout|stderr|caveat)|system-reminder|bash-(?:input|stdout|stderr)|user-prompt-submit-hook)>/;
+/**
+ * A host's delegated-task result posted back as a "user" message (T3 Code:
+ * `Delegated task node:delegated-task:<id> (<name>) [completed]:` then the task's answer).
+ */
+const DELEGATED_NOTICE = /^\s*Delegated task node:\S+(?: \([^\n]*?\))? \[[\w -]+\]:/;
 /** A slash command echo: `<command-name>/clear</command-name> <command-message>… <command-args>…`. */
 const COMMAND_PROMPT = /^\s*<command-(?:name|message|args)>/;
 
 /** True for a user.message text the harness injected rather than the user typed (incl. slash-command echoes). */
 export function isSyntheticPrompt(text: string): boolean {
-  return SYNTHETIC_PROMPT.test(text) || COMMAND_PROMPT.test(text);
+  return SYNTHETIC_PROMPT.test(text) || COMMAND_PROMPT.test(text) || DELEGATED_NOTICE.test(text);
 }
 
 /** A prompt the user typed to the main agent: not a harness notice, a slash-command echo or a subagent's prompt. */
@@ -546,7 +583,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 35; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7.
+export const SESSION_FOLD_VERSION = 37; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -903,8 +940,8 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       s.userMessages++;
       if (s.title !== undefined || !text?.trim()) break;
       if (COMMAND_PROMPT.test(text)) s.fallbackTitle ??= commandTitle(text);
-      // A subagent's prompt is a brief: its first line names the task.
-      else s.title = makeTitle(e.subagentId ? text.trim().split("\n", 1)[0]! : text);
+      // A subagent's prompt is a brief: its first line names the task, once harness frame lines are skipped.
+      else s.title = makeTitle(e.subagentId ? titleText(text).trim().split("\n", 1)[0]! : text);
       break;
     }
     case "session.start":
@@ -939,7 +976,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       // A shell call that writes files (sed -i, `>`, tee, Set-Content, …): they count when it ends, unless it was stopped
       // or turned down (it never ran). A call with no id counts as it starts.
       if (e.kind === "tool.start") {
-        const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? s.cwd);
+        const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? s.cwd).map((f) => changeKey(f, e.cwd, s.cwd));
         if (written.length && typeof id === "string" && id) s.shellFiles.set(id, written);
         else for (const f of written) s.files.add(f);
       } else if (typeof id === "string" && s.shellFiles.has(id)) {
@@ -964,7 +1001,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       break;
     case "file.change":
       // Keyed like a shell call's writes (relative to the cwd), so a file edited both ways counts once.
-      if (typeof e.payload.path === "string" && e.payload.path) s.files.add(normalizeTracePath(e.payload.path, e.cwd ?? s.cwd));
+      if (typeof e.payload.path === "string" && e.payload.path) s.files.add(changeKey(e.payload.path, e.cwd, s.cwd));
       break;
     case "test.result":
       s.lastTest = { passed: num(e.payload.passed) ?? 0, failed: num(e.payload.failed) ?? 0 };
@@ -1090,7 +1127,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   set("cwd", s.cwd ?? prev?.cwd);
   // The earliest repo state wins; one with a snapshot is never replaced (see foldSession).
   set("repo", prev?.repo?.snapshot ? prev.repo : (s.repo ?? prev?.repo));
-  set("title", s.hostTitle ?? s.title ?? fallbackTitle ?? s.startName ?? prev?.title);
+  set("title", workflowAgentTitle(s.hostTitle ?? s.title ?? fallbackTitle ?? s.startName ?? prev?.title, s.parent ?? prev?.parent));
   const traceIds = new Set<string>(prev?.traceIds ?? []);
   for (const t of s.traceIds) {
     if (traceIds.size >= MAX_TRACE_IDS) break;
@@ -1164,6 +1201,22 @@ export function addLlmError(prev: LlmErrors | undefined, payload: Record<string,
 }
 
 /**
+ * The key a changed file counts under in stats.filesChanged (and `coding.sh work show`, `show`):
+ * the path resolved against the folder the event ran in, then relative to the session's cwd, so
+ * one file edited while the agent's folder changed counts once. A path outside the session's cwd
+ * stays absolute.
+ */
+export function changeKey(path: string, eventCwd: string | undefined, sessionCwd: string | undefined): string {
+  const k = normalizeTracePath(path, eventCwd ?? sessionCwd);
+  if (!eventCwd || !sessionCwd) return k;
+  // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
+  // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
+  if (/^(?:[A-Za-z]:)?\//.test(k)) return normalizeTracePath(k, sessionCwd);
+  const base = eventCwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalizeTracePath(`${base}/${k}`, sessionCwd);
+}
+
+/**
  * A session.start an older build's ingest stamped with the session its hook's
  * env named (spool/spawned.ts): `{ parentSessionId, parentAgent, subagentType:
  * "harness" }`. That id can be stale (a session that ended, or was never
@@ -1174,7 +1227,8 @@ const isSpawnMarker = (p: AgentEvent["payload"]): boolean => p.subagentType === 
 
 /**
  * Parent link for a subagent session, from its session.start payload
- * ({ parentSessionId, parentEventId?, subagentId?, subagentType? }).
+ * ({ parentSessionId, parentEventId?, subagentId?, subagentType? }, and for a
+ * workflow agent workflowId, workflowName?, workflowPhase?, workflowLabel?).
  * Ingest also links children named by a parent's subagent.* childSessionId.
  */
 export function parentOf(sorted: AgentEvent[]): Session["parent"] | undefined {
@@ -1186,6 +1240,18 @@ export function parentOf(sorted: AgentEvent[]): Session["parent"] | undefined {
   const subagentId = typeof p.subagentId === "string" ? p.subagentId : start.subagentId;
   if (subagentId) parent.subagentId = subagentId;
   if (typeof p.subagentType === "string") parent.type = p.subagentType;
+  // A workflow agent: the run it belongs to, and its phase and label in that run.
+  const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const workflowId = text(p.workflowId);
+  if (workflowId) {
+    parent.workflowId = workflowId;
+    const name = text(p.workflowName);
+    const phase = text(p.workflowPhase);
+    const label = text(p.workflowLabel);
+    if (name) parent.workflowName = name;
+    if (phase) parent.phase = phase;
+    if (label) parent.label = label;
+  }
   return parent;
 }
 

@@ -335,9 +335,18 @@ function flagMoves(before: GroupStats, after: GroupStats, flags: readonly string
 
 const significant = (m: FlagMove): boolean => m.p <= ALPHA;
 
-/** Verdict and reason from the flagged share, each flag's share, the new rules' effects and the work per session. */
-export function decide(before: GroupStats, after: GroupStats, rules: readonly RuleEffect[]): { verdict: Verdict; reason: string; p?: number; work?: WorkEffect } {
-  if (!after.sessions) return { verdict: "no-sessions-after", reason: "No captured session ran with this change yet." };
+/**
+ * Verdict and reason from the flagged share, each flag's share, the new rules' effects and the work
+ * per session. `noHead` counts the sessions since the change that recorded no git HEAD: they ran,
+ * but no version can be told for them, so an empty side says so instead of "no session ran".
+ */
+export function decide(before: GroupStats, after: GroupStats, rules: readonly RuleEffect[], o: { noHead?: number } = {}): { verdict: Verdict; reason: string; p?: number; work?: WorkEffect } {
+  if (!after.sessions) {
+    const reason = o.noHead
+      ? `No captured session with a known version ran with this change yet: ${o.noHead} session(s) since it recorded no git HEAD, so their version can't be told.`
+      : "No captured session ran with this change yet.";
+    return { verdict: "no-sessions-after", reason };
+  }
   if (!before.sessions) return { verdict: "no-baseline", reason: `No captured session ran with the version before it, so there is nothing to compare ${after.sessions} session(s) with.` };
   const work = workEffect(before, after);
   const w = work ? { work } : {};
@@ -440,7 +449,8 @@ export async function changeEffects(root: string, sessions: readonly Session[], 
     for (const d of added.slice(0, 5)) rules.push(await ruleEffect(d, before, after, eventsOf));
     const b = withIdle(group(before), beforeAll.length - before.length);
     const a = withIdle(group(after), afterAll.length - after.length);
-    out.push({ change: c, before: b, after: a, rules, ...decide(b, a, rules) });
+    const noHead = sessions.filter((s) => !s.repo?.head && s.startedAt >= c.at).length;
+    out.push({ change: c, before: b, after: a, rules, ...decide(b, a, rules, { noHead }) });
   }
   return out;
 }

@@ -25,7 +25,7 @@ import { couplingNote, goldCandidates, goldOnlyCoupling, startTreeLookup, type C
 import { impossibleMutations, isTestPath, readTextFiles, verifierReferencedFiles, type ImpossibleMutation, type TestFileText } from "./impossible.ts";
 import { blockOverlap } from "./leakage.ts";
 import { addedBlocks, addedLines, nearMissMutations, patchPaths } from "./patch.ts";
-import { nearMissRuns, referenceRun, type RecordedRun } from "./task.ts";
+import { addReferenceHint, nearMissRuns, referenceRun, type RecordedRun } from "./task.ts";
 import { comparePassToPass, detectSuiteCommand } from "./suite.ts";
 import { referenceTestEdits } from "./test-edits.ts";
 
@@ -330,7 +330,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   const graded = !!refRun || nmRuns.length > 0;
   const hasReference = !!refPatch || !!refRun;
   if (!task.verifier.command.trim()) errors.push("task has no verifier command");
-  if (!hasReference) errors.push("task has no reference patch or reference run; cannot check that the verifier can pass");
+  if (!hasReference) errors.push(`task has no reference patch or reference run; cannot check that the verifier can pass; ${addReferenceHint(task.id)}`);
   let runFilesN = 0;
   /** CODING_SH_AGENT_OUTPUT, _STDOUT and _DIFF for one step, as an agent run would leave them. */
   const runVars = async (run: RecordedRun | undefined, patch: string | undefined): Promise<Record<string, string>> => {

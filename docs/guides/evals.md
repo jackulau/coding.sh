@@ -399,8 +399,10 @@ test on flipped cases and the minimum detectable effect. It also reports:
 - **A Bayesian check at small n.** Below 100 paired cases it adds P(B>A) and a credible interval
   from a Dirichlet posterior on the paired outcomes. The bootstrap interval stays.
 - **Attrition.** Per arm, trials lost to task errors, grader errors or missing runs, split into
-  infra errors (timeouts, network, HTTP 429/5xx, a refused login, a failed setup) and agent
-  errors. Fisher's exact test flags an uneven split at p < 0.01. A trial still on an infra error
+  infra errors (network timeouts such as `ETIMEDOUT`, HTTP 429/5xx, a refused login, a failed
+  setup), timeouts (the trial timeout: the agent was too slow) and agent errors. Fisher's exact
+  test flags an uneven split at p < 0.01. When the arms' timeout counts differ, a yellow line names
+  the cases and says the verdict depends on the time limit. A trial still on an infra error
   after its retries is unknown: it is left out of the pass rate like an ungraded run, and the
   yellow line above the verdict counts it by kind. When no pair is left, that line starts with
   `void:`.
