@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { openContext } from "../../src/core/context.ts";
 import { fixtureRun } from "../../src/store/conformance.ts";
 import { CLI } from "../_cli.ts";
+import { seed, session } from "../query/_seed.ts";
 
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -112,6 +113,22 @@ describe("judge slop", () => {
     assert.equal(run("judge", "slop", "run_B1").status, 0);
     assert.equal(run("judge", "slop", "run_A1").status, 1);
     assert.equal(run("judge", "slop", "exp_none").status, 1);
+  });
+
+  test("a session with no captured diffs exits 1 and names the diff command for the user's shell", async () => {
+    const home = join(root, "nodiff");
+    const dataHome = join(home, ".coding.sh");
+    mkdirSync(dataHome, { recursive: true });
+    await seed(dataHome, { sessions: [session("sess-nodiff1")] });
+    // PowerShell and cmd set no MSYSTEM or SHELL; there the CLI is codingsh.
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "judge", "slop", "sess-nodiff1"], {
+      env: { ...env, ["HO" + "ME"]: home, USERPROFILE: home, CODING_SH_HOME: dataHome, CODING_SH_NO_AUTO_INGEST: "1", MSYSTEM: undefined, SHELL: undefined },
+      encoding: "utf8",
+      cwd: root,
+    });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Session sess-nodiff1 has no captured diffs/);
+    assert.match(r.stderr, new RegExp(`^\\s*git diff \\| ${process.platform === "win32" ? "codingsh" : "coding\\.sh"} judge slop --diff -$`, "m"));
   });
 
   test("--list-rules prints the catalog with defaults and opt-ins", () => {

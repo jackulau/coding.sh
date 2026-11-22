@@ -10,6 +10,7 @@ import type { RunResult } from "../../core/types.ts";
 import { looksLikeDiff, SLOP_RULES, selectSlopRules, slopFindings, slopScore, traceDiffs, type SlopReport, type SlopRule, type SlopThresholds } from "../../graders/slop.ts";
 import { UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, resolveSession, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -166,7 +167,7 @@ export async function slop(c: CommandContext): Promise<number> {
       throw new CliError(`Session ${s.id} has no captured diffs${d.missing ? ` (${plural(d.missing, "file change")} without one: ${s.agent}'s capture does not record diffs)` : ""}`, {
         reason: "no_diff",
         exitCode: 1,
-        next: ["Grade a diff directly:", "git diff | coding.sh judge slop --diff -"],
+        next: ["Grade a diff directly:", `git diff | ${cliCommand(c.env, ["judge", "slop", "--diff", "-"])}`],
       });
     }
     if (d.missing) out.warn(`${plural(d.missing, "file change")} in this session carried no diff and were not graded`);
