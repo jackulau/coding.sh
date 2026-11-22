@@ -368,7 +368,8 @@ async function show(c: CommandContext): Promise<number> {
   const gantt = buildGantt(run, nodes);
   if (out.json) {
     const full = c.flags.tree === true;
-    out.data({ run: { ...runJson(run), stats: run.stats }, nodes: full ? nodes : nodes.filter((n) => !DETAIL_KINDS.has(n.kind)), ...(c.flags.gantt === true ? { gantt } : {}) });
+    const output = await storedOutput(store, run);
+    out.data({ run: { ...runJson(run), stats: run.stats, output: output ?? null }, nodes: full ? nodes : nodes.filter((n) => !DETAIL_KINDS.has(n.kind)), ...(c.flags.gantt === true ? { gantt } : {}) });
     return 0;
   }
   if (c.flags.gantt === true) {
@@ -398,9 +399,36 @@ async function show(c: CommandContext): Promise<number> {
     if (resumes.length) bits.push(`resumed after ${resumes.join(", ")}`);
     out.row("Durable", bits.join(", "));
   }
+  const output = await storedOutput(store, run);
+  if (output !== undefined) {
+    // The first lines, the first on the row and the rest under it, as for Error.
+    const lines = clean(typeof output === "string" ? output : JSON.stringify(output, null, 2)).replace(/\n+$/, "").split("\n");
+    const cut = (l: string) => (l.length > OUTPUT_LINE_CHARS ? `${l.slice(0, OUTPUT_LINE_CHARS - 1)}…` : l);
+    out.row("Output", cut(lines[0] ?? ""));
+    for (const l of lines.slice(1, OUTPUT_LINES)) out.note(`${" ".repeat(LABEL_WIDTH)}${cut(l)}`);
+    if (lines.length > OUTPUT_LINES) out.note(out.style(`${" ".repeat(LABEL_WIDTH)}… ${plural(lines.length - OUTPUT_LINES, "more line", "more lines")} (--json for all)`, "faint", "err"));
+  }
   out.note();
   for (const l of renderTree(nodes, c.flags.tree === true)) out.print(l);
   return 0;
+}
+
+/** Lines of a run's output `show` prints, and characters of each, before --json for the rest. */
+const OUTPUT_LINES = 6;
+const OUTPUT_LINE_CHARS = 160;
+
+/**
+ * What the run returned, as stored (redacted) in the workflow store: undefined when it stored
+ * nothing (a run that returned nothing, capture.mode "metadata" on import, a durable session's
+ * tree) or the blob is gone.
+ */
+async function storedOutput(store: WorkflowStore, run: WorkflowRun): Promise<unknown> {
+  if (!run.output) return undefined;
+  try {
+    return await store.getValue(run.output);
+  } catch {
+    return undefined;
+  }
 }
 
 /** When a Claude Code agent's transcript was last written (its file's mtime), read at show time. */

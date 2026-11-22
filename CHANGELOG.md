@@ -337,6 +337,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `init` waits up to 15 s, not 5 s, for `opencode --version` when it picks which OpenCode plugin to write, as `doctor` does, and `doctor` waits as long for `gemini --version`. Before, on a busy machine init could write the 2.x plugin for OpenCode 1.x and remove the 1.x one. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-init))
 - **CLI.** When `~/.coding.sh/bin/cli-path` names another install that is still there, `doctor` names `coding.sh upgrade-store`, which asks before it moves the hooks, instead of `update --refresh-bin`, which leaves them alone. With a store plugin, `upgrade-store` now moves the hooks too. Before, it said there was nothing to do. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Workflows.** `workflows show`, `stats`, `score` and `replay` take a unique prefix of a run id, 4 or more characters, as the session commands do. A prefix that several runs share fails and lists them, newest first. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/workflows.md#capture-and-measure-a-run))
+- **Workflows.** `workflows show` prints the first 6 lines of what a run returned, as stored and redacted, on an `Output` row, and `--json` prints all of it as `run.output`. Before, a run's stored output showed nowhere. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/workflows.md#capture-and-measure-a-run))
 
 ## [0.1.7] - 2026-11-16
 

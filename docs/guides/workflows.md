@@ -30,6 +30,11 @@ coding.sh workflows stats <run>
 `wfr_` included. `show`, `stats`, `score` and `replay` take either. A prefix that several runs
 share fails and lists them.
 
+`show` also prints what the run returned, as the workflow store keeps it, redacted: its first 6
+lines on an `Output` row, then how many lines are left. `--json` prints all of it as `run.output`.
+A run that returned nothing, or one imported while `capture.mode` is `metadata`, keeps none: it
+has no `Output` row, and `run.output` is null.
+
 An agent you stopped shows as `cancelled`, and one a resume ran again as `superseded`; neither
 counts as a failure. On a resumed run, an agent that returned its recorded result is a cache hit,
 not one of the agents that ran: `stats` counts it on the `cache hits` row, and its failed and null

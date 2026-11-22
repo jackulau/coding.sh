@@ -195,6 +195,39 @@ describe("coding.sh workflows", () => {
     assert.equal((await json("show", [ids[1].slice(0, common + 1)], {}, e)).run.id, ids[1]);
   });
 
+  it("show prints the start of what a run returned, as stored, and --json all of it", async () => {
+    // An imported Claude Code run: the result its record holds.
+    assert.deepEqual((await json("show", [RUN])).run.output, RUN_OUTPUT);
+    // Command-driver runs: what the command printed, as JSON, as text, or nothing.
+    const home = join(root, "output-home");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), '[capture]\nredactPatterns = ["hunter2"]\n');
+    writeFileSync(join(root, "text-wf.mjs"), 'console.log("first line\\nsecond line, hunter2");\n');
+    writeFileSync(join(root, "silent-wf.mjs"), "");
+    const e = { CODING_SH_HOME: home };
+    const cmd = (name: string, ...argv: string[]) => JSON.stringify({ name, command: [process.execPath, ...argv] });
+    const variant = [cmd("good", join(root, "fake-wf.mjs"), "good"), cmd("text", join(root, "text-wf.mjs")), cmd("silent", join(root, "silent-wf.mjs"))];
+    const doc = await json("run", ["review"], { driver: "command", variant, split: "dev", k: 1, yes: true }, e);
+    const idOf = (name: string): string => doc.runs.find((r: { variant: string }) => r.variant === name).id;
+    const printed = { findings: [{ file: "src/a.ts", line: 11, summary: "x" }, { file: "src/b.ts", line: 40, summary: "y" }] };
+    assert.deepEqual((await json("show", [idOf("good")], {}, e)).run.output, printed);
+    // Its 14 lines as JSON: the first 6 under the row, then how many more and where they are.
+    const lines = JSON.stringify(printed, null, 2).split("\n");
+    const pad = " ".repeat(18);
+    const good = (await cli("show", [idOf("good")], {}, { env: e })).stderr;
+    assert.ok(good.includes(`\n  Output          ${lines[0]}\n${lines.slice(1, 6).map((l) => `${pad}${l}\n`).join("")}${pad}… 8 more lines (--json for all)\n\n`), good);
+    // Text prints as text, redacted as it was stored.
+    const text = await cli("show", [idOf("text")], {}, { env: e });
+    assert.match(text.stderr, /\n {2}Output {10}first line\n {18}second line, \[redacted[^\n]*\n\n/);
+    assert.doesNotMatch(text.stderr + text.stdout, /hunter2|more line/);
+    assert.match((await json("show", [idOf("text")], {}, e)).run.output, /^first line\nsecond line, \[redacted/);
+    // A run that printed nothing stored nothing: no row, and null in JSON.
+    const silent = await cli("show", [idOf("silent")], {}, { env: e });
+    assert.match(silent.stderr, /✓ Status +ok\n/);
+    assert.doesNotMatch(silent.stderr, /Output/);
+    assert.equal((await json("show", [idOf("silent")], {}, e)).run.output, null);
+  });
+
   it("stats prints the metrics", async () => {
     const doc = await json("stats", [RUN]);
     assert.equal(doc.stats.barrierIdleMs, 30_000);
