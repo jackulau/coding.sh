@@ -194,7 +194,7 @@ Purge looks in each of these places:
 | Blobs | Rewrites them under a new hash, and every reference follows. |
 | Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
 | Recorded model calls (`llm-cache/`) | Waits for jobs still recording, then rewrites each recording that holds the value, keeping its replay keys. Deletes a torn or temp file holding it. |
-| Snapshots (`repos/`) | Names each snapshot repo that holds the value, and exits 1 until you delete it. It does not rewrite snapshots. |
+| Snapshots (`repos/`) | Names each snapshot repo that holds the value or that git can't read, and exits 1 until you delete it. It does not rewrite snapshots. |
 | `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |
 
