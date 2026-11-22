@@ -659,7 +659,7 @@ coding.sh show <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for a long id, or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
 
 | Option | Default | Description |
 |---|---|---|

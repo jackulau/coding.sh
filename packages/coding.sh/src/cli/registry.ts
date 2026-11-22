@@ -514,7 +514,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
-    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or <session>#<n>)", required: true }],
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for a long id, or 'latest'; or a model call (its id, or <session>#<n>)", required: true }],
     flags: [
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "List the first N events (default 200; a longer session shows as phases)" },
       { name: "all", type: "boolean", desc: "List every event, with phase and day lines and derail markers" },

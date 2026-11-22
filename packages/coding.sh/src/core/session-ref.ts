@@ -1,7 +1,9 @@
 // Session references: what a person or an agent may pass where coding.sh takes a session id, and the
 // shortest id coding.sh prints for one. The CLI (cli/common.ts resolveSession), the MCP tools
 // (mcp/tools.ts) and `work show` resolve through findSessionRef, so a short id one of them prints
-// opens in the others.
+// opens in the others. An id whose shortest prefix is long or needs quoting in a shell (a T3 Code
+// thread id can run past 200 characters, with percent-encoding) prints as an alias instead.
+import { hash } from "node:crypto";
 import { isEmptySession } from "./sessions.ts";
 import type { IndexStore, Session, SessionFilter } from "./types.ts";
 
@@ -13,6 +15,45 @@ export const SHORT_ID_MIN = 8;
 export const MAX_CANDIDATES = 10;
 
 const SUB = ":sub:";
+
+/** Longest prefix coding.sh prints: a longer shortest prefix prints as an alias. */
+const MAX_REF = 40;
+/**
+ * A reference bash, PowerShell and cmd all pass on as typed, with no quotes: a letter, digit or `_`
+ * first, then those and `. : / -`. One with any other character (`%`, a space, `&`, `$`…) prints as an alias.
+ */
+const PLAIN_REF = /^[A-Za-z0-9_][A-Za-z0-9._:/-]*$/;
+/**
+ * An alias is `x_` and the first 8 to 14 digits of the id's SHA-256 in Crockford's base32, lowercase
+ * (no i, l, o or u): x_d52r41f3. `x` is not a hex digit, so an alias is not the start of a UUID or a
+ * hex id, and a letter first never reads as a number in PowerShell.
+ */
+const ALIAS = "x_";
+const ALIAS_MIN = 8;
+const ALIAS_MAX = 14;
+const ALIAS_DIGITS = "0123456789abcdefghjkmnpqrstvwxyz";
+const ALIAS_RE = /^x_([0-9a-hjkmnp-tv-z]{8,14})$/;
+
+/** The 14 alias digits of `id`: the first 70 bits of its SHA-256, 5 bits a digit. The same on every machine. */
+function aliasDigits(id: string): string {
+  const hex = hash("sha256", id);
+  let out = "";
+  // 5 hex digits are 20 bits, 4 alias digits.
+  for (let i = 0; out.length < ALIAS_MAX; i += 5) {
+    const n = Number.parseInt(hex.slice(i, i + 5), 16);
+    for (let shift = 15; shift >= 0; shift -= 5) out += ALIAS_DIGITS[(n >> shift) & 31];
+  }
+  return out.slice(0, ALIAS_MAX);
+}
+
+/**
+ * True when `id` may print as an alias, so an alias may name it: an id longer than MAX_REF, one with
+ * a character outside PLAIN_REF, or a subagent whose own id starts with `.`, `:`, `/` or `-`. Only
+ * these ids are hashed.
+ */
+function aliasable(id: string): boolean {
+  return id.length > MAX_REF || !PLAIN_REF.test(id) || /:sub:[.:/-]/.test(id);
+}
 
 /** What a reference names: one id, or several it cannot choose between. */
 export type RefMatch = { id: string } | { ambiguous: string[] };
@@ -31,11 +72,16 @@ function lowerBound<T>(xs: readonly T[], key: string, at: (x: T) => string): num
 
 const self = (x: string): string => x;
 const first = (x: readonly [string, string]): string => x[0];
+const byFirst = (a: readonly [string, string], b: readonly [string, string]): number => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 
-/** Every stored session id, sorted, with the agent ids of subagents (`<parent>:sub:<agent>`) for lookup by that part. */
+/**
+ * Every stored session id, sorted, with the agent ids of subagents (`<parent>:sub:<agent>`) for
+ * lookup by that part, and the aliases of the ids that may print one.
+ */
 export class IdSet {
   readonly ids: readonly string[];
   #tails: [string, string][] | undefined;
+  #aliases: [string, string][] | undefined;
 
   constructor(ids: Iterable<string>) {
     this.ids = [...new Set(ids)].sort();
@@ -59,12 +105,25 @@ export class IdSet {
       for (const id of this.ids) {
         for (let at = id.indexOf(SUB); at >= 0; at = id.indexOf(SUB, at + 1)) tails.push([id.slice(at + SUB.length), id]);
       }
-      this.#tails = tails.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      this.#tails = tails.sort(byFirst);
     }
     const out = new Set<string>();
     const tails = this.#tails;
     for (let i = lowerBound(tails, ref, first); i < tails.length && tails[i]![0].startsWith(ref); i++) out.add(tails[i]![1]);
     return [...out].sort();
+  }
+
+  /** The ids that may print an alias (aliasable) whose alias digits start with `digits`, sorted. They are hashed on the first call. */
+  byAlias(digits: string): string[] {
+    if (!this.#aliases) {
+      const aliases: [string, string][] = [];
+      for (const id of this.ids) if (aliasable(id)) aliases.push([aliasDigits(id), id]);
+      this.#aliases = aliases.sort(byFirst);
+    }
+    const out: string[] = [];
+    const aliases = this.#aliases;
+    for (let i = lowerBound(aliases, digits, first); i < aliases.length && aliases[i]![0].startsWith(digits); i++) out.push(aliases[i]![1]);
+    return out.sort();
   }
 }
 
@@ -81,15 +140,23 @@ function pick(ids: readonly string[]): RefMatch | undefined {
 }
 
 /**
- * What `ref` names among the stored ids, tried in this order: the exact id; a prefix of at least
- * MIN_ID_PREFIX characters; an SDK id without its default project (`tenant-7/conv-123` for
- * `default/tenant-7/conv-123`, see server/project.ts scopeSessionId); a subagent's own id without
- * its parent (`a33e97aa…`); a short subagent id (shortSessionId: each `:sub:` part a prefix of the
- * stored part). The first step that matches decides, even when it is ambiguous.
+ * What `ref` names among the stored ids, tried in this order: the exact id; an alias (`x_` and 8 to
+ * 14 alias digits, shortestRef), whose digits start the alias digits of an id that may print one; a
+ * prefix of at least MIN_ID_PREFIX characters; an SDK id without its default project
+ * (`tenant-7/conv-123` for `default/tenant-7/conv-123`, see server/project.ts scopeSessionId); a
+ * subagent's own id without its parent (`a33e97aa…`); a short subagent id (shortSessionId: each
+ * `:sub:` part a prefix of the stored part). The first step that matches decides, even when it is
+ * ambiguous: an alias two ids share lists both.
  */
 export function matchRef(set: IdSet, ref: string): RefMatch | undefined {
   if (!ref) return undefined;
   if (set.has(ref)) return { id: ref };
+  const alias = ALIAS_RE.exec(ref);
+  if (alias) {
+    const ids = set.byAlias(alias[1]!);
+    if (ids.length === 1) return { id: ids[0]! };
+    if (ids.length > 1) return { ambiguous: ids };
+  }
   if (ref.length >= MIN_ID_PREFIX) {
     const m = pick(set.withPrefix(ref));
     if (m) return m;
@@ -137,33 +204,51 @@ function smallest(lo: number, hi: number, ok: (n: number) => boolean): number | 
   return lo;
 }
 
+/** True when matchRef takes `ref` to `id` and nothing else. */
+function names(set: IdSet, ref: string, id: string): boolean {
+  const m = matchRef(set, ref);
+  return !!m && "id" in m && m.id === id;
+}
+
 /**
  * The shortest reference to `id` that matchRef takes back to it today, at least SHORT_ID_MIN
  * characters: a prefix of a top-level id; for a subagent, a prefix of its own id or the short
- * subagent form. An id with no shorter form (or one of SHORT_ID_MIN characters or fewer) comes back whole.
+ * subagent form. When that is longer than MAX_REF characters or needs quoting in a shell
+ * (PLAIN_REF), an alias instead: x_ and the first 8 alias digits, or more when 8 also name another
+ * id. An id with no shorter form (or one of SHORT_ID_MIN characters or fewer) comes back whole, and
+ * so does one not stored.
  */
 export function shortestRef(set: IdSet, id: string): string {
-  if (id.length <= SHORT_ID_MIN || !set.has(id)) return id;
-  const names = (ref: string): boolean => {
-    const m = matchRef(set, ref);
-    return !!m && "id" in m && m.id === id;
-  };
+  if (!set.has(id)) return id;
+  const best = shortestPrefix(set, id);
+  if (best.length <= MAX_REF && PLAIN_REF.test(best)) return best;
+  const digits = aliasDigits(id);
+  for (let k = ALIAS_MIN; k <= ALIAS_MAX; k++) {
+    const ref = `${ALIAS}${digits.slice(0, k)}`;
+    if (names(set, ref, id)) return ref;
+  }
+  return best;
+}
+
+/** The reference shortestRef prints for a stored `id` when it needs no alias. */
+function shortestPrefix(set: IdSet, id: string): string {
+  if (id.length <= SHORT_ID_MIN) return id;
   let best = id;
   // A subagent's own id: what its transcript calls it, usually unique in 8 characters.
   const cut = id.lastIndexOf(SUB);
   const tail = cut >= 0 ? id.slice(cut + SUB.length) : "";
   if (tail.length >= SHORT_ID_MIN && !tail.includes(":")) {
-    const n = smallest(SHORT_ID_MIN, Math.min(tail.length, best.length - 1), (k) => names(tail.slice(0, k)));
+    const n = smallest(SHORT_ID_MIN, Math.min(tail.length, best.length - 1), (k) => names(set, tail.slice(0, k), id));
     if (n !== undefined) best = tail.slice(0, n);
   }
   if (cut >= 0) {
     // Not a prefix: one that stops in the parent's part names the parent, and one past it reads as a cut-off id.
     const s = shortSessionId(id);
-    if (s.length < best.length && names(s)) best = s;
+    if (s.length < best.length && names(set, s, id)) best = s;
     return best;
   }
   // A prefix: longer prefixes name fewer ids, so the shortest that names this one is found by bisecting.
-  const n = smallest(SHORT_ID_MIN, id.length - 1, (k) => names(id.slice(0, k)));
+  const n = smallest(SHORT_ID_MIN, id.length - 1, (k) => names(set, id.slice(0, k), id));
   return n === undefined ? best : id.slice(0, n);
 }
 
