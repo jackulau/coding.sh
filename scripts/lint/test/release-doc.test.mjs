@@ -48,6 +48,23 @@ test("RELEASE.md names publish-image, the Vercel deploy, its secret and the Work
   assert.ok(!doc.includes("wrangler pages"));
 });
 
+test("RELEASE.md says update and the install script install the latest GitHub release, npm's latest without GitHub", () => {
+  // update asks GitHub's releases/latest first and npm's registry only when GitHub fails.
+  const refresh = readFileSync(join(ROOT, "packages/coding.sh/src/update/refresh.ts"), "utf8");
+  const github = refresh.indexOf("/releases/latest`");
+  const npm = refresh.indexOf("encodeURIComponent(a.npmName)}/latest`");
+  assert.ok(github >= 0 && npm > github, "update asks GitHub first");
+  // The install script asks GitHub before npm unless a version or source is given.
+  const install = readFileSync(join(ROOT, "install.sh"), "utf8");
+  const asks = install.indexOf("VERSION=$(github_latest)");
+  assert.ok(asks >= 0 && asks < install.indexOf('NPM_VERSION=$(npm_has "${SPEC:-latest}")'), "install.sh asks GitHub first");
+  const six = doc.replace(/\s+/g, " ");
+  assert.match(six, /install \| sh` installs the latest GitHub release/);
+  assert.match(six, /`coding\.sh update` installs the latest GitHub release from its tarball/);
+  assert.match(six, /When GitHub does not answer, both install npm's latest/);
+  assert.ok(!six.includes("newest of the two"));
+});
+
 test("RELEASE.md names the shipped schema and shell hook, and the timing-test rule", () => {
   assert.ok(doc.includes("dist/schema.json") && doc.includes("dist/hook.sh"));
   assert.match(doc, /timing test fails on a busy machine/);
