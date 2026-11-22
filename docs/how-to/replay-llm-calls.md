@@ -122,8 +122,9 @@ keeps the cache under 1 GB, dropping the least recently used recordings first.
   `[capture]`, and the job's own credentials are replaced with `[redacted:api-key]` if a reply
   echoes them. A replay serves the redacted text.
 - A replay matches a call by its request as those rules leave it. A recording made with the
-  built-in `secrets` rules alone still replays after you add rules. If you change your own rules
-  between a recording and its replay, a call whose text the change touches runs live.
+  built-in `secrets` rules alone still replays after you add rules.
+- If you change your own rules between a recording and its replay, a call whose text the change
+  touches runs live.
 - In metadata mode (`[capture] mode = "metadata"`), a run with `--record` or `--replay` still
   stores the replies, since you asked for a recording, and prints a line that says so.
 - The stored task spec drops environment variables whose names look like secrets (`KEY`, `TOKEN`,

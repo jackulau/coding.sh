@@ -104,9 +104,9 @@ hooks).
 - For transcripts it starts again at the top of each file it missed part of, so it can get a
   transcript event twice. A sink added later gets the transcripts still on disk the same way.
 - A sink with `since` sends no session that started before that time, not even the events the
-  session adds after it. `coding.sh init --remote` sets it to the time it first connects. What a
-  sink leaves out counts as handled, so removing `since` later does not send it. To send the
-  history on purpose, remove `since`, give the sink a new `name`, and run
+  session adds after it. `coding.sh init --remote` sets it to the time it first connects.
+- What a sink leaves out counts as handled, so removing `since` later does not send it. To send
+  the history on purpose, remove `since`, give the sink a new `name`, and run
   `coding.sh ingest --backfill`.
 - With sinks set, one transcript import runs at a time (`~/.coding.sh/sinks.lock`).
 

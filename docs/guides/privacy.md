@@ -209,8 +209,9 @@ transcripts, your shell history or git, and it does not rewrite the snapshots in
   the file. Close it and purge again.
 - **A backup can't be deleted.** Purge names it. Delete it by hand.
 - **A snapshot repo holds the value.** Sessions and eval tasks name a snapshot by its commit id,
-  and a rewrite would change it, so purge names the folder under `repos/` instead. Delete it and
-  purge again. Then `coding.sh show` leaves out the file changes of sessions in that repo, and
+  which a rewrite would change, so purge names the folder under `repos/`. Delete it and purge
+  again.
+- **Deleting a snapshot repo** drops the file changes of its sessions from `coding.sh show`, and
   eval tasks that start from its snapshots can't run.
 - **The database or its search index is damaged.** Purge checks both after it runs.
 - A run's `.git` folder is left alone, and files and snapshot objects over 64 MB are not read. A
