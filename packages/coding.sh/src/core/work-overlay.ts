@@ -93,8 +93,15 @@ export function addAck(o: WorkOverlay, sessionId: string, fingerprint: string): 
   o.acks[sessionId] = [...prev, fingerprint].slice(-ACKS_PER_SESSION);
 }
 
-/** Snoozes an item: stored on each of the given member session ids. */
+/**
+ * Snoozes an item: stored on each of the given member session ids. It replaces the item's earlier
+ * snooze. One call stores the same snooze on each id, so the entries equal to one it overwrites are
+ * that snooze's copies on the item's other sessions, and they go too: a copy left on the session
+ * behind an earlier cause could end later than the new snooze and win in snoozeOf.
+ */
 export function addSnooze(o: WorkOverlay, sessionIds: readonly string[], snooze: WorkSnooze): void {
+  const old = sessionIds.flatMap((id) => o.snoozes[id] ?? []);
+  for (const [id, z] of Object.entries(o.snoozes)) if (old.some((x) => x.until === z.until && x.bucket === z.bucket)) delete o.snoozes[id];
   for (const id of sessionIds) o.snoozes[id] = { ...snooze };
 }
 
