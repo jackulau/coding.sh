@@ -10,9 +10,12 @@
 // One change, by contract: an OpenAI chat stream without stream_options gets
 // stream_options.include_usage, and the usage-only chunk that adds is
 // swallowed here, so the app's loop sees exactly the chunks it would have.
+// While the SDK is off (no CODING_SH_URL, disabled, or shut down), each call
+// goes to the client as the app made it, with nothing added or recorded.
 //
 // Anthropic's messages.stream() calls messages.create({ stream: true }) on the
 // same resource, so it is recorded through create (once).
+import { isEnabled } from "./client.ts";
 import { currentCtx, type LlmCall, recordLlm, runInCtx } from "./context.ts";
 import type { HeaderGetter } from "./gateway.ts";
 import { requestInfo, resultFor, type Shape, streamAcc } from "./providers.ts";
@@ -58,6 +61,8 @@ function wrap(resource: Obj, shape: Shape, provider: string, url: string | undef
   const orig = resource.create as AnyFn & { [OBSERVED]?: boolean };
   if (orig[OBSERVED]) return true;
   const wrapped = function (this: unknown, params: unknown, ...rest: unknown[]): unknown {
+    // Checked per call, so init() after observe() still turns recording on.
+    if (!isEnabled()) return orig.call(this, params, ...rest);
     const ctx = currentCtx();
     const start = nowMs();
     let call: Omit<LlmCall, "end" | "ok"> = { provider, start, url };

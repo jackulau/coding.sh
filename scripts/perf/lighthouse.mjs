@@ -58,6 +58,18 @@ async function deps() {
   }
 }
 
+// On Windows, Chrome can still hold a file in its profile for a moment after kill(), so removing the
+// profile at once could fail with EPERM, and the error ended the whole run with no result. Retry, as
+// chrome-launcher does for the profiles it makes, and if the folder still won't go, say so and keep
+// the measurement.
+export function removeProfile(dir, rm = rmSync) {
+  try {
+    rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (e) {
+    console.error(`could not remove the Chrome profile ${dir} (${e.code ?? e.message}); remove it by hand`);
+  }
+}
+
 function chromePath() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
   const root = join(homedir(), ".cache", "ms-playwright");
@@ -218,7 +230,7 @@ async function main() {
           if (c1.total > c0.total) result[profile][page].cpu_busy = Math.round(((c1.busy - c0.busy) / (c1.total - c0.total)) * 100) / 100;
         } finally {
           await browser.kill();
-          rmSync(userDataDir, { recursive: true, force: true });
+          removeProfile(userDataDir);
         }
         console.error(`${profile} ${page}: ${Math.round((Date.now() - t0) / 100) / 10}s`);
       }

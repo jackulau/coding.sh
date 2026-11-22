@@ -97,8 +97,10 @@ export class Transport {
     return this.flushGaveUp;
   }
 
+  /** queued counts the batch being sent too, so the exit flush still runs while it waits for a retry. */
   stats(): TransportStats {
-    return { queued: this.q.length, sent: this.sent, dropped: this.dropped, failed: this.failed };
+    const c = this.current;
+    return { queued: this.q.length + (c && !c.done ? c.n : 0), sent: this.sent, dropped: this.dropped, failed: this.failed };
   }
 
   /** True when the item was queued; false when it was dropped or the SDK is off or shut down. */
@@ -193,14 +195,7 @@ export class Transport {
   }
 
   private async send(batch: Item[]): Promise<void> {
-    const kind = batch[0]!.kind;
-    const url = `${this.cfg.url}${kind === "event" ? "/v1/ingest" : "/v1/traces"}`;
-    const text = this.body(batch);
-    const gz = await gzip(text);
-    const headers: Record<string, string> = { "content-type": "application/json" };
-    if (gz) headers["content-encoding"] = "gzip";
-    if (this.cfg.key) headers.authorization = `Bearer ${this.cfg.key}`;
-    const doFetch = this.cfg.fetch ?? globalThis.fetch;
+    // Before the first await: from take() on, the batch is always counted in stats().queued.
     const n = batch.length;
     const b: { n: number; done: boolean } = (this.current = { n, done: false });
     const settle = (sent: number, failed: number) => {
@@ -210,6 +205,16 @@ export class Transport {
       this.failed += failed;
       if (sent > 0) this.flushGaveUp = false;
     };
+    const kind = batch[0]!.kind;
+    const url = `${this.cfg.url}${kind === "event" ? "/v1/ingest" : "/v1/traces"}`;
+    const text = this.body(batch);
+    const gz = await gzip(text);
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (gz) headers["content-encoding"] = "gzip";
+    if (this.cfg.key) headers.authorization = `Bearer ${this.cfg.key}`;
+    const doFetch = this.cfg.fetch ?? globalThis.fetch;
+    const gaveUp = (attempt: number, status: number) =>
+      this.warnOnce("gave-up", `[coding.sh] could not reach the server after ${attempt} attempt${attempt === 1 ? "" : "s"} (last status ${status || "network error"}); dropping events`);
 
     for (let attempt = 1; ; attempt++) {
       if (b.done) return; // abandoned by close()
@@ -245,12 +250,14 @@ export class Transport {
       if (b.done) return;
       if (attempt >= MAX_ATTEMPTS || this.closedHard) {
         settle(0, n);
-        this.warnOnce("gave-up", `[coding.sh] could not reach the server after ${attempt} attempts (last status ${status || "network error"}); dropping events`);
+        gaveUp(attempt, status);
         return;
       }
       const delay = wait ?? Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempt - 1));
       if (this.deadline !== undefined && Date.now() + delay >= this.deadline) {
+        // The final flush (exit, shutdown) has no time for another attempt.
         settle(0, n);
+        gaveUp(attempt, status);
         return;
       }
       this.log(`retry ${attempt}/${MAX_ATTEMPTS - 1} in ${Math.round(delay)} ms (status ${status || "network error"})`);
