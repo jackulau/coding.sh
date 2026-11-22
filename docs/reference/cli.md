@@ -398,7 +398,7 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
 - Prints the environment to stdout as export lines; in PowerShell or cmd, as PowerShell's $env: lines, which codingsh proxy env \| Invoke-Expression runs. One line per call goes to stderr.
-- --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
+- --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo or --where: the proxy knows a call's agent, not its repo or the session a query would match. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
 
 ### `coding.sh proxy status`
 
