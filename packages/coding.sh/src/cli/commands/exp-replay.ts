@@ -21,6 +21,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str } from "../common.ts";
 import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import { CliError, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { callOrFail } from "./diff-calls.ts";
@@ -38,7 +39,7 @@ async function gather(c: CommandContext, ctx: Context): Promise<AgentEvent[]> {
     const calls = (await ctx.index.listEvents(first.sessionId, { kinds: ["llm.call"] })).filter((e) => e.source === "proxy" && e.payload.api !== "count_tokens");
     events.push(...calls.slice(-limit));
   }
-  if (!events.length) throw new UsageError("Name the calls to replay, e.g. coding.sh exp replay latest#-1, or --session <id>", { reason: "missing_argument" });
+  if (!events.length) throw new UsageError(`Name the calls to replay, e.g. ${cliCommand(c.env, ["exp", "replay", "latest#-1"])}, or --session <id>`, { reason: "missing_argument" });
   const seen = new Set<string>();
   return events.filter((e) => !seen.has(e.id) && seen.add(e.id));
 }
@@ -125,7 +126,7 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
     if (!hasReplayAuth(p, c.env)) {
       throw new CliError(`exp replay calls the ${p === "anthropic" ? "Anthropic" : "OpenAI"} API with your own key, and $${key} is not set`, {
         reason: "missing_api_key",
-        next: [`export ${key}=…   (the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in $${REPLAY_OAUTH_ENV} works too` : ""})`, "See the cost first: coding.sh exp replay … --dry-run"],
+        next: [`Set your own key (the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in ${REPLAY_OAUTH_ENV} works too` : ""}), or add --dry-run to see the cost first:`, envLine(c.env, key, "…")],
       });
     }
   }

@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { cliCommand } from "../../src/cli/next-steps.ts";
+import { cliCommand, envLine } from "../../src/cli/next-steps.ts";
 import { loadConfig } from "../../src/core/config.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { recorderFor } from "../../src/proxy/index.ts";
@@ -159,5 +159,33 @@ describe("replay --fork: the commands it prints", () => {
     assert.match(r.stderr, /recorded reply was text, and the fork gave no single tool call/);
     const retry = cliCommand(env, ["replay", SESSION, "--step", String(thanks), "--fork", "--with", "CLAUDE.md=my fixed.md", "-k", "3", "--save-case", "forks"]);
     assert.ok(lines(r.stderr).includes(`    ${retry}`), `expected "${retry}" in:\n${r.stderr}`);
+  });
+
+  it("no key: --fork prints the line that sets it in the user's shell, and sends nothing", async () => {
+    const { tool } = await steps();
+    const before = up.seen.length;
+    const r = await cli(["replay", SESSION, "--step", String(tool), "--fork", "--with", "CLAUDE.md=my fixed.md"]);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.equal(up.seen.length, before, "no key: no request");
+    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
+    const set = envLine(env, "ANTHROPIC_API_KEY", "…");
+    assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
+  });
+
+  it("no key: exp replay prints the line that sets it in the user's shell, and sends nothing", async () => {
+    const before = up.seen.length;
+    const r = await cli(["exp", "replay", `${SESSION}#-1`, "--vary", "model=claude-haiku-4-5", "--n", "1"]);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.equal(up.seen.length, before, "no key: no request");
+    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
+    assert.match(r.stderr, /add --dry-run to see the cost first:$/m);
+    const set = envLine(env, "ANTHROPIC_API_KEY", "…");
+    assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
+  });
+
+  it("exp replay with no calls named: the example in the message runs in the user's shell", async () => {
+    const r = await cli(["exp", "replay", "--vary", "model=claude-haiku-4-5"]);
+    assert.equal(r.status, 2, r.stderr + r.stdout);
+    assert.ok(r.stderr.includes(`e.g. ${cliCommand(env, ["exp", "replay", "latest#-1"])}, or --session <id>`), r.stderr);
   });
 });

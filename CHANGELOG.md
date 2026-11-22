@@ -356,6 +356,7 @@ grouped by area, with links to the docs for the details.
 - **Replay.** The replay noise floor line says `first live call 2` when every case-trial went live at the same call, instead of `first live call 2–2 (median 2)`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#3-read-the-result))
 - **Replay.** `replay --fork` prints its keep-this-step command and the retry after `nothing_to_check` with every change flag you gave and `-k`, each argument quoted for your shell. Before, the keep line dropped `--system` and `-k` and left a `--with` path with a space unquoted, and the retry dropped every change flag. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#fork-from-a-step))
 - **Replay.** `replay --fork` on a prompt step says it forks the agent's first call after the prompt, the call it uses. Before, it said the agent's last call before the step. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#fork-from-a-step))
+- **Replay.** With no API key, `replay --fork` and `exp replay` print a line that sets it in the shell you use, a `$env:` line in PowerShell, and the `exp replay` usage example names the CLI the way your shell runs it. Before, PowerShell got a Bash `export` line and `coding.sh`, which fail there. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#errors-exit-1))
 
 ## [0.1.7] - 2026-11-16
 
