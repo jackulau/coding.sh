@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { confirmAboveUsd, parseVariant, renderTree, run, verifyEntries } from "../../src/cli/commands/workflows.ts";
@@ -301,6 +301,37 @@ describe("coding.sh workflows", () => {
     const ok = await cli("run", ["review"], flags);
     assert.equal(ok.code, 0);
     assert.match(ok.stderr, /Validated 1 seeded bug/);
+  });
+
+  it("run and score print each path of a case they refuse in full, and point at --cases only when it was not given", async () => {
+    // A case outside the trees whose bug's patch is inside the snapshot, with paths as a case file may write them.
+    const dir = join(root, "cases-leak");
+    const snap = join(root, "leak-snap");
+    for (const d of [dir, join(root, "leak-repo"), join(snap, "bugs")]) mkdirSync(d, { recursive: true });
+    writeFileSync(join(snap, "bugs", "b1.patch"), BUG_PATCH);
+    const s = root.replaceAll("\\", "/");
+    writeFileSync(join(dir, "s1.toml"), `[start]\nrepoRoot = "${s}/leak-repo"\nsnapshot = "${s}/./leak-snap"\n[[truth.bugs]]\nid = "b1"\nfile = "src/a.ts"\nlines = [2, 2]\npatch = "../leak-snap/bugs/b1.patch"\n`);
+    const refusal = (p: Promise<unknown>) => p.then(() => assert.fail("the cases should be refused"), (e: Error & { reason?: string; next?: string[] }) => e);
+    const variant = [`good=node ${join(root, "fake-wf.mjs")} good`];
+    const ran = await refusal(cli("run", ["review"], { driver: "command", variant, cases: dir, yes: true }));
+    assert.equal(ran.reason, "invalid_cases");
+    assert.equal(ran.message, `Can't read cases from ${dir}: ${join(dir, "s1.toml")}: the patch ${join(snap, "bugs", "b1.patch")} of bug b1 is inside the workflow's tree ${snap}, where its agents could read it; move it to a folder outside repoRoot and snapshot, such as ${join(root, "leak-snap-truth")}, then set its patch to the new path`);
+    assert.ok(!ran.message.includes(sep === "/" ? "\\" : "/"), ran.message);
+    // The message says what to do, and the cases came from --cases: no hint points at --cases again.
+    assert.deepEqual(ran.next, []);
+    const scored = await refusal(cli("score", [RUN], { case: "s1", cases: dir }));
+    assert.equal(scored.message, ran.message);
+    assert.deepEqual(scored.next, []);
+    // Cases from the default folder keep the hint.
+    const missing = await refusal(cli("run", ["no-cases"], { driver: "command", variant, yes: true }));
+    assert.match(missing.message, /^Can't read cases from .*no-cases/);
+    assert.deepEqual(missing.next, ["Point at the cases directory:", "coding.sh workflows run no-cases --cases <dir> --variant …"]);
+    // An empty folder names where a case file goes, with one kind of separator.
+    const empty = join(root, "cases-empty");
+    mkdirSync(empty, { recursive: true });
+    const none = await refusal(cli("run", ["review"], { driver: "command", variant, cases: empty, yes: true }));
+    assert.equal(none.reason, "no_cases");
+    assert.deepEqual(none.next, ["Add cases as TOML files:", join(empty, "<case>.toml")]);
   });
 
   let experimentId = "";

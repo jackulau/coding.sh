@@ -534,6 +534,18 @@ function scoreDeps(c: CommandContext, runId: string | undefined, getJudge?: Scor
   return { cwd: c.cwd, env: c.env, signal: c.signal, ...(runId ? { runId } : {}), ...(slack !== undefined ? { slack } : {}), ...(getJudge ? { getJudge } : {}) };
 }
 
+/**
+ * Cases that would not load. The message says what is wrong and, for a case file, what to do. The
+ * `--cases` hint comes only when the cases came from the default folder: a folder passed with
+ * `--cases` was chosen on purpose.
+ */
+function casesError(dir: string, e: unknown, given: string | undefined, retry: string): CliError {
+  return new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, {
+    reason: "invalid_cases",
+    ...(given === undefined ? { next: ["Point at the cases directory:", retry] } : {}),
+  });
+}
+
 async function score(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
@@ -542,12 +554,13 @@ async function score(c: CommandContext): Promise<number> {
   const { run } = await getRunOrFail(store, id);
   const caseId = str(c.flags.case) ?? run.caseId;
   if (!caseId) throw new UsageError("Pass --case <id>: the run is not part of an experiment", { reason: "missing_value" });
-  const dir = str(c.flags.cases) !== undefined ? resolve(c.cwd, str(c.flags.cases)!) : join(c.cwd, "evals", "workflows", run.name, "cases");
+  const given = str(c.flags.cases);
+  const dir = given !== undefined ? resolve(c.cwd, given) : join(c.cwd, "evals", "workflows", run.name, "cases");
   let cases: WorkflowCase[];
   try {
     cases = await loadCases(dir, run.name, store.blobs);
   } catch (e) {
-    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows score ${run.id} --case ${caseId} --cases <dir>`] });
+    throw casesError(dir, e, given, `coding.sh workflows score ${run.id} --case ${caseId} --cases <dir>`);
   }
   const kase = cases.find((k) => k.id === caseId);
   if (!kase) throw new CliError(`Can't find case ${JSON.stringify(caseId)} in ${dir}`, { reason: "not_found", details: [["cases", cases.map((k) => k.id).join(", ") || "(none)"]] });
@@ -744,14 +757,15 @@ async function runExperiment(c: CommandContext): Promise<number> {
   const split = str(c.flags.split) as WorkflowCase["split"] | undefined;
   if (split !== undefined && split !== "dev" && split !== "heldout") throw new UsageError("--split must be dev or heldout", { reason: "invalid_value" });
   const store = storeOf(c);
-  const dir = str(c.flags.cases) !== undefined ? resolve(c.cwd, str(c.flags.cases)!) : join(c.cwd, "evals", "workflows", workflow, "cases");
+  const given = str(c.flags.cases);
+  const dir = given !== undefined ? resolve(c.cwd, given) : join(c.cwd, "evals", "workflows", workflow, "cases");
   let cases: WorkflowCase[];
   try {
     cases = await loadCases(dir, workflow, store.blobs, split);
   } catch (e) {
-    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows run ${shellQuote(workflow)} --cases <dir> --variant …`] });
+    throw casesError(dir, e, given, `coding.sh workflows run ${shellQuote(workflow)} --cases <dir> --variant …`);
   }
-  if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", `${dir}/<case>.toml`] });
+  if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", join(dir, "<case>.toml")] });
   if (c.flags.validate !== false) await validateCases(c, cases, store, workflow);
   const jobs = scheduleWorkflowJobs(cases, variants, k).length;
   const est = await estimateCost(store, workflow, jobs);
