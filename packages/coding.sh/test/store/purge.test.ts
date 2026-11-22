@@ -2,13 +2,16 @@
 // a blob, a saved fold and the spool ends with no copy anywhere on disk; the index
 // stays intact, search still works and every blob still matches its hash.
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { parseLiterals, purgeWait } from "../../src/cli/commands/purge.ts";
+import { shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
+import { entryBytes, readRecording, recordingPath, writeRecording, type LlmEntry } from "../../src/llmcache/store.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { searchableText } from "../../src/store/common.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
@@ -701,5 +704,188 @@ describe("coding.sh purge with another process reading the blob pack or the inde
     const again = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
     assert.equal(again.oldBytesKept, undefined);
     assert.ok(!packHolds(), "no copy left in pack.db or its WAL");
+  });
+});
+
+// exp run --record / --replay keep model replies in llm-cache/, and snapshots keep
+// the work tree's files in repos/. Purge used to read neither, then print "No copies".
+describe("coding.sh purge in llm-cache recordings and snapshot repos", () => {
+  // A value only a snapshot holds: a file the agent left untracked.
+  const SNAP = "snapshot-only-4471-correct-horse";
+  const OLD = new Date("2026-01-02T03:04:05Z");
+  const RULE = "(hunter2|snapshot-only)-[a-z0-9-]{10,}";
+  let env: TmpEnv;
+  let saved: Record<string, string | undefined> = {};
+  let secrets = "";
+  let llm = "";
+  let rec1 = "";
+  let rec2 = "";
+  let rec3 = "";
+  let torn = "";
+  let leftover = "";
+  let rec2Bytes = Buffer.alloc(0);
+  let shadowA = "";
+  let shadowB = "";
+  let shadowC = "";
+
+  const entry = (ordinal: number, body: string, extra: Partial<LlmEntry> = {}): LlmEntry => ({
+    v: 1,
+    ordinal,
+    provider: "anthropic",
+    path: "/v1/messages",
+    key: String(ordinal).repeat(64),
+    model: "claude-test",
+    status: 200,
+    contentType: "application/json",
+    body,
+    startedAt: 1,
+    latencyMs: 5,
+    ...extra,
+  });
+  const lines = (file: string): LlmEntry[] =>
+    gunzipSync(readFileSync(file))
+      .toString("utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as LlmEntry);
+  const printsNoValue = (text: string) => {
+    for (const v of [SECRET, QUOTED, SNAP]) for (const f of forms(v)) assert.ok(!text.includes(f), "a value was printed");
+  };
+
+  /** A repo with one untracked file, snapshotted: the file's blob lands in the repo's shadow under repos/. */
+  async function repo(name: string, notes: string): Promise<string> {
+    const dir = join(env.root, name);
+    mkdirSync(dir);
+    const init = spawnSync("git", ["init", "-q"], { cwd: dir, encoding: "utf8" });
+    assert.equal(init.status, 0, init.stderr);
+    writeFileSync(join(dir, "notes.txt"), notes);
+    const s = await snapshot(dir, { timeoutMs: 120_000 });
+    assert.ok(s?.snapshot && !s.partial, "the snapshot holds the untracked file");
+    const shadow = shadowRepoPath(dir);
+    assert.ok(existsSync(join(shadow, "HEAD")), "the shadow repo is under repos/");
+    return shadow;
+  }
+
+  before(async () => {
+    env = tmpEnv();
+    saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
+    const gitconfig = join(env.root, "gitconfig");
+    writeFileSync(gitconfig, "[init]\n\tdefaultBranch = main\n");
+    process.env.GIT_CONFIG_GLOBAL = gitconfig;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    await seed(env.dataHome, { sessions: [session("s1")], events: [event("s1", 1, { payload: { text: "nothing to see" } })] });
+    secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n${QUOTED}\n${SNAP}\n`);
+
+    llm = join(env.dataHome, "llm-cache");
+    rec1 = recordingPath(llm, "exp_01", "case-1", 0);
+    await writeRecording(rec1, [
+      entry(1, JSON.stringify({ content: [{ type: "text", text: `use ${SECRET}` }] })),
+      entry(2, `event: content_block_delta\ndata: ${JSON.stringify({ delta: { text: `the password is ${QUOTED}` } })}\n\n`, { contentType: "text/event-stream" }),
+      entry(3, JSON.stringify({ content: [{ type: "text", text: "all clear" }] })),
+      // A tool call's arguments are JSON inside a JSON string: the value is escaped twice in the reply.
+      entry(4, JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { name: "login", arguments: JSON.stringify({ password: QUOTED }) } }] } }] }), {
+        provider: "openai",
+        path: "/v1/chat/completions",
+      }),
+    ]);
+    utimesSync(rec1, OLD, OLD);
+    rec2 = recordingPath(llm, "exp_01", "case-2", 0);
+    await writeRecording(rec2, [entry(1, "nothing to see")]);
+    rec2Bytes = readFileSync(rec2);
+    // A body that is not UTF-8 is stored as base64, so the value is not in its text.
+    rec3 = recordingPath(llm, "exp_01", "case-3", 0);
+    const binary = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SECRET)]).toString("base64");
+    await writeRecording(rec3, [entry(1, binary, { bodyEncoding: "base64", contentType: "application/octet-stream" })]);
+    // A recording cut short, and the temp file of a run that crashed before its rename: no replay reads either.
+    const whole = gzipSync(JSON.stringify(entry(1, `use ${SECRET}`)) + "\n");
+    torn = recordingPath(llm, "exp_01", "case-4", 0);
+    writeFileSync(torn, whole.subarray(0, whole.length - 4));
+    leftover = `${rec1}.4242.abc123.tmp`;
+    writeFileSync(leftover, whole);
+
+    shadowA = await repo("repo-a", `token ${SNAP}\n`);
+    shadowB = await repo("repo-b", `{"password": ${JSON.stringify(QUOTED)}}\n`);
+    // Packed objects are read through git: a pack stores deltas.
+    const pack = spawnSync("git", ["--git-dir", shadowB, "repack", "-a", "-d", "-l", "-q"], { encoding: "utf8" });
+    assert.equal(pack.status, 0, pack.stderr);
+    assert.ok(readdirSync(join(shadowB, "objects", "pack")).some((f) => f.endsWith(".pack")), "repo-b's snapshot is packed");
+    shadowC = await repo("repo-c", "nothing to see\n");
+  });
+  after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    env.restore();
+  });
+
+  test("--rule finds values that only a recording or a snapshot holds", () => {
+    const r = ok(["purge", "--rule", RULE, "--dry-run", "--json"]);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ruleMatches, 2);
+    assert.equal(j.recordings, 2);
+    assert.equal(j.recordingsDeleted, 2);
+    assert.deepEqual(j.snapshotRepos.map((s: { path: string }) => s.path), [shadowA]);
+    printsNoValue(r.stdout + r.stderr);
+  });
+
+  test("--dry-run counts the recordings to scrub, the files to delete and the snapshot repos, and changes nothing", () => {
+    const r = ok(["purge", "--literal", secrets, "--dry-run", "--json"]);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.recordings, 2);
+    assert.equal(j.recordingsDeleted, 2);
+    const repos = j.snapshotRepos as { path: string; root?: string }[];
+    assert.deepEqual(repos.map((s) => s.path), [shadowA, shadowB].sort());
+    assert.deepEqual(repos.map((s) => basename(s.root ?? "")).sort(), ["repo-a", "repo-b"]);
+    const text = ok(["purge", "--literal", secrets, "--dry-run"]);
+    assert.match(text.stderr, /Recordings\s+would scrub 2 recordings of model calls \(llm-cache\)/);
+    assert.match(text.stderr, /would delete 2 torn or leftover files/);
+    assert.equal(text.stderr.match(/Snapshots\s+/g)?.length, 2);
+    assert.match(text.stderr, /Dry run: nothing changed/);
+    printsNoValue(r.stdout + r.stderr + text.stdout + text.stderr);
+    assert.equal(statSync(rec1).mtimeMs, OLD.getTime());
+    assert.ok(existsSync(torn) && existsSync(leftover));
+    assert.ok(holds(gunzipSync(readFileSync(rec1)), SECRET));
+  });
+
+  test("rewrites the recordings with their keys and times kept, deletes the torn and leftover files, and names the snapshot repos", async () => {
+    const r = cli(["purge", "--literal", secrets]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Recordings\s+scrubbed 2 recordings of model calls \(llm-cache\)/);
+    assert.match(r.stderr, /deleted 2 torn or leftover files/);
+    assert.ok(r.stderr.includes(shadowA) && r.stderr.includes(shadowB), r.stderr);
+    assert.match(r.stderr, /purge does not rewrite/);
+    assert.doesNotMatch(r.stderr, /Rotate the secret|No copies/);
+    printsNoValue(r.stdout + r.stderr);
+
+    assert.deepEqual(files(llm).sort(), [rec1, rec2, rec3].sort(), "the torn and leftover files are gone, and no temp file is left");
+    assert.deepEqual(readFileSync(rec2), rec2Bytes, "a recording without the values is left as it was");
+    assert.equal(statSync(rec1).mtimeMs, OLD.getTime(), "gc's least-recently-used order holds");
+    const one = lines(rec1);
+    const [first, second, , fourth] = one;
+    assert.ok(first && second && fourth);
+    assert.equal(JSON.parse(first.body).content[0].text, `use ${PURGE_MARKER}`);
+    assert.ok(second.body.includes(`the password is ${PURGE_MARKER}`));
+    assert.deepEqual(JSON.parse(JSON.parse(fourth.body).choices[0].message.tool_calls[0].function.arguments), { password: PURGE_MARKER });
+    assert.deepEqual(one.map((e) => e.redacted), [true, true, undefined, true]);
+    assert.deepEqual(one.map((e) => e.key), ["1", "2", "3", "4"].map((d) => d.repeat(64)), "replay keys are kept");
+    const three = lines(rec3)[0];
+    assert.ok(three);
+    assert.equal(three.body, "");
+    assert.equal(three.bodyEncoding, undefined);
+    assert.equal(three.redacted, true);
+    for (const f of [rec1, rec2, rec3]) for (const e of lines(f)) for (const v of [SECRET, QUOTED]) assert.ok(!holds(entryBytes(e), v), `${f} still holds a value`);
+    assert.equal((await readRecording(rec1))?.length, 4, "the scrubbed recording still replays");
+    assert.ok(existsSync(shadowA) && existsSync(shadowB), "snapshot repos are reported, not changed");
+  });
+
+  test("once the named snapshot repos are deleted, purge finds no copies", () => {
+    rmSync(shadowA, { recursive: true, force: true });
+    rmSync(shadowB, { recursive: true, force: true });
+    const r = ok(["purge", "--literal", secrets]);
+    assert.match(r.stderr, /No copies of these values in the store/);
+    assert.doesNotMatch(r.stderr, /Snapshots/);
+    assert.ok(existsSync(shadowC), "a snapshot repo without the values stays");
   });
 });

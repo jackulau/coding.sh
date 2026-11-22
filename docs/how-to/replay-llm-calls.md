@@ -123,6 +123,8 @@ dropping the least recently used recordings first.
   stores the replies, since you asked for a recording, and prints a line that says so.
 - The stored task spec drops environment variables whose names look like secrets (`KEY`, `TOKEN`,
   `SECRET`, …).
+- `coding.sh purge` rewrites a recording that holds a leaked value, keeping its replay keys. See
+  [Remove a leaked secret](../guides/privacy.md#remove-a-leaked-secret).
 
 ## If something goes wrong
 

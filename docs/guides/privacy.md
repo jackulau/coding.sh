@@ -180,14 +180,16 @@ expression; write the shape, not the secret, because it sits on the command line
 coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
 ```
 
-Every copy becomes `[redacted:purged]`:
+Purge looks in each of these places:
 
 | Where | What purge does |
 | --- | --- |
-| Events and the search index | Replaces the value. |
-| Session titles and stats, labels, eval docs, settings | Replaces the value. |
+| Events and the search index | Replaces the value with `[redacted:purged]`. |
+| Session titles and stats, labels, eval docs, settings | Replaces the value with `[redacted:purged]`. |
 | Blobs | Rewrites them under a new hash, and every reference follows. |
 | Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
+| Recorded model calls (`llm-cache/`) | Rewrites each recording that holds the value, keeping its replay keys, so it still replays. Deletes a torn recording or a leftover temp file that holds it. |
+| Snapshots (`repos/`) | Names each snapshot repo that holds the value, and exits 1 until you delete it. It does not rewrite snapshots. |
 | `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |
 
@@ -200,9 +202,13 @@ history and git are not touched.
   old bytes until it closes. Purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS`) and names
   the file. Close it and purge again.
 - **A backup can't be deleted.** Purge names it. Delete it by hand.
+- **A snapshot repo holds the value.** Sessions and eval tasks name a snapshot by its commit id,
+  and a rewrite would change it, so purge names the folder under `repos/` instead. Delete it and
+  purge again. Then `coding.sh show` leaves out the file changes of sessions in that repo, and
+  eval tasks that start from its snapshots can't run.
 - **The database or its search index is damaged.** Purge checks both after it runs.
-- A run's `.git` folder and files over 64 MB are left alone. A `--rule` that matches empty text or
-  more than 10,000 distinct values is refused.
+- A run's `.git` folder is left alone, and files and snapshot objects over 64 MB are not read. A
+  `--rule` that matches empty text or more than 10,000 distinct values is refused.
 :::
 
 ## Next steps
