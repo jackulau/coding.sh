@@ -15,7 +15,7 @@ import { loadCases } from "../../workflows/cases.ts";
 import { replayWorkflow } from "../../workflows/replay.ts";
 import { scoreWorkflowCase, verifyEntries, type CaseScore, type ScoreCaseDeps } from "../../workflows/score/case.ts";
 import { validateCase } from "../../workflows/seed/bugs.ts";
-import { WorkflowStore } from "../../workflows/store.ts";
+import { WorkflowStore, type RunFilter } from "../../workflows/store.ts";
 import { DETAIL_KINDS, runSummary } from "../../workflows/viewer.ts";
 import { buildWorkflowTree, markStalled } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
@@ -28,7 +28,7 @@ import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } 
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
-import { ago, clean, CliError, duration, LABEL_WIDTH, plural, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, CliError, duration, LABEL_WIDTH, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const FRAMEWORKS: WorkflowFramework[] = ["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command", "vercel-workflow", "temporal", "inngest", "restate", "dbos"];
@@ -150,20 +150,21 @@ async function listRuns(c: CommandContext): Promise<number> {
       for (const e of r.errors.slice(0, 3)) out.warn(`Couldn't import ${e.path}: ${e.error}`);
     }
   }
-  const runs = await storeOf(c).listRuns({
-    ...(framework ? { framework: framework as WorkflowFramework } : {}),
-    ...(str(c.flags.name) ? { name: str(c.flags.name)! } : {}),
-    ...(str(c.flags.experiment) ? { experimentId: str(c.flags.experiment)! } : {}),
-    ...(since !== undefined ? { since } : {}),
-    limit,
-  });
+  // The filters other than --since, which the empty state looks past.
+  const filter: RunFilter = {};
+  if (framework) filter.framework = framework as WorkflowFramework;
+  if (str(c.flags.name)) filter.name = str(c.flags.name)!;
+  if (str(c.flags.experiment)) filter.experimentId = str(c.flags.experiment)!;
+  const store = storeOf(c);
+  const query: RunFilter = { ...filter, limit };
+  if (since !== undefined) query.since = since;
+  const runs = await store.listRuns(query);
   if (out.json) {
     out.data({ runs: runs.map(runJson), pending });
     return 0;
   }
   if (!runs.length) {
-    out.note("No workflow runs");
-    out.next("Import the workflow runs in your Claude Code projects, or in a run directory", "coding.sh workflows import [path]");
+    await emptyList(out, store, filter, since);
     return 0;
   }
   const tty = out.stdoutTTY;
@@ -181,6 +182,38 @@ async function listRuns(c: CommandContext): Promise<number> {
     ]),
   );
   return 0;
+}
+
+/**
+ * What `workflows list` says when nothing matched. With no filter, the store is empty: say how to import runs. With
+ * --since, say when the newest older run started and how to list it; with another filter that matches no run, how to
+ * list every run.
+ */
+async function emptyList(out: Output, store: WorkflowStore, filter: RunFilter, since: number | undefined): Promise<void> {
+  const what: string[] = [];
+  if (filter.name !== undefined) what.push(`named ${JSON.stringify(clean(filter.name))}`);
+  if (filter.framework !== undefined) what.push(`from ${filter.framework}`);
+  if (filter.experimentId !== undefined) what.push(`in experiment ${JSON.stringify(clean(filter.experimentId))}`);
+  if (since !== undefined) what.push(`since ${localTime(since)}`);
+  out.note(["No workflow runs", ...what].join(" "));
+  if (since !== undefined) {
+    // None in the window: the same filters without it, newest first.
+    const older = await store.listRuns(filter);
+    if (older.length) {
+      out.note(`${plural(older.length, "older run")}; the newest started ${ago(older[0]!.startedAt)}`);
+      let cmd = "coding.sh workflows list";
+      if (filter.name !== undefined) cmd += ` --name ${shellQuote(filter.name)}`;
+      if (filter.framework !== undefined) cmd += ` --framework ${filter.framework}`;
+      if (filter.experimentId !== undefined) cmd += ` --experiment ${shellQuote(filter.experimentId)}`;
+      out.next("See older runs", cmd);
+      return;
+    }
+  }
+  if (what.length && (await store.listRuns({ limit: 1 })).length) {
+    out.next("List every workflow run", "coding.sh workflows list");
+    return;
+  }
+  out.next("Import the workflow runs in your Claude Code projects, or in a run directory", "coding.sh workflows import [path]");
 }
 
 async function importRuns(c: CommandContext): Promise<number> {

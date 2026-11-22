@@ -89,6 +89,29 @@ describe("coding.sh workflows", () => {
     assert.match(r.stderr, /No workflow runs/);
   });
 
+  it("list with nothing in the --since window says so, when the newest run started, and how to list older runs", async () => {
+    // A store of its own, holding only the two imported runs: both started on 2026-11-01, before the last 7 days.
+    const e = { CODING_SH_HOME: join(root, "since-home") };
+    const r = await cli("list", [], { since: "7d" }, { env: e });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /No workflow runs since \w{3} \d+/);
+    assert.match(r.stderr, /2 older runs; the newest started \w{3} \d+/);
+    assert.match(r.stderr, /See older runs:\n {4}coding\.sh workflows list\n/);
+    assert.doesNotMatch(r.stderr, /workflows import/);
+    // The other filters stay in the command.
+    const named = await cli("list", [], { since: "7d", name: "review", framework: "claude-code-workflow", import: false }, { env: e });
+    assert.match(named.stderr, /No workflow runs named "review" from claude-code-workflow since \w{3} \d+/);
+    assert.match(named.stderr, /coding\.sh workflows list --name review --framework claude-code-workflow\n/);
+    // A filter that matches no run at all points at every run, not at an import.
+    const none = await cli("list", [], { name: "nope", import: false }, { env: e });
+    assert.match(none.stderr, /No workflow runs named "nope"\n/);
+    assert.match(none.stderr, /List every workflow run:\n {4}coding\.sh workflows list\n/);
+    assert.doesNotMatch(none.stderr, /workflows import/);
+    // JSON stays an empty list.
+    assert.deepEqual((await json("list", [], { since: "7d", import: false }, e)).runs, []);
+  });
+
   it("import reports skipped and forced re-imports", async () => {
     const again = await json("import", [join(root, "claude", "projects")]);
     assert.equal(again.found, 2);
