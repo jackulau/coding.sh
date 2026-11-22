@@ -150,6 +150,12 @@ function keygen(c: CommandContext): number {
 }
 
 function defaultHealthUrl(c: CommandContext): string {
+  // --port names the server's port, as `serve --port` set it; a bad one is a usage error, not a silent fallback.
+  const flag = num(c.flags.port);
+  if (flag !== undefined) {
+    if (!Number.isInteger(flag) || flag < 1 || flag > 65535) throw new UsageError(`--port must be 1-65535, got ${flag}`, { reason: "invalid_value" });
+    return `http://127.0.0.1:${flag}/healthz`;
+  }
   let port = DEFAULT_SERVE_PORT;
   try {
     port = resolve(c).port;

@@ -294,6 +294,8 @@ export function parseAge(v: string, flag: string): number {
 export function positiveInt(v: FlagValue, name: string): number | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1) throw new UsageError(`--${name} must be an integer of at least 1, got ${JSON.stringify(v)}`);
+  // Past 2^53 - 1 the number has lost digits (and SQLite rejects it as a LIMIT): a usage error, not a crash.
+  if (!Number.isSafeInteger(v)) throw new UsageError(`--${name} must be an integer from 1 to ${Number.MAX_SAFE_INTEGER}, got ${JSON.stringify(v)}`);
   return v;
 }
 

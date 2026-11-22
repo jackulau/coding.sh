@@ -606,6 +606,13 @@ export async function estimateCost(store: WorkflowStore, workflow: string, jobs:
   return { perRun, total: perRun * jobs, basis: costs.length };
 }
 
+/** Why there is no estimate: no past run, or past runs that recorded no cost (the command driver records none). */
+export function noEstimateText(jobs: number, workflow: string, pastRuns: number): string {
+  if (!pastRuns) return `${plural(jobs, "run")}; no past runs of ${workflow} to estimate cost from`;
+  const past = pastRuns >= 50 ? "50 or more past runs" : plural(pastRuns, "past run");
+  return `${plural(jobs, "run")}; ${past} of ${workflow} recorded no cost to estimate from`;
+}
+
 async function confirmCost(c: CommandContext, what: string, est: number | undefined, rerun: string): Promise<void> {
   const limit = confirmAboveUsd(c.env);
   if (est !== undefined && est <= limit) return;
@@ -683,7 +690,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   const jobs = scheduleWorkflowJobs(cases, variants, k).length;
   const est = await estimateCost(store, workflow, jobs);
   if (est) out.note(`Estimated cost ${usd(est.total)} (${plural(jobs, "run")} × median ${usd(est.perRun)} over ${plural(est.basis, "past run")})`);
-  else out.note(`${plural(jobs, "run")}; no past runs of ${workflow} to estimate cost from`);
+  else out.note(noEstimateText(jobs, workflow, (await store.listRuns({ name: workflow, limit: 50 })).length));
   await confirmCost(c, `Run ${plural(jobs, "workflow run")}`, est?.total, `coding.sh workflows run ${shellQuote(workflow)} … --yes`);
   const driver = driverFor(c, driverKind);
   if (loadConfig({ env: c.env }).capture.mode === "metadata") out.warn(`capture.mode is "metadata", but workflow runs keep what their agents return, redacted, so they can be scored`);

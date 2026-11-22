@@ -18,7 +18,13 @@ before(() => {
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 
-const world = (name: string, o: Parameters<typeof improveWorld>[2]) => improveWorld(root, name, o);
+// SHELL set: the commands these tests read are the sh forms (`coding.sh ...`) on Windows too; a
+// PowerShell or cmd run names codingsh (test/cli/qa-r9-cli.test.ts).
+const world = async (name: string, o: Parameters<typeof improveWorld>[2]) => {
+  const w = await improveWorld(root, name, o);
+  w.env.SHELL ??= "/bin/sh";
+  return w;
+};
 
 function cli(w: World, args: string[]) {
   const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: w.repo, env: w.env, encoding: "utf8" });
@@ -148,14 +154,44 @@ describe("cli improve", () => {
     assert.equal(git("commit", "-qm", "drop CLAUDE.md").status, 0);
     const r = cli(w, ["improve", "fix", "1"]);
     assert.equal(r.status, 0, r.stderr);
-    const step = `${r.stdout}\n${r.stderr}`.split("\n").map((l) => l.trim()).find((l) => l.startsWith("git "));
-    assert.ok(step, `a git step is printed:\n${r.stdout}${r.stderr}`);
+    // One `&&` line for sh; in PowerShell or cmd (windowsShell) one line per command.
+    const steps = `${r.stdout}\n${r.stderr}`.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("git "));
+    assert.ok(steps.length, `a git step is printed:\n${r.stdout}${r.stderr}`);
     // Run it up to the improve check, with an identity for the commit.
-    const commit = step!.replace(/ && coding\.sh improve check$/, "");
+    const commit = steps.map((l) => l.replace(/ && coding\.sh improve check$/, "")).join(" && ");
     const env = { ...w.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
     const run = spawnSync("sh", ["-c", commit], { cwd: w.repo, env, encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
     assert.equal(git("status", "--porcelain").stdout.trim(), "");
+  });
+
+  it("improve fix's commit step: one && line for sh; in PowerShell or cmd one command per line, quoted by quoteArg", async () => {
+    const { commitSteps } = await import("../../src/cli/commands/improve.ts");
+    const { quoteArg } = await import("../../src/cli/next-steps.ts");
+    const msg = "CLAUDE.md: says it is done without running anything to check";
+    const sh = commitSteps("CLAUDE.md", msg, { SHELL: "/bin/bash" }, "linux");
+    assert.deepEqual(sh.map(([, c]) => c), [`git add CLAUDE.md && git commit -m '${msg}' && coding.sh improve check`]);
+    const win = commitSteps("docs/My Rules.md", msg, {}, "win32");
+    assert.deepEqual(win.map(([, c]) => c), [`git add ${quoteArg("docs/My Rules.md", {}, "win32")}`, `git commit -m ${quoteArg(msg, {}, "win32")}`, "coding.sh improve check"]);
+    assert.deepEqual(win.map(([, c]) => c), ['git add "docs/My Rules.md"', `git commit -m "${msg}"`, "coding.sh improve check"]);
+    assert.ok(win.every(([, c]) => !c.includes("&&")), "PowerShell 5.1 has no &&");
+    // Git Bash on Windows is sh: one line again.
+    assert.equal(commitSteps("CLAUDE.md", msg, { MSYSTEM: "MINGW64" }, "win32").length, 1);
+  });
+
+  it("improve check: when every session after a change is headless, it says how many were left out and names --headless", async () => {
+    const w = await world("headless-after", { afterFlagged: 0, plan: { before: [{ test: true }, { test: true }, { test: true }], after: [{ headless: true }, { headless: true }] } });
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /No sessions yet: [^\n]*\n\s+Left out: 2 headless sessions after it \(claude -p, an Agent SDK, codex exec\); --headless counts them/);
+    assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless/);
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; headlessLeftOut?: number }[] };
+    const ch = j.changes.find((c) => c.commit === w.commits.rule)!;
+    assert.deepEqual([ch.verdict, ch.headlessLeftOut], ["no-sessions-after", 2]);
+    const all = JSON.parse(cli(w, ["improve", "check", "--json", "--headless"]).stdout) as typeof j;
+    const counted = all.changes.find((c) => c.commit === w.commits.rule)!;
+    assert.notEqual(counted.verdict, "no-sessions-after");
+    assert.equal(counted.headlessLeftOut, undefined);
   });
 
   it("improve check exits 1 on a regression and 0 otherwise", async () => {

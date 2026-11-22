@@ -310,9 +310,18 @@ async function show(c: CommandContext): Promise<number> {
     out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));
-    out.row("Sessions", `${shortId(item.primaryId)}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
-    for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
-    if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${shortId(item.primaryId)}`, "faint"));
+    if (item.workflow) {
+      // A workflow run's agents are siblings under its orchestrator, not children of the first one, and the
+      // orchestrator's tree holds every run it made: the item's own --json lists exactly these.
+      const members = [byId.get(item.primaryId), ...children].filter((s): s is Session => !!s);
+      out.row("Sessions", `${plural(item.sessionIds.length, "agent")} of run ${item.workflow.id}`, "none", true);
+      for (const s of members.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
+      if (members.length > 10) out.print(out.style(`    and ${members.length - 10} more: ${out.command(`coding.sh work show ${item.id} --json`)}`, "faint"));
+    } else {
+      out.row("Sessions", `${shortId(item.primaryId)}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
+      for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
+      if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${shortId(item.primaryId)}`, "faint"));
+    }
     out.row("Next", nextText(item.next), "none", true);
     return 0;
   });

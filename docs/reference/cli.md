@@ -16,7 +16,7 @@ Every command accepts these.
 | `--debug` |  | Show stack traces on errors. |
 | `-h, --help` |  | Show help. |
 | `--store <URL>` |  | Read and write this index store instead of the configured one (also CODING_SH_STORE_URL); skips auto-ingest. |
-| `--blobs <URL>` |  | Blob store to use with --store (also CODING_SH_BLOB_URL; a postgres:// index keeps blobs in the same DB) |
+| `--blobs <URL>` |  | Read and write this blob store instead of the configured one, with or without --store (also CODING_SH_BLOB_URL; a postgres:// --store keeps blobs in the same DB) |
 | `-v, --version` |  | Print the version. |
 
 ## Output and exit codes
@@ -498,10 +498,12 @@ coding.sh serve healthcheck [options]
 | Option | Default | Description |
 |---|---|---|
 | `--url <URL>` |  | URL to probe (default http://127.0.0.1:&lt;port&gt;/healthz) |
+| `-p, --port <PORT>` |  | The port of the default URL (default CODING_SH_PORT, PORT, serve.port in the config, or 4318) |
 | `--timeout <MS>` | `3000` | Give up after this many milliseconds. |
 
 ```sh
 coding.sh serve healthcheck
+coding.sh serve healthcheck --port 8080
 coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz
 ```
 

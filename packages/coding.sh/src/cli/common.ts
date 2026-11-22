@@ -1,6 +1,7 @@
 // Helpers shared by command modules (loaded only after dispatch).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { ConfigEnvError, ConfigError } from "../core/config.ts";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX } from "../core/session-ref.ts";
@@ -46,9 +47,21 @@ export function storeOpenError(e: unknown, env: NodeJS.ProcessEnv): CliError {
   if (e instanceof StoreVersionError) return storeVersionError(e);
   if (e instanceof StoreNewerError) return storeNewerError(e, env);
   if (e instanceof StoreMissingError) return new CliError(e.message, { reason: e.reason, next: e.next, data: { path: e.path } });
+  // A config.toml that does not load for a key outside [store] ([capture], [snapshot], invalid TOML…): the
+  // file is the problem, as `config get` says, not the store it names.
+  if (e instanceof ConfigError && !(e instanceof ConfigEnvError) && !configStoreKey(e)) {
+    const file = e.file ?? paths(env).config;
+    return new CliError(`Can't read config: ${e.message}`, { reason: "invalid_config", next: ["Fix the file at:", file] });
+  }
   // NoFts5Error (store/sqlite.ts, not loaded here until a store opens).
   if (e instanceof Error && (e as { reason?: unknown }).reason === "no_fts5") return new CliError(`Couldn't open the coding.sh store: ${e.message}`, { reason: "no_fts5", next: ["Install Node 22.16 or newer"] });
   return new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, { reason: "store_unavailable", next: storeOpenNext(env, e) });
+}
+
+/** Whether a config error is about the [store] section (its keys, or the store URL they make). */
+function configStoreKey(e: ConfigError): boolean {
+  const msg = e.file && e.message.startsWith(`${e.file}: `) ? e.message.slice(e.file.length + 2) : e.message;
+  return /^(\[store\]|store\b)/.test(msg);
 }
 
 /** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */

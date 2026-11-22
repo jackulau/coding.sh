@@ -182,7 +182,7 @@ export const GLOBAL_FLAGS: FlagSpec[] = [
   { name: "debug", type: "boolean", desc: "Show stack traces on errors" },
   { name: "help", short: "h", type: "boolean", desc: "Show help" },
   { name: "store", type: "string", value: "<URL>", desc: "Read and write this index store instead of the configured one (also CODING_SH_STORE_URL); skips auto-ingest" },
-  { name: "blobs", type: "string", value: "<URL>", desc: "Blob store to use with --store (also CODING_SH_BLOB_URL; a postgres:// index keeps blobs in the same DB)" },
+  { name: "blobs", type: "string", value: "<URL>", desc: "Read and write this blob store instead of the configured one, with or without --store (also CODING_SH_BLOB_URL; a postgres:// --store keeps blobs in the same DB)" },
 ];
 
 export const COMMANDS: CommandSpec[] = [
@@ -425,9 +425,10 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Exit 0 when the server answers 200, 1 otherwise (Docker HEALTHCHECK)",
         flags: [
           { name: "url", type: "string", value: "<URL>", desc: "URL to probe (default http://127.0.0.1:<port>/healthz)" },
+          { name: "port", short: "p", type: "number", value: "<PORT>", desc: "The port of the default URL (default CODING_SH_PORT, PORT, serve.port in the config, or 4318)" },
           { name: "timeout", type: "number", value: "<MS>", desc: "Give up after this many milliseconds", default: "3000" },
         ],
-        examples: ["coding.sh serve healthcheck", "coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz"],
+        examples: ["coding.sh serve healthcheck", "coding.sh serve healthcheck --port 8080", "coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz"],
       },
     ],
     examples: [

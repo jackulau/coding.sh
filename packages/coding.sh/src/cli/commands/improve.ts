@@ -16,7 +16,8 @@ import type { Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, list, oneLine, pendingField, readIngest, shellQuote, str, withContext } from "../common.ts";
+import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
+import { quoteArg, windowsShell } from "../next-steps.ts";
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
@@ -109,15 +110,19 @@ export async function run(c: CommandContext): Promise<number> {
 
 // ---------------------------------------------------------------- report
 
-function issueJson(i: Issue, n: number, provider: ModelProvider | undefined) {
+/** A command as printed: `coding.sh` named for the user's shell (Output.command). */
+type Cmd = (line: string) => string;
+const asIs: Cmd = (line) => line;
+
+function issueJson(i: Issue, n: number, provider: ModelProvider | undefined, cmd: Cmd) {
   const { sessionIds: _ids, ...rest } = i;
-  return { rank: n, ...rest, next: stepsFor(i, n, { provider }) };
+  return { rank: n, ...rest, next: stepsFor(i, n, { provider }).map((s) => ({ ...s, command: cmd(s.command) })) };
 }
 
 /** A group's counts, with every flagged session (id, ISO start, title, flags). */
 const groupJson = ({ work: _work, ...g }: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: new Date(s.startedAt).toISOString(), ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
 
-export function changeJson(e: ChangeEffect) {
+export function changeJson(e: ChangeEffect, cmd: Cmd = asIs) {
   return {
     commit: e.change.commit,
     at: new Date(e.change.at).toISOString(),
@@ -132,7 +137,7 @@ export function changeJson(e: ChangeEffect) {
     after: groupJson(e.after),
     rules: e.rules.map((r) => ({ ...r, ...(r.p !== undefined ? { p: Math.round(r.p * 1000) / 1000 } : {}) })),
     ...(e.work ? { work: workJson(e.work) } : {}),
-    ...(removalStep(e) ? { next: removalStep(e)!.command } : {}),
+    ...(removalStep(e) ? { next: cmd(removalStep(e)!.command) } : {}),
   };
 }
 
@@ -182,7 +187,7 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
   if (idle) out.print(`${indent}  ${out.style(`Left out: ${plural(idle, "session")} with no tool call (${e.before.idle ?? 0} before, ${e.after.idle ?? 0} after), such as a chat or an agent that was not logged in`, "faint")}`);
   const list = e.after.flaggedSessions;
   if (!o.flagged || !list.length) return;
-  out.print(`${indent}  Still flagged after it, ${e.after.flagged} of ${plural(e.after.sessions, "session")} (coding.sh show <id>):`);
+  out.print(`${indent}  Still flagged after it, ${e.after.flagged} of ${plural(e.after.sessions, "session")} (${out.command("coding.sh show <id>")}):`);
   for (const s of list.slice(0, o.flagged)) out.print(`${indent}    ${s.id}  ${localTime(s.startedAt)}  ${s.flags.join(", ")}${s.title ? `  ${JSON.stringify(oneLine(s.title, 50))}` : ""}`);
   if (list.length > o.flagged) out.print(`${indent}    ${out.style(`… ${list.length - o.flagged} more (--sessions lists them all)`, "faint")}`);
 }
@@ -201,12 +206,13 @@ async function report(c: CommandContext): Promise<number> {
     const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
+    const cmd: Cmd = (line) => out.command(line);
     if (out.json) {
       out.data({
         scope: { repo: o.place?.repo ?? o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, subagents: children || undefined, notRead: notRead || undefined, headlessLeftOut: headlessLeftOut || undefined },
-        issues: top.map((i, k) => issueJson(i, k + 1, provider)),
+        issues: top.map((i, k) => issueJson(i, k + 1, provider, cmd)),
         more: Math.max(0, issues.length - top.length),
-        changes: changes.map(changeJson),
+        changes: changes.map((e) => changeJson(e, cmd)),
         ...pendingField(backlog),
       });
       return 0;
@@ -238,10 +244,10 @@ async function report(c: CommandContext): Promise<number> {
         out.print("   Fix, costliest cause first:");
         for (const k of i.causes) out.print(`     ${k.cause} (${k.usd ? `$${k.usd.toFixed(2)}, ` : ""}${plural(k.breaks, "break")}): ${k.fix}`);
       } else if (!i.quietSince) out.print(`   Fix: ${i.fix}${i.rule ? ` Add: "${i.rule}"` : ""}`);
-      for (const s of stepsFor(i, n, { provider })) out.print(`   ${out.style("→", "faint")} ${s.label}: ${out.style(s.command, "cyan")}`);
+      for (const s of stepsFor(i, n, { provider })) out.print(`   ${out.style("→", "faint")} ${s.label}: ${out.style(cmd(s.command), "cyan")}`);
       out.print("");
     });
-    if (issues.length > top.length) out.print(`${plural(issues.length - top.length, "more issue")}: coding.sh improve --limit ${issues.length}\n`);
+    if (issues.length > top.length) out.print(`${plural(issues.length - top.length, "more issue")}: ${cmd(`coding.sh improve --limit ${issues.length}`)}\n`);
     if (changes.length) {
       out.print(out.style("Did your last changes help?", "bold"));
       for (const e of changes) printChange(c, e);
@@ -254,7 +260,7 @@ async function report(c: CommandContext): Promise<number> {
     if (top[0]?.quietSince) out.next("Nothing new since your last change; see whether it helped", "coding.sh improve check");
     else if (top[0]?.rule) out.next("Start with the first one", `coding.sh improve fix 1`);
     else if (top[0]?.examples[0]) out.next("Start with the first one", `coding.sh show ${top[0].examples[0].sessionId}`);
-    if (top.length) out.note("Turn these sessions into an eval you can rerun: coding.sh eval init --sessions");
+    if (top.length) out.note(`Turn these sessions into an eval you can rerun: ${cmd("coding.sh eval init --sessions")}`);
     return 0;
   });
 }
@@ -297,7 +303,7 @@ async function fix(c: CommandContext): Promise<number> {
     const test = behavior ? abCommand(behavior, provider) : undefined;
     if (out.json) {
       if (!present && !dryRun) writeFileSync(abs, after);
-      out.data({ issue: { rank: n, id: issue.id, title: issue.title }, file: relative(root, abs) || target, line: issue.rule, changed: !present && !dryRun, alreadyPresent: present, dryRun, ...(test ? { test } : {}), check: "coding.sh improve check" });
+      out.data({ issue: { rank: n, id: issue.id, title: issue.title }, file: relative(root, abs) || target, line: issue.rule, changed: !present && !dryRun, alreadyPresent: present, dryRun, ...(test ? { test: out.command(test) } : {}), check: out.command("coding.sh improve check") });
       return 0;
     }
     if (present) {
@@ -318,14 +324,27 @@ async function fix(c: CommandContext): Promise<number> {
       if (hasKey) out.next(`Test it on the ${issue.sessions > 1 ? "moments" : "moment"} it went wrong (A = committed, B = your edit)${onPlan}`, test);
       else {
         out.note("");
-        out.note(`Testing the edit on past sessions (${test}) ${NEEDS_MODEL}.`);
+        out.note(`Testing the edit on past sessions (${out.command(test)}) ${NEEDS_MODEL}.`);
         out.note("Without any of them: commit it and let new sessions tell you.");
       }
     }
-    // git add first: `git commit <path>` refuses a file fix just created (untracked).
-    out.next("Keep it: commit, then check new sessions against it", `git add ${shellQuote(target)} && git commit -m ${shellQuote(`${target}: ${issue.title.toLowerCase()}`)} && coding.sh improve check`);
+    for (const [label, command] of commitSteps(target, `${target}: ${issue.title.toLowerCase()}`, c.env)) out.next(label, command);
     return 0;
   });
+}
+
+/**
+ * The next steps after improve fix: stage the file, commit it, check new sessions against it. git
+ * add comes first: `git commit <path>` refuses a file fix just created (untracked). One `&&` line
+ * for sh; PowerShell 5.1 and cmd (windowsShell) get one command per step, each argument quoted
+ * for them (quoteArg), since PowerShell 5.1 has no `&&`.
+ */
+export function commitSteps(target: string, message: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): [label: string, command: string][] {
+  const add = `git add ${quoteArg(target, env, platform)}`;
+  const commit = `git commit -m ${quoteArg(message, env, platform)}`;
+  const check = "coding.sh improve check";
+  if (!windowsShell(env, platform)) return [["Keep it: commit, then check new sessions against it", `${add} && ${commit} && ${check}`]];
+  return [["Keep it: stage the file", add], ["Commit it", commit], ["Then check new sessions against it", check]];
 }
 
 /**
@@ -368,7 +387,7 @@ async function check(c: CommandContext): Promise<number> {
     }
     if (out.json) {
       const changes = first.changes.map((e) => {
-        const j: ReturnType<typeof changeJson> & { headlessLeftOut?: number } = changeJson(e);
+        const j: ReturnType<typeof changeJson> & { headlessLeftOut?: number } = changeJson(e, (line) => out.command(line));
         const n = leftOut.get(e.change.commit);
         if (n) j.headlessLeftOut = n;
         return j;

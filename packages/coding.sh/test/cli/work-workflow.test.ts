@@ -80,6 +80,9 @@ describe("work on a workflow run", () => {
     assert.match(r.stdout, /research: 2 done {2}\$0\.25/);
     assert.match(r.stdout, /lead:sub:c {2}failed {2}build:c/);
     assert.match(r.stdout, /lead:sub:d {2}running {2}build:d/);
+    // The run's agents, not "lead:sub:a and 3 children": they are siblings under the lead.
+    assert.match(r.stdout, /Sessions +4 agents of run run-1\n/);
+    assert.doesNotMatch(r.stdout, /Sessions .*children/);
     const j = await runCmd(work, sb, { action: "show", positionals: [RUN], json: true });
     assert.deepEqual(j.json.workflowAgents.map((a: { sessionId: string; state: string; phase: string }) => [a.sessionId, a.phase, a.state]), [
       ["lead:sub:a", "research", "done"],
