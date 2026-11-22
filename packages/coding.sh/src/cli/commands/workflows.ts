@@ -29,6 +29,7 @@ import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } 
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
+import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX } from "../../core/session-ref.ts";
 import { ago, clean, CliError, duration, LABEL_WIDTH, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -81,19 +82,52 @@ export function confirmAboveUsd(env: NodeJS.ProcessEnv): number {
   return env.CODING_SH_CONFIRM_ABOVE_USD !== undefined && env.CODING_SH_CONFIRM_ABOVE_USD !== "" && Number.isFinite(v) && v >= 0 ? v : 1;
 }
 
-async function getRunOrFail(store: WorkflowStore, id: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
-  const r = await store.getRun(id);
-  if (!r) throw new CliError(`Can't find workflow run ${JSON.stringify(id)}`, { reason: "not_found", next: ["List workflow runs:", "coding.sh workflows list"] });
+/**
+ * The stored run `ref` names: its id, or a prefix of at least MIN_ID_PREFIX characters that one
+ * run's id starts with, matched as session ids are (core/session-ref.ts matchRef). Undefined when
+ * none matches; a prefix several runs share fails, listing them.
+ */
+async function findRun(store: WorkflowStore, ref: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] } | undefined> {
+  const exact = await store.getRun(ref);
+  if (exact || ref.length < MIN_ID_PREFIX) return exact;
+  const runs = await store.listRuns();
+  const m = matchRef(new IdSet(runs.map((r) => r.id)), ref);
+  if (!m) return undefined;
+  if ("id" in m) return store.getRun(m.id);
+  const ids = new Set(m.ambiguous);
+  throw ambiguousRunError(ref, runs.filter((r) => ids.has(r.id)));
+}
+
+/** A prefix several runs share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
+function ambiguousRunError(ref: string, runs: WorkflowRun[]): CliError {
+  const shown = runs.slice(0, MAX_CANDIDATES);
+  const lines = shown.map((r) => `  ${r.id}  ${oneLine(clean(r.name), 40)}  ${r.status}  ${ago(r.startedAt)}`);
+  if (runs.length > shown.length) lines.push(`  …and more`);
+  return new CliError(`Workflow run id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Pass one of these ids, more of the id, or list workflow runs:", "coding.sh workflows list"],
+    data: { candidates: shown.map((r) => ({ id: r.id, name: r.name, status: r.status, startedAt: new Date(r.startedAt).toISOString() })), more: runs.length > shown.length },
+  });
+}
+
+function runNotFound(ref: string): CliError {
+  const short = ref.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+  return new CliError(`Can't find workflow run ${JSON.stringify(ref)}${short}`, { reason: "not_found", next: ["List workflow runs:", "coding.sh workflows list"] });
+}
+
+async function getRunOrFail(store: WorkflowStore, ref: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
+  const r = await findRun(store, ref);
+  if (!r) throw runNotFound(ref);
   return r;
 }
 
 /**
- * A stored workflow run, else the tree of a captured durable workflow session
+ * A stored workflow run (findRun), else the tree of a captured durable workflow session
  * (OTLP spans from Vercel Workflow, Temporal, …: Session.stats.durable), built
  * from its events on the fly.
  */
 async function getRunOrSession(c: CommandContext, id: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
-  const stored = await storeOf(c).getRun(id);
+  const stored = await findRun(storeOf(c), id);
   if (stored) return stored;
   const fromSession = await withContext(c, async (ctx) => {
     const s = await resolveSession(ctx, id).catch(() => undefined);
@@ -101,7 +135,8 @@ async function getRunOrSession(c: CommandContext, id: string): Promise<{ run: Wo
     const spans = (await ctx.index.listEvents(s.id)).filter((e) => e.spanId);
     return spans.length ? buildWorkflowTree({ spans, runId: s.id }) : undefined;
   });
-  return fromSession ?? getRunOrFail(storeOf(c), id);
+  if (!fromSession) throw runNotFound(id);
+  return fromSession;
 }
 
 function wallOf(run: WorkflowRun): number | undefined {
@@ -322,15 +357,19 @@ async function refreshRunning(c: CommandContext, id: string): Promise<void> {
 
 async function show(c: CommandContext): Promise<number> {
   const { out } = c;
-  const id = c.positionals[0];
-  if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const ref = c.positionals[0];
+  if (!ref) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const store = storeOf(c);
+  // A prefix names its run first: the refresh reads the run by its whole id.
+  const id = (await findRun(store, ref))?.run.id ?? ref;
   await refreshRunning(c, id);
   const { run, nodes } = await getRunOrSession(c, id);
   const stalled = run.status === "running" ? markStalled(nodes, Date.now(), (n) => transcriptMtime(run, n)) : 0;
   const gantt = buildGantt(run, nodes);
   if (out.json) {
     const full = c.flags.tree === true;
-    out.data({ run: { ...runJson(run), stats: run.stats }, nodes: full ? nodes : nodes.filter((n) => !DETAIL_KINDS.has(n.kind)), ...(c.flags.gantt === true ? { gantt } : {}) });
+    const output = await storedOutput(store, run);
+    out.data({ run: { ...runJson(run), stats: run.stats, output: output ?? null }, nodes: full ? nodes : nodes.filter((n) => !DETAIL_KINDS.has(n.kind)), ...(c.flags.gantt === true ? { gantt } : {}) });
     return 0;
   }
   if (c.flags.gantt === true) {
@@ -360,9 +399,36 @@ async function show(c: CommandContext): Promise<number> {
     if (resumes.length) bits.push(`resumed after ${resumes.join(", ")}`);
     out.row("Durable", bits.join(", "));
   }
+  const output = await storedOutput(store, run);
+  if (output !== undefined) {
+    // The first lines, the first on the row and the rest under it, as for Error.
+    const lines = clean(typeof output === "string" ? output : JSON.stringify(output, null, 2)).replace(/\n+$/, "").split("\n");
+    const cut = (l: string) => (l.length > OUTPUT_LINE_CHARS ? `${l.slice(0, OUTPUT_LINE_CHARS - 1)}…` : l);
+    out.row("Output", cut(lines[0] ?? ""));
+    for (const l of lines.slice(1, OUTPUT_LINES)) out.note(`${" ".repeat(LABEL_WIDTH)}${cut(l)}`);
+    if (lines.length > OUTPUT_LINES) out.note(out.style(`${" ".repeat(LABEL_WIDTH)}… ${plural(lines.length - OUTPUT_LINES, "more line", "more lines")} (--json for all)`, "faint", "err"));
+  }
   out.note();
   for (const l of renderTree(nodes, c.flags.tree === true)) out.print(l);
   return 0;
+}
+
+/** Lines of a run's output `show` prints, and characters of each, before --json for the rest. */
+const OUTPUT_LINES = 6;
+const OUTPUT_LINE_CHARS = 160;
+
+/**
+ * What the run returned, as stored (redacted) in the workflow store: undefined when it stored
+ * nothing (a run that returned nothing, capture.mode "metadata" on import, a durable session's
+ * tree) or the blob is gone.
+ */
+async function storedOutput(store: WorkflowStore, run: WorkflowRun): Promise<unknown> {
+  if (!run.output) return undefined;
+  try {
+    return await store.getValue(run.output);
+  } catch {
+    return undefined;
+  }
 }
 
 /** When a Claude Code agent's transcript was last written (its file's mtime), read at show time. */
@@ -468,6 +534,26 @@ function scoreDeps(c: CommandContext, runId: string | undefined, getJudge?: Scor
   return { cwd: c.cwd, env: c.env, signal: c.signal, ...(runId ? { runId } : {}), ...(slack !== undefined ? { slack } : {}), ...(getJudge ? { getJudge } : {}) };
 }
 
+/**
+ * Cases that would not load. The message says what is wrong and, for a case file, what to do. The
+ * `--cases` hint comes when the cases came from the default folder, or when `--cases` named no
+ * folder (a file, or nothing there): a folder passed with `--cases` was chosen on purpose.
+ */
+function casesError(dir: string, e: unknown, given: string | undefined, retry: string): CliError {
+  return new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, {
+    reason: "invalid_cases",
+    next: given === undefined || !isFolder(dir) ? ["Point at the cases directory:", retry] : [],
+  });
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function score(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
@@ -476,12 +562,13 @@ async function score(c: CommandContext): Promise<number> {
   const { run } = await getRunOrFail(store, id);
   const caseId = str(c.flags.case) ?? run.caseId;
   if (!caseId) throw new UsageError("Pass --case <id>: the run is not part of an experiment", { reason: "missing_value" });
-  const dir = str(c.flags.cases) !== undefined ? resolve(c.cwd, str(c.flags.cases)!) : join(c.cwd, "evals", "workflows", run.name, "cases");
+  const given = str(c.flags.cases);
+  const dir = given !== undefined ? resolve(c.cwd, given) : join(c.cwd, "evals", "workflows", run.name, "cases");
   let cases: WorkflowCase[];
   try {
     cases = await loadCases(dir, run.name, store.blobs);
   } catch (e) {
-    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows score ${run.id} --case ${caseId} --cases <dir>`] });
+    throw casesError(dir, e, given, `coding.sh workflows score ${run.id} --case ${caseId} --cases <dir>`);
   }
   const kase = cases.find((k) => k.id === caseId);
   if (!kase) throw new CliError(`Can't find case ${JSON.stringify(caseId)} in ${dir}`, { reason: "not_found", details: [["cases", cases.map((k) => k.id).join(", ") || "(none)"]] });
@@ -678,14 +765,15 @@ async function runExperiment(c: CommandContext): Promise<number> {
   const split = str(c.flags.split) as WorkflowCase["split"] | undefined;
   if (split !== undefined && split !== "dev" && split !== "heldout") throw new UsageError("--split must be dev or heldout", { reason: "invalid_value" });
   const store = storeOf(c);
-  const dir = str(c.flags.cases) !== undefined ? resolve(c.cwd, str(c.flags.cases)!) : join(c.cwd, "evals", "workflows", workflow, "cases");
+  const given = str(c.flags.cases);
+  const dir = given !== undefined ? resolve(c.cwd, given) : join(c.cwd, "evals", "workflows", workflow, "cases");
   let cases: WorkflowCase[];
   try {
     cases = await loadCases(dir, workflow, store.blobs, split);
   } catch (e) {
-    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows run ${shellQuote(workflow)} --cases <dir> --variant …`] });
+    throw casesError(dir, e, given, `coding.sh workflows run ${shellQuote(workflow)} --cases <dir> --variant …`);
   }
-  if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", `${dir}/<case>.toml`] });
+  if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", join(dir, "<case>.toml")] });
   if (c.flags.validate !== false) await validateCases(c, cases, store, workflow);
   const jobs = scheduleWorkflowJobs(cases, variants, k).length;
   const est = await estimateCost(store, workflow, jobs);
@@ -888,12 +976,13 @@ function printCompare(out: Output, r: ReturnType<typeof compareWorkflowVariants>
 
 async function replay(c: CommandContext): Promise<number> {
   const { out } = c;
-  const id = c.positionals[0];
-  if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const ref = c.positionals[0];
+  if (!ref) throw new UsageError("Missing <run>", { reason: "missing_argument" });
   const scriptFlag = str(c.flags.script);
   if (!scriptFlag) throw new UsageError("Pass --script <path> (the edited workflow script)", { reason: "missing_value" });
   const store = storeOf(c);
-  const base = await getRunOrFail(store, id);
+  const base = await getRunOrFail(store, ref);
+  const id = base.run.id;
   const script = resolve(c.cwd, scriptFlag);
   let editedScript: string;
   try {
