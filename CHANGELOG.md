@@ -304,6 +304,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The Quickstart's `coding.sh run` sample shows the line `run` prints (`the command ran 573ms, exit 0`), and its `show` sample, the OpenTelemetry page's samples and the SDK tracing guide's sample print a count of one as the CLI does: `1 file changed`, `1 tool call`. ([docs](https://coding.sh/docs/quickstart))
 - **Docs.** Every docs page that shows `npx coding.sh` also gives `npx -p coding.sh codingsh`, the form that runs on Windows. The Install page gives the PowerShell line that deletes `~/.coding.sh`, and each Quickstart prompt tells an agent on Windows to run `codingsh` in PowerShell and cmd. ([docs](https://coding.sh/docs/install#uninstall))
 - **Doctor.** `coding.sh doctor` no longer counts a fast model's calls, such as one served by Cerebras or Groq, as past physical limits. A model whose calls usually top 500 output tokens a second is held to 10,000; any other model is still held to 500. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
+- **CLI.** `init` waits up to 15 s, not 5 s, for `opencode --version` when it picks which OpenCode plugin to write, as `doctor` does, and `doctor` waits as long for `gemini --version`. Before, on a busy machine init could write the 2.x plugin for OpenCode 1.x and remove the 1.x one. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-init))
 
 ## [0.1.7] - 2026-11-16
 
