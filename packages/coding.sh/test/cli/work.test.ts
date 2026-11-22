@@ -229,6 +229,63 @@ describe("work and work show agree on one item", () => {
   });
 });
 
+describe("work show, ack and snooze take a prefix of an item id", () => {
+  let sb: Sandbox;
+  // The items of s12 and s58 have ids that share their first 4 characters; no other id starts as review's does.
+  const [a, b] = ["s12", "s58"];
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([sess(a, 20 * MIN, { title: "first of a pair" }), sess(b, 10 * MIN, { title: "second of a pair" }), sess("review", 30 * MIN, { title: "fix the flaky test", stats: { filesChanged: 1 } })]);
+  });
+  after(() => sb.cleanup());
+
+  test("a prefix of 4 characters or more that one item's id starts with names that item", async () => {
+    const id = workItemId("review");
+    const r = await runCmd(work, sb, { action: "show", positionals: [id.slice(0, 4)], json: true });
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.equal(r.json.id, id);
+    const text = await runCmd(work, sb, { action: "show", positionals: [id.slice(0, 6)] });
+    assert.equal(text.error, undefined, text.error?.stack);
+    assert.match(text.stdout, new RegExp(`^${id} {2}fix the flaky test\\n`));
+    const z = await runCmd(work, sb, { action: "snooze", positionals: [id.slice(0, 5), "2h"], json: true });
+    assert.equal(z.error, undefined, z.error?.stack);
+    assert.equal(z.json.id, id);
+  });
+
+  test("a prefix two items' ids share lists both, newest first, and exits 1", async () => {
+    const prefix = workItemId(a).slice(0, 4);
+    assert.equal(workItemId(b).slice(0, 4), prefix, "the pair's ids share a prefix");
+    const r = await runCmd(work, sb, { action: "show", positionals: [prefix] });
+    assert.ok(r.error instanceof CliError, String(r.error));
+    assert.equal(r.error.exitCode, 1);
+    assert.equal(r.error.reason, "ambiguous");
+    assert.match(r.error.message, new RegExp(`^Work item id prefix "${prefix}" is ambiguous\\. It matches:\\n {2}${workItemId(b)} {2}claude-code {2}\\d+m ago {2}second of a pair\\n {2}${workItemId(a)} {2}claude-code {2}\\d+m ago {2}first of a pair$`));
+    assert.deepEqual(r.error.next, ["Pass one of these ids, more of the id, or list work items:", "coding.sh work --all --since 7d"]);
+    const data = r.error.data as { candidates: { id: string; agent: string; startedAt: string; title: string | null }[]; more: boolean };
+    assert.deepEqual(data, {
+      candidates: [
+        { id: workItemId(b), agent: "claude-code", startedAt: new Date(now - 10 * MIN).toISOString(), title: "second of a pair" },
+        { id: workItemId(a), agent: "claude-code", startedAt: new Date(now - 20 * MIN).toISOString(), title: "first of a pair" },
+      ],
+      more: false,
+    });
+    const ack = await runCmd(work, sb, { action: "ack", positionals: [prefix], json: true });
+    assert.equal(ack.error?.reason, "ambiguous");
+  });
+
+  test("a shorter prefix, or one no item's id starts with, is not found", async () => {
+    const short = await runCmd(work, sb, { action: "show", positionals: [workItemId("review").slice(0, 3)] });
+    assert.ok(short.error instanceof CliError, String(short.error));
+    assert.equal(short.error.reason, "not_found");
+    assert.match(short.error.message, /^Can't find work item "w[0-9a-f]{2}" since 7d \(an id prefix needs at least 4 characters\)$/);
+    assert.ok(![a, b, "review"].some((s) => workItemId(s).startsWith("w000")), "no id starts with w000");
+    const miss = await runCmd(work, sb, { action: "show", positionals: ["w000"] });
+    assert.ok(miss.error instanceof CliError, String(miss.error));
+    assert.equal(miss.error.reason, "not_found");
+    assert.equal(miss.error.message, `Can't find work item "w000" since 7d`);
+  });
+});
+
 describe("the CLI on an imported workflow run", () => {
   const PROJECTS = fileURLToPath(new URL("../fixtures/workflows/claude-code-running/projects", import.meta.url));
   const ROOT = "5a1d7c3e-0b2f-4c6d-9e8f-1a2b3c4d5e6f";
