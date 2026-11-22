@@ -166,10 +166,15 @@ export interface ArmAttrition {
    * Trials lost to infrastructure: those still on an infra error after their
    * retries (a refused login, a failed setup, a rate limit; outcome unknown,
    * counted in `ungraded`), plus task errors that look like infrastructure
-   * (timeouts, spawn failures, network, HTTP 429/5xx).
+   * (network timeouts such as ETIMEDOUT, spawn failures, network, HTTP 429/5xx).
    */
   infra: number;
-  /** The task errors that do not look like infrastructure (the agent crashed or exited non-zero). */
+  /**
+   * Task errors where the agent ran out of time (the trial timeout): the agent
+   * was too slow, so they are neither infra nor re-run. Absent when none.
+   */
+  timedOut?: number;
+  /** The task errors that are neither infrastructure nor a timeout (the agent crashed or exited non-zero). */
   agent: number;
   /** Grader errors and trials still on an infra error after their retries: outcome unknown, left out. */
   ungraded: number;
@@ -186,18 +191,38 @@ export interface Attrition {
   p: number;
   /** Set when p < ATTRITION_ALPHA: one arm lost noticeably more trials. */
   warning?: string;
+  /**
+   * Set when the arms' timeout counts differ (Fisher p < TIMEOUT_ALPHA, or 0
+   * against TIMEOUT_MIN or more): the cases each arm timed out on, and a note
+   * that the verdict depends on the time limit.
+   */
+  timeouts?: { a: string[]; b: string[]; p: number; note: string };
 }
+
+/** Fisher p below which the arms' timeout counts differ. */
+export const TIMEOUT_ALPHA = 0.1;
+/** Timeouts in one arm against none in the other that differ whatever the p. */
+export const TIMEOUT_MIN = 3;
 
 const INFRA = /time[sd]? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|could not start|spawn|ENOMEM|killed by SIG|HTTP (429|5\d\d)\b|rate.?limit|overloaded/i;
 
-/** Whether a task error message looks like infrastructure rather than the agent. */
+/** The trial timeout (`exp run --trial-timeout`, a task's own limit): the agent ran out of time. */
+const TRIAL_TIMEOUT = /trial timeout|agent timed out|timed out after \d+ ?ms/i;
+
+/** Whether a task error is the agent running out of time, not a network timeout (ETIMEDOUT) or a provider's. */
+export function isTimeoutError(message: string): boolean {
+  return TRIAL_TIMEOUT.test(message) && !/ETIMEDOUT/.test(message);
+}
+
+/** Whether a task error message looks like infrastructure rather than the agent. A trial timeout is the agent's. */
 export function isInfraError(message: string): boolean {
-  return INFRA.test(message);
+  return !isTimeoutError(message) && INFRA.test(message);
 }
 
 function armAttrition(runs: readonly CaseRun[], missing: number): ArmAttrition {
   let errored = 0;
   let infraErrors = 0;
+  let timedOut = 0;
   let infraUnknown = 0;
   let ungraded = 0;
   for (const r of runs) {
@@ -207,11 +232,44 @@ function armAttrition(runs: readonly CaseRun[], missing: number): ArmAttrition {
       ungraded++;
     } else if (r.error !== undefined) {
       errored++;
-      if (isInfraError(r.error)) infraErrors++;
+      if (isTimeoutError(r.error)) timedOut++;
+      else if (isInfraError(r.error)) infraErrors++;
     } else if (r.ungraded) ungraded++;
   }
   const lost = errored + ungraded + missing;
-  return { runs: runs.length + missing, completed: runs.length - errored - ungraded, errored, infra: infraErrors + infraUnknown, agent: errored - infraErrors, ungraded, missing, lost };
+  const out: ArmAttrition = {
+    runs: runs.length + missing,
+    completed: runs.length - errored - ungraded,
+    errored,
+    infra: infraErrors + infraUnknown,
+    agent: errored - infraErrors - timedOut,
+    ungraded,
+    missing,
+    lost,
+  };
+  if (timedOut) out.timedOut = timedOut;
+  return out;
+}
+
+/** The case ids an arm timed out on, sorted. */
+function timedOutCases(runs: readonly CaseRun[]): string[] {
+  return [...new Set(runs.filter((r) => !r.infra && r.error !== undefined && isTimeoutError(r.error)).map((r) => r.caseId))].sort();
+}
+
+/** The timeout note when the arms' timeout counts differ; undefined otherwise. */
+function timeoutContrast(a: ArmAttrition, b: ArmAttrition, runsA: readonly CaseRun[], runsB: readonly CaseRun[]): Attrition["timeouts"] {
+  const ta = a.timedOut ?? 0;
+  const tb = b.timedOut ?? 0;
+  if (ta === tb) return undefined;
+  const p = fisherExact(ta, a.runs - ta, tb, b.runs - tb);
+  if (!(p < TIMEOUT_ALPHA || (Math.min(ta, tb) === 0 && Math.max(ta, tb) >= TIMEOUT_MIN))) return undefined;
+  const ids = { a: timedOutCases(runsA), b: timedOutCases(runsB) };
+  const list = (xs: string[]) => (xs.length > 10 ? `${xs.slice(0, 10).join(", ")}, … ${xs.length - 10} more` : xs.join(", "));
+  const side = (name: string, t: number, runs: number, xs: string[]) => `${name} timed out on ${t} of ${runs} trials${xs.length ? ` (${list(xs)})` : ""}`;
+  const note =
+    `timeouts differ by arm: ${side("A", ta, a.runs, ids.a)}, ${side("B", tb, b.runs, ids.b)} (Fisher p=${p < 0.001 ? "<0.001" : p.toFixed(3)}); ` +
+    `they count as fails, so the verdict depends on the time limit: rerun with a larger --trial-timeout to see whether it holds`;
+  return { ...ids, p, note };
 }
 
 /**
@@ -672,8 +730,10 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     attrition.warning =
       `uneven attrition: A lost ${attA.lost} of ${attA.runs} trials, B lost ${attB.lost} of ${attB.runs} (Fisher p=${attrition.p < 0.001 ? "<0.001" : attrition.p.toFixed(3)}); ` +
       `lost trials are not missing at random, so the paired result may be biased` +
-      (infra ? `. ${infra} task error(s) look like infrastructure (timeout, network, HTTP 429/5xx): re-run those cases before trusting the verdict` : "");
+      (infra ? `. ${infra} task error(s) look like infrastructure (network, HTTP 429/5xx): re-run those cases before trusting the verdict` : "");
   }
+  const timeouts = timeoutContrast(attA, attB, a.runs, b.runs);
+  if (timeouts) attrition.timeouts = timeouts;
   const wa = weightsOf(a);
   const wb = weightsOf(b);
   const out: Comparison = {

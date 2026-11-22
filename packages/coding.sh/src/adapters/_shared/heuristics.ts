@@ -1,6 +1,9 @@
 // Heuristics over tool calls: test-runner summaries from shell output, file
 // changes from edit tools and apply_patch envelopes.
 
+import { isVerifyCommand } from "../../core/sessions.ts";
+import { stripHeredocs } from "../../core/shell-diff.ts";
+
 export interface TestSummary {
   runner: string;
   passed: number;
@@ -20,6 +23,239 @@ export const TEST_COMMAND_RE =
 
 export function isTestCommand(cmd: string | undefined): boolean {
   return !!cmd && TEST_COMMAND_RE.test(cmd);
+}
+
+/** Runner shapes isVerifyCommand leaves out: cargo nextest, and a package manager's options or workspace before `test`. */
+const RUNS_TESTS_EXTRA = /\bcargo\s+nextest\b|\b(?:npm|pnpm|yarn|bun)\s+(?:\S+\s+)*?(?:run\s+)?test(?::[\w:-]+)?(?=\s|$)|\b(?:turbo|nx|lerna)\s+(?:run\s+)?test\b/i;
+/** Commands that print, list or search text: a stage they start runs nothing, whatever its arguments name. */
+const READERS = new Set(["cat", "tac", "head", "tail", "less", "more", "bat", "nl", "strings", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk", "cut", "sort", "uniq", "wc", "jq", "echo", "printf", "ls", "dir", "type", "gc", "get-content", "select-string", "sls", "findstr", "write-output", "write-host"]);
+const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
+/** Shell keywords that open a compound command: the stage is judged by the command after them (`until grep …; do sleep 15; done`). */
+const KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "while", "until", "do", "done", "!", "{", "}"]);
+/** A log or text file a command reads or writes: its name (`ci-tsc.log`) names no command. */
+const LOG_FILE = /\.(?:log|txt|out|err)$/i;
+/** A shell that runs a heredoc's body as commands (`bash <<EOF`): its body is not data. */
+const SHELL_HEREDOC = /(?:^|[\s;&|(])(?:bash|sh|zsh|dash|pwsh|powershell)(?:\.exe)?\b[^\n]*<<(?!<)/m;
+
+/** A command split into its stages on |, &&, ||, ;, & and line breaks outside quotes. */
+function shellStages(cmd: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q: string | undefined;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (q) {
+      cur += c;
+      if (c === "\\" && q === '"' && i + 1 < cmd.length) cur += cmd[++i];
+      else if (c === q) q = undefined;
+    } else if (c === '"' || c === "'") {
+      q = c;
+      cur += c;
+    } else if (c === "\\" && i + 1 < cmd.length) {
+      cur += c + cmd[++i]; // an escaped character, or a line continuation
+    } else if (c === "|" || c === "&" || c === ";" || c === "\n" || c === "\r") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+interface Word {
+  raw: string;
+  value: string;
+  quoted: boolean;
+}
+
+/** A stage's words: quoted strings as one word (unquoted in `value`), and where each starts. */
+function stageWords(stage: string): (Word & { at: number })[] {
+  const out: (Word & { at: number })[] = [];
+  for (const m of stage.matchAll(/"((?:[^"\\]|\\.)*)"?|'([^']*)'?|[^\s"']+/g)) {
+    const quoted = m[1] !== undefined || m[2] !== undefined;
+    out.push({ raw: m[0], value: quoted ? (m[1] ?? m[2])! : m[0], quoted, at: m.index });
+  }
+  return out;
+}
+
+const exeName = (w: string): string => w.replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
+
+/**
+ * Whether one stage runs tests or checks: past env assignments, cd, time and timeout <n>, a shell
+ * launcher (powershell/pwsh -Command, bash/sh -c, cmd /c) is judged by the command it runs; a
+ * stage that starts with a reader (cat, tail, grep, Get-Content, …) runs nothing; else the stage,
+ * its quoted strings removed, must name a test or check command.
+ */
+function stageRunsTests(stage: string, depth: number): boolean {
+  const s = stage.replace(/^[({!\s]+/, "");
+  const words = stageWords(s);
+  let i = 0;
+  for (;;) {
+    const w = words[i];
+    if (!w || w.quoted) break;
+    const name = w.value.toLowerCase();
+    if (ENV_ASSIGN.test(w.value) || name === "env" || name === "time" || KEYWORDS.has(name)) i++;
+    else if (name === "cd" || name === "pushd" || name === "set-location" || name === "sl") i += 2;
+    else if (name === "timeout") {
+      i++;
+      while (words[i] && /^-/.test(words[i]!.value)) i++;
+      if (words[i] && DURATION.test(words[i]!.value)) i++;
+    } else break;
+  }
+  const first = words[i];
+  if (!first) return false;
+  const rest = words.slice(i + 1);
+  const name = exeName(first.value);
+  // The launcher's command: a quoted last word as its text, else the stage from that word on.
+  const argAfter = (flag: RegExp): string | undefined => {
+    const k = rest.findIndex((w) => !w.quoted && flag.test(w.value));
+    const next = k < 0 ? undefined : rest[k + 1];
+    if (!next) return undefined;
+    return next.quoted && k + 2 === rest.length ? next.value : s.slice(next.at);
+  };
+  if (depth < 4 && (name === "powershell" || name === "pwsh")) {
+    const arg = argAfter(/^[-/](?:c|command)$/i);
+    if (arg !== undefined) return runsTestsAt(arg, depth + 1);
+  } else if (depth < 4 && (name === "bash" || name === "sh" || name === "zsh" || name === "dash")) {
+    const k = rest.findIndex((w) => !w.quoted && /^-[a-z]*c[a-z]*$/.test(w.value));
+    if (k >= 0 && rest[k + 1]) return runsTestsAt(rest[k + 1]!.value, depth + 1);
+  } else if (depth < 4 && name === "cmd") {
+    const arg = argAfter(/^\/[ck]$/i);
+    if (arg !== undefined) return runsTestsAt(arg, depth + 1);
+  }
+  if (READERS.has(name)) return false;
+  const bare = words.slice(i).filter((w, k) => !w.quoted && (k === 0 || !LOG_FILE.test(w.value))).map((w) => w.raw).join(" ");
+  return isVerifyCommand(bare) || RUNS_TESTS_EXTRA.test(bare);
+}
+
+const runsTestsAt = (cmd: string, depth: number): boolean => shellStages(cmd).some((st) => stageRunsTests(st, depth));
+
+/**
+ * Whether a shell command runs tests or checks, so its output can carry a test result: some
+ * stage of it (split on |, &&, ||, ; and line breaks outside quotes) does, by isVerifyCommand.
+ * `tail -50 ci.log`, `grep -n "test result" log` and `Get-Content test.log` run none;
+ * `npm test 2>&1 | tail -40` and `powershell -Command "npm test"` do. A heredoc's body is data
+ * (`python3 - <<'EOF' … EOF`, even one cut off before its end), unless a shell reads it.
+ */
+export function runsTests(cmd: string | undefined): boolean {
+  if (!cmd) return false;
+  return runsTestsAt(SHELL_HEREDOC.test(cmd) ? cmd : stripHeredocs(cmd), 0);
+}
+
+// ------------------------------------------------- shell calls that change no files here
+
+/** Programs that write no file in the working tree (a redirect aside): readers, and shell built-ins. */
+const QUIET = new Set([...READERS, "pwd", "true", "false", "test", "[", "export", "set", "unset", "which", "where", "date", "sleep", "mkdir", "cd", "pushd", "popd", "exit", "whoami", "hostname", "uname"]);
+/** git subcommands that leave the working tree as it is. */
+const GIT_READS = new Set(["status", "log", "diff", "show", "fetch", "rev-parse", "merge-base", "ls-files", "ls-remote", "ls-tree", "blame", "describe", "shortlog", "grep", "remote", "config", "rev-list", "cat-file", "for-each-ref", "show-ref", "reflog", "version", "help", "branch"]);
+/** gh commands that read: `gh auth token`, `gh run view`, `gh pr view 12`. */
+const GH_READ = /^(?:auth|run|api|status|search|(?:pr|issue|repo|release)\s+(?:view|list|checks|diff|status))\b/;
+const QUIET_TARGET = /^(?:\/dev\/null|nul|\$null|&\d)$/i;
+
+/** A stage's shell words: quoted and unquoted parts written together (`a='b c'`) are one word. */
+function shellWords(stage: string): Word[] {
+  const out: (Word & { end: number })[] = [];
+  for (const w of stageWords(stage)) {
+    const prev = out[out.length - 1];
+    if (prev && prev.end === w.at) {
+      prev.raw += w.raw;
+      prev.value += w.value;
+      prev.quoted ||= w.quoted;
+      prev.end += w.raw.length;
+    } else out.push({ raw: w.raw, value: w.value, quoted: w.quoted, end: w.at + w.raw.length });
+  }
+  return out;
+}
+
+/** Whether one stage writes no file: no redirect to a file, and a quiet program (or a shell running quiet stages). */
+function stageQuiet(stage: string, depth: number): boolean {
+  const words = shellWords(stage.replace(/^[({!\s]+/, ""));
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!;
+    const r = w.quoted ? null : /^\d*>>?(.*)$/.exec(w.value);
+    if (r && !QUIET_TARGET.test(r[1] || words[k + 1]?.value || "")) return false;
+  }
+  let i = 0;
+  for (;;) {
+    const w = words[i];
+    if (!w || w.quoted) break;
+    const name = w.value.toLowerCase();
+    if (ENV_ASSIGN.test(w.value) || name === "env" || name === "time" || KEYWORDS.has(name)) i++;
+    else if (name === "timeout") {
+      i++;
+      while (words[i] && /^-/.test(words[i]!.value)) i++;
+      if (words[i] && DURATION.test(words[i]!.value)) i++;
+    } else break;
+  }
+  const first = words[i];
+  if (!first) return true;
+  const name = exeName(first.value);
+  const args = words.slice(i + 1).map((w) => w.value);
+  if (name === "bash" || name === "sh" || name === "zsh" || name === "dash") {
+    const k = args.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
+    return depth < 4 && k >= 0 && args[k + 1] !== undefined && quietAt(args[k + 1]!, depth + 1);
+  }
+  if (name === "git") {
+    let k = 0;
+    while (args[k] !== undefined && args[k]!.startsWith("-")) k += args[k] === "-c" || args[k] === "-C" ? 2 : 1;
+    return GIT_READS.has(args[k] ?? "");
+  }
+  if (name === "gh") return GH_READ.test(args.join(" "));
+  if (name === "sed") return !args.some((a) => /^-[a-z]*i|^--in-place/.test(a));
+  return QUIET.has(name);
+}
+
+const quietAt = (cmd: string, depth: number): boolean =>
+  shellStages(stripHeredocs(cmd).replace(/\d*>&\d+|&>|>&/g, (m) => (m === "&>" || m === ">&" ? ">" : " "))).every((st) => stageQuiet(st, depth));
+
+/**
+ * Whether a shell command writes no file: every stage runs a program that only reads, waits or
+ * prints (cat, grep, git status, git fetch, gh auth token, mkdir, sleep, …) and redirects nowhere
+ * but /dev/null. A file a dirty-tree diff shows changed after such a command was changed by
+ * another process. Unknown programs count as writers.
+ */
+export function writesNothing(cmd: string): boolean {
+  return quietAt(cmd, 0);
+}
+
+/** A directory as one form: forward slashes, no trailing slash, Git Bash's /c/… as c:/…, a drive path lower-cased. */
+function dirKey(p: string): string {
+  let s = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const m = /^\/([a-zA-Z])(?=\/|$)/.exec(s);
+  if (m) s = `${m[1]}:${s.slice(2)}`;
+  return /^[a-zA-Z]:/.test(s) ? s.toLowerCase() : s;
+}
+
+/**
+ * Whether a shell command runs in another directory than `cwd`: its first stage is `cd` to an
+ * absolute path outside `cwd`, and every later `cd` is relative (`cd /d/other/pkg && npm test`).
+ */
+export function runsElsewhere(cmd: string, cwd: string | undefined): boolean {
+  if (!cwd) return false;
+  const here = dirKey(cwd);
+  let first = true;
+  for (const st of shellStages(stripHeredocs(cmd))) {
+    const words = shellWords(st.replace(/^[({\s]+/, ""));
+    const name = words[0]?.value.toLowerCase();
+    const isCd = name === "cd" || name === "pushd" || name === "set-location" || name === "sl";
+    if (!isCd) {
+      if (first) return false;
+      continue;
+    }
+    const to = words.find((w, k) => k > 0 && !w.value.startsWith("-"))?.value;
+    if (!to || to.includes("$") || to === "-" || to.startsWith("~")) return false;
+    const abs = /^(?:\/|[a-zA-Z]:[\\/])/.test(to);
+    if (first && !abs) return false;
+    if (abs) {
+      const there = dirKey(to);
+      if (there === here || there.startsWith(`${here}/`)) return false;
+    }
+    first = false;
+  }
+  return !first;
 }
 
 const n = (s: string | undefined) => (s ? Number.parseInt(s, 10) : 0);
@@ -54,6 +290,9 @@ const lastCount = (text: string, re: RegExp): number | undefined => {
  */
 function isPytestSummary(line: string): boolean {
   return line.split(/[\r\u2028\u2029]/).some((part) => {
+    // The summary starts its line, after any "=" rule: a count inside other text (an assertion
+    // message, a diff line) is not one.
+    if (!/^[ \t]*(?:=+[ \t]*)?\d+ [a-z]/.test(part)) return false;
     const m = /\b\d+ (?:passed|failed|error|errors)\b/.exec(part);
     return !!m && /\bin [\d.]+s\b/.test(part.slice(m.index + m[0].length));
   });
@@ -64,7 +303,7 @@ type Parser = (t: string) => TestSummary | undefined;
 const PARSERS: Parser[] = [
   // cargo: "test result: ok. 10 passed; 0 failed; 1 ignored; …" (one per crate/binary → sum)
   (t) => {
-    const re = /test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored/g;
+    const re = /^[ \t]*test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored/gm;
     let m: RegExpExecArray | null;
     let hit = false;
     const s = { runner: "cargo", passed: 0, failed: 0, skipped: 0 };
@@ -130,9 +369,31 @@ const PARSERS: Parser[] = [
   },
 ];
 
+/** The runner a command names, by the summary it prints: its own summary outranks other runners' text in the output. */
+const COMMAND_RUNNERS: [string, RegExp][] = [
+  ["cargo", /\bcargo\s+(?:\S+\s+)*?(?:test|nextest)\b/],
+  ["jest", /\bjest\b/],
+  ["vitest", /\bvitest\b/],
+  ["pytest", /\bpy\.?test\b/],
+  ["node:test", /\bnode\s+(?:\S+\s+)*?--test\b/],
+  ["mocha", /\bmocha\b/],
+  ["go", /\bgo\s+(?:\S+\s+)*?test\b/],
+];
+
+/** The runners a command names, outside heredoc bodies. */
+function runnersNamed(command: string | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!command) return out;
+  const c = stripHeredocs(command.length > 20_000 ? command.slice(0, 20_000) : command);
+  for (const [runner, re] of COMMAND_RUNNERS) if (re.test(c)) out.add(runner);
+  return out;
+}
+
 /**
  * Test summary from a shell command's output: the one parser every adapter uses.
- * The first runner whose summary appears wins, in the order above. Within a runner
+ * A runner the command names goes first (`node --test` is read from node's own summary,
+ * not from a pytest or cargo line a failing assertion or a printed fixture holds); then the
+ * first runner whose summary appears wins, in the order above. Within a runner
  * the last summary counts, except cargo (sums its per-target lines) and go
  * (counts its per-test or per-package lines). Mocha and go summaries are weaker
  * signals: they count only when `testRun` says the output comes from a test run,
@@ -142,11 +403,16 @@ const PARSERS: Parser[] = [
 export function parseTestOutput(output: string | undefined, command?: string, testRun = isTestCommand(command)): TestSummary | undefined {
   if (!output) return undefined;
   const t = stripAnsi(output.length > 200_000 ? output.slice(-200_000) : output);
-  for (const p of PARSERS) {
+  const named = runnersNamed(command);
+  const accept = (s: TestSummary | undefined): s is TestSummary => {
+    if (!s) return false;
+    if (!testRun && !named.has(s.runner) && (s.runner === "mocha" || s.runner === "go")) return false; // weaker signals
+    return s.passed + s.failed + (s.skipped ?? 0) > 0;
+  };
+  const parsers = named.size ? [...PARSERS.map((p) => (x: string) => { const s = p(x); return s && named.has(s.runner) ? s : undefined; }), ...PARSERS] : PARSERS;
+  for (const p of parsers) {
     const s = p(t);
-    if (!s) continue;
-    if (!testRun && (s.runner === "mocha" || s.runner === "go")) continue; // weaker signals
-    if (s.passed + s.failed + (s.skipped ?? 0) === 0) continue;
+    if (!accept(s)) continue;
     if (s.skipped === 0) delete s.skipped;
     return s;
   }

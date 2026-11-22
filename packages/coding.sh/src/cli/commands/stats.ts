@@ -10,6 +10,22 @@ import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, w
 import { noSessionsNext } from "../first-session.ts";
 import { duration, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import type { IndexStore } from "../../core/types.ts";
+import { findSessions } from "../../query/run.ts";
+import { andQuery, parseWhere, type Query } from "../../query/where.ts";
+
+/** Printed under the table when subagents were rolled up: why stats and usage book their spend apart. */
+export const ROLLUP_NOTE = "Subagents' cost, tokens and tool calls count on their top-level session's day, agent, model and repo; usage books each subagent on its own. --all lists them as their own rows.";
+
+/** Whether any subagent session started in the window (and matches --where): its spend was rolled up. */
+export async function hasSubagents(index: IndexStore, since: number, until: number, where: Query | undefined): Promise<boolean> {
+  try {
+    const q = andQuery(where ?? {}, parseWhere("parent:*", { now: Date.now() }).root);
+    return (await findSessions(index, q, { filter: { since, until }, limit: 1 })).sessions.length > 0;
+  } catch {
+    return false; // only a note
+  }
+}
 
 const BARS = "▁▂▃▄▅▆▇█";
 
@@ -122,6 +138,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.note(`${measure}: ${trend(m.all)}  ${cell(measure, measureOf(m.totals, measure))} in all`);
     }
     if (m.totals.pricedSessions && m.totals.pricedSessions < m.totals.sessions) out.note(`COST covers the ${m.totals.pricedSessions} of ${plural(m.totals.sessions, "session")} with a price.`);
+    if (c.flags.all !== true && (await hasSubagents(ctx.index, since, until, where))) out.note(ROLLUP_NOTE);
     if (m.truncated) out.warn("Stopped after 100,000 sessions: narrow --since or --where.");
     return 0;
   }, { create: false });

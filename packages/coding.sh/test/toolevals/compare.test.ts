@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { mulberry32 } from "../../src/stats/prng.ts";
 import { pairedPermutation } from "../../src/stats/tests.ts";
 import { compareToolArms, runOutcome, summarizeArms } from "../../src/toolevals/compare.ts";
-import { formatToolCompare } from "../../src/toolevals/report.ts";
+import { formatArms, formatToolCompare } from "../../src/toolevals/report.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import type { SurfaceReport, TrialResult } from "../../src/toolevals/types.ts";
 import { trial } from "./helpers.ts";
@@ -170,5 +170,39 @@ describe("toolevals pass^k / pass@k are fractions of tasks", () => {
     assert.equal(runOutcome(summarizeArms([t("a", true)])), undefined);
     assert.equal(runOutcome(summarizeArms([t("a", true), t("b", false, "network")])), "incomplete");
     assert.equal(runOutcome(summarizeArms([t("a", false, "network"), t("b", false, "network")])), "void");
+  });
+});
+
+describe("toolevals arm summary: silent failures and target calls per success (R8-1)", () => {
+  it("counts fails with no rejected call, failed call or retry, and target calls per pass", () => {
+    const ts = [
+      trial("a", "base", D, 1, true, { targetCalls: 3 }),
+      trial("b", "base", D, 1, false, { targetCalls: 2, failedCalls: 1 }),
+      trial("c", "base", D, 1, false, { targetCalls: 4 }),
+      trial("d", "base", D, 1, false, { targetCalls: 1, retries: 2 }),
+    ];
+    const [s] = summarizeArms(ts);
+    assert.equal(s!.silentFailures, 1);
+    assert.equal(s!.targetCallsPerSuccess, 10);
+    assert.match(formatArms([s!]), /silent failures 1 · target calls per success 10/);
+    assert.doesNotMatch(formatArms(summarizeArms([trial("a", "base", D, 1, true)]).map(({ targetCallsPerSuccess: _, ...a }) => a)), /silent failures/);
+  });
+  it("leaves a task error and an infra trial out of silent failures", () => {
+    const err = trial("a", "base", D, 1, false);
+    err.error = "boom";
+    const inf = trial("b", "base", D, 1, false);
+    inf.infra = "network";
+    const [s] = summarizeArms([err, inf]);
+    assert.equal("silentFailures" in s!, false);
+    assert.equal(s!.targetCallsPerSuccess, null);
+  });
+  it("an all-pass arm has no silentFailures key; trials without metrics give neither key", () => {
+    const [pass] = summarizeArms([trial("a", "base", D, 1, true), trial("b", "base", D, 1, true)]);
+    assert.equal("silentFailures" in pass!, false);
+    assert.equal(pass!.targetCallsPerSuccess, 2);
+    const bare = (taskId: string, ok: boolean): TrialResult => ({ taskId, variant: "base", driver: "d", pass: ok }) as TrialResult;
+    const [none] = summarizeArms([bare("a", true), bare("b", false)]);
+    assert.equal("silentFailures" in none!, false);
+    assert.equal("targetCallsPerSuccess" in none!, false);
   });
 });

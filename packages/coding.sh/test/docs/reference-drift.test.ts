@@ -59,12 +59,12 @@ describe("docs drift", () => {
   it("the MCP docs list every MCP tool", () => {
     const tools = matches([readFileSync(join(pkg, "src", "mcp", "tools.ts"), "utf8")], /^\s{6}name: "([a-z_]+)",$/gm);
     assert.ok(tools.size >= 10, "found the tools");
-    for (const file of [join(repo, "apps", "site", "src", "pages", "docs", "mcp.astro"), join(repo, "docs", "guides", "explore.md")]) {
-      const doc = readFileSync(file, "utf8");
-      const listed = matches([doc], /(?:\["|`)([a-z_]+)(?:",|`)/g);
-      const missing = [...tools].filter((t) => !listed.has(t));
-      assert.deepEqual(missing, [], `add these MCP tools to ${file}: ${missing.join(", ")}`);
-    }
+    const file = join(repo, "apps", "site", "src", "pages", "docs", "mcp.astro");
+    const listed = matches([readFileSync(file, "utf8")], /(?:\["|`)([a-z_]+)(?:",|`)/g);
+    const missing = [...tools].filter((t) => !listed.has(t));
+    assert.deepEqual(missing, [], `add these MCP tools to ${file}: ${missing.join(", ")}`);
+    // The explore guide points at that list instead of keeping a second copy.
+    assert.match(readFileSync(join(repo, "docs", "guides", "explore.md"), "utf8"), /\(https:\/\/coding\.sh\/docs\/mcp#tools\)/, "docs/guides/explore.md links to the MCP tool list");
   });
 
   it("reference/config.md lists every CODING_SH_* variable", () => {

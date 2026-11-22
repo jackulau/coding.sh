@@ -5,7 +5,11 @@
 //           the current HEAD and branch are cached per root, HEAD at a time per
 //           root and second).
 // - main:   the main worktree's root when root is a linked worktree, read by the
-//           same git call from its common git dir (cached with the root).
+//           same git call from its common git dir (cached with the root). Absent
+//           in a worktree of a bare repo, a bare clone at proj/.git included.
+//           Both in one spelling (git.ts repoPath: the long name, and on Windows
+//           an upper-case drive letter), whatever spelling the agent's cwd had,
+//           so one repo is one string however each agent spelled its folder.
 // - head:   the commit the agent reported at session start (Codex session_meta
 //           git.commit_hash → session.start payload.gitCommit, or the HEAD a
 //           0.1.3 hook read from .git → payload.git.commit), else HEAD at
