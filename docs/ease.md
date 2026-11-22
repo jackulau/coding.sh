@@ -29,12 +29,12 @@ needs `python3` for its pseudo-terminal; without it, that path is skipped.
 
 ## On Windows
 
-It measures nothing on Windows yet. The human path is skipped there. The run then stops before the
-agent path: it packs the CLI by running `npm` without a shell, which finds nothing because npm is
-`npm.cmd` on Windows, so it exits 1 with `spawnSync npm ENOENT` and prints no report. Past that, the
-agent path runs each command with `sh -c` and starts the CLI from `<prefix>/bin/coding.sh`, where
-npm puts it on macOS and Linux only. It does not cover PowerShell or cmd, where the command is
-`codingsh`.
+On Windows it measures the agent path only. The human path is skipped, because it needs a
+pseudo-terminal. The installer line and the hook commands run in Git for Windows' `sh`, as Claude
+Code runs hooks there; without that `sh` the run stops with `no sh found`. Each `coding.sh` command
+from agents.md runs the installed CLI with node, as the `coding.sh.cmd` shim npm adds does, so no
+shell picks the command. It does not measure setup by a person, or typing the commands in
+PowerShell or cmd, where `coding.sh` opens npm's sh script and the command is `codingsh`.
 
 ## What it measures
 
