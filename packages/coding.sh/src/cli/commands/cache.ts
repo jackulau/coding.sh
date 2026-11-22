@@ -73,7 +73,9 @@ function render(out: Output, r: CacheHealth, sessions: number, sinceText: string
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
-  if (c.action !== "doctor") throw new UsageError(`Unknown cache command ${JSON.stringify(c.action)}`, { reason: "unknown_command", suggestion: "coding.sh cache doctor" });
+  // `coding.sh cache` with no subcommand is `cache doctor`.
+  const action = c.action ?? "doctor";
+  if (action !== "doctor") throw new UsageError(`Unknown cache command ${JSON.stringify(action)}`, { reason: "unknown_command", suggestion: "coding.sh cache doctor" });
   const sinceText = str(c.flags.since) ?? "30d";
   const since = parseSince(sinceText);
   const limit = positiveInt(c.flags.limit, "limit") ?? DEFAULT_LIMIT;
