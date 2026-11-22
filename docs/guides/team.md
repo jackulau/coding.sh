@@ -39,7 +39,9 @@ docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project b
 ```
 
 Each command prints a key (`csh_ik_...`) once, plus a `sha256:` line. Send the key to its owner over a
-private channel. Put only the hashes in `deploy/compose/.env`. Hashes are safe to commit.
+private channel. Put only the hashes in `deploy/compose/.env`. Hashes are safe to commit. In Git
+Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of `docker run`, or Git Bash turns `/app/cli.mjs`
+into a Windows path.
 
 ```sh
 CODING_SH_INGEST_KEYS=alice:sha256:...,billing-api:sha256:...
@@ -151,3 +153,10 @@ People with database access can run the CLI and MCP tools straight against it, f
 `CODING_SH_STORE_URL='postgres://coding:...@db-host:5432/coding' coding.sh sessions --project alice`.
 This needs the `coding.sh-store-postgres` package installed next to coding.sh. The Postgres
 password grants full access to the data, so most of the team should use the viewer instead.
+
+The stack from step 1 does not publish the Postgres port. On the server, run the CLI inside the
+serve container, which already has the store URL:
+
+```sh
+docker compose -f deploy/compose/compose.postgres.yml exec coding-sh /nodejs/bin/node /app/cli.mjs sessions --project alice
+```
