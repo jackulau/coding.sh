@@ -219,8 +219,8 @@ describe("work and work show agree on one item", () => {
   test("one instant reads the same in Why and Started, and a wait under a minute reads in seconds", async () => {
     const r = await runCmd(work, sb, { action: "show", positionals: ["multi"] });
     assert.equal(r.error, undefined, r.error?.stack);
-    const why = /Why +ended (\S+) ago/.exec(r.stdout)?.[1];
-    const last = /last active (\S+) ago/.exec(r.stdout)?.[1];
+    const why = /Why +main session ended (\S+) ago/.exec(r.stdout)?.[1];
+    const last = /Started +.*, last active (\S+) ago/.exec(r.stdout)?.[1];
     assert.ok(why && last, r.stdout);
     assert.equal(why, last);
     const w = await runCmd(work, sb, { action: "show", positionals: ["waits"] });

@@ -134,7 +134,10 @@ through T3's store, whichever agent it runs.
    first.
 2. **Failed**: no session in the item is running or waiting, and its main session ended on API
    errors (the `api-stall` flag, shown as "api 529") or with failing tests. Items that failed on
-   one API cause are also counted as a group ("api 529 x4"). Newest first.
+   one API cause are also counted as a group ("api 529 x4"). Newest first. The reason gives the
+   failed session's end ("ended 6h ago on api 529"). When the item has more than one session, it
+   says whose end that is: "main session ended 6h ago", or in a workflow run "failed agent" (the
+   newest failed agent when several failed: "last failed agent").
 3. **Stalled**: a session in the item has no end, waits on nothing, and has been quiet for the
    derail stall threshold (15 minutes) or longer. For agents that report no prompts, the row says
    it may be waiting on approval. Oldest first.
@@ -226,9 +229,11 @@ has no kind yet.
 
 `stageWhy` gives the evidence in one line. A failure or a quoted question is cut to keep the line
 within 80 characters; counts and ages are never cut. Examples: "waits 2m for permission: …",
-"running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, stopped 4m ago",
-"changed 3 files, stopped 12m ago", or "acknowledged: changed 3 files, stopped 12m ago". The
+"running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, last active 4m ago",
+"changed 3 files, last active 12m ago", or "acknowledged: changed 3 files, last active 12m ago". The
 running time counts from the item's first session; a stalled item says how long it has been quiet.
+"Last active" is the item's last activity over all its sessions, as `work show` gives it on its
+Started row, so it can be later than the failed session's end in the reason.
 
 ## Acknowledging and snoozing
 
@@ -372,7 +377,9 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   bucket order, API groups, harness and host children, snoozes, and a corrupt overlay. For stages
   it has one test per rule, and checks that an acked blocked item stays approval, an acked review
   item becomes done, a snoozed review item stays review, a failed item with no change is review
-  with kind research, and the stage counts include hidden items.
+  with kind research, and the stage counts include hidden items. A failed item with a child active
+  after the failure says "main session ended 6h ago" in its reason and "last active 4h ago" in its
+  stage; `test/core/work-workflow.test.ts` checks the same for a run's failed agents.
 - `test/cli/work.test.ts` also checks that `work --stage executing --json` lists only the running
   item that changed a file, that `--stage done` lists hidden items, and that `--stage reveiw` exits
   2 and suggests `review`.

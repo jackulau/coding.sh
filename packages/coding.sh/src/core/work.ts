@@ -112,7 +112,7 @@ export interface WorkItem {
   stage: Stage;
   /** Unset while an item that changed no file still plans or executes: not known yet. */
   kind?: WorkKind;
-  /** The evidence for the stage, one short line: "changed 3 files, stopped 12m ago". */
+  /** The evidence for the stage, one short line: "changed 3 files, last active 12m ago" (the item's last activity, over all its sessions). */
   stageWhy: string;
 }
 
@@ -450,11 +450,11 @@ export function workStage(members: readonly Session[], primary: Session, now: nu
     const open = own.filter((c) => !acked(c));
     const turn = own.find((c) => c.bucket === "turn");
     const failure = apiFailure(primary) ?? ((primary.stats.testsFailed ?? 0) > 0 ? `tests: ${primary.stats.testsFailed} failed` : undefined) ?? own.find((c) => c.bucket === "failed")?.failure;
-    const tail = turn ? `your turn for ${short(now - turn.at)}` : `stopped ${short(now - end)} ago`;
+    const tail = turn ? `your turn for ${short(now - turn.at)}` : `last active ${short(now - end)} ago`;
     return { stage: open.length ? "review" : "done", kind: kind ?? "research", why: withFacts(open.length ? "" : "acknowledged: ", failure, [changed, tail]) };
   }
   const tests = testsText(primary.stats.testsPassed, primary.stats.testsFailed);
-  const why = [tests, changed, `stopped ${short(now - end)} ago`].filter(Boolean).join(", ");
+  const why = [tests, changed, `last active ${short(now - end)} ago`].filter(Boolean).join(", ");
   return { stage: "done", kind: kind ?? "research", why: tests || changed ? why : `${why}, no file changed` };
 }
 
@@ -512,9 +512,14 @@ function describe(item: WorkItem, cause: WorkCause, members: readonly Session[],
       const reason = `${WAIT_WORDS[w.kind]} for ${age}${quote(w.text)}`;
       return { reason, next: item.probablyClosed ? `probably closed: ${closedNext}` : `answer in ${where}` };
     }
-    case "failed":
+    case "failed": {
+      // With several sessions, say whose end the age is, since the stage's "last active" is the whole
+      // item's: a run's newest failed agent, or else the main session (workCauses fails no other).
+      const runFailed = item.workflow?.phases.reduce((n, p) => n + p.failed, 0) ?? 0;
+      const who = members.length < 2 ? "" : item.workflow ? (runFailed > 1 ? "last failed agent " : "failed agent ") : "main session ";
       // The agent's own resume command keeps the full id: the agent's CLI takes no prefix.
-      return { reason: `ended ${age} ago on ${cause.failure}`, next: resume ? `\`coding.sh show ${shortId(s.id)}\`, then \`${resume}\`` : `\`coding.sh show ${shortId(s.id)}\`` };
+      return { reason: `${who}ended ${age} ago on ${cause.failure}`, next: resume ? `\`coding.sh show ${shortId(s.id)}\`, then \`${resume}\`` : `\`coding.sh show ${shortId(s.id)}\`` };
+    }
     case "stalled": {
       const hint = reportsPrompts(s) ? undefined : `${promptAgent(s)} reports no prompts: it may be waiting on approval`;
       const reason = `quiet for ${age} mid-turn${hint ? `; ${hint}` : ""}`;
