@@ -84,9 +84,9 @@ function midClip(s: string, n: number): string {
   const tail = Math.ceil((n - 1) * 0.4);
   return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
 }
-/** The repo column's text: the repo facet's name (last path segment of the repo root, else the working directory). */
+/** The repo column's text: the last path segment of the repo's main checkout (a worktree's too), else its root, else the working directory. */
 function repoLabel(s: Session): string {
-  const p = s.repo?.root ?? s.cwd;
+  const p = s.repo?.main ?? s.repo?.root ?? s.cwd;
   if (p === undefined || p === null) return "";
   const n = String(p).replace(/\\/g, "/");
   return /\/var\/folders\/[\s\S]*\/T$/.test(n) ? "tmp" : n.slice(n.lastIndexOf("/") + 1);
@@ -181,7 +181,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
     const tokens = u ? (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0) : 0;
     const act = activity(s);
     const cost = costText(s);
-    const dir = s.repo?.root ?? s.cwd;
+    const dir = s.repo?.main ?? s.repo?.root ?? s.cwd;
     const tone = testsTone(s);
     const fr = failedRequests(s);
     return [

@@ -25,6 +25,8 @@ export interface WorkflowExperimentRecord {
   driver: string;
   variants: WorkflowVariant[];
   caseIds: string[];
+  /** caseId → the pass threshold its case file sets, for `workflows compare`. Absent when no case sets one. */
+  thresholds?: Record<string, number>;
   k: number;
   runIds: string[];
   /** runId → quality score (F1, pass rate, judge score), when scored. */

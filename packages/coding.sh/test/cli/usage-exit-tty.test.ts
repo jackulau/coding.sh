@@ -38,6 +38,26 @@ describe("usage errors exit 2 on a TTY and off one", () => {
   });
   after(() => rmSync(root, { recursive: true, force: true }));
 
+  it("a command named for what it asks (cost, waste) exits 2 and suggests the command that answers it", () => {
+    const want: Record<string, string> = { cost: "usage", costs: "usage", spend: "usage", price: "usage", tokens: "usage", waste: "usage --cache", WASTE: "usage --cache" };
+    for (const [typed, cmd] of Object.entries(want)) {
+      const r = cli([typed], false);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.match(r.stderr, new RegExp(`Unknown command "${typed}"\\n    Did you mean coding\\.sh ${cmd.replace("-", "\\-")}\\?\\n$`), typed);
+    }
+    // --json carries it in next, in the same words.
+    const j = cli(["waste", "--json"], false);
+    assert.equal(j.status, 2);
+    assert.deepEqual(JSON.parse(j.stderr).next, ["Did you mean:", "coding.sh usage --cache"]);
+    // A close spelling still comes first; a name no intent covers gets no guess (not even Object's own keys).
+    assert.match(cli(["usge"], false).stderr, /Did you mean coding\.sh usage\?/);
+    for (const typed of ["constructor", "toString"]) {
+      const r = cli([typed], false);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.doesNotMatch(r.stderr, /Did you mean/i, typed);
+    }
+  });
+
   for (const tty of [false, true]) {
     const where = tty ? "on a TTY" : "piped";
     it(`a typo command exits 2 ${where}, with one suggestion`, () => {

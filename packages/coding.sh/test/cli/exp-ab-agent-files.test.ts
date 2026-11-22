@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { unloadedEdits } from "../../src/cli/commands/exp-ab.ts";
+import { resolveArm, unloadedEdits } from "../../src/cli/commands/exp-ab.ts";
 import { importedBy, loadedBy } from "../../src/core/harness-paths.ts";
 import { injectContext, type FrozenPrefix } from "../../src/experiments/continuation.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
@@ -109,6 +109,59 @@ describe("exp ab: files the session's agent loads", () => {
     const r = cli(e, ["exp", "ab", "--dry-run"]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /Claude Code does not load AGENTS\.md: the edit changes nothing for 1 of 2 cases/);
+  });
+
+  it("a CLAUDE.md-only edit on Codex sessions names the file Codex loads, not Claude Code's", async () => {
+    const e = await setup("codex-claude-md", ["codex", "codex"]);
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\n");
+    writeFileSync(join(e.repo, "CLAUDE.md"), "Keep answers short.\nRun the tests before you say you are done.\n");
+    const r = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /No arm difference: Codex does not load CLAUDE\.md/);
+    assert.match(r.stderr, /Edit the instructions file the agent loads \(AGENTS\.md for Codex\)/);
+    assert.doesNotMatch(r.stderr, /for Claude Code|@CLAUDE\.md/);
+  });
+
+  it("a line-ending change is not an edit: CRLF in the work tree against LF in git (core.autocrlf=true)", async () => {
+    const e = await setup("crlf", ["codex", "codex"]);
+    // What a Windows checkout with core.autocrlf=true holds for the committed text: CRLF line ends.
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\r\n");
+    const r = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /No uncommitted changes to AGENTS\.md/);
+    const file = cli(e, ["exp", "ab", "--a", "git:HEAD", "--b", "AGENTS.md", "--dry-run"]);
+    assert.equal(file.status, 2, file.stdout + file.stderr);
+    assert.match(file.stderr, /have the same harness files/);
+    // A real edit made in CRLF still counts.
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\r\nRun the tests first.\r\n");
+    const edit = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(edit.status, 0, edit.stdout + edit.stderr);
+  });
+
+  it("a --b draft in a folder replaces the instructions file of its name", async () => {
+    const draft = "Keep answers short.\nRun the tests before you say you are done.\n";
+    const codex = await setup("draft-codex", ["codex", "codex"]);
+    writeFileSync(join(codex.repo, "AGENTS.md"), "Keep answers short.\n");
+    mkdirSync(join(codex.repo, "drafts"));
+    writeFileSync(join(codex.repo, "drafts", "AGENTS.md"), draft);
+    const r = cli(codex, ["exp", "ab", "--b", "drafts/AGENTS.md", "--dry-run"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /A current files \(2 files\) vs B drafts\/AGENTS\.md \(2 files\)/);
+    // Claude Code does not load AGENTS.md, so a draft of it is no difference on its sessions.
+    const claude = await setup("draft-claude", ["claude-code", "claude-code"]);
+    writeFileSync(join(claude.repo, "AGENTS.md"), "Keep answers short.\n");
+    mkdirSync(join(claude.repo, "drafts"));
+    writeFileSync(join(claude.repo, "drafts", "AGENTS.md"), draft);
+    const none = cli(claude, ["exp", "ab", "--b", "drafts/AGENTS.md", "--dry-run"]);
+    assert.equal(none.status, 2, none.stdout + none.stderr);
+    assert.match(none.stderr, /No arm difference: Claude Code does not load AGENTS\.md/);
+    // The files B holds: the draft in place of AGENTS.md; a file at a harness path keeps that path.
+    mkdirSync(join(codex.repo, ".claude", "rules"), { recursive: true });
+    writeFileSync(join(codex.repo, ".claude", "rules", "tests.md"), "Run the tests.\n");
+    const base = [{ path: "AGENTS.md", text: "Keep answers short.\n" }, { path: "CLAUDE.md", text: "Keep answers short.\n" }];
+    const arm = (v: string) => resolveArm(v, { cwd: codex.repo, root: codex.repo, base, flag: "b", ctx: { index: { getBundle: async () => undefined }, blobs: undefined } as never });
+    assert.deepEqual((await arm("drafts/AGENTS.md")).files, [{ path: "AGENTS.md", text: draft }, base[1]]);
+    assert.deepEqual((await arm(".claude/rules/tests.md")).files.map((f) => f.path), [".claude/rules/tests.md", "AGENTS.md", "CLAUDE.md"]);
   });
 
   it("unloadedEdits and injectContext agree on what each agent reads", () => {

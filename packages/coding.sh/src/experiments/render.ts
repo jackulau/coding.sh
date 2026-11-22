@@ -377,12 +377,13 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (att.a.lost || att.b.lost) {
     const arm = (x: ArmAttrition) => {
       const n = (k: number, what: string) => (k ? [`${k} ${what}${k === 1 ? "" : "s"}`] : []);
-      const parts = [...n(x.infra, "infra error"), ...n(x.agent, "agent error"), ...n(x.ungraded, "ungraded run"), ...n(x.missing, "missing run")];
+      const parts = [...n(x.infra, "infra error"), ...n(x.timedOut ?? 0, "timeout"), ...n(x.agent, "agent error"), ...n(x.ungraded, "ungraded run"), ...n(x.missing, "missing run")];
       return `${x.lost}/${x.runs}${parts.length ? ` (${parts.join(", ")})` : ""}`;
     };
     out.push(`lost    A ${arm(att.a)}  B ${arm(att.b)}  ${paint(`Fisher p=${pValue(att.p)}`, "dim", color)}`);
   }
   if (att.warning) out.push(paint(`! ${att.warning}`, "yellow", color));
+  if (att.timeouts) out.push(paint(`! ${att.timeouts.note}`, "yellow", color));
   if (c.onlyInA.length || c.onlyInB.length) out.push(paint(`unpaired: ${c.onlyInA.length} only in A, ${c.onlyInB.length} only in B`, "dim", color));
   const untrusted = new Set(
     [...(opts.a?.graders ?? []), ...(opts.b?.graders ?? [])].filter((g) => !trusted(g.calibration)).map((g) => g.id),

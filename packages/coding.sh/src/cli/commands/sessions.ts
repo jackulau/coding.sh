@@ -1,10 +1,10 @@
 // coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--view <name>] [--facets [keys]]
-import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
-import { andQuery, FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
-import { checkoutRepo } from "../../mcp/data.ts";
+import { andQuery, FACET_KEYS, scopesSubagents, type Node, type Query } from "../../query/where.ts";
+import { parsePlace, placeNode } from "../../mcp/data.ts";
+import { userHome } from "../../core/paths.ts";
 import { viewQuery } from "../../query/views.ts";
 import { viewCliError } from "./views.ts";
 import type { Session } from "../../schema/index.ts";
@@ -25,6 +25,31 @@ function facetKeys(v: unknown, eventIndex: boolean): string[] | undefined {
   const bad = keys.filter((k) => !FACET_KEYS.includes(k));
   if (bad.length || !keys.length) throw new UsageError(`--facets: can't count ${bad.join(", ") || "nothing"}; use ${FACET_KEYS.join(", ")}`, { reason: "bad_flag" });
   return keys;
+}
+
+/**
+ * --repo on `sessions` and `export`: a path or a repo name, read as `work` and `budget` read it
+ * (parsePlace), ANDed onto `where`. A name matches the repo's main checkout and every worktree
+ * (`repo:<name>`) and a folder of that name; a path matches sessions at or under it, and a
+ * checkout's root or a folder inside a linked worktree stands for the whole repo (`repo:<main root>`).
+ */
+export function withRepo(where: Query | undefined, repo: string | undefined, c: Pick<CommandContext, "cwd" | "env">, platform: string = process.platform): Query | undefined {
+  if (repo === undefined) return where;
+  const place = parsePlace(repo, c.cwd, userHome(c.env));
+  // Wrapped in a group, as --agent is, so a repo facet keeps it.
+  const node = place.name !== undefined && platform === "win32" ? nameNodeAnyCase(place.name) : placeNode(place);
+  return node ? andQuery(where ?? {}, { t: "or", items: [node] }) : where;
+}
+
+/**
+ * A repo name on Windows, where folder names ignore case: `repo:` and the folder name compared
+ * without case (a glob value with no wildcard), as `work --repo` compares them (matchesPlace), so
+ * DEMO-REPO finds the main checkout's sessions and every worktree's, not only the ones whose
+ * folder happens to match. The folder name is matched after either slash.
+ */
+function nameNodeAnyCase(name: string): Node {
+  const cmp = (key: string, parts: string[]): Node => ({ t: "cmp", key, op: ":", values: [{ raw: parts.join("*"), parts, quoted: false, kind: "glob" }], at: 0 });
+  return { t: "or", items: [cmp("repo", [name]), cmp("dir", ["", "\\" + name]), cmp("dir", ["", `/${name}`])] };
 }
 
 /** "1 of these 5 sessions is flagged", "2 of these 5 sessions are flagged", "This session is flagged". */
@@ -49,27 +74,23 @@ export async function run(c: CommandContext): Promise<number> {
     const window = timeWindow({ since: sinceWhen }, where);
     // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
     const scope = agentScope(agents, where);
-    // --repo at a checkout's root or inside a linked worktree means the whole repo: the main
-    // checkout's sessions and every worktree's (`repo:<main root>`). Another folder keeps the exact match.
-    const group = repo ? checkoutRepo(resolve(c.cwd, repo)) : undefined;
-    // Wrapped in a group, as --agent is, so a repo facet keeps it.
-    const scoped: Query | undefined = group ? andQuery(scope.where ?? {}, { t: "or", items: [{ t: "cmp", key: "repo", op: ":", values: [{ raw: group, quoted: true, kind: "eq" }], at: 0 }] }) : scope.where;
+    const scoped = withRepo(scope.where, repo, c);
     const backlog = await autoIngest(ctx, readIngest(c));
-    const filter: SessionFilter = {
+    const topOnly = !(c.flags.subagents === true || scopesSubagents(where?.root));
+    const base: SessionFilter = {
       ...(scope.agent ? { agent: scope.agent } : {}),
-      ...(repo && !group ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
-      ...(c.flags.subagents === true || scopesSubagents(where?.root) ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
     };
+    const filter: SessionFilter = topOnly ? { ...base, parentSessionId: null } : base;
     windowNote(out, window);
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
     if (facets && fields) throw new UsageError("--fields picks from the session rows: drop --facets", { reason: "invalid_argument" });
     if (facets) return printFacets(c, await counts(ctx.index, scoped ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
     const empty = c.flags.empty === true;
     let listing: Listing;
-    if (where || group) listing = await query(ctx.index, scoped!, filter, positiveInt(c.flags.limit, "limit") ?? where?.limit ?? 20, empty);
+    if (where || repo !== undefined) listing = await query(ctx.index, scoped ?? {}, filter, positiveInt(c.flags.limit, "limit") ?? where?.limit ?? 20, empty);
     else if (agents.length > 1) {
       const each = await Promise.all(agents.map((agent) => listPlain(ctx.index, { ...filter, agent }, limit, empty)));
       listing = {
@@ -81,12 +102,14 @@ export async function run(c: CommandContext): Promise<number> {
     } else listing = await listPlain(ctx.index, filter, limit, empty);
     const { sessions } = listing;
     if (!sessions.length) await rejectAgentTypos(ctx.index, agents);
+    const hiddenChildren = topOnly ? await childCount(ctx.index, scoped, base) : 0;
     if (out.json) {
       // Rows are a digest; --fields picks from the whole session (stats.phases, each derail's event).
       const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true }), fields)) : sessions.map((s) => sessionJson(s));
       const doc: Record<string, unknown> = { sessions: rows, total: listing.total };
       if (listing.capped) doc.totalCapped = true;
       if (listing.hidden) doc.hiddenEmpty = listing.hidden;
+      if (hiddenChildren) doc.hiddenChildren = hiddenChildren;
       if (window.since !== undefined || window.until !== undefined) doc.window = windowJson(window);
       out.data({ ...doc, ...pendingField(backlog) });
       return 0;
@@ -94,6 +117,10 @@ export async function run(c: CommandContext): Promise<number> {
     const footer = () => {
       if (listing.total > sessions.length) out.note(`${listing.total}${listing.capped ? "+" : ""} matched, ${sessions.length} shown`);
       if (listing.hidden) out.note(`(${plural(listing.hidden, "empty session")} hidden; --empty shows them)`);
+    };
+    // The last line: subagent sessions the top-level list left out.
+    const childLine = () => {
+      if (hiddenChildren) out.note(`${plural(hiddenChildren, "child session")} not shown (--subagents)`);
     };
     if (!sessions.length) {
       out.note("No sessions");
@@ -103,6 +130,7 @@ export async function run(c: CommandContext): Promise<number> {
         const n = noSessionsNext(c.env);
         out.next(n.label, n.command);
       }
+      childLine();
       return 0;
     }
     const tty = out.stdoutTTY;
@@ -126,6 +154,7 @@ export async function run(c: CommandContext): Promise<number> {
       const top = [...byFlag].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f} ${n}`).join(", ");
       out.next(`${flaggedText(flagged, sessions.length)} (${top}). See what to fix first and the line that fixes it`, "coding.sh improve");
     }
+    childLine();
     return 0;
   }, { create: false });
 }
@@ -182,6 +211,21 @@ async function query(index: IndexStore, q: Query, filter: SessionFilter, limit: 
     return l;
   } catch (e) {
     throw queryCliError(e);
+  }
+}
+
+/**
+ * Child (subagent) sessions the same filters match, which a top-level list leaves out: one
+ * facet query (each session has one agent), empty ones included. 0 when the store can't count them.
+ */
+async function childCount(index: IndexStore, scoped: Query | undefined, filter: SessionFilter): Promise<number> {
+  // The scope in a group, so the agent facet keeps a typed agent: clause.
+  const root = andQuery(scoped?.root ? { root: { t: "or", items: [scoped.root] } } : {}, { t: "is", name: "child", at: 0 });
+  try {
+    const r = await facetCounts(index, root, ["agent"], { filter, limit: 1000 });
+    return (r.agent ?? []).reduce((n, x) => n + x.count, 0);
+  } catch {
+    return 0;
   }
 }
 

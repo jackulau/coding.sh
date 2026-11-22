@@ -64,6 +64,7 @@ dᵢ = Bᵢ − Aᵢ: its pass rate, or score, in B minus the same in A.
 | Non-inferiority (`--margin D`) | B is at most D worse than A when the interval's lower bound is above −D and a one-sided sign-flip test of "B − A ≤ −D" has p below 0.025. Exits 1 otherwise. Use it for a cheaper or faster B. |
 | Regression to the mean | When B ran only on the cases A failed, B looks better even if it changes nothing. The verdict is forced to `inconclusive`. |
 | Interleaving | Runs that did not alternate A and B may differ because the model or the network changed between them. `compare` warns. |
+| Timeouts by arm | A task error that says `trial timeout`, `agent timed out` or `timed out after N ms` counts in an arm's `attrition.timedOut`, not under infrastructure, and is not marked for a re-run. `ETIMEDOUT` and other network timeouts stay infrastructure. When the arms' timeout counts differ (Fisher p below 0.1, or 0 against 3 or more), `attrition.timeouts` names the cases each arm timed out on and notes that the verdict depends on the time limit: rerun with a larger `--trial-timeout`. |
 
 ## The ship-or-hold gate
 

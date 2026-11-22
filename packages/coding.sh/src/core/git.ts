@@ -8,8 +8,9 @@
 // - GIT_OPTIONAL_LOCKS=0 so read-only commands never refresh/rewrite the
 //   user's index behind their back.
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { windowsSpelling } from "../query/where.ts";
 import { killTree } from "./spawn.ts";
 
 export const DEFAULT_GIT_TIMEOUT_MS = 30_000;
@@ -222,26 +223,74 @@ export function nativeRoot(cwd: string, gitRoot: string, prefix: string | undefi
 }
 
 /**
+ * A repo folder in one spelling, so a root and a main stored from different cwds compare as
+ * strings: the real path (realpathSync.native: long names for 8.3 short ones, junctions and
+ * symlinks resolved, the case on disk), then on Windows an upper-case drive letter and
+ * backslashes (windowsSpelling). A path that does not exist keeps its spelling, drive letter
+ * aside. RepoState.root and .main are stored this way; checkoutRepo (src/mcp/data.ts) answers
+ * in it, and the `repo:` key spells a typed path the same way as far as it can without the disk.
+ */
+export function repoPath(p: string): string {
+  let real = resolve(p);
+  try {
+    real = realpathSync.native(real);
+  } catch {
+    // Gone or unreadable: compared as written.
+  }
+  return process.platform === "win32" ? windowsSpelling(real) : real;
+}
+
+/**
  * The work tree containing `cwd` and, when it is a linked worktree, the root of the
- * repo's main worktree (one git call). `main` is absent in a main checkout, a
- * submodule, and a worktree of a bare repo (which has no main worktree).
+ * repo's main worktree (one git call), both in one spelling (repoPath). `main` is absent
+ * in a main checkout, a submodule, and a worktree of a bare repo (which has no main
+ * worktree, wherever the bare repo is kept: a bare clone at proj/.git too).
  */
 export async function worktreeRoots(cwd: string): Promise<{ root: string; main?: string } | undefined> {
   if (!existsSync(cwd)) return undefined;
-  const r = await run(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "--show-prefix"], { cwd, allowFail: true });
+  const r = await run(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, allowFail: true });
   if (r.code !== 0) return undefined;
-  const [root, gitDir, commonDir, prefix] = r.stdout.split("\n").map((l) => l.trim());
+  const [root, gitDir, commonDir] = r.stdout.split("\n").map((l) => l.trim());
   if (!root) return undefined;
-  const out: { root: string; main?: string } = { root: nativeRoot(cwd, root, prefix) };
+  const out: { root: string; main?: string } = { root: repoPath(root) };
   const main = gitDir && commonDir ? mainWorktree(resolve(cwd, gitDir), resolve(cwd, commonDir)) : undefined;
-  if (main) out.main = main;
+  if (main) out.main = repoPath(main);
   return out;
 }
 
-/** The main worktree's root from a worktree's git dirs: undefined unless the git dir is a linked worktree's of a repo with a work tree. */
+/**
+ * The main worktree's root from a worktree's git dirs: undefined unless the git dir is a linked
+ * worktree's of a repo with a work tree (its common dir is <main>/.git, and not a bare repo's).
+ */
 export function mainWorktree(gitDir: string, commonDir: string): string | undefined {
-  if (sameDir(gitDir, commonDir) || basename(commonDir) !== ".git") return undefined;
+  if (sameDir(gitDir, commonDir) || basename(commonDir) !== ".git" || isBare(commonDir)) return undefined;
   return dirname(commonDir);
+}
+
+/**
+ * Whether the repo whose shared git dir is `commonDir` is bare: core.bare in its config file
+ * (the last value wins; a `bare` line with no value is true). A bare clone kept at proj/.git
+ * has a .git folder as a checkout does, but proj is no checkout. Read from the file: no git run.
+ */
+export function isBare(commonDir: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(join(commonDir, "config"), "utf8");
+  } catch {
+    return false;
+  }
+  let core = false;
+  let bare = false;
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t.startsWith("[")) {
+      core = /^\[\s*core\s*\]/i.test(t);
+      continue;
+    }
+    const m = core ? /^bare\s*(?:=\s*([^\s;#]*))?\s*(?:[;#].*)?$/i.exec(t) : null;
+    if (m) bare = m[1] === undefined || /^(?:true|yes|on|1)$/i.test(m[1]);
+  }
+  return bare;
 }
 
 /**

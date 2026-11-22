@@ -8,8 +8,8 @@ const TOOLS: [string, string][] = [
   ["improve", "What goes wrong most in this repo's sessions, ranked, each with the AGENTS.md line that fixes it."],
   ["harness_changes", "Each committed AGENTS.md, rule or skill change: flagged sessions before and after, and a verdict."],
   ["harness_audit", "Each memory file, AGENTS.md, rule and skill with its load tokens and the sessions that used it, unused first. With check: true, whether uncommitted edits deleted, reworded or relaxed a protected line."],
-  ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
-  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and flags. Filter with flag or where."],
+  ["session_current", "The session of the agent calling the tool: its summary and latest timeline. Without a session id it picks one in this directory or repo, subagents and worktree delegates included: one running first, then the newest."],
+  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and flags. Filter with flag or where. hiddenChildren counts the subagent sessions it leaves out; includeSubagents: true lists them."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls. With tail it starts at the end, and nextCursor pages back toward the start."],
   ["session_replay", "A session as numbered steps, with the files as of any step, and a step's or a range's diff. With fork, a step's model call sent again with changed files."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
@@ -30,7 +30,8 @@ const TOOLS: [string, string][] = [
   ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, with filters."],
   ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
   ["score_add_batch", "Store up to 100 scores in one call, each checked as score_add checks one. If one is invalid, none is stored."],
-  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error, 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
+  ["work", "What needs you across agents, as coding.sh work --json gives it: each item with its reason, next step, phases and supersededBy, paged with limit and cursor, and the index's age. With all, running and done items too."],
+  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error, the index's age (index.updatedAt, index.ageMs), 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
 ];
 
 // The skills follow packages/coding.sh/skills/<name>/SKILL.md.
@@ -127,6 +128,11 @@ const gemini = `// ~/.gemini/settings.json
     <code>limitUsed</code> field. A tool with a <code>cursor</code> argument also returns <code>nextCursor</code>, which starts at the
     first row left out. Rows are dropped, not cut. With <code>tail</code>, <code>session_get</code> pages the other way: its
     <code>nextCursor</code> gives the entries before the page, back to the first.
+  </p>
+  <p>
+    A session longer than 20,000 events is read
+    from its last 20,000, and the cursor holds where that window starts, so the next page continues it while the session
+    grows. Paging stops at the window's start, and the answer says <code>eventsTruncated</code>.
   </p>
   <p>
     A tool error is a result with <code>isError: true</code> and the message as its text, such as a <code>since</code> later

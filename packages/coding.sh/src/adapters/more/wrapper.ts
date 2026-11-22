@@ -138,7 +138,8 @@ export const wrapperAdapter: Adapter = {
   // 2 (0.1.2): secret-named argv flags redacted. 3: llm.usage lines become llm.calls.
   // 4 (0.1.8): an output chunk's test.result comes from the shared parser: pytest -q's bare summary line counts,
   //    skipped is absent when 0, and a mocha or go summary no longer counts (no command vouches for a chunk).
-  parseVersion: 4,
+  // 5 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture.
+  parseVersion: 5,
   async detect(): Promise<DetectResult> {
     return { installed: true, hooked: false, notes: ["Built in: capture any agent with `coding.sh run -- <cmd>`. Nothing to install."] };
   },

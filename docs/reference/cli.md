@@ -540,7 +540,7 @@ coding.sh sessions [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself) |
@@ -566,6 +566,7 @@ coding.sh sessions --agent codex --since 7d
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
+- Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh views`
@@ -1134,7 +1135,7 @@ coding.sh usage --by subagent --json
 ```
 
 - Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.
-- --by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: "attributed". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:&lt;name&gt;; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out.
+- --by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: "attributed". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:&lt;name&gt;; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out. A T3 Code thread that switched agents is not a subagent: its cost stays with the parent's.
 - --cache adds a line that splits the estimate into cache reads, cache writes, uncached input and output, each with its share. Reported and billed costs have no split; the line names them apart. --json has the split in each row and the total (estimatedCostByTokenType in USD, estimatedCostShareByTokenType, estimatedCostUnsplitUsd), except with --by mcp, skill or subagent.
 
 ## `coding.sh cache`
@@ -1206,6 +1207,7 @@ coding.sh stats --by flag --where 'agent:codex' --json
 
 - Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
 - With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
+- Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh sql`
@@ -1255,7 +1257,7 @@ coding.sh export [what] [options]
 | `--evidence <DIR>` |  | Instead: write each matching session's events, tool inputs and full outputs, redacted, as files under DIR. |
 | `--force` |  | With --evidence, write into a directory that is not empty. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
 | `--subagents` |  | Include subagent sessions (and their events and labels). A --where with id:, parent:, is:root or is:child picks them itself. |
@@ -1853,7 +1855,7 @@ coding.sh exp ab [spec] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits, else your last harness commit) |
 | `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
@@ -3367,11 +3369,12 @@ coding.sh improve fix 1
 coding.sh improve check
 ```
 
-- improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.
+- improve lists the failure flags in this repo's sessions and any command or tool that fails in two or more sessions; the title says it fails the same way only when every failure shows the same error line. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.
 - A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.
 - Prompt cache paid for again (stored cache breaks) is an issue from $1 in two or more sessions: its dollars and share of the spend set its severity, with a fix per cause, costliest first.
-- Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Eval and benchmark runs and subagents are always left out.
-- A failed compound line (&&, ;, \|, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.
+- Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Subagents and delegates count with the session that started them, headless or not. Eval and benchmark runs are always left out. improve reads the newest 2000 sessions in scope and says how many older ones it did not read.
+- A failed compound line (&&, ;, \|, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command and groups by the error's class (not found, TS2322, TypeError) or the exit status, never by the output's words.
+- A command run by a PowerShell tool, or by powershell or pwsh with -Command or -c, is read as PowerShell: statements split on ; and pipelines on \|, single quotes are literal and the backtick escapes. The failing part is never the launcher or a pipeline cmdlet such as Select-Object or Out-String.
 - When sessions ran on the repo's current harness version (the newest commit that changed AGENTS.md or another instructions file, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
 - check reads the git history of AGENTS.md, the Claude Code and Gemini instructions files, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
 - check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising significantly, is Helped, and its line names any flag that rose. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:&lt;previous&gt; to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.
@@ -3886,7 +3889,7 @@ coding.sh refine check [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Before (default: git HEAD when B is omitted, else the repo's current files) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits) |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 
 ```sh

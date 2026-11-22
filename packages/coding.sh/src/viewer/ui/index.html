@@ -414,6 +414,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facet .more-link { display: none; }
 }
 .list-col { min-width: 0; display: grid; gap: 0.75rem; align-content: start; }
+/* The query bar gets a line of its own under the title, so it stays put while the fact line beside the title grows or shrinks (a filter that matches nothing). */
+.list-col > .page-head > :first-child { flex: 1 0 100%; }
 @media (max-width: 1023px) {
   /* Phones: title and search first, then the Filters button, then the chart and rows. */
   .sessions-layout { gap: 0.75rem; }
@@ -1618,6 +1620,10 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .work-where { max-width: 28rem; }
 .work-next { color: var(--text-2); overflow-wrap: anywhere; }
 .work-sessions summary { cursor: pointer; width: fit-content; }
+.work-phases { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; }
+.work-phase { display: inline-flex; align-items: baseline; gap: 0.35rem; }
+.work-phase-group > .meta { margin-top: 0.35rem; }
+.work-phase-group li { display: flex; align-items: baseline; gap: 0.35rem; min-width: 0; overflow-wrap: anywhere; }
 .work-sessions ul { margin: 0.35rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.2rem; font-size: 12px; }
 .work-actions, .work-more { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .work-stages { margin-top: 0.1rem; }
@@ -1970,8 +1976,8 @@ function fmtDayRange(from, to) {
   const one = (ts) => new Date(ts).toLocaleString(undefined, year ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
   return one(from) + " – " + one(to);
 }
-/** Where a session ran: its repo root, else its working directory (what the repo facet counts). */
-function repoDir(s) { return (s.repo && s.repo.root) ?? s.cwd; }
+/** Where a session ran: its repo's main checkout (a worktree's too), else its repo root, else its working directory. */
+function repoDir(s) { return (s.repo && (s.repo.main ?? s.repo.root)) ?? s.cwd; }
 /** The repo column and the repo facet name a session the same way: the last path segment, "tmp" for the macOS temp dir. */
 function repoLabel(s) {
   const p = repoDir(s);
@@ -3184,7 +3190,8 @@ function renderSessions(view) {
       h("div", { class: "title-row" }, h("h1", { id: "sessions-h" }, "Sessions"), nothingCaptured ? null : viewsEl),
       h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => typeof t === "string" ? h("span", null, t) : h("span", { class: "sum-cost", title: t.title }, t.text)),
         // The clause row has its own Clear all; the scope filter alone has no chip.
-        hasFilters() && !whereTerms(list.where).length && !list.filters.since && !list.filters.until ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
+        hasFilters() && !whereTerms(list.where).length && !list.filters.since && !list.filters.until ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null,
+        stats ? indexAgeEl(h("span", { class: "index-age live" })) : null)),
     nothingCaptured ? null : bar);
   bar.dataset.invalid = String(!!(list.whereError && list.showError));
 
@@ -5973,7 +5980,7 @@ function runTreePanel(s, kidCount) {
       cost.none ? null : h("span", null, h("b", null, cost.text), " total"));
     const worst = data.worst && data.worst.flags && data.worst.flags.length
       ? h("p", { class: "rt-worst" }, "Fix first: ",
-          h("a", { href: sessionHref(data.worst.sessionId) }, data.worst.role),
+          worstLink(data),
           " — ", data.worst.flags[0])
       : null;
     const nodes = h("div", { class: "rt-nodes" });
@@ -5996,6 +6003,15 @@ function runTreePanel(s, kidCount) {
     swap(body, totals, worst, nodes);
   });
   return details;
+}
+
+/** The Run tree's "Fix first" link: the session by its title, as its tree row names it, then its role. */
+function worstLink(data) {
+  const w = data.worst;
+  const find = (ns) => { for (const n of ns || []) { if (n.id === w.sessionId) return n; const c = find(n.children); if (c) return c; } return null; };
+  const node = find(data.tree);
+  const title = node && node.title ? oneLine(node.title) : "";
+  return h("a", { href: sessionHref(w.sessionId), title: title ? title + " (" + w.role + ")" : w.sessionId }, title ? [clip(title, 80), h("span", { class: "meta" }, " (" + w.role + ")")] : w.role);
 }
 
 /** "temporal researchAgent · 4 steps · 2 retries": the header fact for a durable workflow run. */
@@ -7948,11 +7964,13 @@ async function showWork(seq, query) {
   let acting = false;
   const draw = (doc, quiet) => {
     const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
-    meta.textContent = workCounts(doc.counts) + " · since " + st.since;
+    // How old the index is, in the CLI's words (an older server sends no `index`): in the line while fresh, a warning while old.
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    swap(meta, workCounts(doc.counts) + " · since " + st.since, age && !doc.index.stale ? [" · ", age] : null);
     stageSeg.hidden = stagesMeta.hidden = !doc.stages;
     if (doc.stages) stagesMeta.textContent = "Stages: " + workStages(doc.stages);
     hiddenBtn.textContent = doc.hidden ? "Show hidden (" + fmtNum(doc.hidden) + ")" : "Show hidden";
-    const lines = [];
+    const lines = age && doc.index.stale ? [h("p", { class: "meta" }, age)] : [];
     if (hidden && !st.all && doc.items.length) lines.push(h("p", { class: "meta" }, hidden + "."));
     if (doc.noPromptSignal && doc.noPromptSignal.length) lines.push(h("p", { class: "meta" }, "No prompt signal from " + doc.noPromptSignal.join(", ") + ": their waits show as stalled."));
     if (doc.truncated) lines.push(h("p", { class: "meta" }, "Read the newest sessions only: pick a shorter window."));
@@ -8049,7 +8067,7 @@ function workBody(doc, st, go, act) {
   const groups = WORK_BUCKETS.map(([b, label]) => [label, items.filter((i) => i.bucket === b)]).concat([["Hidden", items.filter((i) => !i.bucket)]]);
   const out = groups.filter(([, list]) => list.length).map(([label, list], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
     h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, fmtNum(list.length))),
-    h("ul", { class: "work-list" }, list.map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now)))));
+    h("ul", { class: "work-list" }, list.map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now, doc)))));
   if (doc.groups && doc.groups.length) out.push(h("p", { class: "meta" }, doc.groups.map((gr) => gr.cause + " x" + gr.count + ": " + gr.items.join(", ")).join(" · ")));
   if (doc.more) {
     out.push(h("div", { class: "work-more" },
@@ -8058,7 +8076,24 @@ function workBody(doc, st, go, act) {
   }
   return out;
 }
-function workItemEl(i, ids, act, now = Date.now()) {
+const WORK_AGENT_TONE = { running: "tone-warn", failed: "tone-fail", done: "tone-pass" };
+/** "build: 2 running, 1 failed, 3 done", as `coding.sh work` words a phase; the dot is its worst state. */
+function workPhaseEl(p) {
+  const n = ["running", "failed", "done"].filter((k) => p[k]);
+  return h("span", { class: "work-phase" }, h("span", { class: "dot " + WORK_AGENT_TONE[p.failed ? "failed" : p.running ? "running" : "done"], "aria-hidden": "true" }),
+    (p.name || "no phase") + ": " + (n.map((k) => p[k] + " " + k).join(", ") || plural(p.agents || 0, "agent")));
+}
+/** A run's agents under their phase, with the phase's cost; each links to its session. */
+function workPhasesEl(i, agents) {
+  return i.workflow.phases.map((p) => {
+    const own = agents.filter((a) => (a.phase || "") === (p.name || ""));
+    return own.length ? h("div", { class: "work-phase-group" },
+      h("p", { class: "meta" }, (p.name || "no phase") + (p.costUsd !== undefined ? " · " + fmtCost(p.costUsd) : "")),
+      h("ul", null, own.map((a) => h("li", null, h("span", { class: "dot " + (WORK_AGENT_TONE[a.state] || "tone-muted"), "aria-hidden": "true" }),
+        h("a", { class: "work-link", href: sessionHref(a.sessionId) }, oneLine(a.label || a.title) || a.sessionId), h("span", { class: "meta" }, " " + a.state))))) : null;
+  });
+}
+function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
   const tone = i.bucket === "blocked" || i.bucket === "failed" ? "tone-fail" : i.bucket === "stalled" ? "tone-warn" : "tone-muted";
   const at = Date.parse(i.since || i.lastActivity);
   const where = i.repo || i.cwd;
@@ -8074,6 +8109,8 @@ function workItemEl(i, ids, act, now = Date.now()) {
   ];
   const cause = i.causeSessionId && i.causeSessionId !== i.sessionId ? i.causeSessionId : "";
   const others = ids.filter((id) => id !== i.sessionId);
+  const agents = i.workflow && doc.workflowAgents && doc.workflowAgents[i.id];
+  const by = i.supersededBy && doc.sessionOf ? doc.sessionOf[i.supersededBy] : "";
   const ackCmd = shCmd("coding.sh work ack", i.id);
   const snoozeCmd = shCmd("coding.sh work snooze", i.id, "1h");
   return h("li", { class: "panel work-item", "data-item": i.id, "data-bucket": i.bucket || "hidden" },
@@ -8086,9 +8123,13 @@ function workItemEl(i, ids, act, now = Date.now()) {
       i.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[i.hidden] || i.hidden) : null),
     h("p", { class: "work-reason" }, h("span", { class: "dot " + tone, "aria-hidden": "true" }), h("span", null, i.reason)),
     h("p", { class: "meta work-facts" }, facts),
+    i.workflow && i.workflow.phases && i.workflow.phases.length ? h("p", { class: "meta work-phases", "aria-label": "Phases of " + (i.workflow.name || "the run") }, i.workflow.phases.map(workPhaseEl)) : null,
     h("p", { class: "work-next" }, h("span", { class: "meta" }, "Next "), workNext(i.next)),
     cause ? h("p", { class: "meta" }, "Cause in ", h("a", { class: "work-link", href: sessionHref(cause) }, cause)) : null,
-    others.length ? h("details", { class: "work-sessions" },
+    i.supersededBy ? h("p", { class: "meta work-superseded" }, "Superseded by ", by ? h("a", { class: "work-link mono", href: sessionHref(by) }, i.supersededBy) : h("span", { class: "mono" }, i.supersededBy)) : null,
+    agents && agents.length ? h("details", { class: "work-sessions" },
+      h("summary", { class: "meta" }, plural(agents.length, "agent") + " by phase"),
+      workPhasesEl(i, agents)) : others.length ? h("details", { class: "work-sessions" },
       h("summary", { class: "meta" }, plural(others.length, "more session") + " in this item"),
       h("ul", null, others.map((id) => h("li", null, h("a", { class: "work-link mono", href: sessionHref(id) }, id)))),
       i.sessions > ids.length ? h("p", { class: "meta" }, fmtNum(i.sessions - ids.length) + " more: coding.sh work show " + i.id) : null) : null,
@@ -8340,6 +8381,7 @@ async function showWorkflows(seq) {
     swap(slot, h("div", { class: "panel empty" },
       h("h2", { text: "No workflow runs yet" }),
       h("p", { text: "A workflow run is one program that starts many agents: a Claude Code Workflow tool script, or a LangGraph, Mastra or Agents SDK app. Import the Claude Code runs on this machine, then open one here." }),
+      h("p", null, "The ", h("a", { href: "#/work" }, "Work"), " page groups a run's agents from their sessions alone. This page lists only the runs ", h("code", null, "coding.sh workflows import"), " has added."),
       cmdBlock("coding.sh workflows import", "Copy workflows import command")));
     announce("No workflow runs");
     return;
@@ -9356,7 +9398,15 @@ function loadStar() {
 // `coding.sh ui` ingests in the background, so the list can open on a partial
 // index. While a backlog of spool files is pending the top bar says how many; the list's
 // "new sessions" pill picks up what lands. 404 (`serve`, no background ingest) stops the polling.
-const ingestState = { importing: false, captureSetUp: false };
+const ingestState = { importing: false, captureSetUp: false, index: null };
+/** The session list's "index updated 4m ago" (/api/ingest's `index`, in the CLI's words); hidden while the server sends none. */
+function indexAgeEl(el) {
+  const ix = ingestState.index;
+  el.hidden = !(ix && ix.text);
+  el.textContent = el.hidden ? "" : ix.text;
+  el.classList.toggle("warn", !!(ix && ix.stale));
+  return el;
+}
 function loadIngest() {
   const pill = $("#indexing");
   let was = false;
@@ -9372,6 +9422,8 @@ function loadIngest() {
         const n = typeof st.filesPending === "number" ? st.filesPending : 0;
         ingestState.importing = !!st.importing;
         ingestState.captureSetUp = !!st.captureSetUp;
+        ingestState.index = st.index && typeof st.index.text === "string" ? st.index : null;
+        for (const el of document.querySelectorAll(".index-age.live")) indexAgeEl(el);
         // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
         const on = (!!st.ingesting && n >= 20) || ingestState.importing;
         if (on && ingestState.importing) {

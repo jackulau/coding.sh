@@ -110,7 +110,8 @@ export function suggest(input: string, candidates: readonly string[]): string | 
     }
   }
   if (best !== undefined && bestD <= max) return best;
-  const synonym = SYNONYMS[lower]?.find((s) => candidates.includes(s));
+  // Own keys only: `constructor` or `toString` typed as a command is no synonym.
+  const synonym = (Object.hasOwn(SYNONYMS, lower) ? SYNONYMS[lower] : undefined)?.find((s) => candidates.includes(s));
   if (synonym) return synonym;
   if (lower.length < 3) return undefined;
   const prefixed = [...new Set(candidates.filter((c) => c.toLowerCase().startsWith(lower)))];

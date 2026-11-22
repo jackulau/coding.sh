@@ -70,7 +70,7 @@ llm replay noise floor 4% (n=50) [1%, 14%]; control vs exp_01J…: 9 output(s) d
 | `noise floor 4%` | The control's pass or fail differs from the recording's in 4% of case-trials. A smaller B − A may be noise. |
 | `9 output(s) differ` | Outputs of the control that differ from the recording's, passing or not. |
 | `first live call 3–12` | Where the control's replay stopped in each case-trial. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
-| `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out. |
+| `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out, and a warning names the case-trial and why. |
 | `Replayed arms are correlated` | Confirm a win with a fresh live run before you ship it. |
 
 :::more What counts as the same request
@@ -108,8 +108,10 @@ recorded, and only 2xx replies are served from a recording.
 | `excludeTools` | false | Leaves the tool list out of the key. |
 | `excludeModel` | false | Leaves the model out of the key. |
 
-The flags win over the spec. A replay matches the keys the recording stored, so set `excludeTools`
-or `excludeModel` when you record, and keep it set when you replay.
+The flags win over the spec. With `--arm`, an arm given as a whole spec can set its own `upstream`,
+which wins for that arm's calls, with or without a spec before the flags. A replay matches the keys
+the recording stored, so set `excludeTools` or `excludeModel` when you record, and keep it set when
+you replay.
 
 ## What is stored
 

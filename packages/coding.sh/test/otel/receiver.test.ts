@@ -214,6 +214,30 @@ describe("OTLP receiver over HTTP", () => {
     assert.equal(child?.parent?.type, "researcher");
   });
 
+  // Regression: spans exported children first (one request each, as a BatchSpanProcessor can split them)
+  // stored the subagent's model call in the root's session, and the root kept its model after the call
+  // moved to the subagent's session, so the same trace gave the root a model only when split.
+  it("gives the root no model of its subagents' calls, whatever the batch split", async () => {
+    const T = "6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c";
+    const spans = [
+      otlpSpan(T, "e000000000000003", "e000000000000002", "ChatAnthropic", [sAttr("openinference.span.kind", "LLM"), sAttr("llm.model_name", "claude-sonnet-4-5"), iAttr("llm.token_count.prompt", 800), iAttr("llm.token_count.completion", 100)], 200, 1200),
+      otlpSpan(T, "e000000000000002", "e000000000000001", "sub-alpha", [sAttr("openinference.span.kind", "AGENT"), sAttr("input.value", "alpha task")], 100, 3000),
+      otlpSpan(T, "e000000000000001", undefined, "orchestrator", [sAttr("openinference.span.kind", "AGENT"), sAttr("input.value", "triage the bug")], 0, 8000),
+    ];
+    const roots: (string | undefined)[] = [];
+    for (const split of [false, true]) {
+      await rx.close();
+      await start();
+      const body = otlpTraces("qa-openinference", spans);
+      for (const p of split ? splitSpans(body) : [body]) assert.equal((await send(rx.url, json("/v1/traces", p))).status, 200);
+      const root = await store.getSession(T);
+      assert.equal(root?.stats.latency?.subagents, 1);
+      assert.equal((await store.getSession(`otel-sub-${T}-e000000000000002`))?.model, "claude-sonnet-4-5");
+      roots.push(root?.model);
+    }
+    assert.deepEqual(roots, [undefined, undefined]);
+  });
+
   it("credits a GenAI subagent's work and uncached input tokens to the right sessions (gzip protobuf)", async () => {
     const T = "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e";
     const [root, reader, writer] = ["f000000000000001", "f000000000000002", "f000000000000003"];
@@ -432,8 +456,8 @@ describe("OTLP receiver over HTTP", () => {
       body: { stringValue: `claude_code.${name}` },
       attributes: [c, sAttr("event.name", name), sAttr("prompt.id", "p1"), ...attrs],
     });
-    const records = [
-      log(0, "user_prompt", [sAttr("prompt", "hello there")]),
+    const records = (promptMs: number) => [
+      log(promptMs, "user_prompt", [sAttr("prompt", "hello there")]),
       log(2100, "api_request", [
         sAttr("model", "claude-sonnet-4-5"),
         { key: "cost_usd", value: { doubleValue: 0.0123 } },
@@ -444,12 +468,16 @@ describe("OTLP receiver over HTTP", () => {
         sAttr("request_id", "req_b1"),
       ]),
     ];
-    const logs = { resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: records }] }] };
+    const logs = (promptMs: number) => ({
+      resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: records(promptMs) }] }],
+    });
 
-    for (const order of ["traces first", "logs first"]) {
+    // Regression: a user_prompt log stamped a few ms before the interaction span started stayed before
+    // the session.start, so the one prompt read as a phase of its own and every model call as a resume.
+    for (const [order, promptMs] of [["traces first", 0], ["logs first", 0], ["logs first, the prompt logged 5 ms before the span", -5], ["traces first, the prompt logged 5 ms before the span", -5]] as const) {
       it(`keeps the reported cost and the span's TTFT in one call, ${order}`, async () => {
-        const posts = [() => send(rx.url, json("/v1/traces", traces)), () => send(rx.url, json("/v1/logs", logs))];
-        if (order === "logs first") posts.reverse();
+        const posts = [() => send(rx.url, json("/v1/traces", traces)), () => send(rx.url, json("/v1/logs", logs(promptMs)))];
+        if (order.startsWith("logs first")) posts.reverse();
         for (const p of posts) assert.equal((await p()).status, 200);
         const s = await store.getSession(sid);
         assert.equal(s?.stats.latency?.llmCalls, 1, "counted once");

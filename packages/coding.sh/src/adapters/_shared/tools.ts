@@ -1,7 +1,8 @@
 // Cross-agent tool-call semantics: which tools are shells, which edit files,
 // and the derived file.change / test.result events they imply.
 import { isAbsolute, relative } from "node:path";
-import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, structuredPatchDiff, unifiedDiff, type FileChangeInfo } from "./heuristics.ts";
+import { commandOrigin, normalizeTracePath } from "../../core/shell-diff.ts";
+import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, runsElsewhere, runsTests, structuredPatchDiff, unifiedDiff, writesNothing, type FileChangeInfo } from "./heuristics.ts";
 import { arr, blobList, fieldLimit, isObj, obj, outputText, str, type Emitter } from "./normalize.ts";
 
 const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
@@ -112,7 +113,7 @@ export function fileChangesOf(tool: string, input: unknown, output?: unknown, cw
     return [{ path: relPath(path, cwd), op: "modify" }];
   }
   if (DELETE_TOOLS.has(t) && path) return [{ path: relPath(path, cwd), op: "delete" }];
-  if (SHELL_TOOLS.has(t) && isObj(out.bashEditDiff)) return bashEditChanges(out.bashEditDiff, cwd);
+  if (SHELL_TOOLS.has(t) && isObj(out.bashEditDiff)) return bashEditChanges(out.bashEditDiff, cwd, shellCommandOf(tool, input));
   if (PATCH_TOOLS.has(t)) {
     const text = patchTextOf(input);
     if (!text) return [];
@@ -128,9 +129,14 @@ export function fileChangesOf(tool: string, input: unknown, output?: unknown, cw
  * with structuredPatch-style hunks, plus `changedFiles` naming every changed
  * path when `files` was cut short (`moreFiles` > 0). `unavailable: true` (no
  * diff could be taken) gives nothing. Hooks see the same object as tool_response.
+ *
+ * The diff is the checkout's before and after, so it also holds files the call did not edit
+ * (keepShellDiffFile): those a git branch switch, merge or checkout brought in, and those another
+ * process changed while a command that writes nothing, or runs in another directory, ran.
  */
-function bashEditChanges(diff: Record<string, unknown>, cwd?: string): FileChangeInfo[] {
+function bashEditChanges(diff: Record<string, unknown>, cwd?: string, command?: string): FileChangeInfo[] {
   if (diff.unavailable === true) return [];
+  const keep = keepShellDiffFile(command, cwd);
   const out: FileChangeInfo[] = [];
   const seen = new Set<string>();
   for (const f of arr(diff.files)) {
@@ -139,6 +145,7 @@ function bashEditChanges(diff: Record<string, unknown>, cwd?: string): FileChang
     if (!path || seen.has(path)) continue;
     seen.add(path);
     const rel = relPath(path, cwd);
+    if (!keep(rel)) continue;
     const op = o.created === true ? "add" : o.deleted === true ? "delete" : "modify";
     let additions = 0;
     let deletions = 0;
@@ -154,9 +161,28 @@ function bashEditChanges(diff: Record<string, unknown>, cwd?: string): FileChang
   for (const p of arr(diff.changedFiles)) {
     if (typeof p !== "string" || !p || seen.has(p)) continue;
     seen.add(p);
-    out.push({ path: relPath(p, cwd), op: "modify" });
+    const rel = relPath(p, cwd);
+    if (keep(rel)) out.push({ path: rel, op: "modify" });
   }
   return out;
+}
+
+/**
+ * Whether a file in a shell call's dirty-tree diff is the call's own edit: the command names it
+ * (commandOrigin "named"); else not when a git command brought it in ("vcs": checkout, switch,
+ * merge, pull, rebase, reset), nor when the command writes nothing or runs in another
+ * directory, so another process changed it. Other unnamed files stay (a script, a formatter, a build).
+ */
+function keepShellDiffFile(command: string | undefined, cwd?: string): (rel: string) => boolean {
+  if (command === undefined) return () => true;
+  let foreign: boolean | undefined;
+  return (rel) => {
+    const origin = commandOrigin(command, normalizeTracePath(rel, cwd), cwd);
+    if (origin === "named") return true;
+    if (origin === "vcs") return false;
+    foreign ??= writesNothing(command) || runsElsewhere(command, cwd);
+    return !foreign;
+  };
 }
 
 export interface DerivedOpts {
@@ -188,7 +214,7 @@ export async function clipDiff(ctx: Emitter["ctx"], diff: string | undefined): P
 /**
  * Emits file.change (one per touched file, with a unified diff when the call
  * carries enough to build one) and test.result (when a shell tool ran a test
- * suite) for a finished tool call. Ids use natural keys, so the same call seen
+ * suite: runsTests) for a finished tool call. Ids use natural keys, so the same call seen
  * live and in a backfilled transcript dedupes.
  */
 export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
@@ -203,8 +229,9 @@ export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
       );
     }
   }
+  // Only a command that runs tests vouches for a summary in its output: `tail ci.log` prints an old one.
   const cmd = shellCommandOf(o.tool, o.input);
-  if (cmd !== undefined) {
+  if (runsTests(cmd)) {
     const s = parseTestOutput(outputText(o.output), cmd);
     if (s) em.emit("test.result", { runner: s.runner, passed: s.passed, failed: s.failed, skipped: s.skipped, toolUseId: o.toolUseId }, { ...o.extra, key: [o.toolUseId] });
   }

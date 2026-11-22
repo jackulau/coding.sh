@@ -97,6 +97,14 @@ export function shadowRepoPath(repoRoot: string, env: NodeJS.ProcessEnv = proces
 }
 
 /**
+ * Whether this store holds a shadow repo for `repoRoot`: the only place a snapshot commit lives. A
+ * reader checks it first, so reading writes nothing (ensureShadow would create the repo).
+ */
+export function hasShadow(repoRoot: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return existsSync(join(shadowRepoPath(repoRoot, env), "HEAD"));
+}
+
+/**
  * Create (idempotently) the bare shadow repo for `repoRoot` and point its
  * alternates at the user's object store. Safe to call concurrently.
  */

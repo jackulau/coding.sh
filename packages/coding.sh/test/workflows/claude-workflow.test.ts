@@ -206,6 +206,10 @@ describe("Claude Code workflow tree", () => {
     assert.equal(s.cacheHits, 7);
     assert.equal(s.agents, 2);
     assert.equal(s.cacheHitRate, 7 / 9);
+    // The shares are of the 2 agents that ran: the 7 cached ones count as cache hits, not in them.
+    assert.equal(s.nullAgents, 1);
+    assert.equal(s.nullRate, 1 / 2);
+    assert.equal(s.failRate, 0);
     assert.equal(s.resumeSavedMs, 10_000 + 19_900 + 29_800 + 5000 + 9900 + 3500 + 3500);
     assert.ok(Math.abs(s.resumeSavedUsd! - 0.8) < 1e-9);
   });

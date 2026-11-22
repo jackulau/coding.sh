@@ -4,8 +4,9 @@
 import { parsePlace } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
+import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, countsLine, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkQueue } from "../../core/work.ts";
+import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
@@ -58,36 +59,46 @@ async function list(c: CommandContext): Promise<number> {
   const all = c.flags.all === true || stages.length > 0;
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
-    await distinctFiles(ctx, q.items.slice(0, limit), sessions);
+    // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
+    await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
     if (out.json) {
-      out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...pendingField(backlog) });
+      out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog });
+    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog, stale });
     return 0;
   });
 }
 
 /**
- * An item whose files several sessions changed counts each path once, as `work show` does: a
- * sum of the sessions' own counts would count a path two sessions touched twice.
+ * The index's age while it is old (core/ingest-health.ts): no ingest has finished for longer than
+ * a stall takes and none runs. The queue is then judged as of the last ingest, so an agent that was
+ * active just before it is not called stalled. A store named by --store or CODING_SH_STORE_URL is
+ * filled elsewhere, so this home's record says nothing about it.
  */
-async function distinctFiles(ctx: Context, items: readonly WorkItem[], sessions: readonly Session[]): Promise<void> {
-  const byId = new Map(sessions.map((s) => [s.id, s]));
-  for (const i of items) {
-    const changers = i.sessionIds.filter((id) => (byId.get(id)?.stats.filesChanged ?? 0) > 0).length;
-    if (changers > 1) await workFiles(ctx.index, i, sessions);
-  }
+function staleIndex(ctx: Context): IndexAge | undefined {
+  if (ctx.storeOverridden) return undefined;
+  const age = indexAge(ctx.paths.root);
+  return age?.stale ? age : undefined;
 }
 
-function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog }): void {
+/** `indexUpdatedAt` and `asOf` (the time the queue was judged at) for --json, only while the index is old. */
+function staleIndexField(stale: IndexAge | undefined): { indexUpdatedAt?: string; asOf?: string } {
+  if (!stale) return {};
+  const at = new Date(stale.at).toISOString();
+  return { indexUpdatedAt: at, asOf: at };
+}
+
+function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge }): void {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
   out.print(`${out.style("Stages", "faint")}  ${stagesLine(q.stages)}`);
+  if (o.stale) out.print(out.style(staleIndexText(o.stale), "yellow"));
   if (q.noPromptSignal.length) out.print(out.style(`No prompt signal from ${q.noPromptSignal.join(", ")}: their waits show as stalled.`, "faint"));
   if (o.truncated) out.note(`Read the newest sessions only: narrow --since.`);
   if (o.backlog.pendingFiles) out.note(`${plural(o.backlog.pendingFiles, "capture")} not yet ingested; --fresh waits for them.`);
@@ -127,8 +138,15 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const where = i.repo ?? i.cwd;
   const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
+  if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
   out.print(`          ${out.style("next:", "faint")} ${nextText(i.next)}`);
+}
+
+/** "build: 2 running, 1 failed, 3 done", the agents of one phase of a workflow run by state. */
+export function phaseText(p: WorkPhase): string {
+  const states = (["running", "failed", "done"] as const).filter((k) => p[k]).map((k) => `${p[k]} ${k}`);
+  return `${p.name ?? "no phase"}: ${states.join(", ")}`;
 }
 
 /**
@@ -148,12 +166,13 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 // ------------------------------------------------------------ one item
 
 /** The item an id names: an item id (w + 6 hex), else a session id in one. Unknown: exit 1. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay): Promise<{ item: WorkItem; sessions: Session[] }> {
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[] }> {
   const w = windowOf(c);
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
   const pick = (ss: Session[]) => {
-    const q = buildWorkQueue(ss, { all: true, overlay });
-    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref) || i.rootId === ref);
+    const q = buildWorkQueue(ss, { all: true, overlay, now });
+    // A session id names the item it is in before a run item it started (whose rootId it is).
+    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref)) ?? q.items.find((i) => i.rootId === ref);
   };
   let item = pick(sessions);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
@@ -188,14 +207,22 @@ async function show(c: CommandContext): Promise<number> {
   windowOf(c);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
-    const { item, sessions } = await findItem(c, ctx, ref, overlay);
+    const { item, sessions } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
+    const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
+    // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
+    const own = mainFilesChanged(item, byId);
     if (out.json) {
       out.data({
         ...workItemJson(item),
+        // JSON.stringify drops an undefined field: no sessionFilesChanged without a count, and an item that is
+        // no workflow run has no workflowAgents.
+        sessionFilesChanged: own,
+        workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
         files: [...files].slice(0, 200),
         sessions: [item.primaryId, ...children.map((s) => s.id)].map((id) => {
           const s = byId.get(id);
@@ -204,11 +231,13 @@ async function show(c: CommandContext): Promise<number> {
           if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
           return row;
         }),
+        ...staleIndexField(stale),
         ...pendingField(backlog),
       });
       return 0;
     }
     out.print(`${out.style(item.id, "cyan")}  ${oneLine(item.title ?? "(untitled)", 80)}`);
+    if (stale) out.print(out.style(staleIndexText(stale), "yellow"));
     out.row("State", item.bucket ? BUCKET_LABELS[item.bucket] : `hidden (${item.hidden})`, item.bucket === "blocked" || item.bucket === "failed" ? "warn" : "none", true);
     out.row("Why", `${item.probablyClosed ? "probably closed: " : ""}${item.reason}`, "none", true);
     out.row("Stage", `${stageTag(item)}: ${item.stageWhy}`, "none", true);
@@ -220,7 +249,19 @@ async function show(c: CommandContext): Promise<number> {
     out.row("Started", `${ago(item.startedAt)}, last active ${ago(item.lastActivity)}${item.running ? " (running)" : ""}`, "none", true);
     if (item.costUsd !== undefined) out.row("Cost", usd(item.costUsd), "none", true);
     if (item.startedBy) out.row("Started by", item.startedBy, "none", true);
-    out.row("Files", item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed", "none", true);
+    if (item.workflow) {
+      out.row("Workflow", `${item.workflow.name ? `${item.workflow.name}, ` : ""}run ${item.workflow.id}, ${plural(agents.length, "agent")}`, "none", true);
+      for (const p of item.workflow.phases) {
+        out.print(`    ${phaseText(p)}${p.costUsd !== undefined ? `  ${usd(p.costUsd)}` : ""}`);
+        const inPhase = agents.filter((a) => a.phase === p.name);
+        for (const a of inPhase.slice(0, 20)) {
+          const cost = a.costUsd !== undefined ? usd(a.costUsd) : "";
+          out.print(`      ${a.sessionId}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
+        }
+        if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
+      }
+    }
+    out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));
     out.row("Sessions", `${item.primaryId}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
@@ -231,14 +272,25 @@ async function show(c: CommandContext): Promise<number> {
   });
 }
 
+/**
+ * The main session's own files-changed count (its stats.filesChanged, as `show` reports it), when
+ * the item has other sessions whose files its filesChanged also counts; undefined otherwise.
+ */
+export function mainFilesChanged(item: Pick<WorkItem, "primaryId" | "sessionIds">, byId: ReadonlyMap<string, Session>): number | undefined {
+  if (!item.sessionIds.some((id) => id !== item.primaryId)) return undefined;
+  return byId.get(item.primaryId)?.stats.filesChanged;
+}
+
 async function ack(c: CommandContext): Promise<number> {
   const { out } = c;
   const ref = idArg(c);
   windowOf(c);
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
+    // Judged as the list was: an old index acknowledges what `work` showed, not a stall that came of its age.
+    const asOf = staleIndex(ctx)?.at;
     const overlay = readOverlay(ctx.paths.work);
-    const { item } = await findItem(c, ctx, ref, overlay);
+    const { item } = await findItem(c, ctx, ref, overlay, asOf);
     const cause = item.bucket ? item.cause : undefined;
     if (!cause) {
       if (out.json) out.data({ id: item.id, acked: false, hidden: item.hidden ?? null });
@@ -248,7 +300,7 @@ async function ack(c: CommandContext): Promise<number> {
     addAck(overlay, cause.sessionId, cause.fingerprint);
     writeOverlay(ctx.paths.work, overlay);
     // What the item shows now: the next cause, if it has one.
-    const { item: after } = await findItem(c, ctx, item.id, overlay);
+    const { item: after } = await findItem(c, ctx, item.id, overlay, asOf);
     if (out.json) {
       out.data({ id: item.id, acked: true, bucket: cause.bucket, fingerprint: cause.fingerprint, now: workItemJson(after) });
       return 0;

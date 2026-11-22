@@ -729,7 +729,9 @@ export const opencode: Adapter = {
   // 2 (0.1.2): backfill reads the 1.x SQLite tables.
   // 3 (0.1.5): backfill reads a database OpenCode set aside after a schema mismatch when there is no opencode.db. A tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
-  parseVersion: 4,
+  // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
+  // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
+  parseVersion: 6,
 
   async detect() {
     const r = await detectAgent({

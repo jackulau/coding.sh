@@ -107,6 +107,10 @@ describe("changeEffects", () => {
     assert.equal(first.verdict, "no-baseline");
     const last = effects.find((x) => x.change.subject === "ask for a summary")!;
     assert.equal(last.verdict, "no-sessions-after");
+    // A session after every change that recorded no HEAD is counted in the reason.
+    const { repo: _, ...headless } = at("h0", commits.init!, { flagged: false, tested: true, k: 1e6 });
+    const withHeadless = await changeEffects(root, [...sessions, headless], { since: 0, limit: 5, events: async (id) => events.get(id) ?? [] });
+    assert.match(withHeadless.find((x) => x.change.subject === "ask for a summary")!.reason, /1 session\(s\) since it recorded no git HEAD/);
   });
 
   it("regressed: more sessions flagged after a change", async () => {
@@ -155,6 +159,14 @@ describe("decide", () => {
     assert.equal(decide(g(6, 3), g(6, 2), []).verdict, "no-clear-change");
     assert.equal(decide(g(0, 0), g(6, 2), []).verdict, "no-baseline");
     assert.equal(decide(g(6, 2), g(0, 0), []).verdict, "no-sessions-after");
+  });
+
+  it("sessions with no git HEAD are named, not called sessions that never ran", () => {
+    assert.equal(decide(g(6, 2), g(0, 0), []).reason, "No captured session ran with this change yet.");
+    const d = decide(g(6, 2), g(0, 0), [], { noHead: 12 });
+    assert.equal(d.verdict, "no-sessions-after");
+    assert.match(d.reason, /12 session\(s\) since it recorded no git HEAD/);
+    assert.doesNotMatch(d.reason, /No captured session ran/);
   });
 
   it("a line the agent follows with the flagged share unchanged is followed-no-effect, not helped (5/10 → 5/10, acted 0/10 → 9/10)", () => {

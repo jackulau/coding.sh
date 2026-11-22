@@ -52,7 +52,7 @@ test each hit.
 | `agent` | session | Agent id, or the service name of an SDK or OpenTelemetry app | `agent:codex` |
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
-| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name | `repo:coding-sh` |
+| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name. On Windows a typed path gets an upper-case drive letter and backslashes (`c:/w/demo` is `C:\w\demo`), the spelling stored roots have; type the long name, not an 8.3 short name | `repo:coding-sh` |
 | `launch` | session | `headless` (`claude -p`, an SDK, `codex exec`) or `interactive` | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
@@ -335,7 +335,8 @@ coding.sh export labels --format csv
 ```
 
 The filters `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--where`, `--subagents` and
-`--limit` (the N newest sessions) pick sessions; `events` and `labels` export the rows of those
+`--limit` (the N newest sessions) pick sessions, as they do for `coding.sh sessions` (`--repo` takes
+a path or a repo name); `events` and `labels` export the rows of those
 sessions. With no filter, `export labels` exports every label, including labels on eval cases.
 
 JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label` in the
@@ -377,9 +378,9 @@ JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `agent_version` | Agent version, when known |
 | `model` | Main model |
 | `cwd` | Working directory |
-| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote`, and `main` for a worktree |
+| `repo` | Repo JSON: `root`, `head` (the HEAD commit), `branch`, and `main` (the main checkout's root) when `root` is a linked worktree. A worktree of a bare repo has no `main`. `snapshot` and `partial` appear when a working-tree snapshot was taken |
 | `repo_root` | The repo root, for filtering |
-| `title` | First prompt or the agent's title. It skips a workflow harness's frame line, a `Project:` line and pasted blocks; a prompt that is only a paste gives its first line |
+| `title` | First prompt or the agent's title. It skips a workflow harness's frame line, a `Project:` line in a prompt with a frame line, and pasted blocks; a prompt that is only a paste gives its first line. A subagent takes the first line left. A workflow agent whose prompt is only a frame is titled by its phase and label ("build · titles") |
 | `started_at` | Start time |
 | `ended_at` | End time (NULL while running or unknown) |
 | `stats` | Stats JSON: `events`, `turns`, `toolCalls`, `toolErrors`, `usage`, `latency`, … |
