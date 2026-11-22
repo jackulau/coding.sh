@@ -38,6 +38,12 @@ export interface LlmPlan {
   control: boolean;
 }
 
+const MORE_WARNINGS: Record<string, string> = {
+  missing: "llm cache: more case-trials have no source recording; they run live and are left unscored",
+  failed: "llm cache: more case-trials had a live call fail; they are left unscored",
+  other: "llm cache: more warnings like these are not shown",
+};
+
 /** Whether any llm flag is set (they run one task or two arms; not a matrix or --watch). */
 export const llmFlagsSet = (c: CommandContext): string[] => (["record", "replay", "replay-until"] as const).filter((f) => c.flags[f] !== undefined && c.flags[f] !== false);
 
@@ -68,10 +74,14 @@ export async function llmPlan(c: CommandContext, store: FileEvalStore, specFile:
   if (untilRaw !== undefined && !replayRef) throw new UsageError("--replay-until needs --replay <EXPERIMENT>", { reason: "invalid_argument" });
   if (!record && !replayRef) return undefined;
   const dir = paths(c.env).llmCache;
-  let warned = 0;
+  // Up to 3 warnings of each kind, then one line for the rest of that kind.
+  const warned = new Map<string, number>();
   const onWarn = (m: string) => {
-    if (++warned <= 3) c.out.warn(m);
-    else if (warned === 4) c.out.warn("llm cache: more case-trials have no source recording; they run live and are left unscored");
+    const kind = / has no recording for /.test(m) ? "missing" : / live call \d+ failed /.test(m) ? "failed" : "other";
+    const n = (warned.get(kind) ?? 0) + 1;
+    warned.set(kind, n);
+    if (n <= 3) c.out.warn(m);
+    else if (n === 4) c.out.warn(MORE_WARNINGS[kind]!);
   };
   const opts: LlmRunOpts = {
     mode: record ? "record" : "replay",

@@ -66,7 +66,7 @@ llm replay noise floor 4% (n=50) [1%, 14%]; control vs exp_01J…: 9 output(s) d
 |---|---|
 | `noise floor 4%` | The control alone differs from the recording in 4% of outputs. A smaller B − A may be noise. |
 | `first live call 3–12` | Where replay stopped in each case-trial. Each run keeps it as `runs[].llm.firstLiveOrdinal`. |
-| `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out. |
+| `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out, and a warning names the case-trial and why. |
 | `Replayed arms are correlated` | Confirm a win with a fresh live run before you ship it. |
 
 :::more What counts as the same request

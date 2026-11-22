@@ -3,7 +3,7 @@
 // errors. A command agent calls a stub model API; temp HOME only.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -144,6 +144,25 @@ describe("exp run --record / --replay from the CLI", () => {
     const meta = JSON.parse(alone.stdout).experiment.metadata;
     assert.deepEqual(meta.weights, { sha256: sha });
     assert.equal(meta.llm.control, "skipped");
+  });
+
+  it("--no-control says why each left-out case-trial is unscored: no recording, or a live call that failed", async () => {
+    const add = (...cases: object[]) => cli(["dataset", "add", "dsu", ...cases.flatMap((x) => ["--case", JSON.stringify(x)])]);
+    const specU = (name: string) => {
+      const file = join(home, `${name}.json`);
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(spec(name, "sys A"), "utf8")), dataset: "dsu" }));
+      return file;
+    };
+    // u2's calls fail (the stub answers 500), so the recording has no reply to serve for it.
+    assert.equal((await add({ id: "u1", input: "q1", expected: "x" }, { id: "u2", input: "please-500", expected: "x" })).status, 0);
+    const rec = JSON.parse((await cli(["exp", "run", specU("urec"), "--record", "--json"])).stdout).experiment.id as string;
+    // u3 comes after the recording, so it has none.
+    assert.equal((await add({ id: "u3", input: "q3", expected: "x" })).status, 0);
+    const r = await cli(["exp", "run", specU("urep"), "--replay", rec, "--no-control"]);
+    assert.match(r.stdout, /unscored 2 replayed run/);
+    assert.match(r.stderr, new RegExp(`${rec} has no recording for case u3 trial 1; running it live and leaving it unscored`));
+    assert.match(r.stderr, /case u2 trial 1: live call 1 failed \(HTTP 500\); leaving it unscored/);
+    assert.doesNotMatch(r.stderr, /case u1 /);
   });
 
   it("the spec's llm field records too, and flags fail fast with a reason", async () => {
