@@ -31,7 +31,7 @@ Fix first
 Did your last changes help?
   4925549  Nov 11 04:13  AGENTS.md +129 -0  "Add AGENTS.md and package.json"
       + # AGENTS.md …
-    No sessions yet: No captured session ran with this change yet.
+    No captured session ran with this change yet.
 ```
 
 Each issue has a count, a severity, the newest example and the commands for the next step.
@@ -156,7 +156,7 @@ and did each session take more work. Then it gives one verdict:
 | Regressed | More flagged sessions. `check` exits 1. |
 | No clear change | 5 or more sessions after, and the difference could be chance. |
 | Too early to tell | Fewer than 5 sessions after, and no clear result yet. |
-| No sessions yet | No session ran with the change. When headless sessions ran with it, the line under the verdict counts them and names `--headless`. |
+| No captured session ran with this change yet | No session ran with the change. The line has no verdict word. When only headless sessions ran with it, the line says so, counts them and names `--headless`. |
 | No sessions before it | Nothing to compare with, often the commit that added the file. |
 
 For Followed and Costlier, `check` suggests `coding.sh refine test git:<previous>` to test the

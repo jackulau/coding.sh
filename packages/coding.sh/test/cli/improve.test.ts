@@ -2,7 +2,7 @@
 // gained a line, with synthetic sessions recorded before and after it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -29,6 +29,13 @@ const world = async (name: string, o: Parameters<typeof improveWorld>[2]) => {
 function cli(w: World, args: string[]) {
   const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: w.repo, env: w.env, encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** Commits one more CLAUDE.md line now: a harness change no session ran with yet. */
+function commitRule(w: World, line: string, subject: string) {
+  appendFileSync(join(w.repo, "CLAUDE.md"), `${line}\n`);
+  const r = spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qam", subject], { cwd: w.repo, env: w.env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
 }
 
 describe("cli improve", () => {
@@ -179,19 +186,34 @@ describe("cli improve", () => {
     assert.equal(commitSteps("CLAUDE.md", msg, { MSYSTEM: "MINGW64" }, "win32").length, 1);
   });
 
-  it("improve check: when every session after a change is headless, it says how many were left out and names --headless", async () => {
+  it("improve check: when only headless sessions ran after a change, its reason says so, once, and names --headless", async () => {
     const w = await world("headless-after", { afterFlagged: 0, plan: { before: [{ test: true }, { test: true }, { test: true }], after: [{ headless: true }, { headless: true }] } });
+    const reason = "Only headless sessions ran with this change: 2 (claude -p, an Agent SDK, codex exec). --headless counts them.";
     const text = cli(w, ["improve", "check"]);
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /No sessions yet: [^\n]*\n\s+Left out: 2 headless sessions after it \(claude -p, an Agent SDK, codex exec\); --headless counts them/);
+    assert.ok(text.stdout.includes(`\n  ${reason}\n`), text.stdout);
+    assert.doesNotMatch(text.stdout, /No sessions yet|No captured session ran|headless sessions after it/, "said once, and not as if no session ran");
     assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless/);
-    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; headlessLeftOut?: number }[] };
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; reason: string; headlessLeftOut?: number }[] };
     const ch = j.changes.find((c) => c.commit === w.commits.rule)!;
-    assert.deepEqual([ch.verdict, ch.headlessLeftOut], ["no-sessions-after", 2]);
+    assert.deepEqual([ch.verdict, ch.reason, ch.headlessLeftOut], ["no-sessions-after", reason, 2]);
     const all = JSON.parse(cli(w, ["improve", "check", "--json", "--headless"]).stdout) as typeof j;
     const counted = all.changes.find((c) => c.commit === w.commits.rule)!;
     assert.notEqual(counted.verdict, "no-sessions-after");
     assert.equal(counted.headlessLeftOut, undefined);
+    // improve shows the change with the same reason.
+    const report = JSON.parse(cli(w, ["improve", "--json"]).stdout) as { changes: { commit: string; reason: string }[] };
+    assert.equal(report.changes.find((c) => c.commit === w.commits.rule)?.reason, reason);
+    assert.ok(cli(w, ["improve"]).stdout.includes(`\n    ${reason}\n`));
+  });
+
+  it("improve check: a change no session ran with yet says so once", async () => {
+    const w = await world("none-after", { afterFlagged: 0 });
+    commitRule(w, "Keep commits small.", "CLAUDE.md: keep commits small");
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /"CLAUDE\.md: keep commits small"\n {4}\+ Keep commits small\.\n {2}No captured session ran with this change yet\.\n/);
+    assert.doesNotMatch(text.stdout, /No sessions yet/);
   });
 
   it("improve check exits 1 on a regression and 0 otherwise", async () => {
