@@ -69,7 +69,7 @@ session, linked to its parent.
 
 - In the viewer: subagents fold under their parent in the list, and its page shows the run
   as a tree.
-- In the CLI: `coding.sh tree <id>` shows the run with what each part cost, and
+- In the CLI: `coding.sh tree <id>` shows a session's subagents with each part's cost, and
   `coding.sh sessions --subagents` lists them.
 - Agents of one workflow run share `parent.workflowId`;
   [`coding.sh work`](reference/cli.md#codingsh-work) shows the run as one item with its phases.

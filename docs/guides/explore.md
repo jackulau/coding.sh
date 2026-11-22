@@ -208,8 +208,8 @@ coding.sh sessions --flag looping
 
 ## Subagents and the run tree
 
-`show` lists a session's subagents at the end, and `sessions --subagents` or `--where is:child`
-lists them. `tree` shows a multi-agent run with what each part cost:
+`show` lists a session's subagents, and `sessions --subagents` or `--where is:child` lists them.
+`tree` shows a multi-agent run with what each part cost:
 
 ```sh
 coding.sh tree 9887c95d-2739-4dae-8222-4471386def67
@@ -224,7 +224,8 @@ Apply each SQLite migration once when two processes open the index
   └ 9887c95d-2739-4dae-8222-4471386def67:sub:a8f20c41e7  Explore  claude-haiku-4-5  50s  2 tools  $0.0145  Find user_version reads
 ```
 
-`--run` reads the argument as a run id, so a fan-out's agents show as one tree.
+From a subagent, `tree` shows its part, and `--all` the whole run. `--run` takes a run id, so a
+fan-out's agents show as one tree.
 
 ## Replay a session
 

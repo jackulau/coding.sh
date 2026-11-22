@@ -88,6 +88,7 @@ grouped by area, with links to the docs for the details.
 - **Site.** coding.sh is served by Vercel instead of a Cloudflare Worker, which had hit its daily request limit and answered 429. Moved pages, `www`, the headers and the installer behave as before. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 - **Dogfood.** A perf or site budget missed by a little gets partial credit: the target divided by the reading for a ceiling, and the reverse for a floor. One reading near a budget moved the headline by 4 points before. `compare` scores the previous scorecard again with the current scorer and keeps its stored headline as `prevStored`. [Dogfood design](https://github.com/jackulau/coding.sh/blob/main/docs/design/dogfood.md)
 - **SDK.** In Python, `coding_sh.flush()` waits at most 5 s by default, as `flush()` does in TypeScript; `flush(timeout=None)` still waits until the queue is sent or given up. Before, a script that ended with `coding_sh.flush()`, as the quick start shows, could hang for over a minute when the server did not answer. [SDK](https://coding.sh/docs/sdk)
+- **Sessions.** `coding.sh tree` on a subagent shows that subagent and its own subagents, below a line naming the sessions above it. Before, it printed the whole run, which `--all` still shows. From a subagent, `--json` adds `ancestors`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#subagents-and-the-run-tree))
 
 ### Fixed
 
