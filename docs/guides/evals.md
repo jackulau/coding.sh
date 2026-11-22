@@ -224,7 +224,9 @@ checklist.
 tasks, best first, with the score's reasons, the guessed verifier and, with `--all`, the sessions
 left out and why. `--since`, `--limit`, `--repo DIR|all` and `--flagged` (only failed or flagged
 sessions) change the pool, and `--json` prints `{candidates, considered, eligible, rejected}`. The
-MCP tool `eval_candidates` returns the same list.
+MCP tool `eval_candidates` returns the same list and counts, plus `rejectedBy`: how many sessions
+each reason left out, such as `{"no-git-start": 3, "no-edits": 1}`. Its counts cover every session
+in the pool, including the rejected ones it does not list.
 
 `coding.sh eval validate <task>` checks that the verifier is fair: a do-nothing attempt fails, the
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history

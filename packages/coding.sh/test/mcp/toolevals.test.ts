@@ -89,6 +89,8 @@ describe("tool evals against the coding.sh MCP server", () => {
     // description and session_tree's run argument.
     // work's id (one item, found as work show finds it) adds about 0.1 KB; shorter status and work
     // descriptions and status's lastError as an open object paid for it.
+    // eval_candidates' rejected and rejectedBy (counts over every considered session, not just the
+    // page) fit in shorter eval_candidates text.
     assert.ok(s.surfaceBytes < 44_950, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);

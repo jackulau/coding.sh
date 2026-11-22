@@ -1208,19 +1208,22 @@ function toolDefs(): PagedTool[] {
       name: "eval_candidates",
       title: "Rank sessions as eval tasks",
       description:
-        "Rank this repo's recent sessions by how good a repo-replay eval task each would make: failure flags, pushback and a guessable verifier score up; subagents, eval runs and sessions with no git start, prompt or edits are rejected.",
+        "Rank this repo's recent sessions as repo-replay eval tasks: failure flags, pushback and a guessable verifier score up; subagents, eval runs and sessions with no git start, prompt or edits are rejected.",
       inputSchema: input({
-        since: { type: "string", description: "How far back: 30m, 12h, 7d, 2w. Default 14d." },
+        since: { type: "string", description: "30m, 12h, 7d or 2w back. Default 14d." },
         limit: LIMIT(10, 50),
-        repo: { type: "string", description: "Sessions under this directory, or all. Default: this git repo." },
+        repo: { type: "string", description: "Under this directory, or all. Default: this git repo." },
         flagged: { type: "boolean", description: "Only failed or flagged sessions (what eval_init drafts from)." },
-        includeRejected: { type: "boolean", description: "Also return rejected sessions with the reason." },
+        includeRejected: { type: "boolean", description: "Also list rejected sessions." },
       }),
+      // rejected and rejectedBy (a count per reject reason) cover every considered session, not just the page.
       outputSchema: out(
         {
           candidates: arr(out({ sessionId: S, eligible: B, reject: S, score: N, reasons: arr(S), verifierGuess: S }, ["sessionId", "eligible", "score"])),
           considered: N,
           eligible: N,
+          rejected: N,
+          rejectedBy: { type: "object" },
           next: S,
         },
         ["candidates", "considered", "eligible"],
@@ -1228,7 +1231,7 @@ function toolDefs(): PagedTool[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const { rankSessions } = await import("../eval/candidates.ts");
+        const { rankSessions, CANDIDATE_REJECTS } = await import("../eval/candidates.ts");
         const { recentSessions, DEFAULT_SINCE_MS } = await import("../eval/init.ts");
         const { repoRoot } = await import("../core/git.ts");
         const { resolve } = await import("node:path");
@@ -1249,10 +1252,19 @@ function toolDefs(): PagedTool[] {
         const eligible = ranked.filter((x) => x.eligible);
         const limit = numArg(a, "limit", 10);
         const shown = [...eligible.slice(0, limit), ...(a.includeRejected === true ? ranked.filter((x) => !x.eligible).slice(0, limit) : [])];
+        // In the order eval candidates names the reasons; a reason no session has is left out.
+        const rejectedBy: Record<string, number> = {};
+        for (const r of CANDIDATE_REJECTS) {
+          const n = ranked.filter((x) => x.reject === r).length;
+          if (n) rejectedBy[r] = n;
+        }
         return {
           candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: new Date(x.startedAt).toISOString() })),
           considered: ranked.length,
           eligible: eligible.length,
+          // As eval candidates --json names it.
+          rejected: ranked.length - eligible.length,
+          rejectedBy,
           ...(eligible.length ? { next: "eval_init with source: sessions and these sessionIds builds a suite from them (ask the user first)" } : {}),
         };
       },
