@@ -31,6 +31,11 @@ export interface GroupState {
   /** When the group entered this state (ms). */
   since: number;
   checkedAt: number;
+  /**
+   * The state the target last got, kept while the change from it is not delivered (the
+   * delivery failed, or the target was off): the next check sends that change again.
+   */
+  lastDelivered?: AlertState;
 }
 
 export interface AlertDef {

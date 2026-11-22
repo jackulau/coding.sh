@@ -193,7 +193,9 @@ function resultRows(r: AlertResult): string[][] {
   const threshold = (state: string) => thresholdText(r, state === "WARNING" && r.warn !== undefined ? r.warn : r.over);
   if (r.error) return [[r.name, "ERROR", "-", thresholdText(r, r.over), r.window, r.error]];
   if (!r.groups.length) return [[r.name, r.state, "-", threshold(r.state), r.window, ""]];
-  return r.groups.map((g) => [g.agent !== undefined ? `${r.name} (${g.agent})` : r.name, g.state, valueText(r.measure, g.value), threshold(g.state), r.window, g.changed ? `was ${g.previous}` : ""]);
+  // The change the target is told about: from the state it last got.
+  const change = (g: AlertResult["groups"][number]) => (g.lastDelivered !== undefined ? `was ${g.lastDelivered} (not delivered before)` : g.changed ? `was ${g.previous}` : "");
+  return r.groups.map((g) => [g.agent !== undefined ? `${r.name} (${g.agent})` : r.name, g.state, valueText(r.measure, g.value), threshold(g.state), r.window, change(g)]);
 }
 
 /** Exit 0 whatever the alerts say: a scheduler reads states from --json, not from the exit code. */
