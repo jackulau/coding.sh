@@ -463,6 +463,7 @@ export const COMMANDS: CommandSpec[] = [
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself)" },
       { name: "empty", type: "boolean", desc: "Include sessions with no turn, tool call or model call (hidden by default)" },
+      { name: "include-runs", type: "boolean", desc: "Include trial sessions from eval, compare and exp runs (a --where with is:run or run: picks them itself)" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
       WHERE("sessions"),
@@ -472,7 +473,7 @@ export const COMMANDS: CommandSpec[] = [
       FRESH,
     ],
     examples: ["coding.sh sessions --where 'agent:codex cost>0.5 since:7d'", "coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'", "coding.sh sessions --view codex-flagged --since 7d", "coding.sh sessions --facets model,tool --where 'repo:coding-sh'", "coding.sh sessions --agent codex --since 7d"],
-    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", "Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.", PENDING_NOTE],
+    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", "Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.", "Without --include-runs the list leaves out sessions that ran with a run id (eval, compare, exp, or CODING_SH_RUN_ID set by hand) and ends with how many it left out; --json has that count as hiddenRuns, absent when there are none.", PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {

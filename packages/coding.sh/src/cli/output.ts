@@ -9,6 +9,7 @@
 // - Color precedence: --no-color, NO_COLOR, FORCE_COLOR, then per-stream TTY.
 import { cutToWidth, padToWidth, textWidth } from "../core/width.ts";
 import { UsageError } from "./args.ts";
+import { nextStepBin } from "./next-steps.ts";
 
 export const LABEL_WIDTH = 16;
 
@@ -16,6 +17,8 @@ export interface OutputOptions {
   json?: boolean;
   noColor?: boolean;
   env?: NodeJS.ProcessEnv;
+  /** The platform printed commands are named for (nextStepBin); default process.platform. */
+  platform?: NodeJS.Platform;
   stdout?: NodeJS.WriteStream | { write(s: string): unknown; isTTY?: boolean; columns?: number };
   stderr?: NodeJS.WriteStream | { write(s: string): unknown; isTTY?: boolean };
   stdin?: NodeJS.ReadStream | { isTTY?: boolean };
@@ -103,9 +106,13 @@ export class Output {
   private readonly se: { write(s: string): unknown; isTTY?: boolean };
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private spinnerText = "";
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly platform: NodeJS.Platform;
 
   constructor(opts: OutputOptions = {}) {
     const env = opts.env ?? process.env;
+    this.env = env;
+    this.platform = opts.platform ?? process.platform;
     this.so = opts.stdout ?? process.stdout;
     this.se = opts.stderr ?? process.stderr;
     const stdin = opts.stdin ?? process.stdin;
@@ -231,11 +238,23 @@ export class Output {
     else this.err(line);
   }
 
-  /** Next step: benefit, colon, then the command on its own line. */
+  /** Next step: benefit, colon, then the command on its own line (named for the user's shell, `command`). */
   next(benefit: string, command: string): void {
     this.err("");
     this.err(`  ${benefit.replace(/:+$/, "")}:`);
-    this.err(`    ${this.style(command, "cyan", "err")}`);
+    this.err(`    ${this.style(this.command(command), "cyan", "err")}`);
+  }
+
+  /**
+   * A printed command as the user's shell runs it: a leading `coding.sh` becomes nextStepBin of
+   * this Output's env (`codingsh` in PowerShell or cmd, the npx form under npx). A line that is
+   * not a command (a label ending in `:`, prose) and a line cliCommand or runCommand built (it
+   * names the right binary already) stay as they are.
+   */
+  command(line: string): string {
+    if (!LEADING_BIN.test(line) || /[:.?!]$/.test(line)) return line;
+    const bin = nextStepBin(this.env, this.platform);
+    return bin === "coding.sh" ? line : bin + line.slice("coding.sh".length);
   }
 
   // ------------------------------------------------------------ progress
@@ -311,15 +330,15 @@ export class Output {
 
   /** A usage error's `next`: always [what it is, the command]; a close suggestion first, else the help to read. */
   private usageNext(e: UsageError): string[] {
-    if (e.suggestion) return [e.askUser ? "With their approval:" : "Did you mean:", e.suggestion];
-    if (e.reason === "unknown_command") return ["See the commands:", this.helpCommand ?? "coding.sh --help"];
-    return [e.reason === "unknown_option" ? "See the options:" : "See the usage:", this.helpCommand ?? "coding.sh --help"];
+    if (e.suggestion) return [e.askUser ? "With their approval:" : "Did you mean:", this.command(e.suggestion)];
+    if (e.reason === "unknown_command") return ["See the commands:", this.command(this.helpCommand ?? "coding.sh --help")];
+    return [e.reason === "unknown_option" ? "See the options:" : "See the usage:", this.command(this.helpCommand ?? "coding.sh --help")];
   }
 
   /** `next` of a failure in --json: two lines, [what it is, the command], never empty. */
   private nextSteps(next: readonly string[] | undefined): string[] {
-    if (!next?.length) return ["See what this command takes:", this.helpCommand ?? "coding.sh --help"];
-    return next.length === 1 ? ["Next:", next[0]!] : next.slice(0, 2);
+    if (!next?.length) return ["See what this command takes:", this.command(this.helpCommand ?? "coding.sh --help")];
+    return next.length === 1 ? ["Next:", this.command(next[0]!)] : next.slice(0, 2).map((l) => this.command(l));
   }
 
   /** Prints an error (human: headline + details + recovery; --json: one line on stderr). */
@@ -332,8 +351,8 @@ export class Output {
         this.ew(`${this.style("✗", "red", "err")} ${e.message}\n`);
         if (e.askUser) {
           this.ew(`    ${ASK_USER}\n`);
-          if (e.suggestion) this.ew(`    With their approval: ${this.style(e.suggestion, "cyan", "err")}\n`);
-        } else if (e.suggestion) this.ew(`    Did you mean ${this.style(e.suggestion, "cyan", "err")}?\n`);
+          if (e.suggestion) this.ew(`    With their approval: ${this.style(this.command(e.suggestion), "cyan", "err")}\n`);
+        } else if (e.suggestion) this.ew(`    Did you mean ${this.style(this.command(e.suggestion), "cyan", "err")}?\n`);
       }
       return 2;
     }
@@ -352,12 +371,15 @@ export class Output {
       this.ew(`${this.style("✗", "red", "err")} ${message}\n`);
       for (const [k, v] of ce?.details ?? []) this.ew(`  ${formatLabel(k)}${v}\n`);
       if (ce?.askUser) this.ew(`    ${ASK_USER}\n`);
-      for (const n of ce?.next ?? []) this.ew(`    ${n}\n`);
+      for (const n of ce?.next ?? []) this.ew(`    ${this.command(n)}\n`);
       if (debug && e instanceof Error && e.stack) this.ew(e.stack + "\n");
     }
     return ce?.exitCode ?? 1;
   }
 }
+
+/** A line that starts with the CLI's name and then an argument (a command, a flag, a placeholder) or nothing. */
+const LEADING_BIN = /^coding\.sh(?:$| (?:[a-z<-]))/;
 
 export function formatLabel(label: string): string {
   return label.length >= LABEL_WIDTH ? label.slice(0, LABEL_WIDTH - 2) + "… " : label.padEnd(LABEL_WIDTH);

@@ -64,8 +64,11 @@ WSL, coding.sh behaves as it does on Linux and records the agents you run inside
 In PowerShell and cmd, type `codingsh` instead of `coding.sh` (for example `codingsh init` and
 `codingsh ui`). npm also installs an extensionless sh script named `coding.sh`, and PowerShell and
 cmd pick it over `coding.sh.cmd`, so `coding.sh` fails there. `codingsh` is the same CLI. In Git
-Bash, `coding.sh` works. Run in PowerShell or cmd, `init`, `uninstall` and `update` name `codingsh`
-in the commands they print, and `update` names `npm install -g coding.sh` to reinstall.
+Bash, `coding.sh` works. Run in PowerShell or cmd, the next steps and error hints commands print
+name `codingsh`, `--json` included, and `update` names `npm install -g coding.sh`
+to reinstall. `status` does too for a stopped ingest's hint, the MCP `status` tool's update
+`command` names the bin for the shell that started the server, and on Windows the viewer's update
+pill copies `codingsh update`.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.

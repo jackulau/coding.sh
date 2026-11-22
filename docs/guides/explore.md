@@ -24,8 +24,9 @@ ses_b32e798f30f8bed3a17e              opencode          1h ago   1m32s     1    
 ```
 
 The newest 20 come first. `coding-sh-triage` is an app traced with the SDK; the others are coding
-agents. Subagent sessions and sessions with nothing in them are hidden; the last line counts the
-hidden subagents (`hiddenChildren` in `--json`).
+agents. Subagents, trials from eval, compare and exp runs, and empty sessions are hidden; the last
+lines count them (`hiddenChildren`, `hiddenRuns` in `--json`). TOOLS is `-` when the source
+records model calls only. Off a terminal, titles are cut to 100 characters.
 
 | Flag | What it does |
 |---|---|
@@ -36,6 +37,7 @@ hidden subagents (`hiddenChildren` in `--json`).
 | `--where <query>` | Any filter the [query language](https://coding.sh/docs/query) takes. |
 | `-n, --limit 50` | More rows (default 20). |
 | `--subagents` | Include subagent sessions. |
+| `--include-runs` | Include trial sessions from eval, compare and exp runs. |
 
 ## Filter by what happened
 
@@ -107,6 +109,10 @@ Subagents
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
 session id, a unique prefix of 4 or more characters, or `latest`.
+
+A failed model call shows its status and error on its `llm` line, and the Model errors row counts
+them. When the source records model calls only (the proxy, or an SDK call outside `trace()`), the
+Turns row says so instead of counting 0 tool calls.
 
 ## Search every session
 
@@ -345,7 +351,8 @@ coding.sh sessions --where 'tool:Bash ok:false' --json --fields id,title,stats.t
 ```
 
 `show --json` adds `phases` and `days`. For a session over 200 events it prints `events: []` next
-to `eventCount`; `--limit N` or `--all` lists them.
+to `eventCount`; `--limit N` or `--all` lists them. Event text is whole, read back from its blob,
+with no `truncated`.
 
 ## Ask your agent
 

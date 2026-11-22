@@ -81,7 +81,7 @@ describe("destructive suggestions carry askUser", () => {
 function capture(json: boolean): { out: Output; err: () => string } {
   let buf = "";
   const sink = { write: (s: string) => ((buf += s), true), isTTY: false } as unknown as NodeJS.WriteStream;
-  const out = new Output({ json, env: { NO_COLOR: "1" }, stdout: sink, stderr: sink, stdin: { isTTY: false } as NodeJS.ReadStream });
+  const out = new Output({ json, env: { NO_COLOR: "1" }, platform: "linux", stdout: sink, stderr: sink, stdin: { isTTY: false } as NodeJS.ReadStream });
   return { out, err: () => buf };
 }
 

@@ -728,6 +728,15 @@ flagged when:
 
 One 429 that a retry got past does not flag. A 500, a 400 or an auth error does not count.
 
+The `llm-error` flag marks a session whose last failed model call it never got past: a failed
+`llm.call` or an API `error` event that is not a rate limit or an overload, with no model call,
+reply or tool call after it. A failed call shows in `show` with its status and error, and counts in
+`stats.llmErrors`.
+
+The `tools:unseen` tag marks a session whose source records model calls only: every event came from
+the proxy, or from an SDK call outside `trace()`. Its tool count is unknown, not 0, so `sessions`
+prints `-` under TOOLS and `show` says so on its Turns row.
+
 **Waste and cache breaks.** Each stat is absent when there is nothing to report.
 
 | Field | Meaning |

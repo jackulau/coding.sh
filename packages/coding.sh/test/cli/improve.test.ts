@@ -43,7 +43,7 @@ describe("cli improve", () => {
     assert.match(text.stdout, /^12 sessions in repo since 14d \(claude-code 12\)$/m);
     assert.match(text.stdout, /^1\. Says it is done without running anything to check$/m);
     assert.match(text.stdout, /Fix: Name the check in AGENTS\.md\. Add: "Run `npm test` before you say you are done, and say what it printed\."/);
-    assert.match(text.stderr, /Start with the first one:\n\s+coding\.sh improve fix 1/);
+    assert.match(text.stderr, /Start with the first one:\n\s+(?:coding\.sh|codingsh) improve fix 1/);
   });
 
   it("names the repo, not a relative path, when run from a subdirectory", async () => {
@@ -114,7 +114,7 @@ describe("cli improve", () => {
     assert.match(text.stdout, new RegExp(`Not seen in the 6 sessions since ${w.commits.rule!.slice(0, 7)} changed the harness`));
     assert.doesNotMatch(text.stdout, /Fix: /);
     assert.match(text.stdout, /Helped: Fewer sessions went wrong after it: flagged sessions 4 of 4 before, 0 of 6 after/);
-    assert.match(text.stderr, /Nothing new since your last change; see whether it helped:\n\s+coding\.sh improve check/);
+    assert.match(text.stderr, /Nothing new since your last change; see whether it helped:\n\s+(?:coding\.sh|codingsh) improve check/);
   });
 
   it("improve fix appends the line once, uncommitted; --dry-run writes nothing", async () => {
@@ -195,7 +195,7 @@ describe("cli improve", () => {
     assert.match(text.stdout, /^ {4}after-5 {2}\w{3} \d+ (\d\d:\d\d|\d{4}) {2}no-verification {2}"Task after-5"$/m);
     assert.doesNotMatch(text.stdout, /^ {4}after-0 /m);
     assert.match(text.stdout, /… 1 more \(--sessions lists them all\)/);
-    assert.match(text.stderr, /See the sessions that went wrong after it:\n\s+coding\.sh show after-5/);
+    assert.match(text.stderr, /See the sessions that went wrong after it:\n\s+(?:coding\.sh|codingsh) show after-5/);
 
     const all = cli(w, ["improve", "check", "--sessions"]);
     assert.match(all.stdout, /^ {4}after-0 /m);
@@ -230,7 +230,7 @@ describe("cli improve", () => {
       text.stdout,
       /^ {2}Followed, no effect yet: The agent follows the new line \(9 of 10 sessions after, 0 of 10 before, p < 0\.001\), but flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.000\): following a line is not the same as fixing what it targets\.$/m,
     );
-    assert.match(text.stderr, new RegExp(`Test whether the harness does as well without this change:\\n\\s+coding\\.sh refine test git:${prev}`));
+    assert.match(text.stderr, new RegExp(`Test whether the harness does as well without this change:\\n\\s+(?:coding\\.sh|codingsh) refine test git:${prev}`));
   });
 
   it("improve check: more tool calls after a change with the flags unchanged is 'Costlier', with both medians and a removal test", async () => {
@@ -246,7 +246,7 @@ describe("cli improve", () => {
     const text = cli(w, ["improve", "check"]);
     assert.equal(text.status, 0, text.stderr);
     assert.match(text.stdout, /^ {2}Costlier: Sessions after it make more tool calls \(median 20 → 45, p < 0\.001\), and flagged sessions did not fall \(0 of 10 before, 0 of 10 after, p 1\.000\)\.$/m);
-    assert.match(text.stderr, /Test whether the harness does as well without this change:\n\s+coding\.sh refine test git:/);
+    assert.match(text.stderr, /Test whether the harness does as well without this change:\n\s+(?:coding\.sh|codingsh) refine test git:/);
   });
 
   it("improve check --repo counts sessions from another checkout of the repo against its history", async () => {
@@ -291,6 +291,6 @@ describe("cli improve", () => {
     const r = spawnSync(process.execPath, ["--no-warnings", CLI, "improve", "check"], { cwd: dir, env: w.env, encoding: "utf8" });
     assert.equal(r.status, 1, "not a usage error: no argument is missing");
     assert.match(r.stderr, /Not in a git repo/);
-    assert.match(r.stderr, /coding\.sh improve check --repo <dir>/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) improve check --repo <dir>/);
   });
 });

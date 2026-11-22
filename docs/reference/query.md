@@ -123,6 +123,10 @@ attributes of a trace's root span or resource. Beside other event keys they matc
 `id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where is:child` lists
 subagents. The MCP tool `sessions_list` does the same with `includeSubagents` and `where`.
 
+`sessions` also leaves out trial sessions, the ones eval, compare and exp runs start, unless you
+pass `--include-runs`. It ends with how many it left out. A query with `is:run` or `run:` decides
+that itself.
+
 ### Dates and times
 
 A date without a zone is local time: `since:2026-11-09` starts at local midnight. A date with `Z`
@@ -226,6 +230,7 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `refusal` | Had a model call stop on a refusal (`refusal`, `content_filter` or `safety`). |
 | `text-tool-call` | Had the model write a tool call out as text, so it never ran. |
 | `api-stall` | Was held up by rate limits or an overloaded API: three or more 429 or 529 errors, a minute of retry waits, retries run out, or an error it never got past. |
+| `llm-error` | Had a model call fail, other than a rate limit or an overload, and no model call, reply or tool call came after it. |
 | `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve, such as `git reset --hard` or `git push --force`. |
 | `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
 
@@ -272,6 +277,7 @@ tags out.
 | `weights:edited` | Recorded a weight edit (`stats.weightEdits`). |
 | `weights:checkpoint` | Recorded the file its weights were saved to (`stats.weightEdits.checkpoints`). |
 | `cache:low` | Wrote a prompt cache of at least 4,096 tokens over three or more turns, and read back less than it wrote. |
+| `tools:unseen` | Came from a source that records model calls only: the proxy, or an SDK call outside `trace()`. `sessions` prints `-` under TOOLS, since the session may have run tools. |
 | `fold:error` | Could not be folded into stats. `coding.sh ingest` tries again. |
 
 ## Facets

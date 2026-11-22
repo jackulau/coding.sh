@@ -12,6 +12,7 @@ import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstFirst, 
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
+import { nextStepBin } from "../cli/next-steps.ts";
 import { isNewer } from "../update/semver.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
@@ -517,8 +518,12 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   };
 }
 
-/** Update availability from the cache the update checker keeps (no network here). */
-export function updateInfo(home: string, current = version()): Obj {
+/**
+ * Update availability from the cache the update checker keeps (no network here).
+ * `command` names the CLI the way the user's shell runs it (nextStepBin of `env`,
+ * the environment the agent started this server with).
+ */
+export function updateInfo(home: string, current = version(), env: NodeJS.ProcessEnv = process.env): Obj {
   const c = readUpdateCache(join(home, "update.json"));
   const latest = typeof c?.latest === "string" ? c.latest : undefined;
   const available = isNewer(latest, current);
@@ -530,6 +535,7 @@ export function updateInfo(home: string, current = version()): Obj {
     checkedAt: typeof c?.checkedAt === "number" ? iso(c.checkedAt) : undefined,
     url: available && typeof c?.url === "string" ? c.url : undefined,
     install: available && install ? `npm install -g ${install}` : undefined,
+    command: available ? `${nextStepBin(env)} update` : undefined,
   };
 }
 
@@ -1639,7 +1645,7 @@ function toolDefs(): PagedTool[] {
       outputSchema: out(
         {
           version: S,
-          update: out({ latest: S, available: B, install: S }, ["available"]),
+          update: out({ latest: S, available: B, install: S, command: S }, ["available"]),
           home: S,
           last24h: out({ sessions: I, agents: arr(S) }),
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
@@ -1666,16 +1672,17 @@ function toolDefs(): PagedTool[] {
           if (!prev || lastActivity(s) > lastActivity(prev)) lastByAgent.set(s.agent, s);
         }
         const [latest] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
-        const update = updateInfo(ctx.paths.root);
+        const update = updateInfo(ctx.paths.root, version(), ctx.env);
+        const bin = nextStepBin(ctx.env);
         const spool = spoolStats(ctx.paths.spool);
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         // The work queue `coding.sh work` shows (core/work.ts), over its default window, with acks and snoozes applied.
         const short = await shortIds(ctx);
         const { queue, truncated } = await readWorkQueue(ctx.index, { since: now - WORK_WINDOW_MS, now, overlay: readOverlay(ctx.paths.work), shortId: short });
         const hints: string[] = [];
-        if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? "coding.sh update"}`);
+        if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? update.command}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
-        else if (!day.sessions.length) hints.push("No sessions in the last 24h: if agents ran, check hooks with `coding.sh doctor`.");
+        else if (!day.sessions.length) hints.push(`No sessions in the last 24h: if agents ran, check hooks with \`${bin} doctor\`.`);
         const [{ quotaJson, quotaReport }, { codexHome }] = await Promise.all([import("../quota/index.ts"), import("../adapters/codex.ts")]);
         const quota = quotaJson(quotaReport({ claudeFile: ctx.paths.quota, codexHome: codexHome(ctx.env) }), now);
         return {

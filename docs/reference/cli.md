@@ -545,6 +545,7 @@ coding.sh sessions [options]
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself) |
 | `--empty` |  | Include sessions with no turn, tool call or model call (hidden by default) |
+| `--include-runs` |  | Include trial sessions from eval, compare and exp runs (a --where with is:run or run: picks them itself) |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
@@ -567,6 +568,7 @@ coding.sh sessions --agent codex --since 7d
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
 - Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.
+- Without --include-runs the list leaves out sessions that ran with a run id (eval, compare, exp, or CODING_SH_RUN_ID set by hand) and ends with how many it left out; --json has that count as hiddenRuns, absent when there are none.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh views`

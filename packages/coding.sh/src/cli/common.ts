@@ -17,6 +17,7 @@ import { version } from "./meta.ts";
 import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { suggest, UsageError, type FlagValue } from "./args.ts";
+import { cliCommand } from "./next-steps.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
@@ -81,7 +82,8 @@ export function storeNewerError(e: StoreNewerError, env: NodeJS.ProcessEnv): Cli
   const waiting = spool.files ? `${plural(spool.files, "capture file")} wait${spool.files === 1 ? "s" : ""} in the spool (${p.spool})` : `new captures wait in the spool (${p.spool})`;
   // The index from before the migration, when this coding.sh can open it.
   const backup = listBackups(e.path).find((b) => b.schema <= e.known);
-  const restore = backup ? ` To go back instead, ${UPGRADE_STORE} --restore puts back the index from before the migration (v${backup.schema}).` : "";
+  // Inside the message, not a next line Output names for the shell: name the CLI here (cliCommand).
+  const restore = backup ? ` To go back instead, ${cliCommand(env, ["upgrade-store", "--restore"])} puts back the index from before the migration (v${backup.schema}).` : "";
   return new CliError(`${e.path} uses index schema v${e.schema}${by}, but this coding.sh ${version()} only knows up to v${e.known}. Your captures are safe: ${waiting} and ${spool.files === 1 ? "is" : "are"} indexed once a coding.sh that knows v${e.schema} runs.${restore}`, {
     reason: "store_newer",
     next: [`Install ${e.writer ? `coding.sh ${e.writer.version} or newer` : `a coding.sh that knows index schema v${e.schema}`}:`, "coding.sh update"],
