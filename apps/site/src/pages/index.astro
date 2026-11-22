@@ -9,7 +9,7 @@ import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
 import Mark from "../components/Mark.astro";
 import Wordmark from "../components/Wordmark.astro";
-import { SITE, REPO_URL, LICENSE_URL, RELEASE, INSTALL_CMD, INSTALL_SH } from "../data/site";
+import { SITE, REPO_URL, LICENSE_URL, RELEASE, INSTALL_CMD, INSTALL_CMD_WIN, INSTALL_SH } from "../data/site";
 import { releasePath, slug } from "../lib/changelog";
 import { STATS } from "../data/compare";
 import { SETUP_PROMPT } from "../data/prompts";
@@ -90,7 +90,7 @@ const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + 
 // padding), and the phone crop is drawn at half its pixel width.
 const desk = await getImage({ src: shot, widths: [777, shot.width], format: "webp", quality: 82 });
 const phone = await getImage({ src: shotM, widths: [shotM.width / 2, shotM.width], format: "webp", quality: 82 });
-const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, SETUP_PROMPT: attr(SETUP_PROMPT), SETUP_LINE: "Set up coding.sh on this machine…", NPX: attr(INSTALL_CMD), INSTALL: attr(INSTALL_SH), COPY_ICON, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
+const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, SETUP_PROMPT: attr(SETUP_PROMPT), SETUP_LINE: "Set up coding.sh on this machine…", NPX: attr(INSTALL_CMD), NPX_WIN: attr(INSTALL_CMD_WIN), INSTALL: attr(INSTALL_SH), COPY_ICON, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
 // The footer's links, in columns. Every one is a page that exists.
 const FOOT: [string, [string, string][]][] = [
   ["Start", [["Quickstart", "/docs/quickstart"], ["Install", "/docs/install"], ["Agents", "/docs/agents"], ["All docs", "/docs"]]],
