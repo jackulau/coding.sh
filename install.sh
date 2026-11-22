@@ -2,14 +2,15 @@
 # coding.sh installer:  curl -fsSL https://coding.sh/install | sh
 #
 # 1. Checks for Node >= 22.16.
-# 2. Installs coding.sh: from npm when the registry has it (npm i -g coding.sh@<version>),
-#    otherwise the tarball attached to the GitHub release. Both are the same bytes.
+# 2. Installs the latest GitHub release of coding.sh, the one `coding.sh update` installs: from
+#    npm when the registry has that version (npm i -g coding.sh@<version>), otherwise the tarball
+#    attached to the release. Both are the same bytes. If GitHub does not answer, npm's latest.
 # 3. Runs `coding.sh init`: detects your agents, shows one plan (capture hooks +
 #    the coding.sh MCP server for each agent), asks once (Y/n) before writing.
 # 4. Opens the local viewer.
 #
 # Env: CODING_SH_VERSION=v0.1.0 pins a release. CODING_SH_TARBALL=<path or url> installs that tarball. CODING_SH_YES=1 skips the prompt.
-#      CODING_SH_SOURCE=npm|github forces a source (default: npm if published, else github).
+#      CODING_SH_SOURCE=npm|github forces a source (default: npm if it has the release, else github).
 #      CODING_SH_NO_INIT=1 installs only. CODING_SH_NO_UI=1 skips opening the viewer.
 set -eu
 
@@ -35,6 +36,14 @@ npm_has() {
     | tail -n 1 | awk '{print $NF}' | tr -d "'"
 }
 
+# Prints the tag of the latest GitHub release, or nothing when GitHub does not
+# answer in time (offline, blocked, rate limited) or the tag is not a version.
+github_latest() {
+  tag=$(curl -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$REPO/releases/latest" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || tag=
+  case "$tag" in v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$tag" ;; esac
+}
+
 if [ -n "${CODING_SH_TARBALL:-}" ]; then
   # Local or custom tarball (tests, mirrors, air-gapped installs).
   URL="$CODING_SH_TARBALL"
@@ -42,6 +51,14 @@ if [ -n "${CODING_SH_TARBALL:-}" ]; then
 else
   VERSION="${CODING_SH_VERSION:-}"
   URL=
+  ASKED=
+  if [ "$SOURCE" = auto ] && [ -z "$VERSION" ]; then
+    # The latest GitHub release is the one `coding.sh update` installs. npm can be
+    # behind it (a publish that failed or waits for approval), so GitHub names it.
+    ASKED=1
+    VERSION=$(github_latest) || VERSION=
+    [ -n "$VERSION" ] || say "coding.sh: no answer from GitHub; trying npm's latest."
+  fi
   if [ "$SOURCE" != "github" ]; then
     SPEC="${VERSION#v}"
     NPM_VERSION=$(npm_has "${SPEC:-latest}")
@@ -55,8 +72,7 @@ else
   fi
   if [ -z "$URL" ]; then
     if [ -z "$VERSION" ]; then
-      VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+      [ -n "$ASKED" ] || VERSION=$(github_latest) || VERSION=
       [ -n "$VERSION" ] || die "Could not find the latest release of $REPO."
     fi
     NUM="${VERSION#v}"

@@ -5,9 +5,12 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { after, before, describe, it } from "node:test";
+import { parseVersion } from "../../src/adapters/_shared/detect.ts";
 import { apiForVersion, opencode, opencodeDbNotes, opencodeDbPath, pluginPath, pluginSource, PLUGIN_MARKER } from "../../src/adapters/opencode.ts";
+import { blockingNotes, staleNotes } from "../../src/cli/commands/init.ts";
 import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
+import { nodeBin } from "../_bin.ts";
 
 const T0 = 1793527200000;
 
@@ -241,6 +244,84 @@ describe("opencode plugin", () => {
   });
 });
 
+describe("opencode plugin on disk (doctor and init)", () => {
+  let env: TmpEnv;
+  let hookCommand: string;
+  before(() => {
+    env = tmpEnv();
+    hookCommand = join(env.dataHome, "bin", "hook.mjs");
+  });
+  after(() => env.restore());
+
+  it("reads OpenCode 2's `opencode v2.1.4` as 2.1.4 and writes the v2 plugin for it", async () => {
+    // OpenCode 1.x prints "1.19.5", 2.x "opencode v2.3.2". Read past the v, 2.1.4 was 1.4: the v1 plugin, which 2.x does not load.
+    assert.equal(parseVersion("opencode v2.3.2\n"), "2.3.2");
+    assert.equal(parseVersion("opencode v2.1.4"), "2.1.4");
+    for (const [text, want] of [["1.19.5", "1.19.5"], ["2.1.319 (Claude Code)", "2.1.319"], ["codex-cli 0.166.0", "0.166.0"], ["2025.09.18-7ae6800", "2025.09.18-7ae6800"]]) assert.equal(parseVersion(text!), want);
+    fakeBin(env, "opencode", "opencode v2.1.4");
+    assert.equal((await opencode.detect()).version, "2.1.4");
+    const plan = await opencode.install({ hookCommand, scope: "user", dryRun: true });
+    assert.deepEqual(plan.map((ch) => ch.path), [pluginPath({ scope: "user" }, 2)]);
+  });
+
+  it("the plugin init writes has no note", async () => {
+    fakeBin(env, "opencode", "opencode v2.3.2");
+    await opencode.install({ hookCommand, scope: "user", dryRun: false });
+    const r = await opencode.detect();
+    assert.deepEqual([r.version, r.hooked], ["2.3.2", true]);
+    assert.deepEqual(blockingNotes(r.notes), []);
+  });
+
+  it("a plugin for the other OpenCode API is stale, and init's rewrite clears it", async () => {
+    // Set up under OpenCode 2, then back on 1.19.5: the file is there, and OpenCode does not run it.
+    fakeBin(env, "opencode", "1.19.5");
+    const v2 = pluginPath({ scope: "user" }, 2);
+    const r = await opencode.detect();
+    assert.equal(r.hooked, true);
+    const note = `${v2} is stale: OpenCode 1.19.5 will not run a plugin written for OpenCode 2.x`;
+    assert.deepEqual(blockingNotes(r.notes), [note]);
+    assert.deepEqual(staleNotes(r.notes), [note], "init writes it again");
+    const fix = await opencode.install({ hookCommand, scope: "user", dryRun: false });
+    assert.deepEqual(fix.map((ch) => [ch.path, ch.action]), [[pluginPath({ scope: "user" }, 1), "create"], [v2, "delete"]]);
+    assert.deepEqual(blockingNotes((await opencode.detect()).notes), []);
+    // The version unknown, which API OpenCode loads is too: no note.
+    fakeBin(env, "opencode", "");
+    assert.deepEqual(blockingNotes((await opencode.detect()).notes), []);
+  });
+
+  it("a plugin this CLI would write differently is stale; one running another home's hook is not", async () => {
+    fakeBin(env, "opencode", "1.19.5");
+    const v1 = pluginPath({ scope: "user" }, 1);
+    // What an older coding.sh wrote: the marker, other code.
+    writeFileSync(v1, readFileSync(v1, "utf8").replace("windowsHide: true", "windowsHide: false"));
+    const r = await opencode.detect();
+    assert.equal(r.hooked, true);
+    assert.deepEqual(blockingNotes(r.notes), [`${v1} is stale (differs from the plugin this CLI writes)`]);
+    assert.deepEqual(staleNotes(r.notes), blockingNotes(r.notes));
+    // Doctor names a plugin that runs another home's hook.mjs on its own row; the code is current.
+    writeFileSync(v1, pluginSource(join(env.root, "elsewhere", "bin", "hook.mjs"), 1));
+    assert.deepEqual(blockingNotes((await opencode.detect()).notes), []);
+  });
+});
+
+describe("opencode plugin choice with a slow `opencode --version`", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  // With no npm package.json beside it, init reads the version from `opencode --version`, which a
+  // busy machine can hold past 5 s. With no version, init wrote the 2.x plugin for OpenCode 1.x.
+  it("waits out a --version that takes over 5 s and plans the 1.x plugin for 1.19.5", { timeout: 30_000 }, async () => {
+    const bin = join(env.root, "bin");
+    nodeBin(bin, "opencode", 'setTimeout(() => console.log("1.19.5"), 6000);\n');
+    process.env.PATH = bin;
+    const plan = await opencode.install({ hookCommand: join(env.dataHome, "bin", "hook.mjs"), scope: "user", dryRun: true });
+    assert.deepEqual(plan.map((ch) => [ch.path, ch.action]), [[pluginPath({ scope: "user" }, 1), "create"]]);
+  });
+});
+
 describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", () => {
   let env: TmpEnv;
   before(() => (env = tmpEnv()));
@@ -266,7 +347,7 @@ describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", 
     return join(env.root, name, "opencode");
   };
   const summary = (events: AgentEvent[]) => events.map((e) => [e.kind, e.payload.tool ?? e.payload.text ?? ""]);
-  const BLOCKING = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b/i; // doctor's BLOCKING_NOTE
+  const BLOCKING = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b|\bis stale\b/i; // doctor's BLOCKING_NOTE
 
   it("imports sessions, messages and tool parts from <data>/opencode.db", async () => {
     const dir = dataDir("main");

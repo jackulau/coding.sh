@@ -13,6 +13,7 @@ import { after, describe, test } from "node:test";
 import { refreshAfterUpdate, runUpdate } from "../../src/cli/commands/update.ts";
 import { checkMcpEntries } from "../../src/cli/commands/doctor.ts";
 import { ensureHookBin, hookBinHealth, planHookBin, refreshHookBin, writeHookBin } from "../../src/cli/hookbin.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../src/mcp/launch.ts";
@@ -42,6 +43,34 @@ function ctx(e: NodeJS.ProcessEnv, flags: Record<string, boolean> = {}): Command
   const sink = { write: () => true, isTTY: false };
   const out = new Output({ json: false, env: e, stdout: sink, stderr: sink, stdin: { isTTY: false } });
   return { flags, positionals: [], rest: [], out, env: e, cwd: e.HOME!, debug: false, signal: new AbortController().signal };
+}
+
+/** ctx with what the command printed kept. */
+function captured(e: NodeJS.ProcessEnv, flags: Record<string, boolean> = {}, json = false) {
+  const text = { stdout: "", stderr: "" };
+  const out = new Output({ json, env: e, stdout: { write: (s: string) => (text.stdout += s), isTTY: false }, stderr: { write: (s: string) => (text.stderr += s), isTTY: false }, stdin: { isTTY: false } });
+  const c: CommandContext = { flags, positionals: [], rest: [], out, env: e, cwd: e.HOME!, debug: false, signal: new AbortController().signal };
+  return { c, text };
+}
+
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** An install npm wrote under `root/<name>` (dist/cli.mjs, package.json with `version`): the CLI path. */
+function npmInstall(root: string, name: string, version: string): string {
+  const pkg = join(root, name, "node_modules", "coding.sh");
+  mkdirSync(join(pkg, "dist"), { recursive: true });
+  writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "coding.sh", version }));
+  writeFileSync(join(pkg, "dist", "cli.mjs"), "");
+  return join(pkg, "dist", "cli.mjs");
+}
+
+/** A bin init set up from `owner`: the old hook, and cli-path naming it. */
+function oldBin(e: NodeJS.ProcessEnv, owner: string): { hook: string; pointer: string } {
+  const bin = join(e.CODING_SH_HOME!, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "hook.mjs"), "// hook v1\n");
+  writeFileSync(join(bin, "cli-path"), owner + "\n");
+  return { hook: join(bin, "hook.mjs"), pointer: join(bin, "cli-path") };
 }
 
 describe("MCP launch spec (INS-7)", () => {
@@ -126,6 +155,78 @@ describe("hook bin after `coding.sh update` (INS-6)", () => {
     const h = hookBinHealth(e, join(e.root, "new", "cli.mjs"));
     assert.equal(h.cliPathCurrent, false);
     assert.equal(h.cliPathExists, false);
+  });
+
+  test("--refresh-bin from a second install leaves the hooks of the install that owns the store alone, and names upgrade-store", async () => {
+    const e = env();
+    const first = npmInstall(e.root, "first", "0.1.6");
+    const { hook, pointer } = oldBin(e, first);
+    const second = npmInstall(e.root, "second", "0.1.8");
+
+    const human = captured(e, { "refresh-bin": true });
+    assert.equal(await runUpdate(human.c, { cli: second }), 0);
+    assert.equal(readFileSync(hook, "utf8"), "// hook v1\n", "the hook is left as it is");
+    assert.equal(readFileSync(pointer, "utf8"), first + "\n", "hooks still start the first install");
+    assert.match(human.text.stderr, new RegExp(`^! Hooks run the coding\\.sh 0\\.1\\.6 at ${esc(first)}, another install`, "m"));
+    // upgrade-store asks before it moves the hooks to this install. The command runs where the user is:
+    // codingsh in PowerShell and cmd on Windows (no MSYSTEM, no SHELL), coding.sh in Git Bash.
+    assert.match(human.text.stderr, process.platform === "win32" ? /\n {4}codingsh upgrade-store\n/ : /\n {4}coding\.sh upgrade-store\n/);
+    const bash = captured({ ...e, MSYSTEM: "MINGW64" }, { "refresh-bin": true });
+    assert.equal(await runUpdate(bash.c, { cli: second }), 0);
+    assert.match(bash.text.stderr, /\n {4}coding\.sh upgrade-store\n/);
+
+    const json = captured(e, { "refresh-bin": true }, true);
+    assert.equal(await runUpdate(json.c, { cli: second }), 0);
+    assert.deepEqual(JSON.parse(json.text.stdout), { bin: "other_install", hook, owner: first, ownerVersion: "0.1.6" });
+    assert.equal(readFileSync(hook, "utf8"), "// hook v1\n");
+
+    // The install that owns the store refreshes it, and one whose cli-path names a CLI that is gone takes it over.
+    assert.equal(await runUpdate(ctx(e, { "refresh-bin": true }), { cli: first }), 0);
+    assert.equal(readFileSync(hook, "utf8"), "// hook v2\n");
+    writeFileSync(hook, "// hook v1\n");
+    rmSync(join(e.root, "first"), { recursive: true });
+    assert.equal(await runUpdate(ctx(e, { "refresh-bin": true }), { cli: second }), 0);
+    assert.equal(readFileSync(hook, "utf8"), "// hook v2\n");
+    assert.equal(readFileSync(pointer, "utf8"), second + "\n");
+  });
+
+  test("an update the install that owns the store runs hands the hooks to the version npm installed, also at another path", async () => {
+    const e = env();
+    const first = npmInstall(e.root, "first", "0.1.6");
+    const { hook, pointer } = oldBin(e, first);
+    // The new CLI (this checkout's) at another path than the one running the update.
+    const r = await refreshAfterUpdate(e, new AbortController().signal, async () => MAIN, first);
+    assert.equal(r.status, "refreshed");
+    assert.equal(readFileSync(hook, "utf8"), "// hook v2\n");
+    assert.equal(readFileSync(pointer, "utf8"), MAIN + "\n");
+  });
+
+  test("an update run by a second install says the hooks still run the install that owns the store, and names upgrade-store", async () => {
+    const e = env();
+    const first = npmInstall(e.root, "first", "0.1.6");
+    const out = captured(e);
+    const code = await runUpdate(out.c, {
+      current: "0.1.7",
+      check: async () => ({ latest: "0.1.8", checkedAt: 1, install: "coding.sh-0.1.8.tgz", source: "github" }),
+      install: async () => ({ code: 0, output: "" }),
+      refresh: async () => ({ status: "other_install", owner: first, ownerVersion: "0.1.6" }),
+    });
+    assert.equal(code, 0);
+    assert.match(out.text.stderr, /^✓ Updated coding\.sh 0\.1\.7 → 0\.1\.8$/m);
+    assert.match(out.text.stderr, new RegExp(`^! Hooks still run the coding\\.sh 0\\.1\\.6 at ${esc(first)}, another install`, "m"));
+    assert.match(out.text.stderr, new RegExp(`\\n {4}${esc(cliCommand(e, ["upgrade-store"]))}\\n`));
+
+    const json = captured(e, {}, true);
+    await runUpdate(json.c, {
+      current: "0.1.7",
+      check: async () => ({ latest: "0.1.8", checkedAt: 1, install: "coding.sh-0.1.8.tgz", source: "github" }),
+      install: async () => ({ code: 0, output: "" }),
+      refresh: async () => ({ status: "other_install", owner: first, ownerVersion: "0.1.6" }),
+    });
+    const doc = JSON.parse(json.text.stdout) as Record<string, unknown>;
+    assert.equal(doc.bin, "other_install");
+    assert.equal(doc.owner, first);
+    assert.equal(doc.ownerVersion, "0.1.6");
   });
 });
 

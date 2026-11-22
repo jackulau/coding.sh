@@ -39,9 +39,9 @@ const sdkSetup = (lang: "TypeScript" | "Python") => {
 4. Verify: run the agent once, then coding.sh sessions --agent <that name> --json. Each model call outside trace() is its own session, with its tokens and cost. Tell me the session ids and what they recorded.`;
 };
 
-const SDK_FIRST = `Run my agent on three different inputs. Then use coding.sh sessions and coding.sh show to tell me which run cost the most, which was slowest, and why. Quote the numbers coding.sh printed.`;
+const SDK_FIRST = `Run my agent on three different inputs. Then use coding.sh sessions and coding.sh show to tell me which run cost the most, which was slowest, and why. Quote the numbers coding.sh printed. ${WIN}`;
 
-export const FIRST_PROMPT = `Use coding.sh to look at my agent sessions from the last 7 days. Run coding.sh improve --repo all and tell me the top problem, the sessions it comes from, and the AGENTS.md line it proposes. Don't edit AGENTS.md until I say so.`;
+export const FIRST_PROMPT = `Use coding.sh to look at my agent sessions from the last 7 days. Run coding.sh improve --repo all and tell me the top problem, the sessions it comes from, and the AGENTS.md line it proposes. Don't edit AGENTS.md until I say so. ${WIN}`;
 
 export const QUICKSTART_PATHS: QuickstartPath[] = [
   { id: "coding-agents", label: "Coding agents", setup: SETUP_PROMPT, first: FIRST_PROMPT },
