@@ -21,6 +21,7 @@ import { sinceSink } from "../sinks/since.ts";
 import { FsBlobStore } from "./fs-blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "./memory.ts";
 import { SqliteIndexStore } from "./sqlite.ts";
+import { holdUpgradeLine, repriceTook } from "./upgrade.ts";
 
 export type IndexStoreFactory = (url: string, config: Config) => IndexStore | Promise<IndexStore>;
 export type BlobStoreFactory = (url: string, config: Config) => BlobStore | Promise<BlobStore>;
@@ -157,13 +158,17 @@ export async function openIndexStore(url: string, config: Config, o: OpenIndexOp
     }
     indexFactories.set(scheme, factory);
   }
-  const store = await factory(url, config);
-  await store.migrate();
-  // A pass on a store other processes open holds the lock the refold of this home holds
-  // (core/reparse.ts), so two processes never run one at once.
-  if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
-  await repriceOnOpen(store, url, config, o);
-  return store;
+  const make = factory;
+  // The line that closes an upgrade comes after the repricing below, and counts it.
+  return holdUpgradeLine(async () => {
+    const store = await make(url, config);
+    await store.migrate();
+    // A pass on a store other processes open holds the lock the refold of this home holds
+    // (core/reparse.ts), so two processes never run one at once.
+    if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
+    await repriceOnOpen(store, url, config, o);
+    return store;
+  });
 }
 
 /**
@@ -185,7 +190,14 @@ async function repriceOnOpen(store: IndexStore, url: string, config: Config, o: 
     deferReprice(store, stamp);
     return;
   }
-  await repriceStored(store, config.pricing).catch(() => {});
+  const started = Date.now();
+  let ran = false;
+  try {
+    ran = (await repriceStored(store, config.pricing)).ran;
+  } catch (err) {
+    ran = (err as Error).name !== "LockBusyError";
+  }
+  if (ran) repriceTook(Date.now() - started);
 }
 
 /**

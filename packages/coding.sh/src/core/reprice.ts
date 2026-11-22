@@ -20,6 +20,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentEvent, CostByTokenType, Session } from "../schema/index.ts";
+import { repriceProgress } from "../store/upgrade.ts";
 import { sha256Hex } from "./ids.ts";
 import { acquireLock, type Lock } from "./lock.ts";
 import { priceEvent, PRICING_RULES_VERSION, pricesFor, TOKEN_TYPES, type Prices } from "./pricing.ts";
@@ -49,7 +50,7 @@ export interface RepriceOptions {
   each?: (sessions: Session[], fn: (prev: Session) => Promise<void>) => Promise<void>;
   /** True for a session the pass leaves out: the caller repriced it already, right before its fold (core/reparse.ts). */
   skip?: (id: string) => boolean;
-  /** Sessions looked at so far, of all of them. */
+  /** Sessions looked at so far, of all of them. Default: a line where a person waits, after 2 s (store/upgrade.ts repriceProgress). */
   onProgress?: (done: number, total: number) => void;
   /**
    * The lock file the pass holds: default the one repriceLock set for this store, if any. false: none,
@@ -82,7 +83,7 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
     const each = opts.each ?? (async (list, fn) => {
       for (const s of list) await fn(s);
     });
-    const progress = opts.onProgress ?? (() => {});
+    const progress = opts.onProgress ?? repriceProgress();
     const all = (await index.listSessions({})).filter((s) => !opts.skip?.(s.id));
     let events = 0;
     let sessions = 0;
