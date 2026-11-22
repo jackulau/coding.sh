@@ -1149,13 +1149,28 @@ coding.sh usage --by subagent --json
 Score prompt-cache health and name what breaks the cached prefix.
 
 ```text
-coding.sh cache <action>
+coding.sh cache [action] [options]
 ```
 
 | Action | What it does |
 |---|---|
 | [`doctor`](#codingsh-cache-doctor) | Hit rate, a grade, and the cache breaks ranked by cost: cause, sessions, tokens re-billed, extra USD, the fix, and two calls to diff |
 
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `-n, --limit <N>` | `200` | Read the stored requests of at most this many sessions with breaks, costliest first; the totals, the causes and the grade cover every session. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh cache
+coding.sh cache --agent claude-code --since 7d
+coding.sh cache doctor --json
+```
+
+- With no subcommand it runs doctor, with the same options.
 - Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.
 - Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; compaction (the history was compacted or rewritten, the name usage --cache and improve use); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.
 - Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.
