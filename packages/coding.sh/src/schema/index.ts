@@ -283,6 +283,56 @@ export interface Waiting {
 }
 
 /**
+ * What a wait in Session.stats.waits was on (core/wait-stats.ts):
+ * - `permission`: an approval prompt (a live permission notification from the agent's hook, or a
+ *   host app's request to approve a command, a file change or a file read).
+ * - `question`: a question tool call (AskUserQuestion, request_user_input, …) or a host app's question.
+ * - `plan`: a plan-approval call (ExitPlanMode).
+ * - `request`: any other request a host app reports (T3 Code's secret, link and MCP input requests).
+ * - `turn`: the next prompt after the main thread's turn ended, in a session launched interactively.
+ */
+export type WaitKind = "permission" | "question" | "plan" | "request" | "turn";
+
+/** One kind's waits in Session.stats.waits. */
+export interface WaitTotal {
+  count: number;
+  /** Their summed length (ms). */
+  ms: number;
+  /** The median length (ms), when count is over one. */
+  medianMs?: number;
+  /** How many of them nobody answered. Absent when none. */
+  open?: number;
+}
+
+/**
+ * Session.stats.waits: how often and how long the session waited on the person, and on what
+ * (core/wait-stats.ts). A wait ends when the person answers: its tool call ends, its host request
+ * resolves, or the person's next prompt arrives.
+ */
+export interface WaitStats {
+  /** Waits counted, every kind, `open` ones included. */
+  count: number;
+  /** Their summed length (ms). Waits on different threads at the same time each count. */
+  ms: number;
+  byKind: Partial<Record<WaitKind, WaitTotal>>;
+  /**
+   * Waits nobody answered, counted up to the session's end, a resume, or its last event (included
+   * in count and ms). Absent when none.
+   */
+  open?: { count: number; ms: number };
+  /**
+   * Turn waits that an agent's prompt ended instead of the person's (a task notification, a
+   * delegated task's result, a message another thread sent), or that ended when the agent went on by
+   * itself. Not in count or ms. Absent when none.
+   */
+  agent?: { count: number; ms: number };
+  /** Prompts the person sent while the main thread's turn was still running. Absent when none. */
+  steers?: number;
+  /** Waits cut to 12 hours (each counts 12 hours). Absent when none. */
+  capped?: number;
+}
+
+/**
  * One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls
  * printed or named (core/sessions.ts foldPrs; no network call).
  * - `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.
@@ -347,6 +397,8 @@ export interface AgentEvent {
   /**
    * Kind-specific, small (< 4 KB after normalization). Conventions:
    * - user.message / assistant.message: { text }
+   *   user.message also { from?: "agent" }: an agent sent the prompt, not the person (T3 Code's
+   *   provider, MCP and server prompts, notifications, delegated results, other threads' messages).
    * - llm.call: { provider?, requestModel?, responseModel?, ttftMs?, stopReason?,
    *               tokensPerSec?, ok, error? } — one model API call; durationMs on the event.
    *   durationMs, ttftMs and tokensPerSec are absent when the source does not show when
@@ -471,7 +523,8 @@ export interface Session {
     cacheBreaks?: CacheBreakStats;
     /**
      * How the agent was launched: `headless` (`claude -p`, an Agent SDK, `codex exec`) or
-     * `interactive` (a terminal UI or an IDE). Unset when the agent's start does not say.
+     * `interactive` (a terminal UI, an IDE, or a T3 Code thread a person started). A host app's
+     * launch wins over the agent's own start. Unset when neither says.
      */
     launch?: "headless" | "interactive";
     /**
@@ -509,6 +562,12 @@ export interface Session {
      * prompt), as of its last event (core/waiting.ts). Unset when nothing waits.
      */
     waiting?: Waiting;
+    /**
+     * How often and how long the session waited on the person (permission prompts, questions, plans,
+     * host requests, and turns in a session launched interactively), and how often the person
+     * steered a running turn (core/wait-stats.ts). Unset when it never waited and nobody steered.
+     */
+    waits?: WaitStats;
     /** Pull requests the session opened, merged, closed or linked, oldest first: every one it opened, merged or closed, and the 20 latest it only linked. Unset when it touched none. */
     prs?: PullRequestRef[];
     /**
