@@ -472,6 +472,7 @@ grouped by area, with links to the docs for the details.
 - **Install.** `uninstall` removes coding.sh from an agent's other config files when it can't read or parse one of them, leaves that file as it is, prints the error and exits 1. Before, it removed nothing from that agent and could say that nothing was installed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#uninstall))
 - **Capture.** On Windows, the node hook writes an event whose agent name Windows keeps for a device, such as `con` or `nul.txt`, or ends in a dot, which Windows drops from a folder name, under `spool/unknown`, as it does for other names that are not safe folder names. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Work.** After `work snooze`, the note and `work snooze --help` say the item shows only while it is in a more urgent bucket until the snooze ends. Before, they said it comes back sooner, as if the snooze ended. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#acknowledging-and-snoozing))
+- **CLI.** `blame`, `attribution` and `tree`'s in: line name each session by the shortest reference that opens it, not by 8 characters many T3 Code thread ids share. In `sessions`, `tree`, `search`, `status` and `blame`'s session table, an id over 40 characters, one that needs quotes in a shell, or `latest` or `last` prints as that reference. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#search-every-session))
 
 ## [0.1.7] - 2026-11-16
 

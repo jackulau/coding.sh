@@ -314,6 +314,34 @@ export async function shortener(index: Pick<IndexStore, "listSessions" | "sessio
   };
 }
 
+/**
+ * True when a list may print `id` as it is: at most MAX_REF characters, passed on by a shell as
+ * typed (PLAIN_REF), and not a RESERVED word. A UUID prints whole; a T3 Code thread id does not.
+ */
+export function printsWhole(id: string): boolean {
+  return id.length <= MAX_REF && PLAIN_REF.test(id) && !RESERVED.has(id);
+}
+
+/** How a command prints the stored session ids it names (printedRefs). Each opens its session alone. */
+export interface PrintedRefs {
+  /** For a narrow column: the shortest reference (shortestRef). */
+  short(id: string): string;
+  /** For a list: the id itself when it printsWhole, else short(id). */
+  whole(id: string): string;
+}
+
+/**
+ * The references a command prints for the ids it names: `short` the ids it prints short, `whole`
+ * the ids it prints whole. Every stored id is read (shortener) at most once, and only when an id in
+ * `short`, or one in `whole` that does not print whole, needs it. Pass every id the command prints:
+ * without the read, short(id) is the id as wholeRef prints it.
+ */
+export async function printedRefs(index: Pick<IndexStore, "listSessions" | "sessionIdsByPrefix">, ids: { short?: readonly string[]; whole?: readonly string[] }): Promise<PrintedRefs> {
+  const read = !!ids.short?.length || !!ids.whole?.some((id) => !printsWhole(id));
+  const short = read ? await shortener(index) : wholeRef;
+  return { short, whole: (id) => (printsWhole(id) ? id : short(id)) };
+}
+
 /** One session an ambiguous reference matches, as the CLI's --json and the MCP error list them. */
 export interface RefCandidate {
   id: string;
