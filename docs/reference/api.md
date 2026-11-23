@@ -147,6 +147,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/work`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | POST | [`/api/work/ack`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | POST | [`/api/work/snooze`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| GET | [`/api/work/{id}`](#get-apiworkid) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -442,7 +443,8 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 
 ### `GET /`, `GET /index.html`
 
-The viewer page (HTML, also `HEAD`). Auth: read key or basic auth.
+The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. A `GET` that sends
+`Accept-Encoding: gzip` gets the page gzipped; the answer says `Vary: Accept-Encoding` either way.
 
 `/?t=<read key>` trades the key for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and
 redirects to `/`, so the key leaves the address bar. The exchange happens when:
@@ -499,6 +501,9 @@ share these errors:
 | 403 | the server binds loopback and the `Host` header is not loopback (DNS-rebinding guard) | `{"error":"forbidden host","status":403}` |
 | 404 | unknown route, a session outside the key's project, or a session id with a raw `/` (the error says to send `%2F`) | `{"error":"not found","status":404}` |
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
+
+A JSON answer of 32 KB or more goes gzipped when the request sends `Accept-Encoding: gzip`, and
+says `Vary: Accept-Encoding`.
 
 Times are epoch milliseconds. `since` is inclusive and `until` exclusive, both on a session's start.
 
@@ -2011,14 +2016,17 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `repo` | one repo |
 | `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
 | `all=1` | show hidden items, like `--all` |
-| `limit` | default 20, at most 500 |
+| `limit` | default 20, at most 1000 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
 
-Item fields for workflow runs and replaced failures:
+`totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1` or `stage` lists them). The page's headings read "20 of 671" from it.
+
+Item fields for workflow runs, replaced failures and linked worktrees:
 
 - A workflow run's item has `workflow`: the run's `id`, its `name` when known, and `phases`. Each phase has its `name` (absent if none), `agents`, `running`, `failed`, `done`, and `costUsd` when known.
 - A failed item that a later item on the same branch replaced has `supersededBy`, that item's id.
+- An item whose main session ran in a linked worktree has `repoMain`, the root of the repo's main checkout. `repo` stays the worktree. It is absent in a main checkout.
 - The top-level `needYou` counts blocked and failed items that are neither probably closed nor superseded.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
@@ -2026,6 +2034,12 @@ Item fields for workflow runs and replaced failures:
 - `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
 - Both writes look the item up in the last 7 days, or the window in `?since=`. An item not in the window answers 404.
 - An id that is not an item id, or a duration that does not parse, answers 400. The body must be JSON, is capped at 1 KB, and the `Origin` must match the host.
+
+### `GET /api/work/{id}`
+
+The viewer's item page (`#/w/<id>`): one item, as `coding.sh work show <id> --json` prints it, built by the same code, plus the list's `now` and `index` and, for a superseded failure, `sessionOf`. It leaves out the CLI's `indexUpdatedAt`, `asOf` and `pending`: `index` gives the index's age. Only `coding.sh ui` answers.
+
+It takes `since`, `agent` and `repo` as `GET /api/work` does. An id that is not an item id answers 400; an item not in the window, or not matching the filters, answers 404.
 
 ### `GET /api/ingest`
 

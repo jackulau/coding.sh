@@ -104,6 +104,19 @@ describe("one work item per workflow run", () => {
     assert.deepEqual(run.workflow!.phases.map((p) => [p.name, p.failed, p.done]), [["research", 0, 3], ["build", 1, 2], ["review", 0, 2]]);
   });
 
+  test("a failed run's reason names the failed agent whose end it times; its stage gives the run's last activity", () => {
+    const stopped = fleet().map((s) => (s.endedAt === undefined ? { ...s, endedAt: s.startedAt + MIN } : s));
+    const run = queue(stopped).items.find((i) => i.workflow?.id === "run-a")!;
+    // b3 failed nearly 2 hours ago; the reviewers ended 18 minutes ago.
+    assert.match(run.reason, /^failed agent ended 1h ago on api 529/);
+    assert.equal(run.stageWhy, "api 529, last active 18m ago");
+    // With two failed agents, the age is the newer one's end.
+    const two = stopped.map((s) => (s.id === "lead:sub:b2" ? { ...s, flags: failedApi.flags, stats: { ...s.stats, ...failedApi.stats } } : s));
+    const both = queue(two).items.find((i) => i.workflow?.id === "run-a")!;
+    assert.equal(both.cause?.sessionId, "lead:sub:b3");
+    assert.match(both.reason, /^last failed agent ended 1h ago on 2 failed agents \(api 529\)/);
+  });
+
   test("a subagent of a workflow agent joins its run and its phase's cost", () => {
     const sub = sess("lead:sub:b1:sub:s1", 115 * MIN, { parent: { sessionId: "lead:sub:b1", subagentId: "s1" }, stats: cost(0.5) });
     const q = queue([...fleet(), sub], { all: true });

@@ -67,6 +67,7 @@ const SITE_PAGES: Record<string, string> = {
   "how-to/trace-durable-workflow.md": "/docs/how-to/trace-durable-workflow",
   "how-to/capture-with-proxy.md": "/docs/how-to/capture-with-proxy",
   "how-to/track-cost.md": "/docs/cost",
+  "how-to/alerts.md": "/docs/how-to/alerts",
   "how-to/compare-agents.md": "/docs/how-to/compare-agents",
   "how-to/replay-llm-calls.md": "/docs/how-to/replay-llm-calls",
   "how-to/test-agents-md-change.md": "/docs/how-to/test-agents-md-change",

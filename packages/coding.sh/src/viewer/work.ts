@@ -1,15 +1,16 @@
-// The viewer's Work page data (#/work): the queue `coding.sh work` prints, read by the
-// same functions (core/work.ts readWorkQueue, workJson) so the items match
-// `work --json` for the same store and filters. Ack and snooze write the same
-// work.json overlay the CLI writes (core/work-overlay.ts), with the CLI's rules.
+// The viewer's Work page data (#/work, #/w/<id>): the queue `coding.sh work` prints and the
+// item `work show` prints, read by the same functions (core/work.ts readWorkQueue, workJson,
+// workFiles) so the items match `work --json` for the same store and filters. Ack and snooze
+// write the same work.json overlay the CLI writes (core/work-overlay.ts), with the CLI's rules.
 import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
-import { stagesFlag } from "../cli/commands/work.ts";
+import { mainFilesChanged, stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
 import type { IndexStore } from "../core/types.ts";
+import type { Session } from "../schema/index.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
-import { addAck, addSnooze, readOverlay, writeOverlay } from "../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
+import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
+import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workFiles, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
 export interface WorkSource {
@@ -29,9 +30,14 @@ export interface WorkSource {
 export const WORK_PAGE_SINCE = "7d";
 /** Items in one response when the request names no limit: `work`'s default. */
 const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 500;
+/** A bigger limit is cut to this; the page's "Show all" asks for up to this many. */
+const MAX_LIMIT = 1000;
 /** Member session ids listed per item, for the page's links. */
 const MEMBERS_MAX = 50;
+/** Paths an item's answer lists, as `work show --json` lists them. */
+const FILES_MAX = 200;
+/** A work item id: "w" and six hex digits (core/work.ts workItemId). */
+export const WORK_ITEM_ID = /^w[0-9a-f]{6}$/;
 
 export class WorkApiError extends Error {
   readonly status: number;
@@ -98,13 +104,14 @@ export function indexDoc(age: IndexAge | undefined, work = false): { index?: { u
 const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => (age?.stale ? age.at : now);
 
 /**
- * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus three
+ * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus four
  * fields for the page: `members` (item id → its member session ids, the primary first) for the
- * session links, `hiddenBy` (hidden reason → count; {} when nothing is hidden), and `now` (ISO),
- * the moment the reasons' ages were worked out. With a `root` it carries `index` (indexDoc), and an
- * old index judges the queue as of its last ingest. Left out when empty: `workflowAgents` (a run
- * item's id → its agents, as `work show --json` lists them) and `sessionOf` (the id of an item a
- * shown failure was superseded by → that item's primary session).
+ * session links, `hiddenBy` (hidden reason → count; {} when nothing is hidden), `totals` (each
+ * bucket and "hidden" → how many items of the whole answer, not just the first `limit`, fall in
+ * it), and `now` (ISO), the moment the reasons' ages were worked out. With a `root` it carries
+ * `index` (indexDoc), and an old index judges the queue as of its last ingest. Left out when empty:
+ * `workflowAgents` (a run item's id → its agents, as `work show --json` lists them) and `sessionOf`
+ * (the id of an item a shown failure was superseded by → that item's primary session).
  */
 export async function workList(index: IndexStore, src: WorkSource, q: URLSearchParams): Promise<Record<string, unknown>> {
   const clock = src.now?.() ?? Date.now();
@@ -123,6 +130,9 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const hiddenBy: Partial<Record<HiddenReason, number>> = {};
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   const shown = queue.items.slice(0, limit);
+  // `counts` counts every stage and leaves hidden items out; the page's headings count what this answer lists.
+  const totals: Record<string, number> = Object.fromEntries([...BUCKETS, "hidden"].map((b) => [b, 0]));
+  for (const i of queue.items) totals[i.bucket ?? "hidden"] = (totals[i.bucket ?? "hidden"] ?? 0) + 1;
   const workflowAgents: Record<string, unknown[]> = {};
   for (const i of shown) {
     if (i.workflow) workflowAgents[i.id] = itemWorkflowAgents(i, sessions, now).slice(0, MEMBERS_MAX).map(({ startedAt: _, ...a }) => a);
@@ -141,6 +151,7 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
     now: new Date(now).toISOString(),
     members: Object.fromEntries(shown.map((i) => [i.id, i.sessionIds.slice(0, MEMBERS_MAX)])),
     hiddenBy,
+    totals,
   };
   if (Object.keys(workflowAgents).length) doc.workflowAgents = workflowAgents;
   if (Object.keys(sessionOf).length) doc.sessionOf = sessionOf;
@@ -150,26 +161,79 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
 /** The JSON body's fields; anything but an object reads as {}. */
 const fieldsOf = (body: unknown): Record<string, unknown> => (body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {});
 
-/** The item `id` names, judged as the list was: as of the last ingest while the index is old. */
-async function findItem(index: IndexStore, src: WorkSource, id: unknown, q: URLSearchParams, now: number): Promise<WorkItem> {
-  if (typeof id !== "string" || !/^w[0-9a-f]{6}$/.test(id)) throw new WorkApiError(400, 'id must be a work item id such as "w1a2b3c"');
+interface FindOptions {
+  /** Apply the request's agent and repo filters, as the list does. */
+  filtered?: boolean;
+  /** The moment the queue is judged as of, already worked out (judgedAt). */
+  judged?: number;
+  shortId?: (id: string) => string;
+  overlay?: WorkOverlay;
+}
+
+/**
+ * The item `id` names, judged as the list was: as of the last ingest while the index is old. Also the
+ * queue it was found in (every item, hidden ones too) and the window's sessions.
+ */
+async function findItem(index: IndexStore, src: WorkSource, id: unknown, q: URLSearchParams, now: number, opts: FindOptions = {}): Promise<{ item: WorkItem; items: WorkItem[]; sessions: Session[] }> {
+  if (typeof id !== "string" || !WORK_ITEM_ID.test(id)) throw new WorkApiError(400, 'id must be a work item id such as "w1a2b3c"');
   const f = filtersOf(src, q, now);
-  const { queue } = await readWorkQueue(index, { since: f.since, all: true, overlay: readOverlay(src.overlay), now: judgedAt(src, now) });
+  const filters = opts.filtered ? { agents: f.agents, place: f.place } : {};
+  const { queue, sessions } = await readWorkQueue(index, { since: f.since, all: true, overlay: opts.overlay ?? readOverlay(src.overlay), now: opts.judged ?? judgedAt(src, now), shortId: opts.shortId, ...filters });
   const item = queue.items.find((i) => i.id === id);
-  if (!item) throw new WorkApiError(404, `no work item ${id} since ${f.sinceText}`);
-  return item;
+  if (!item) throw new WorkApiError(404, `no work item ${id} since ${f.sinceText}${opts.filtered && (f.agents.length || f.place) ? " that matches the filters" : ""}`);
+  return { item, items: queue.items, sessions };
+}
+
+/**
+ * GET /api/work/<id>?since=7d&agent=a&repo=x: one item as `coding.sh work show <id> --json` gives it, read
+ * by the same functions (workFiles, workItemJson, itemWorkflowAgents), plus what the list adds: `now`
+ * (ISO), `sessionOf` when a newer item superseded the item's failure, and `index` with a `root`. The
+ * agent and repo filters apply as on the list. A malformed id is a 400; an id no item has is a 404.
+ */
+export async function workShow(index: IndexStore, src: WorkSource, id: string, q: URLSearchParams): Promise<Record<string, unknown>> {
+  const clock = src.now?.() ?? Date.now();
+  const age = src.root ? indexAge(src.root, clock) : undefined;
+  const now = judgedAt(src, clock, age);
+  const overlay = readOverlay(src.overlay);
+  // The window and the judgment as the list's: from the last ingest while the index is old.
+  const { item, items, sessions } = await findItem(index, src, id, q, now, { filtered: true, judged: now, shortId: await shortener(index), overlay });
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  // Before workItemJson: when it reads every session, workFiles sets the item's file count and review reason.
+  const files = await workFiles(index, item, sessions, now);
+  const children = item.sessionIds.filter((sid) => sid !== item.primaryId).map((sid) => byId.get(sid)).filter((s): s is Session => !!s);
+  const doc: Record<string, unknown> = {
+    ...workItemJson(item),
+    now: new Date(now).toISOString(),
+    sessionFilesChanged: mainFilesChanged(item, byId),
+    workflowAgents: item.workflow ? itemWorkflowAgents(item, sessions, now).map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
+    files: files.slice(0, FILES_MAX),
+    sessions: [item.primaryId, ...children.map((s) => s.id)].map((sid) => {
+      const s = byId.get(sid);
+      if (!s) return { id: sid };
+      const row: Record<string, unknown> = { id: s.id, agent: s.agent, title: s.title ?? null, parentSessionId: s.parent?.sessionId ?? null };
+      if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
+      return row;
+    }),
+  };
+  if (item.supersededBy) {
+    // The newer item ended with no failure, so it is often hidden, or outside the filters.
+    const later = items.find((i) => i.id === item.supersededBy) ?? buildWorkQueue(sessions, { overlay, now, all: true }).items.find((i) => i.id === item.supersededBy);
+    if (later) doc.sessionOf = { [later.id]: later.primaryId };
+  }
+  for (const k of Object.keys(doc)) if (doc[k] === undefined) delete doc[k];
+  return { ...doc, ...indexDoc(age, true) };
 }
 
 /** POST /api/work/ack {"id":"w…"}: acknowledges the item's current cause, as `coding.sh work ack <id>` does. */
 export async function workAck(index: IndexStore, src: WorkSource, q: URLSearchParams, body: unknown): Promise<Record<string, unknown>> {
   const now = src.now?.() ?? Date.now();
-  const item = await findItem(index, src, fieldsOf(body).id, q, now);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
   const cause = item.bucket ? item.cause : undefined;
   if (!cause) return { id: item.id, acked: false, hidden: item.hidden ?? null };
   const overlay = readOverlay(src.overlay);
   addAck(overlay, cause.sessionId, cause.fingerprint);
   writeOverlay(src.overlay, overlay, now);
-  const after = await findItem(index, src, item.id, q, now);
+  const { item: after } = await findItem(index, src, item.id, q, now);
   return { id: item.id, acked: true, bucket: cause.bucket, label: BUCKET_LABELS[cause.bucket], now: workItemJson(after) };
 }
 
@@ -185,7 +249,7 @@ export async function workSnooze(index: IndexStore, src: WorkSource, q: URLSearc
     throw e;
   }
   const now = src.now?.() ?? Date.now();
-  const item = await findItem(index, src, fieldsOf(body).id, q, now);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
   const until = now + ms;
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
   const overlay = readOverlay(src.overlay);

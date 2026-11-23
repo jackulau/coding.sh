@@ -31,6 +31,9 @@ coding.sh doctor --json   # the same as one JSON document
 1 agent not capturing
 ```
 
+The rows and the last line go to stdout, and the next steps to stderr, so
+`coding.sh doctor > doctor.txt` saves every row.
+
 A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
 show up, work down this list:
 
@@ -88,6 +91,7 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names no install that is still there. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
 | `Hook hooks run the coding.sh … at …, another install` | `bin/cli-path` names another install that is still there. The hooks run it, and it owns the store. | `coding.sh upgrade-store` from the install the hooks should run (it asks first), or use the install the row names. |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
+| `Status line runs coding.sh statusline, which PowerShell and cmd can't run (<file>)` | Windows only. Claude Code's status line names `coding.sh`, as older versions installed it. Claude Code runs it through PowerShell when Git Bash is not installed, so no status line shows. doctor only reads the file. | `codingsh statusline install` (in Git Bash, `coding.sh statusline install`) |
 | `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
 | `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
 | `Stats N model calls past physical limits (…)` | Recent stored model calls show more than 500 output tokens a second (10,000 for a model whose calls usually top 500, as on a fast host such as Cerebras or Groq), a first token outside the call, or a cost below $0 or above $50. A parser or unit bug, not a real call. | `coding.sh show <session>` for the session it names, and report it. |
@@ -188,6 +192,25 @@ line then names the copy of the index it kept (not with `--json`, and not when s
 
 ```text
 coding.sh: index upgraded to schema v11. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
+```
+
+A new coding.sh can also change the prices cost estimates come from, and so can a `[prices]` edit
+in config.toml. Stored estimates are then repriced once. On the home's own `index.db`, the
+background ingest that starts at the next session end, read or viewer start does it, so commands
+don't wait.
+
+Until that ingest finishes, sessions show their old estimates, the viewer shows
+`Rebuilding stats…`, and MCP answers carry `index.refolding: true`.
+
+With `CODING_SH_NO_AUTO_INGEST=1`, or on another store (a `[store]` setting, `--store` or
+`CODING_SH_STORE_URL`), the first command that opens the index reprices it before it answers. At a
+terminal, and not with `--json`, it prints progress after 2 seconds, at most once a second, then how
+long it took. After an upgrade that printed progress, the closing line counts the repricing and
+names both parts:
+
+```text
+coding.sh: repricing cost estimates: 400 of 1,000 sessions (40%)
+coding.sh: index upgraded in 24.7s: migrate 1.2s, reprice 23.5s. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
 ```
 
 - **Another command waits.** A command that opens the index while another process upgrades it
@@ -329,14 +352,14 @@ The command ran and something failed.
 | `no_backup` | `No index from before a migration is kept next to ~/.coding.sh/index.db: nothing to restore` | `upgrade-store --restore` found no `index.db.v<N>.bak` this coding.sh can open: none was kept, or a `coding.sh purge` deleted it. Update instead: `coding.sh update`. |
 | `source_checkout` | `coding.sh is running from a source checkout (…), so it won't open your real store in ~/.coding.sh: …` | Set `CODING_SH_HOME` to a temp dir, or `CODING_SH_DEV_REAL_STORE=1` to use the real store. |
 | `locked` | `Can't ingest: …` | Another ingest is running. Wait for it, then run `coding.sh ingest`. |
-| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
+| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. `init --proxy` writes no base URL while it can't use `proxy.port`: another program holds it, it is 0, or this home's proxy runs on another port. It prints the command that fixes it, such as `coding.sh config set proxy.port 4321`. Run that, then `coding.sh init --proxy` again. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |
 | `proxy_failed` | `The background proxy did not start` | Read `~/.coding.sh/proxy.log`, or run `coding.sh proxy` in the foreground to see the error. |
 | `grader_error` | (judge grade) `grader error: …` (exit 2) | The grader could not grade, so there is no verdict. Check the grader's provider and API key, then run again. A fail verdict exits 1. |
 | `fetch_failed` | (compare --parity) `Couldn't fetch https://example.com/: …` (exit 2) | Check the URL and that the site is reachable from this machine. A fetch that takes over 30 s fails too. |
 | `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` (exit 2) | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
 | `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` (exit 2) | Run the command yourself; it must print the page's HTML on stdout. |
-| `not_found` | `Can't find session "nope"` (a session id or a unique prefix of one, 4+ characters), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
+| `not_found` | `Can't find session "nope"` (a session id, a unique prefix of 4+ characters, or the `x_` alias coding.sh prints for one), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
 | `target_exists` | `traces/ is not empty` (export --evidence) | Pass `--force` to write into it anyway, or pick an empty directory. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |
@@ -362,7 +385,7 @@ The command ran and something failed.
 | `no_budget` | `answers has no budget_usd, so it can't be scheduled` | Add `budget_usd = 5` (or your cap) to the benchmark file. Printing the schedule works without one. |
 | `ambiguous` | `2 tasks are named "…"`, `Session id prefix "9f1c" is ambiguous. It matches: …` | Pass one of the ids it prints, or more of the session id. |
 | `exists` | `Target gh already exists in coding.sh.toml`, `bench/answers.toml already exists`, `An alert named "failures" exists` | Pick another name, or `--force` where offered. For an alert, `coding.sh alert rm <name>` first. |
-| `delivery_failed` | `Test notification to webhook https://example.com/hook failed after 3 tries: POST … → 500` (alert test) | The webhook did not answer 2xx, or the command did not exit 0. Fix the target and run `coding.sh alert test <name>` again; until one succeeds, a target turned off after 5 failed deliveries stays off. On Windows a command runs in cmd.exe, where a sh command such as `notify-send` is not found: run a script by its full path, in a folder whose path has no spaces, as in `command:node C:\alerts\notify.mjs`. |
+| `delivery_failed` | `Test notification to webhook https://example.com/hook failed after 3 tries: POST … → 500` (alert test) | The webhook did not answer 2xx, or the command did not exit 0. Fix the target and run `coding.sh alert test <name>` again; until one succeeds, a target turned off after 5 failed deliveries stays off. On Windows a command runs in cmd.exe, where a sh command such as `notify-send` is not found: run a script by its full path, in a folder whose path has no spaces, as in `command:node C:\alerts\notify.mjs`. See [Run a command](how-to/alerts.md#run-a-command). |
 | `conflict` | `Can't export to …: the directory is not empty` | Pick an empty directory, or add `--force`. |
 | `no_agents` | `No supported agents found on this machine` | Install a supported agent, or use `coding.sh run -- <cmd>`. |
 | `hook_missing` | `Can't find hook.mjs to install` | From a source checkout, run `npm run build` first. |

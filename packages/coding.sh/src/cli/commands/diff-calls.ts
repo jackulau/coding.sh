@@ -7,6 +7,7 @@ import { CallRefError, diffCalls, loadCall, previousCall, resolveCall, type Call
 import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { oneLine, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { clean, CliError, duration, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -88,6 +89,14 @@ export function printDiff(out: Output, d: CallDiff, rec?: Recorded): void {
   if (c.cause) row("Why", c.cause);
 }
 
+/** The Cache and Why rows read b as a later call in a's conversation: what a pair breaks of that. */
+export function pairWarnings(d: CallDiff): string[] {
+  const w: string[] = [];
+  if (d.b.ts < d.a.ts) w.push("b ran before a, so it could not read anything a cached: the Cache and Why rows do not apply");
+  if (d.a.sessionId !== d.b.sessionId) w.push("a and b are from different sessions: b can read from the cache only the prefix the two requests share, and a history that differs is the other conversation, not an edit");
+  return w;
+}
+
 /** The one-call view: what was sent, what came back, usage and cache. `all` prints the whole system prompt. */
 export function printCall(out: Output, l: LoadedCall, all: boolean): void {
   const e = l.event;
@@ -135,7 +144,12 @@ export async function run(c: CommandContext): Promise<number> {
     // --json: the pieces neither event recorded, so `tools.same: true` is not read as a comparison.
     const notRecorded = d.content === "metadata" ? (Object.keys(rec) as (keyof Recorded)[]).filter((k) => !rec[k]) : [];
     if (out.json) out.data(notRecorded.length ? { ...d, notRecorded } : d);
-    else printDiff(out, d, rec);
+    else {
+      printDiff(out, d, rec);
+      for (const w of pairWarnings(d)) out.warn(w);
+      // A found a is always the earlier call; two named calls can be the other way round.
+      if (d.b.ts < d.a.ts && c.positionals.length > 1) out.next("Name the earlier call first:", cliCommand(c.env, ["diff-calls", c.positionals[1]!, c.positionals[0]!]));
+    }
     return 0;
   }, { create: false });
 }

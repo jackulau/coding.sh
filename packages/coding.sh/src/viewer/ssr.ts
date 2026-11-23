@@ -85,6 +85,12 @@ function midClip(s: string, n: number): string {
   const tail = Math.ceil((n - 1) * 0.4);
   return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
 }
+/** The names of the host apps that drive agents (Session.host), as viaHost() in ui/index.html has them. */
+const HOST_NAMES: Record<string, string | undefined> = { t3code: "T3 Code" };
+/** " via T3 Code" for a session a host app drove (Session.host), else "". */
+function viaHost(s: Session): string {
+  return s.host ? " via " + (HOST_NAMES[s.host] || s.host) : "";
+}
 /** The repo column's text: the last path segment of the repo's main checkout (a worktree's too), else its root, else the working directory. */
 function repoLabel(s: Session): string {
   const p = s.repo?.main ?? s.repo?.root ?? s.cwd;
@@ -179,6 +185,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
   const rows = items.map((s) => {
     const title = oneLine(s.title) || "Untitled session";
     const agent = s.parent?.type ?? s.agent;
+    const host = viaHost(s);
     const repo = repoLabel(s);
     const u = s.stats.usage;
     const tokens = u ? (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0) : 0;
@@ -192,7 +199,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
       `<span class="dot ${tone ? "tone-" + tone : act.failed || fr ? "tone-fail ring" : "tone-muted"}" aria-hidden="true"></span>`,
       `<div class="row-main"><span class="row-title truncate" title="${esc(title)}">${esc(title)}</span>${badges(s)}</div>`,
       `<div class="row-cells">`,
-      `<span class="cell agent-cell"><span>${esc(agent)}</span>${s.model ? `<span class="sub"> ${esc(midClip(s.model, 22))}</span>` : ""}</span>`,
+      `<span class="cell agent-cell" title="${esc([s.agent + host, s.model].filter(Boolean).join(" · "))}"><span>${esc(agent)}${host ? `<span class="host">${esc(host)}</span>` : ""}</span>${s.model ? `<span class="sub"> ${esc(midClip(s.model, 22))}</span>` : ""}</span>`,
       `<span class="cell muted repo-cell${repo ? "" : " is-none"}"${dir ? ` title="${esc(dir)}"` : ""}>${esc(repo || "—")}</span>`,
       `<span class="cell act-cell">${esc(act.text)}${act.failed ? `<span class="err"><span class="sep"> · </span>${esc(act.failed)}</span>` : ""}</span>`,
       `<span class="cell num muted tok-cell">${tokens ? esc(fmtCompact(tokens) + " tok") : ""}</span>`,

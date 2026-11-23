@@ -2,10 +2,11 @@
 // gained a line, with synthetic sessions recorded before and after it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { putSession, sessionEvents } from "../helpers-decision.ts";
 import { improveWorld, type World } from "../helpers-improve.ts";
 import { CLI } from "../_cli.ts";
 
@@ -29,6 +30,35 @@ const world = async (name: string, o: Parameters<typeof improveWorld>[2]) => {
 function cli(w: World, args: string[]) {
   const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: w.repo, env: w.env, encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** Commits one more CLAUDE.md line now: a harness change no session ran with yet. */
+function commitRule(w: World, line: string, subject: string) {
+  appendFileSync(join(w.repo, "CLAUDE.md"), `${line}\n`);
+  const r = spawnSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qam", subject], { cwd: w.repo, env: w.env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+}
+
+/** Headless sessions (`claude -p`) that ran `npm test` in `dir` at git HEAD `head`; `main` when dir is a linked worktree of that repo. */
+async function headlessIn(w: World, rows: { id: string; dir: string; head: string; main?: string; daysAgo: number }[]) {
+  const { openContext } = await import("../../src/core/context.ts");
+  const ctx = await openContext({ env: w.env, cwd: w.repo });
+  try {
+    for (const r of rows) {
+      const repo: { root: string; head: string; main?: string } = { root: r.dir, head: r.head };
+      if (r.main) repo.main = r.main;
+      const events = sessionEvents(r.id, { cwd: r.dir, startedAt: Date.now() - r.daysAgo * 86_400_000 }, [
+        ["session.start", { entrypoint: "sdk-cli" }],
+        ["user.message", { text: `Task ${r.id}` }],
+        ["tool.start", { tool: "Bash", toolUseId: `${r.id}-t`, input: { command: "npm test" } }],
+        ["tool.end", { tool: "Bash", toolUseId: `${r.id}-t`, ok: true, output: "ok" }],
+        ["assistant.message", { text: "Done." }],
+      ]);
+      await putSession(ctx.index, events.map((e) => ({ ...e, repo })));
+    }
+  } finally {
+    await ctx.close();
+  }
 }
 
 describe("cli improve", () => {
@@ -179,19 +209,86 @@ describe("cli improve", () => {
     assert.equal(commitSteps("CLAUDE.md", msg, { MSYSTEM: "MINGW64" }, "win32").length, 1);
   });
 
-  it("improve check: when every session after a change is headless, it says how many were left out and names --headless", async () => {
+  it("improve check: when only headless sessions ran after a change, its reason says so, once, and names --headless", async () => {
     const w = await world("headless-after", { afterFlagged: 0, plan: { before: [{ test: true }, { test: true }, { test: true }], after: [{ headless: true }, { headless: true }] } });
+    const reason = "Only headless sessions ran with this change: 2 (claude -p, an Agent SDK, codex exec). --headless counts them.";
     const text = cli(w, ["improve", "check"]);
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /No sessions yet: [^\n]*\n\s+Left out: 2 headless sessions after it \(claude -p, an Agent SDK, codex exec\); --headless counts them/);
-    assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless/);
-    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; headlessLeftOut?: number }[] };
+    assert.ok(text.stdout.includes(`\n  ${reason}\n`), text.stdout);
+    assert.doesNotMatch(text.stdout, /No sessions yet|No captured session ran|headless sessions after it/, "said once, and not as if no session ran");
+    assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless$/m);
+    // The command as given plus --headless: the flags given still pick the same sessions.
+    const given = cli(w, ["improve", "check", "--since", "40d", "--agent", "claude-code"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.ok(given.stdout.includes(`\n  ${reason}\n`), given.stdout);
+    assert.match(given.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --since 40d --agent claude-code --headless$/m);
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; reason: string; headlessLeftOut?: number }[] };
     const ch = j.changes.find((c) => c.commit === w.commits.rule)!;
-    assert.deepEqual([ch.verdict, ch.headlessLeftOut], ["no-sessions-after", 2]);
+    assert.deepEqual([ch.verdict, ch.reason, ch.headlessLeftOut], ["no-sessions-after", reason, 2]);
     const all = JSON.parse(cli(w, ["improve", "check", "--json", "--headless"]).stdout) as typeof j;
     const counted = all.changes.find((c) => c.commit === w.commits.rule)!;
     assert.notEqual(counted.verdict, "no-sessions-after");
     assert.equal(counted.headlessLeftOut, undefined);
+    // improve shows the change with the same reason.
+    const report = JSON.parse(cli(w, ["improve", "--json"]).stdout) as { changes: { commit: string; reason: string }[] };
+    assert.equal(report.changes.find((c) => c.commit === w.commits.rule)?.reason, reason);
+    assert.ok(cli(w, ["improve"]).stdout.includes(`\n    ${reason}\n`));
+  });
+
+  it("improve check: a change no session ran with yet says so once", async () => {
+    const w = await world("none-after", { afterFlagged: 0 });
+    commitRule(w, "Keep commits small.", "CLAUDE.md: keep commits small");
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /"CLAUDE\.md: keep commits small"\n {4}\+ Keep commits small\.\n {2}No captured session ran with this change yet\.\n/);
+    assert.doesNotMatch(text.stdout, /No sessions yet/);
+    assert.match(text.stderr, /Re-check as new sessions arrive:\n\s+(?:coding\.sh|codingsh) improve check --watch$/m);
+    // The command as given plus --watch: the flags given still pick the same changes and sessions.
+    const given = cli(w, ["improve", "check", "--since", "40d", "--agent", "claude-code"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.match(given.stderr, /Re-check as new sessions arrive:\n\s+(?:coding\.sh|codingsh) improve check --since 40d --agent claude-code --watch$/m);
+  });
+
+  it("improve check cuts a long commit subject to one line, as sessions cuts titles; --json keeps it whole", async () => {
+    const w = await world("long-subject", { afterFlagged: 0 });
+    const subject = `CLAUDE.md: ${Array.from({ length: 30 }, (_, k) => `rule ${k} says what the tests printed`).join(", ")}`;
+    assert.ok(subject.length > 600);
+    commitRule(w, "Say what the tests printed.", subject);
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    // Off a TTY, 100 characters, as the sessions table cuts a title.
+    assert.ok(text.stdout.includes(` ${JSON.stringify(`${subject.slice(0, 99)}…`)}\n`), text.stdout);
+    assert.ok(!text.stdout.includes(subject.slice(0, 101)));
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { subject: string }[] };
+    assert.equal(j.changes[0]!.subject, subject);
+  });
+
+  it("improve check counts the headless sessions it left out in the folders it reads; sessions --where repo: counts by repo name", async () => {
+    const w = await world("headless-folders", { afterFlagged: 0, headless: 2 });
+    await headlessIn(w, [
+      // A repo nested in the checkout's folder, at a commit this repo does not have.
+      { id: "nested-0", dir: join(w.repo, "vendor", "lib"), head: "0".repeat(40), daysAgo: 3 },
+      // A linked worktree of the repo outside its folder: check reads it only with --repo.
+      { id: "worktree-0", dir: join(root, "headless-folders", "other"), head: w.commits.rule!, main: w.repo, daysAgo: 3 },
+      { id: "worktree-1", dir: join(root, "headless-folders", "other"), head: w.commits.rule!, main: w.repo, daysAgo: 2.5 },
+    ]);
+    const check = (args: string[]) => {
+      const r = cli(w, ["improve", "check", "--json", ...args]);
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout) as { headlessLeftOut?: number; changes: { commit: string; after: { sessions: number } }[] };
+    };
+    // Under the checkout's folder: its own 2 and the nested repo's 1, not the worktree's 2.
+    assert.equal(check([]).headlessLeftOut, 3);
+    // --headless reads the same folders: the checkout's 2 count after the change; the nested repo's commit is not in this history.
+    assert.equal(check(["--headless"]).changes.find((c) => c.commit === w.commits.rule)!.after.sessions, 8);
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stderr, /3 headless sessions under [^\n]+ since 30d left out \(--headless\)/);
+    // sessions counts by repo name: the checkout's 2 and the worktree's 2, not the nested repo (named lib).
+    const s = cli(w, ["sessions", "--where", "repo:repo", "--since", "30d", "--facets", "launch", "--json"]);
+    assert.equal(s.status, 0, s.stderr);
+    const launch = (JSON.parse(s.stdout) as { facets: { launch: { value: string; count: number }[] } }).facets.launch;
+    assert.equal(launch.find((f) => f.value === "headless")?.count, 4);
   });
 
   it("improve check exits 1 on a regression and 0 otherwise", async () => {

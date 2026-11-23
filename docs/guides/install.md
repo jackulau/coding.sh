@@ -129,9 +129,12 @@ The check is off when `CI` is set, or with `NO_UPDATE_NOTIFIER=1`, `CODING_SH_NO
 or `[update] check = false` in `~/.coding.sh/config.toml`.
 
 Three days after you first run coding.sh, one extra dim line asks for a GitHub star, once, after a
-command that worked. The viewer shows a small card after 5 top-level sessions, until you dismiss it or
-click Star. Neither makes a network request. `CODING_SH_NO_STAR_PROMPT=1`, `NO_UPDATE_NOTIFIER=1`
-or `CI` turns both off. The state is in `~/.coding.sh/star.json`.
+command that worked. A command run with a variable that agents set (`CLAUDECODE`, `AI_AGENT`,
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`) skips it, so an agent does not use it up.
+
+The viewer shows a small card after 5 top-level sessions, until you dismiss it or click Star.
+Neither makes a network request. `CODING_SH_NO_STAR_PROMPT=1`, `NO_UPDATE_NOTIFIER=1` or `CI`
+turns both off. The state is in `~/.coding.sh/star.json`.
 
 ## Uninstall
 

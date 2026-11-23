@@ -7,10 +7,13 @@
 // wait for it (the CLI while the background ingest upgrades) can say how far it is.
 // A smaller store upgrades without progress; when the upgrade kept a copy of the
 // index, one line says where it is, through the writer setUpgradeNotice sets.
+// The line that closes an upgrade comes at the end of the open (holdUpgradeLine),
+// so it counts a repricing pass the open ran after the migration and names the parts.
 //
 // Also here, because a migration is one-way: the copy of the index kept before
 // one (backupIndex, restoreBackup), the stamp that names the store's last writer
 // (WRITER_KEY), and the error for a store a newer coding.sh migrated.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants, copyFileSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -31,6 +34,66 @@ let quietNotice: ((line: string) => void) | undefined;
 /** Sets where the line after an upgrade without progress goes; undefined turns it off. */
 export function setUpgradeNotice(write: ((line: string) => void) | undefined): void {
   quietNotice = write;
+}
+
+/** One open of the index (holdUpgradeLine): what its closing line says. */
+interface OpenHold {
+  /** The line that closes an upgrade that printed progress, held until the open ends. */
+  upgrade?: { started: number; ended: number; hints: string[]; write: (line: string) => void };
+  /** How long a repricing pass on the open took, when one ran (repriceTook). */
+  repriceMs?: number;
+  /** Whether that pass printed progress (repriceProgress). */
+  repricePrinted?: boolean;
+}
+
+const opens = new AsyncLocalStorage<OpenHold>();
+const seconds = (ms: number): string => (ms / 1000).toFixed(1);
+
+/**
+ * Runs an open of the index (store/factory.ts openIndexStore) and closes it with one line: an
+ * upgrade that printed progress says how long the whole open took and, when the open also
+ * repriced stored costs, the parts (`index upgraded in 24.7s: migrate 1.2s, reprice 23.5s.`);
+ * a pass that printed progress after a quiet upgrade, or none, says how long it took.
+ */
+export async function holdUpgradeLine<T>(open: () => Promise<T>): Promise<T> {
+  const hold: OpenHold = {};
+  try {
+    return await opens.run(hold, open);
+  } finally {
+    const u = hold.upgrade;
+    if (u) {
+      const migrate = u.ended - u.started;
+      const parts = hold.repriceMs === undefined ? "" : `: migrate ${seconds(migrate)}s, reprice ${seconds(hold.repriceMs)}s`;
+      const took = hold.repriceMs === undefined ? migrate : Date.now() - u.started;
+      u.write(`coding.sh: index upgraded in ${seconds(took)}s${parts}.${u.hints.length ? ` ${u.hints.join(" ")}` : ""}\n`);
+    } else if (hold.repricePrinted && hold.repriceMs !== undefined) {
+      quietNotice?.(`coding.sh: cost estimates repriced in ${seconds(hold.repriceMs)}s.`);
+    }
+  }
+}
+
+/** Records how long a repricing pass took on the open running now (holdUpgradeLine); outside one, nothing. */
+export function repriceTook(ms: number): void {
+  const hold = opens.getStore();
+  if (hold) hold.repriceMs = ms;
+}
+
+/**
+ * Progress of a repricing pass (core/reprice.ts) a person waits for: nothing for 2 s, then a line
+ * at most once a second, through the writer setUpgradeNotice sets (a person at a terminal: never
+ * stdout, never under --json, never the MCP server).
+ */
+export function repriceProgress(): (done: number, total: number) => void {
+  const started = Date.now();
+  const hold = opens.getStore();
+  let last = 0;
+  return (done, total) => {
+    const now = Date.now();
+    if (!quietNotice || now - started < 2000 || now - last < 1000) return;
+    last = now;
+    if (hold) hold.repricePrinted = true;
+    quietNotice(`coding.sh: repricing cost estimates: ${fmt(done)} of ${fmt(total)} sessions (${Math.min(100, Math.floor((done / Math.max(1, total)) * 100))}%)`);
+  };
 }
 
 /** What `<db>.upgrade` holds while a process upgrades the index. */
@@ -112,8 +175,9 @@ export class UpgradeProgress {
   /**
    * Removes the state file. When progress was printed, says how long the upgrade took and what
    * to run next: `gc --compact` when it rewrote the events (`after.compact`), and where the copy
-   * of the index it kept is (`after.backup`), with the command that puts it back. An upgrade that
-   * printed nothing and kept a copy says where it is in one line, through setUpgradeNotice.
+   * of the index it kept is (`after.backup`), with the command that puts it back. Inside an open
+   * (holdUpgradeLine) that line waits for the open's end. An upgrade that printed nothing and
+   * kept a copy says where it is in one line, through setUpgradeNotice.
    */
   end(ok: boolean, after: { compact?: boolean; backup?: string } = {}): void {
     if (this.statePath) rmSync(this.statePath, { force: true });
@@ -131,6 +195,11 @@ export class UpgradeProgress {
     const hints: string[] = [];
     if (after.compact) hints.push(`Run \`${cliCommand(process.env, ["gc", "--compact"])}\` to give back the space the old layout used.`);
     if (after.backup) hints.push(kept(after.backup));
+    const hold = opens.getStore();
+    if (hold) {
+      hold.upgrade = { started: this.started, ended: Date.now(), hints, write: this.write };
+      return;
+    }
     this.write(`coding.sh: index upgraded in ${secs}s.${hints.length ? ` ${hints.join(" ")}` : ""}\n`);
   }
 

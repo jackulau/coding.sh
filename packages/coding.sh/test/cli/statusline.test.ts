@@ -125,6 +125,31 @@ describe("statusline install / uninstall", () => {
     assert.equal(readFileSync(settings(e), "utf8"), original, "byte-for-byte restore");
   });
 
+  test("keeps a CRLF settings.json's line ends and one-line arrays, and still restores it byte-for-byte", async () => {
+    const e = env();
+    const crlf = (lines: string[]) => lines.map((l) => `${l}\r\n`).join("");
+    const original = crlf(["{", '  "model": "opus",', '  "permissions": {', '    "allow": ["Bash(ls)", "Bash(git status)"]', "  }", "}"]);
+    writeFileSync(settings(e), original);
+    assert.equal(await run(ctx(e, "install")), 0);
+    // Only the statusLine member is new: the rest keeps its bytes, CRLF included.
+    const statusLine = ['  "statusLine": {', '    "type": "command",', `    "command": ${JSON.stringify(COMMAND)},`, '    "padding": 0', "  }"];
+    const installed = crlf(["{", '  "model": "opus",', '  "permissions": {', '    "allow": ["Bash(ls)", "Bash(git status)"]', "  },", ...statusLine, "}"]);
+    assert.equal(readFileSync(settings(e), "utf8"), installed);
+    assert.equal(await run(ctx(e, "uninstall")), 0);
+    assert.equal(readFileSync(settings(e), "utf8"), original, "byte-for-byte restore");
+  });
+
+  test("a CRLF settings.json changed after install keeps its layout when uninstall removes only ours", async () => {
+    const e = env();
+    const crlf = (lines: string[]) => lines.map((l) => `${l}\r\n`).join("");
+    writeFileSync(settings(e), crlf(["{", '  "model": "opus",', '  "env": { "A": "1" }', "}"]));
+    await run(ctx(e, "install"));
+    // An edit after install: uninstall can't restore the backup, so it removes the statusLine member.
+    writeFileSync(settings(e), readFileSync(settings(e), "utf8").replace('"opus"', '"sonnet"'));
+    assert.equal(await run(ctx(e, "uninstall")), 0);
+    assert.equal(readFileSync(settings(e), "utf8"), crlf(["{", '  "model": "sonnet",', '  "env": { "A": "1" }', "}"]));
+  });
+
   test("refuses to replace another status line without --force", async () => {
     const e = env();
     const original = '{"statusLine":{"type":"command","command":"ccusage statusline"}}';

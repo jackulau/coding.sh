@@ -80,17 +80,25 @@ function serverRoutes(): Map<string, string> {
     const base = `/api/${c[1]}`;
     // A case with named sub-routes (`if (id === "calls")`): the bare path, then each name with
     // its own methods, `/{}` after it when it reads `sub` as an id. One behind `if (!ctx.<source>)`
-    // is only in `coding.sh ui`, which passes that source.
+    // is only in `coding.sh ui`, which passes that source. An item after the names
+    // (`if (sub === undefined && …) {`) answers its methods at `/{}`.
     const named = [...block.matchAll(/if \(id === "([a-z-]+)"\)/g)];
     if (named.length) {
       const by = /if \(!ctx\.\w+\) throw new HttpError\(404/.test(block) ? "ui" : "serve, ui";
       if (/\bget\(\);/.test(block.slice(0, named[0]!.index))) routes.set(key("GET", base), by);
-      named.forEach((n, j) => {
-        const seg = block.slice(n.index!, named[j + 1]?.index ?? block.length);
+      const lastName = named[named.length - 1]!.index!;
+      const itemAt = block.slice(lastName).search(/if \(sub === undefined && /);
+      const end = itemAt < 0 ? block.length : lastName + itemAt;
+      const methodsOf = (seg: string) => {
         const ms = new Set([...seg.matchAll(/method [!=]== "([A-Z]+)"/g)].map((m) => m[1]!));
         if (/\bget\(\);/.test(seg)) ms.add("GET");
-        for (const m of ms) routes.set(key(m, `${base}/${n[1]}${/checkId\(sub\b/.test(seg) ? "/{}" : ""}`), by);
+        return ms;
+      };
+      named.forEach((n, j) => {
+        const seg = block.slice(n.index!, named[j + 1]?.index ?? end);
+        for (const m of methodsOf(seg)) routes.set(key(m, `${base}/${n[1]}${/checkId\(sub\b/.test(seg) ? "/{}" : ""}`), by);
       });
+      if (itemAt >= 0) for (const m of methodsOf(block.slice(end))) routes.set(key(m, `${base}/{}`), by);
       return;
     }
     // A case with items inside items (`if (sub === undefined) {` … `checkId(sub, "item")`): the bare

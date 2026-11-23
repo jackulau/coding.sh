@@ -18,6 +18,8 @@ and the instruction files on disk, and changes nothing.
    - `never-read`: no session loaded it or read it.
    - `write-only`: sessions wrote it and none read it back.
    - `loaded-not-read`: a skill that was listed in context and never used.
+   - `deleted`: sessions wrote it and none read it back, and it is gone from disk. There is nothing
+     to remove; say so instead of proposing to delete it.
 3. Then give what loading costs: `loadTokensPerSession` for the whole setup, and the files with the
    largest `loadTokens`, which is what loading that file cost over the whole window. These are
    files to shorten, not to delete.

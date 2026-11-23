@@ -294,6 +294,84 @@ describe("harness tools pin after a removal", () => {
   });
 });
 
+describe("toolDrift on a store with an event query", () => {
+  let root = "";
+  let env: NodeJS.ProcessEnv = {};
+  before(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-toolscan-")));
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), USERPROFILE: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" };
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it("reads no session's events when no proxy call sent tools, and answers as the walk over every session does", async () => {
+    const { index, blobs } = await openStores(loadConfig(env));
+    // The same store with its event query swapped out: toolDrift walks every session, as it did before.
+    const swap = (queryEvents: unknown) => new Proxy(index, {
+      get(t, p) {
+        if (p === "queryEvents") return queryEvents;
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const walk = swap(undefined);
+    const failing = swap(async () => {
+      throw new Error("no event query here");
+    });
+    let reads = 0;
+    const listEvents = index.listEvents.bind(index);
+    index.listEvents = async (id, o) => (reads++, listEvents(id, o));
+    const since = Date.now() - 86_400_000;
+    const t0 = since + 3_600_000;
+    let n = 0;
+    const ev = (sessionId: string, ts: number, o: Partial<AgentEvent> = {}): AgentEvent => ({ id: `q${n++}`, v: SCHEMA_VERSION, sessionId, ts, agent: "claude-code", kind: "llm.call", payload: { ok: true }, ...o });
+    const bash = toolHashes(BASH)!;
+    const pins = { "builtin/Bash": { descSha: bash.descSha, schemaSha: bash.schemaSha, at: since } };
+    try {
+      // Four sessions in the window whose model calls came from their transcripts, with tool calls between them.
+      for (let i = 0; i < 4; i++) {
+        const id = `s${i + 1}`;
+        const t = t0 + i * 10_000;
+        await index.putEvents([ev(id, t), ev(id, t + 100, { kind: "tool.start", payload: { tool: "Read", toolUseId: `${id}-r` } }), ev(id, t + 200, { kind: "tool.end", payload: { tool: "Read", toolUseId: `${id}-r`, ok: true } }), ev(id, t + 300)]);
+        await index.upsertSession({ id, agent: "claude-code", startedAt: t, stats: { events: 4, turns: 1, toolCalls: 1, toolErrors: 0 } } as never);
+      }
+      // A proxy call that stored its tools, in a session that ended before the window: not counted.
+      const old = await blobs.put(JSON.stringify([BASH]));
+      await index.putEvents([ev("s0", since - 60_000, { source: "proxy", payload: { ok: true, toolsRef: old, toolCount: 1 }, blobs: [old] })]);
+      await index.upsertSession({ id: "s0", agent: "claude-code", startedAt: since - 60_000, endedAt: since - 30_000, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+
+      const walked = await toolDrift(walk, blobs, { since });
+      assert.equal(reads, 4, "the walk reads each session in the window");
+      assert.deepEqual([walked.calls, walked.callsWithoutTools, walked.blobs, walked.tools], [0, 0, 0, []]);
+      reads = 0;
+      assert.deepEqual(await toolDrift(index, blobs, { since }), walked);
+      assert.equal(reads, 0, "no session's events read");
+      assert.deepEqual(await toolDrift(index, blobs, { since, pins }), await toolDrift(walk, blobs, { since, pins }));
+      // A store whose event query fails walks, as before.
+      reads = 0;
+      assert.deepEqual(await toolDrift(failing, blobs, { since }), walked);
+      assert.equal(reads, 4);
+      await assert.rejects(toolDrift(index, blobs, { since, signal: AbortSignal.abort() }), { name: "AbortError" });
+
+      // A proxy call that sent tools without storing them (capture mode metadata): counted apart, as by the walk.
+      await index.putEvents([ev("s2", t0 + 10_250, { source: "proxy", payload: { ok: true, toolCount: 1, toolsHash: "abc" } })]);
+      const unstored = await toolDrift(index, blobs, { since });
+      assert.deepEqual([unstored.calls, unstored.callsWithoutTools], [0, 1]);
+      assert.deepEqual(unstored, await toolDrift(walk, blobs, { since }));
+
+      // A proxy call that stored its tools array, in an older session still open in the window.
+      const ref = await blobs.put(JSON.stringify([BASH, search("Search docs")]));
+      await index.putEvents([ev("s5", t0 + 5000, { source: "proxy", payload: { ok: true, toolsRef: ref, toolCount: 2, toolsHash: "def" }, blobs: [ref] })]);
+      await index.upsertSession({ id: "s5", agent: "claude-code", startedAt: since - 120_000, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+      const stored = await toolDrift(index, blobs, { since, pins });
+      assert.deepEqual([stored.calls, stored.callsWithoutTools, stored.blobs, stored.blobsRead, stored.tools.map((t) => t.tool)], [1, 1, 1, 1, ["search", "Bash"]]);
+      assert.deepEqual(stored, await toolDrift(walk, blobs, { since, pins }));
+    } finally {
+      await index.close();
+      await blobs.close?.();
+    }
+  });
+});
+
 describe("CLI: harness tools", () => {
   let up: Upstream;
   let proxy: TestProxy;

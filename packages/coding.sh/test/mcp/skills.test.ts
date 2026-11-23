@@ -38,7 +38,7 @@ const VERDICTS = [.../export type Verdict = ([^;]+);/.exec(readFileSync(join(PKG
  * Names no tool schema declares: `pending` is added to any result by the server
  * (src/mcp/server.ts), the rest are the memory audit's file flags and plain words in backticks.
  */
-const UNSCHEMAED = ["pending", "never-read", "write-only", "loaded-not-read"];
+const UNSCHEMAED = ["pending", "never-read", "write-only", "loaded-not-read", "deleted"];
 type Send = (method: string, params?: Record<string, unknown>) => Promise<Rpc>;
 
 function filesUnder(dir: string, prefix = ""): string[] {
