@@ -10,7 +10,8 @@
 // file the request did not carry is added the way Claude Code adds CLAUDE.md.
 // The sending is exp replay's (experiments/replay.ts).
 import { isAbsolute, join, posix } from "node:path";
-import { commandOf, type ReplayStep } from "../core/replay.ts";
+import type { ReplayStep } from "../core/replay.ts";
+import { commandLineOf } from "../core/shell-tools.ts";
 import type { BlobStore, HarnessBundle, IndexStore } from "../core/types.ts";
 import type { Prices } from "../core/pricing.ts";
 import type { FetchLike } from "../judge/http.ts";
@@ -357,7 +358,7 @@ export function actionLabel(a: FirstAction | undefined, max = 90): string {
   if (!a || a.type === "none") return "nothing";
   if (a.type === "text") return `text: ${JSON.stringify(clip(a.text ?? "", max - 8))}`;
   const name = a.name ?? "tool";
-  const cmd = commandOf(a.input);
+  const cmd = commandLineOf(a.input);
   if (cmd !== undefined) return clip(`${name}: ${cmd.replace(/\s+/g, " ").trim()}`, max);
   const path = isObj(a.input) ? (str(a.input.file_path) ?? str(a.input.path) ?? str(a.input.pattern)) : undefined;
   if (path) return clip(`${name} ${path}`, max);

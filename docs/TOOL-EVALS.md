@@ -391,6 +391,8 @@ The tap misses work the agent does outside the target: reading docs with its own
 | Gemini CLI | `run_shell_command` `input.command` | `read_file` `input.absolute_path` | `web_fetch`, `google_web_search` | agent name as tool name (U) |
 | Copilot / Cursor / Amp / Pi / Droid / Goose | (U), filled from fixtures per adapter | (U) | (U) | (U) |
 
+Any agent's shell tool counts as shell, Antigravity's `run_command` (`input.CommandLine`) included, and so do Droid's `Execute` and Devin's `exec` when `input.command` is a string.
+
 A shell command counts as a call to a CLI target when its first command word, after `env X=…`,
 `cd …&&` and pipes are split off, equals `bin`. `man <bin>`, `tldr <bin>` and `<bin> help …`
 count as help lookups. A file read counts as a doc lookup when its path matches `docs`.
