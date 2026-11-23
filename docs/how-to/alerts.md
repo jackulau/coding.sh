@@ -10,8 +10,9 @@ coding.sh alert test failures
 coding.sh alert check
 ```
 
-You need: coding.sh capturing your sessions (`coding.sh init`). In PowerShell or cmd, the command
-is `codingsh` instead of `coding.sh`.
+You need: coding.sh capturing your sessions (`coding.sh init`). On Windows, type
+`npx -p coding.sh codingsh` for `npx coding.sh`, and in PowerShell or cmd, `codingsh` for an
+installed `coding.sh`.
 
 ## Add an alert
 
