@@ -101,6 +101,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** For a `coding.sh run --` session, `eval new` and `eval candidates` no longer take code (`sh -c "npm run build"`), a `NAME=value` setting or a path with a space in it for the task prompt. A session whose command has no other prompt argument is left out as having no prompt. [docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/session-to-eval.md#one-session-at-a-time)
 - **Serve.** `coding_sh_session_cost_usd_total` counts a session's cost when one of its turns ends too, so an OpenTelemetry trace with a conversation id counts its root's own cost, not only its subagents'. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#17-metrics-and-logs)
 - **Work.** A session that merged more than 20 pull requests keeps every PR it opened, merged or closed; only the PRs it just viewed or linked are capped at 20. An orchestrator's early merges no longer leave their items "open" in Ready for review. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#work-items)
 - **Work.** Work whose session pushed to a pull request or linked it to its T3 Code thread leaves Ready for review once another session merges that PR. Sessions get `stats.prs.own`. A PR the work only viewed still does not count. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#the-queue)
@@ -449,6 +450,7 @@ grouped by area, with links to the docs for the details.
 - **Harness.** `harness audit` no longer counts a written file that is gone from disk as write-only. It is flagged `deleted` and listed after the files still on disk, and `--json` counts it in `totals.deleted` and the `harness_audit` MCP tool in `unused.deleted`, apart from `writeOnly`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#memory-and-instruction-files))
 - **Viewer.** Work headings count the whole bucket ("119 of 671") instead of only the cards the page loaded, and Show all lists up to 1,000 items in place, beside the CLI command that lists them all. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
 - **Work.** When the index is old, `work show` counts a review item's age from the last ingest, as `work` and the Work page do, so all three give the same reason. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
+- **Capture.** T3 Code's store is read where it is while T3 Code has it open, each thread in one short read transaction, instead of copied to the temp directory on every read. A SQLite store is copied only when the temp directory keeps room to spare, and a refused T3 copy names the space needed and free. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
 
 ## [0.1.7] - 2026-11-16
 
