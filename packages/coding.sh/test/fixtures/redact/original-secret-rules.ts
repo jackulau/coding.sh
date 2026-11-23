@@ -42,24 +42,26 @@ const RULES: Rule[] = [
   { kind: "jwt", pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/g },
   { kind: "bearer", pattern: /(\b[Bb]earer\s+)(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{16,}=*/g, replace: keepPrefix("bearer") },
   { kind: "basic-auth", pattern: /(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/]{8,}=*/gi, replace: keepPrefix("basic-auth") },
+  // Updated on purpose: password, url-secret, secret-assignment and secret-field leave a value that
+  // is exactly a marker an earlier rule wrote, so a vendor token after a secret name keeps its kind.
   {
     kind: "password",
-    pattern: /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)(@)/gi,
+    pattern: /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)(?!\[redacted:[a-z0-9-]+\]@)([^\s@/]+)(@)/gi,
     replace: (_m, pre, _pw, at) => `${pre}${marker("password")}${at}`,
   },
   {
     kind: "url-secret",
-    pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?${SECRET_NAME}=)[^&\\s#"'<>]+`, "gi"),
+    pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?${SECRET_NAME}=)(?!\\[redacted:[a-z0-9-]+\\](?:[&\\s#"'<>]|$))[^&\\s#"'<>]+`, "gi"),
     replace: keepPrefix("url-secret"),
   },
   {
     kind: "secret-assignment",
-    pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
+    pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
     replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
   },
   {
     kind: "secret-field",
-    pattern: new RegExp(`(["']?(?:[A-Za-z0-9]+[_-])*${SECRET_NAME}["']?\\s*:\\s*["'])([^"'\\s]{8,})(["'])`, "gi"),
+    pattern: new RegExp(`(["']?(?:[A-Za-z0-9]+[_-])*${SECRET_NAME}["']?\\s*:\\s*["'])(?!\\[redacted:[a-z0-9-]+\\]["'])([^"'\\s]{8,})(["'])`, "gi"),
     replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
   },
   {

@@ -267,22 +267,24 @@ function builtInSecretRules(): RedactRule[] {
     // a lookbehind once "://" is found: scanning forward from every word start in
     // a long dotted/dashed run is quadratic. The scheme stays in the output either
     // way, so only where the match starts changes.
+    // This rule, url-secret, secret-assignment and secret-field leave a value that is exactly a
+    // marker an earlier rule wrote, so a vendor token after a secret name keeps its kind.
     {
       kind: "password",
-      pattern: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)([^\s@/]+)(@)/gi,
+      pattern: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)(?!\[redacted:[a-z0-9-]+\]@)([^\s@/]+)(@)/gi,
       replace: (_m, pre, _pw, at) => `${pre}${marker("password")}${at}`,
     },
     // ?password=…&token=… in URLs and form bodies.
     {
       kind: "url-secret",
-      pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?${SECRET_NAME}=)[^&\\s#"'<>]+`, "gi"),
+      pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?${SECRET_NAME}=)(?!\\[redacted:[a-z0-9-]+\\](?:[&\\s#"'<>]|$))[^&\\s#"'<>]+`, "gi"),
       replace: keepPrefix("url-secret"),
     },
     // FOO_API_KEY=value / export DB_PASSWORD="value" (shell, .env). No spaces
     // around "=" (that's code, not env), value isn't a $reference or a number.
     {
       kind: "secret-assignment",
-      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
+      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
       replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
     },
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
@@ -291,7 +293,7 @@ function builtInSecretRules(): RedactRule[] {
     // whole identifier from every start position (quadratic on long words).
     {
       kind: "secret-field",
-      pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])([^"'\\s]{8,})(["'])`, "gi"),
+      pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])(?!\\[redacted:[a-z0-9-]+\\]["'])([^"'\\s]{8,})(["'])`, "gi"),
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
     },
     withFastApply(proseSecret, redactProseSecrets),

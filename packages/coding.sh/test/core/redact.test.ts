@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
-import { createRedactor, isSecretAttrKey, redactArgv, SECRET_NEEDLES, secretRules, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
+import { createRedactor, isSecretAttrKey, redactArgv, redactionTally, SECRET_NEEDLES, secretRules, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
 import { originalSecretRedact } from "../fixtures/redact/original-secret-rules.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -127,6 +127,26 @@ describe("redact: secrets", () => {
   it("redacts key data after a BEGIN line that starts in the dashes of the BEGIN line before it", () => {
     // The second BEGIN line starts at 22, on the first one's closing dashes.
     assert.equal(r.string(OVERLAPPING_BEGIN), `${OVERLAPPING_BEGIN.slice(0, 22)}[redacted:private-key]`);
+  });
+
+  it("keeps the kind of a vendor token after a secret name", () => {
+    // Random-looking values: a made-up one (a run like 0123…) counts as placeholder-key instead.
+    const anthropic = ["sk-", "ant-", "api03-", "Rq7Lm2Xv9Pz4Kw8Nt3Bc6Hd1Fg5Js0Ya7Ue2Wi9Oo4"].join("");
+    const github = ["gh", "p_", "R4nd0mT0k3nV4lu3xQ9zLm2Wp8Ks5Yt7Hc1D"].join("");
+    const cases: [string, string, string][] = [
+      [`export ANTHROPIC_API_KEY=${anthropic}`, "export ANTHROPIC_API_KEY=[redacted:anthropic-key]", "anthropic-key"],
+      [`GITHUB_TOKEN="${github}"`, 'GITHUB_TOKEN="[redacted:github-token]"', "github-token"],
+      [`{"api_key": "${anthropic}"}`, '{"api_key": "[redacted:anthropic-key]"}', "anthropic-key"],
+      [`https://api.test/v1?access_token=${github}&x=1`, "https://api.test/v1?access_token=[redacted:github-token]&x=1", "github-token"],
+      [`https://x-access-token:${github}@git.test/r.git`, "https://x-access-token:[redacted:github-token]@git.test/r.git", "github-token"],
+    ];
+    for (const [input, out, kind] of cases) {
+      const tally = redactionTally();
+      assert.equal(r.string(input, tally), out);
+      assert.deepEqual(tally.kinds, { [kind]: 1 });
+    }
+    // A value that goes on past the token is still replaced whole.
+    assert.equal(r.string(`ANTHROPIC_API_KEY=${anthropic}\\n${anthropic}`), "ANTHROPIC_API_KEY=[redacted:secret-assignment]");
   });
 
   for (const s of negatives) {
