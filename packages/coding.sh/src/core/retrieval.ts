@@ -589,7 +589,14 @@ function psArgs(raw: readonly string[], valued: readonly string[]): PsArgs {
   // `a, b` is three words and `a,b` one: a comma list goes on while a word ends or starts with a comma.
   const take = (i: number): [string[], number] => {
     let text = raw[i] ?? "";
-    while (i + 1 < raw.length && (text.endsWith(",") || raw[i + 1]!.startsWith(","))) text += raw[++i];
+    // `tail`, the last word that is not empty, ends as `text` does. `text.endsWith` would copy all
+    // of `text`, built by `+=`, on every step.
+    let tail = text;
+    while (i + 1 < raw.length && (tail.endsWith(",") || raw[i + 1]!.startsWith(","))) {
+      const w = raw[++i]!;
+      text += w;
+      if (w) tail = w;
+    }
     return [items(text), i];
   };
   for (let i = 0; i < raw.length; i++) {

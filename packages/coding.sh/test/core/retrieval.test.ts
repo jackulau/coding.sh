@@ -9,6 +9,7 @@ import { deserialize, serialize } from "node:v8";
 import { classifyRetrieval, retrievalTotals } from "../../src/core/retrieval.ts";
 import { buildSession, foldSession, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind, RetrievalStats, Session } from "../../src/schema/index.ts";
+import { assertCpuUnder } from "../helpers-timing.ts";
 
 let n = 0;
 let clock = Date.UTC(2026, 10, 7, 9);
@@ -121,6 +122,15 @@ describe("classifyRetrieval", () => {
     assert.equal(kind("Bash", { command: `git ${"-C a ".repeat(50000)}show HEAD:x` }), "read");
     const ms = performance.now() - t0;
     assert.ok(ms < 5000, `${Math.round(ms)} ms`);
+  });
+
+  it("a PowerShell list of 20,000 files, with a space after or before each comma, is read in linear time", () => {
+    const files = Array.from({ length: 20000 }, (_, i) => `f${i}.ts`);
+    for (const comma of [", ", " ,"]) {
+      const input = { command: `Get-Content ${files.join(comma)}` };
+      assertCpuUnder(JSON.stringify(comma), () => classifyRetrieval("PowerShell", input));
+      assert.deepEqual(classifyRetrieval("PowerShell", input)?.paths, files);
+    }
   });
 
   it("a pipeline that removes or edits what it found is not a search", () => {
