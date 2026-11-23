@@ -43,6 +43,11 @@ export const marker = (kind: string): string => `[redacted:${kind}]`;
 export const HIGH_CONFIDENCE_KINDS: ReadonlySet<string> = new Set([
   "anthropic-key", "openai-key", "github-token", "gitlab-token", "slack-token", "slack-webhook", "aws-access-key",
   "google-api-key", "stripe-key", "npm-token", "coding-sh-key", "vercel-ai-gateway-key", "private-key",
+  "huggingface-token", "groq-key", "replicate-token", "xai-key", "perplexity-key", "google-oauth-token",
+  "google-oauth-secret", "sendgrid-key", "digitalocean-token", "shopify-token", "pypi-token", "docker-token",
+  "linear-key", "vault-token", "stripe-webhook-secret", "atlassian-token", "databricks-token", "age-secret-key",
+  "postman-key", "sentry-token", "pinecone-key", "langsmith-key", "tavily-key", "nvidia-key", "grafana-token",
+  "figma-token",
 ]);
 
 const MARKER_RE = /\[redacted:([a-z0-9-]+)\]/g;
@@ -139,6 +144,23 @@ const SECRET_NAME_NEEDLES: readonly string[] = ["key", "secret", "token", "passw
 /** Lower-case text that every key SECRET_KEY matches holds. */
 const SECRET_KEY_NEEDLES: readonly string[] = [...SECRET_NAME_NEEDLES, "authorization", "cookie"];
 
+/** GitLab token prefixes after "gl" (glpat-, gldt-, glrt-, ...); a longer one before its own prefix. */
+const GITLAB_PREFIXES: readonly string[] = ["pat", "oas", "dt", "rtr", "rt", "cbt", "ptt", "ft", "imt", "agent", "soat", "ffct"];
+/** "-----BEGIN " in base64, as an encoded key block starts (kubeconfig's client-key-data). */
+const ENCODED_BEGIN = "LS0tLS1CRUdJTi";
+
+/** True when base64 text decodes to the BEGIN line of a private key. */
+function isEncodedPrivateKey(b64: string): boolean {
+  const head = b64.slice(0, Math.min(64, b64.length - (b64.length % 4)));
+  return /^-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY/.test(Buffer.from(head, "base64").toString("latin1"));
+}
+
+/** A value written by hand, not a reference: a digit and a letter, and no `$x`, `{...}`, `<...>`, index, call or dotted name. */
+function isLiteralSecret(v: string): boolean {
+  if (!/\d/.test(v) || !/[A-Za-z]/.test(v) || /^[${(<]/.test(v) || /[[(]/.test(v)) return false;
+  return !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(v);
+}
+
 function holdsAny(s: string, needles: readonly string[]): boolean {
   for (const n of needles) if (s.includes(n)) return true;
   return false;
@@ -196,8 +218,8 @@ export const SECRET_NEEDLES: Readonly<Record<string, RuleNeedles>> = {
   "anthropic-key": { any: ["sk-ant-"] },
   "openai-key": { any: ["sk-"] },
   "github-token": { any: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] },
-  "gitlab-token": { any: ["glpat-"] },
-  "slack-token": { any: ["xox"] },
+  "gitlab-token": { any: GITLAB_PREFIXES.map((p) => `gl${p}-`) },
+  "slack-token": { any: ["xox", "xapp-"] },
   "slack-webhook": { any: ["https://hooks.slack.com/services/"] },
   "aws-access-key": { any: ["AKIA", "ASIA", "AROA", "AIDA"] },
   "google-api-key": { any: ["AIza"] },
@@ -205,14 +227,46 @@ export const SECRET_NEEDLES: Readonly<Record<string, RuleNeedles>> = {
   "npm-token": { any: ["npm_"] },
   "coding-sh-key": { any: ["csh_"] },
   "vercel-ai-gateway-key": { any: ["vck_"] },
+  "huggingface-token": { any: ["hf_"] },
+  "groq-key": { any: ["gsk_"] },
+  "replicate-token": { any: ["r8_"] },
+  "xai-key": { any: ["xai-"] },
+  "perplexity-key": { any: ["pplx-"] },
+  "google-oauth-token": { any: ["ya29."] },
+  "google-oauth-secret": { any: ["GOCSPX-"] },
+  "sendgrid-key": { any: ["SG."] },
+  "digitalocean-token": { any: ["dop_v1_", "doo_v1_", "dor_v1_"] },
+  "shopify-token": { any: ["shpat_", "shpca_", "shppa_", "shpss_"] },
+  "pypi-token": { any: ["pypi-AgE"] },
+  "docker-token": { any: ["dckr_pat_", "dckr_oat_"] },
+  "linear-key": { any: ["lin_api_", "lin_oauth_"] },
+  "vault-token": { any: ["hvs.", "hvb.", "hvr."] },
+  "stripe-webhook-secret": { any: ["whsec_"] },
+  "atlassian-token": { any: ["ATATT3"] },
+  "databricks-token": { any: ["dapi"] },
+  "age-secret-key": { any: ["AGE-SECRET-KEY-1"] },
+  "postman-key": { any: ["PMAK-"] },
+  "sentry-token": { any: ["sntrys_", "sntryu_"] },
+  "pinecone-key": { any: ["pcsk_"] },
+  "langsmith-key": { any: ["lsv2_pt_", "lsv2_sk_"] },
+  "tavily-key": { any: ["tvly-"] },
+  "nvidia-key": { any: ["nvapi-"] },
+  "grafana-token": { any: ["glsa_", "glc_"] },
+  "figma-token": { any: ["figd_"] },
+  "azure-storage-key": { any: ["AccountKey="] },
+  "encoded-private-key": { any: [ENCODED_BEGIN] },
   jwt: { any: ["eyJ"] },
   bearer: { any: ["earer"] },
   "basic-auth": { any: ["authorization"], fold: true },
+  "auth-header": { any: ["authorization"], fold: true },
+  cookie: { any: ["cookie"], fold: true },
   password: { any: ["://"] },
-  "url-secret": { any: SECRET_NAME_NEEDLES, fold: true },
+  "url-secret": { any: [...SECRET_NAME_NEEDLES, "sig"], fold: true },
   "secret-assignment": { any: ["KEY", "SECRET", "TOKEN", "PASSW", "CREDENTIAL"] },
   "secret-field": { any: SECRET_NAME_NEEDLES, fold: true },
   "prose-secret": { any: ["pat", "token", "pass", "key", "secret"], fold: true },
+  netrc: { any: ["password"] },
+  "secret-value": { any: SECRET_NAME_NEEDLES, fold: true },
 };
 
 const needles = new WeakMap<RedactRule, RuleNeedles>();
@@ -248,9 +302,10 @@ function builtInSecretRules(): RedactRule[] {
     // OpenAI-style: sk-, sk-proj-, sk-svcacct-… Require a digit so kebab-case words don't match.
     { kind: "openai-key", pattern: /(?<![A-Za-z0-9_-])sk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}/g },
     { kind: "github-token", pattern: /(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g },
-    // GitLab PATs can carry dotted suffixes (glpat-<id>.<n>.<more>); redact the whole token.
-    { kind: "gitlab-token", pattern: /(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]+)*/g },
-    { kind: "slack-token", pattern: /(?<![A-Za-z0-9_-])xox[abposr]-[A-Za-z0-9-]{10,}/g },
+    // GitLab tokens can carry dotted suffixes (glpat-<id>.<n>.<more>); redact the whole token.
+    { kind: "gitlab-token", pattern: new RegExp(`(?<![A-Za-z0-9_-])gl(?:${GITLAB_PREFIXES.join("|")})-[A-Za-z0-9_-]{20,}(?:\\.[A-Za-z0-9_-]+)*`, "g") },
+    // Bot and user tokens (xoxb-, xoxp-, ...) and app-level tokens (xapp-1-...).
+    { kind: "slack-token", pattern: /(?<![A-Za-z0-9_-])(?:xox[abposr]-|xapp-\d-)[A-Za-z0-9-]{10,}/g },
     { kind: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]{20,}/g },
     { kind: "aws-access-key", pattern: /(?<![A-Z0-9])(?:AKIA|ASIA|AROA|AIDA)[A-Z0-9]{16}(?![A-Z0-9])/g },
     { kind: "google-api-key", pattern: /(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/g },
@@ -259,30 +314,81 @@ function builtInSecretRules(): RedactRule[] {
     // coding.sh serve ingest/read keys (csh_ik_… / csh_rk_…).
     { kind: "coding-sh-key", pattern: /(?<![A-Za-z0-9_-])csh_(?:ik|rk)_[A-Za-z0-9_-]{32,}/g },
     { kind: "vercel-ai-gateway-key", pattern: /(?<![A-Za-z0-9_-])vck_[A-Za-z0-9_-]{20,}/g },
+    // More vendors by their published prefixes. A fixed-length format also needs a break after it.
+    { kind: "huggingface-token", pattern: /(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}/g },
+    { kind: "groq-key", pattern: /(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{40,}/g },
+    { kind: "replicate-token", pattern: /(?<![A-Za-z0-9_-])r8_[A-Za-z0-9]{30,}/g },
+    { kind: "xai-key", pattern: /(?<![A-Za-z0-9_-])xai-[A-Za-z0-9]{40,}/g },
+    { kind: "perplexity-key", pattern: /(?<![A-Za-z0-9_-])pplx-[A-Za-z0-9]{32,}/g },
+    { kind: "google-oauth-token", pattern: /(?<![A-Za-z0-9_-])ya29\.[A-Za-z0-9_-]{30,}/g },
+    { kind: "google-oauth-secret", pattern: /(?<![A-Za-z0-9_-])GOCSPX-[A-Za-z0-9_-]{24,}/g },
+    { kind: "sendgrid-key", pattern: /(?<![A-Za-z0-9_-])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
+    { kind: "digitalocean-token", pattern: /(?<![A-Za-z0-9_-])do[opr]_v1_[a-f0-9]{64}(?![A-Za-z0-9_-])/g },
+    { kind: "shopify-token", pattern: /(?<![A-Za-z0-9_-])shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}(?![A-Za-z0-9_-])/g },
+    { kind: "pypi-token", pattern: /(?<![A-Za-z0-9_-])pypi-AgE[A-Za-z0-9_-]{50,}/g },
+    { kind: "docker-token", pattern: /(?<![A-Za-z0-9_-])dckr_(?:pat|oat)_[A-Za-z0-9_-]{24,}/g },
+    { kind: "linear-key", pattern: /(?<![A-Za-z0-9_-])lin_(?:api|oauth)_[A-Za-z0-9]{32,}/g },
+    // HashiCorp Vault (hvs., hvb., hvr.); a digit keeps a dotted name out.
+    { kind: "vault-token", pattern: /(?<![A-Za-z0-9_-])hv[sbr]\.(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{24,}/g },
+    { kind: "stripe-webhook-secret", pattern: /(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9]{24,}/g },
+    { kind: "atlassian-token", pattern: /(?<![A-Za-z0-9_-])ATATT3[A-Za-z0-9_=-]{50,}/g },
+    { kind: "databricks-token", pattern: /(?<![A-Za-z0-9_-])dapi[a-f0-9]{32}(?:-\d)?(?![A-Za-z0-9_-])/g },
+    { kind: "age-secret-key", pattern: /(?<![A-Za-z0-9_-])AGE-SECRET-KEY-1[0-9A-Z]{58}(?![A-Za-z0-9_-])/g },
+    { kind: "postman-key", pattern: /(?<![A-Za-z0-9_-])PMAK-[a-f0-9]{24}-[a-f0-9]{34}(?![A-Za-z0-9_-])/g },
+    { kind: "sentry-token", pattern: /(?<![A-Za-z0-9_-])sntry[su]_[A-Za-z0-9+/=_-]{40,}/g },
+    { kind: "pinecone-key", pattern: /(?<![A-Za-z0-9_-])pcsk_[A-Za-z0-9_]{40,}/g },
+    { kind: "langsmith-key", pattern: /(?<![A-Za-z0-9_-])lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}(?![A-Za-z0-9_-])/g },
+    { kind: "tavily-key", pattern: /(?<![A-Za-z0-9_-])tvly-[A-Za-z0-9-]{24,}/g },
+    { kind: "nvidia-key", pattern: /(?<![A-Za-z0-9_-])nvapi-[A-Za-z0-9_-]{40,}/g },
+    { kind: "grafana-token", pattern: /(?<![A-Za-z0-9_-])(?:glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8}(?![A-Za-z0-9_-])|glc_[A-Za-z0-9+/=]{32,})/g },
+    { kind: "figma-token", pattern: /(?<![A-Za-z0-9_-])figd_[A-Za-z0-9_-]{30,}/g },
+    // The key in an Azure storage connection string. Azurite's published key is in many docs and
+    // fixtures, so this kind only counts and does not tag the session.
+    { kind: "azure-storage-key", pattern: /(?<![A-Za-z0-9])(AccountKey=)[A-Za-z0-9+/]{20,}={0,2}/g, replace: keepPrefix("azure-storage-key") },
+    // A private key block in base64 (kubeconfig's client-key-data): replaced when it decodes to a BEGIN line.
+    {
+      kind: "encoded-private-key",
+      pattern: new RegExp(`${ENCODED_BEGIN}[A-Za-z0-9+/=]{20,}`, "g"),
+      replace: (m) => (isEncodedPrivateKey(m) ? marker("encoded-private-key") : m),
+    },
     { kind: "jwt", pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/g },
     // "Bearer <token>" / "Basic <b64>" in headers and curl commands; keep the scheme word.
     { kind: "bearer", pattern: /(\b[Bb]earer\s+)(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{16,}=*/g, replace: keepPrefix("bearer") },
     { kind: "basic-auth", pattern: /(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/]{8,}=*/gi, replace: keepPrefix("basic-auth") },
-    // scheme://user:password@host — keep user and host. The scheme is checked by
-    // a lookbehind once "://" is found: scanning forward from every word start in
-    // a long dotted/dashed run is quadratic. The scheme stays in the output either
-    // way, so only where the match starts changes.
+    // Any other Authorization (or Proxy-Authorization) value: "Token <t>", "ApiKey <t>" or a bare
+    // token, as a header or a quoted key. Keeps the scheme word; a value already redacted is left.
+    // This rule, cookie, netrc and secret-value end a value at a backslash: in the text of a JSON
+    // document inside a string it starts an escape (\n, \"), which the document needs to parse.
+    {
+      kind: "auth-header",
+      pattern: /(\bauthorization["']?[ \t]*:[ \t]*["']?(?:[A-Za-z][\w-]{0,30}[ \t]+)?)([^\s"'`,;\\]{8,})/gi,
+      replace: (m, pre, v) => (isLiteralSecret(v) ? `${pre}${marker("auth-header")}` : m),
+    },
+    // Cookie and Set-Cookie headers: every name=value pair to the end of the line or quote.
+    { kind: "cookie", pattern: /(\b(?:set-)?cookie["']?[ \t]*:[ \t]*["']?)(?=[\w.-]+=)[^\r\n'"\\]*/gi, replace: keepPrefix("cookie") },
+    // scheme://user:password@host, or scheme://:password@host with no user (redis://) — keep
+    // user and host. The scheme is checked by a lookbehind once "://" is found: scanning forward
+    // from every word start in a long dotted/dashed run is quadratic. The scheme stays in the
+    // output either way, so only where the match starts changes.
+    // This rule, url-secret, secret-assignment and secret-field leave a value that is exactly a
+    // marker an earlier rule wrote, so a vendor token after a secret name keeps its kind.
     {
       kind: "password",
-      pattern: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)([^\s@/]+)(@)/gi,
+      pattern: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]*:)(?!\[redacted:[a-z0-9-]+\]@)([^\s@/]+)(@)/gi,
       replace: (_m, pre, _pw, at) => `${pre}${marker("password")}${at}`,
     },
-    // ?password=…&token=… in URLs and form bodies.
+    // ?password=…&token=… in URLs and form bodies, and the signature of a signed URL
+    // (Azure SAS sig=, S3 X-Amz-Signature=, GCS X-Goog-Signature=).
     {
       kind: "url-secret",
-      pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?${SECRET_NAME}=)[^&\\s#"'<>]+`, "gi"),
+      pattern: new RegExp(`([?&](?:[a-z0-9_-]*[_-])?(?:${SECRET_NAME}|sig|signature)=)(?!\\[redacted:[a-z0-9-]+\\](?:[&\\s#"'<>]|$))[^&\\s#"'<>]+`, "gi"),
       replace: keepPrefix("url-secret"),
     },
     // FOO_API_KEY=value / export DB_PASSWORD="value" (shell, .env). No spaces
     // around "=" (that's code, not env), value isn't a $reference or a number.
     {
       kind: "secret-assignment",
-      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
+      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
       replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
     },
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
@@ -291,10 +397,25 @@ function builtInSecretRules(): RedactRule[] {
     // whole identifier from every start position (quadratic on long words).
     {
       kind: "secret-field",
-      pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])([^"'\\s]{8,})(["'])`, "gi"),
+      pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])(?!\\[redacted:[a-z0-9-]+\\]["'])([^"'\\s]{8,})(["'])`, "gi"),
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
     },
     withFastApply(proseSecret, redactProseSecrets),
+    // A .netrc entry: machine <host> login <user> password <value>, on one line or several.
+    {
+      kind: "netrc",
+      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)([^\s\\]+)/g,
+      replace: (m, pre, v) => (isLiteralSecret(v) ? `${pre}${marker("netrc")}` : m),
+    },
+    // The value after a secret name and ":" or "=", quoted or not, with spaces or not: .env
+    // (DB_PASSWORD = …), YAML (client_secret: …), TOML (api_key = "…"), INI, connection strings
+    // (Password=…;) and headers (X-Api-Key: …). Only a value written by hand (isLiteralSecret),
+    // so `token: string`, `password = os.environ[...]` and `$SECRET` stay.
+    {
+      kind: "secret-value",
+      pattern: new RegExp(`(${SECRET_NAME}["']?[ \\t]*[:=][ \\t]*)(["']?)([^\\s"'\`,;)\\\\]{8,})`, "gi"),
+      replace: (m, pre, q, v) => (isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m),
+    },
   ];
 }
 
@@ -334,6 +455,8 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
   for (; open; open = PRIVATE_KEY_BEGIN.exec(s)) {
     PRIVATE_KEY_DATA.lastIndex = PRIVATE_KEY_BEGIN.lastIndex;
     if (PRIVATE_KEY_DATA.test(s)) break;
+    // The next BEGIN line can start inside this one: its dashes may be this line's last five.
+    PRIVATE_KEY_BEGIN.lastIndex = open.index + 1;
   }
   if (open) {
     onMatch?.("private-key", s.slice(open.index));
@@ -740,8 +863,13 @@ export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, le
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
-    const clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
-    if (clean === JSON.stringify(doc)) return s;
+    let clean: string;
+    try {
+      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
+      if (clean === JSON.stringify(doc)) return s;
+    } catch {
+      return tooDeepMarker(tally); // a document too deep to serialize
+    }
     for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     return clean;
   });
@@ -853,8 +981,17 @@ function tooDeep(v: object, redact: (s: string) => string, tally?: RedactionTall
     const out = walk(JSON.parse(text), redact, 0, tally);
     return JSON.stringify(out) === text ? v : out;
   } catch {
-    return marker("too-deep");
+    return tooDeepMarker(tally);
   }
+}
+
+/**
+ * The marker for a value too deep to copy, counted as `too-deep`: a caller that keeps its input
+ * when the tally is empty (the spool, a side file's scrub) writes the marker instead.
+ */
+function tooDeepMarker(tally?: RedactionTally): string {
+  if (tally) tally.kinds["too-deep"] = (tally.kinds["too-deep"] ?? 0) + 1;
+  return marker("too-deep");
 }
 
 function isAlreadyRedacted(s: string): boolean {

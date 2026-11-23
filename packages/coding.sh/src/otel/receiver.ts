@@ -924,6 +924,10 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     const route = opts.routes && Object.hasOwn(opts.routes, (req.url ?? "/").split("?")[0]!) ? opts.routes[(req.url ?? "/").split("?")[0]!] : undefined;
     void (route ?? handle)(req, res);
   });
+  // As serve does: a client gets 20 s to send its headers and 120 s for the whole request,
+  // so one that sends slowly can't hold a connection for Node's default 5 minutes.
+  server.headersTimeout = 20_000;
+  server.requestTimeout = 120_000;
   server.on("clientError", (_err, socket) => {
     if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   });

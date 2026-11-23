@@ -159,7 +159,7 @@ and a viewer replica leaves out ingest:
 | Process | Serves | Auth and limits |
 |---|---|---|
 | `coding.sh ui` (default port 4319) | `/`, `/index.html` and every `/api/*` route; its `/api/update` really checks for a new release | A random token made per process: open the printed `/?t=…` URL once, or send `Authorization: Bearer <token>`. Read keys and basic auth do not apply. Binds loopback and checks the `Host` header |
-| `coding.sh collector` (default port 4318) | Only `POST /v1/traces`, `/v1/logs` and `/v1/metrics` | No auth. Binds loopback, rejects a non-loopback `Host` header, allows browser origins on localhost |
+| `coding.sh collector` (default port 4318) | Only `POST /v1/traces`, `/v1/logs` and `/v1/metrics` | No auth. Binds loopback, rejects a non-loopback `Host` header, allows browser origins on localhost. Request headers / whole request: 20 s / 120 s, as `serve` |
 | `coding.sh serve --role viewer` | Everything but `/v1/*` and `/proxy/*` | Same read auth as `serve`; a read replica that takes no ingest |
 
 `coding.sh ui` has no `/v1/*`, `/healthz`, `/readyz` or `/metrics`. The collector answers any
