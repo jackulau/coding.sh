@@ -112,6 +112,28 @@ describe("classifyRetrieval", () => {
     ]);
   });
 
+  it("a search keeps the lines that a literal `echo` alone in its pipeline prints", () => {
+    const rows: [string, string, string[] | undefined][] = [
+      ["Bash", "grep -rn foo src || echo 'no matches'", ["no matches"]],
+      ["Bash", 'echo "--- a.ts ---"; grep -n foo a.ts; echo -n done; echo "--- a.ts ---"', ["--- a.ts ---", "done"]],
+      ["Bash", "grep -rn foo src && echo found || echo not found", ["found", "not found"]],
+      ["Bash", 'grep -rn foo src || echo "none" >&2', ["none"]],
+      // A word that is not literal, a backslash (zsh's echo reads escapes), output to a file or into a pipe, and no search.
+      ["Bash", 'grep -rn foo src; echo "exit $?"', undefined],
+      ["Bash", "grep -rn foo src || echo 'a\\tb'", undefined],
+      ["Bash", "grep -rn foo src; echo none > log.txt", undefined],
+      ["Bash", "grep -rn foo src; echo foo | grep foo", undefined],
+      ["Bash", "cat a.ts; echo done", undefined],
+      ["PowerShell", 'Write-Host "=== a ==="; Select-String foo a.ts', ["=== a ==="]],
+      ["PowerShell", "Select-String foo a.ts; if (-not $?) { echo 'no matches' }", ["no matches"]],
+      // Write-Output prints each word on its own line; a parameter; a pipe into a cmdlet.
+      ["PowerShell", 'Select-String foo a.ts; Write-Output "a" "b"', undefined],
+      ["PowerShell", 'Select-String foo a.ts; Write-Host "x" -ForegroundColor Red', undefined],
+      ["PowerShell", 'Select-String foo a.ts; Write-Output "none" | Out-Null', undefined],
+    ];
+    for (const [tool, command, want] of rows) assert.deepEqual(classifyRetrieval(tool, { command })?.echoed, want, command);
+  });
+
   it("a read whose output goes to a file reads nothing", () => {
     bashKinds([
       ["cat a.ts > b.ts", "none"],
@@ -364,6 +386,10 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rc foo src", { ok: false, output: "Exit code 1\nsrc/a.ts:0\nsrc/b.ts:0" })), 1);
     assert.equal(empty(bash("grep -rn foo src | wc -l", { output: '{"stdout":"0\\n","stderr":"","interrupted":false,"isImage":false}' })), 1);
     assert.equal(empty(bash("ls src | wc -l", { output: "       0" })), 1);
+    // The lines a literal `echo` in the command prints are not what the search found.
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "no matches" })), 1);
+    assert.equal(empty(bash('echo "--- src ---"; grep -rn foo src', { ok: false, output: "Exit code 1\n--- src ---" })), 1);
+    assert.equal(empty(bash('grep -rn foo src || echo "none" >&2', { output: '{"stdout":"","stderr":"none\\n","interrupted":false,"isImage":false}' })), 1);
   });
 
   it("a search that found something, printed nothing by design, or was cut is not empty", () => {
@@ -392,6 +418,10 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rn foo src | wc -l", { output: "3" })), 0);
     assert.equal(empty(bash("grep 0 nums.txt", { output: "0" })), 0);
     assert.equal(empty(bash("grep -c foo a.ts b.ts", { ok: false, output: "Exit code 2\na.ts:0\ngrep: b.ts: No such file or directory" })), 0);
+    // A match or an error beside what an `echo` printed, and a quiet search, whose status says nothing here.
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "src/a.ts:3: foo" })), 0);
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "grep: src: No such file or directory\nno matches" })), 0);
+    assert.equal(empty(bash("grep -q foo a.ts && echo yes", { output: "yes" })), 0);
   });
 
   it("a read after `cd` into a Windows folder with spaces keys like the edit of the same file", () => {

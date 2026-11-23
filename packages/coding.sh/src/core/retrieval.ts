@@ -54,6 +54,8 @@ export interface RetrievalCall {
   quiet?: true;
   /** Its searches print counts, not matches (`grep -c`, `grep x | wc -l`): a count of zero is no match. */
   count?: true;
+  /** The lines its literal `echo`s print (`grep x f || echo 'no matches'`): not what its searches found. */
+  echoed?: string[];
   /** A shell command. */
   shell?: true;
 }
@@ -139,7 +141,8 @@ const PS_PIPE = new Set([
 /**
  * What a shell line retrieves: each pipeline decided by its first command, `cd` followed. A
  * pipeline whose output goes to a file (`> out.txt`, `| Out-File`) reads nothing the agent sees,
- * and its search is quiet.
+ * and its search is quiet. The lines a literal `echo` prints are kept, so that they are not taken
+ * for what a search found.
  */
 function shellRetrieval(command: string, ps: boolean, start: string | undefined): RetrievalCall | undefined {
   const parts = shellParts(command, ps ? "powershell" : "sh");
@@ -148,6 +151,7 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
   /** By pipeline start: its output goes to a file or nowhere. */
   const gone: boolean[] = [];
   const stack: (string | undefined)[] = [];
+  const echoed: string[] = [];
   let dir = start;
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!;
@@ -157,6 +161,11 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     if (p.away || (pps && prog !== undefined && PS_AWAY.has(prog))) gone[starts[i]!] = true;
     if (!prog) continue;
     const raw = words.slice(1);
+    // An `echo` alone in its pipeline prints its words to the agent; one piped on feeds the next command (`echo x | grep x`).
+    if (starts[i] === i && starts[i + 1] !== i && !p.away && (prog === "echo" || (pps && PS_ECHO.has(prog))) && echoed.length < MAX_ECHOED) {
+      const t = echoText(raw, pps);
+      if (t !== undefined && !echoed.includes(t)) echoed.push(t);
+    }
     const args = raw.map((w) => unq(w, pps));
     if (pps ? PS_CD.has(prog) : SH_CD.has(prog)) {
       dir = pps ? psCd(prog, raw, dir, stack) : shCd(prog, args, dir, stack);
@@ -214,6 +223,7 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
   const out: RetrievalCall = { read, search, web: false, paths: [...paths], shell: true };
   if (search && quiet) out.quiet = true;
   else if (search && count) out.count = true;
+  if (search && echoed.length) out.echoed = echoed;
   return out;
 }
 
@@ -352,6 +362,33 @@ function unq(raw: string, ps: boolean): string {
   if (raw.startsWith("-") || (ps ? PS_PLAIN : SH_PLAIN).test(raw)) return raw;
   const { text, literal } = ps ? psWord(raw) : shWord(raw);
   return literal ? text.replace(/\\/g, "/") : MARK + raw;
+}
+
+/** PowerShell's cmdlets and aliases that print their words (lower case), beside `echo`. */
+const PS_ECHO = new Set(["write-output", "write", "write-host"]);
+/** The most `echo` lines kept for one call, and the longest. */
+const MAX_ECHOED = 16;
+const MAX_ECHO_LENGTH = 200;
+
+/**
+ * The line a literal `echo` prints (`echo 'no matches'`, `Write-Host "--- a ---"`), or undefined
+ * when a word is not literal (a variable, a glob), holds a backslash (zsh's and dash's `echo` read
+ * escapes), or, in PowerShell, is a parameter or one of several words (`Write-Output` prints each
+ * on its own line).
+ */
+function echoText(raw: readonly string[], ps: boolean): string | undefined {
+  if (ps && (raw.length !== 1 || raw[0]!.startsWith("-"))) return undefined;
+  let k = 0;
+  // bash's `-n` (no newline) and `-e` (read escapes): a word with a backslash is refused anyway.
+  if (!ps) while (k < raw.length && /^-[neE]+$/.test(raw[k]!)) k++;
+  const words: string[] = [];
+  for (; k < raw.length; k++) {
+    const { text, literal } = ps ? psWord(raw[k]!) : shWord(raw[k]!);
+    if (!literal || text.includes("\\")) return undefined;
+    words.push(text);
+  }
+  const t = words.join(" ").trim();
+  return t && t.length <= MAX_ECHO_LENGTH && !/[\r\n]/.test(t) ? t : undefined;
 }
 
 /** The longest path a `cd` or `git -C` chain builds before its directory counts as unknown. */
@@ -793,15 +830,21 @@ const blank = (v: unknown, pending: Pending): boolean => typeof v !== "string" |
 /** A count of zero: `0`, or wc's `0 0 0`. */
 const ZERO_COUNT = /^0(?:\s+0)*$/;
 
-/** Output that shows no match: from a search that counts (`grep -c`, `| wc -l`), only counts of zero (`0`, `a.ts:0`) and blank lines. */
+/**
+ * Output that shows no match: each line blank, a line a literal `echo` in the command prints
+ * (`|| echo 'no matches'`), or, from a search that counts (`grep -c`, `| wc -l`), a count of zero
+ * (`0`, `a.ts:0`).
+ */
 function showsNoMatch(t: string, pending: Pending): boolean {
-  if (!pending.count) return false;
+  const { count, echoed } = pending;
+  if (!count && !echoed) return false;
   for (let at = 0; at <= t.length; ) {
     let nl = t.indexOf("\n", at);
     if (nl < 0) nl = t.length;
     const line = t.slice(at, nl).trim();
     at = nl + 1;
-    if (line && !ZERO_COUNT.test(line.slice(line.lastIndexOf(":") + 1).trim())) return false;
+    if (!line || echoed?.includes(line)) continue;
+    if (!count || !ZERO_COUNT.test(line.slice(line.lastIndexOf(":") + 1).trim())) return false;
   }
   return true;
 }
@@ -818,8 +861,9 @@ function exitStatus(p: Record<string, unknown>): number | undefined {
  * A search that found nothing: it printed nothing, its tool said "No matches found" or "No files
  * found" (a shell command: that line and nothing else), or it exited 1 (grep's and rg's "no
  * match") with nothing printed. grep's warnings are not printed output, nor are counts of zero
- * from a search that counts (`grep -c`). A search whose output was cut, that was stopped, or whose
- * matches went elsewhere (`quiet`) did not find nothing.
+ * from a search that counts (`grep -c`) or the lines a literal `echo` prints (`|| echo 'none'`). A
+ * search whose output was cut, that was stopped, or whose matches went elsewhere (`quiet`) did not
+ * find nothing.
  */
 function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, pending: Pending): boolean {
   const p = e.payload;
@@ -854,6 +898,8 @@ interface Pending {
   quiet?: true;
   /** Its searches print counts (RetrievalCall.count). */
   count?: true;
+  /** The lines its literal `echo`s print (RetrievalCall.echoed). */
+  echoed?: string[];
 }
 
 /** The fold state behind Session.stats.retrieval. Plain data (Maps, Sets, arrays), saved with the session's fold. */
@@ -927,6 +973,7 @@ function begin(s: RetrievalState, e: AgentEvent, cwd: string | undefined): Pendi
   if (c.search && !c.read) pending.search = true;
   if (c.quiet) pending.quiet = true;
   if (c.count) pending.count = true;
+  if (c.echoed && pending.search) pending.echoed = c.echoed;
   return pending;
 }
 
