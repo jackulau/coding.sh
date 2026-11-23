@@ -241,7 +241,9 @@ describe("a session captured with coding.sh run --", () => {
     assert.equal(byId["inner-claude-1"]!.eligible, true);
     assert.equal(byId["earlier-1"]!.eligible, true, "a session that ended before the wrapper started is not inside it");
     const text = formatCandidates(r);
-    assert.ok(text.includes("rejected: it wrapped session inner-cl, which recorded the same work: that session is the one to use"), text);
+    // The whole id, or the reference a ref function gives (eval candidates passes core/session-ref.ts shortener).
+    assert.ok(text.includes("rejected: it wrapped session inner-claude-1, which recorded the same work: that session is the one to use"), text);
+    assert.ok(formatCandidates(r, (id) => `<${id}>`).includes("rejected: it wrapped session <inner-claude-1>, which"));
     assert.equal(rejectSummary(r), "1 that wrapped another session");
   });
 });

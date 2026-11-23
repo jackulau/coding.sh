@@ -193,6 +193,40 @@ describe("eval new names a session whose id is latest by its alias when the ledg
   });
 });
 
+describe("eval candidates names the session a run -- wrapper recorded by a reference that opens it", () => {
+  let sb: Sandbox;
+  let repo: { root: string; head: string };
+  before(async () => {
+    sb = sandbox();
+    repo = gitRepo(sb);
+    const now = Date.now();
+    const at = { repo: { root: repo.root, head: repo.head } };
+    // Each wrapper ran around one session; B, the newest session, shares A's first 8 characters.
+    const sessions = [mkSession(B, now - 1000, at)];
+    const events: AgentEvent[] = [];
+    for (const [i, inner] of [A, SPACED, "latest"].entries()) {
+      const start = now - 60_000 + i * 15_000;
+      sessions.push(mkSession(`wrap-${i + 1}`, start, { ...at, agent: "wrapper", endedAt: start + 10_000 }), mkSession(inner, start + 1000, at));
+      events.push(ev(`wrap-${i + 1}`, "session.start", { source: "wrapper", cmd: "node", args: ["agent.mjs", "fix the tests"] }, { ...at, agent: "wrapper" }));
+    }
+    await sb.seed(sessions, events);
+  });
+  after(() => sb.cleanup());
+
+  test("each wrapper's reason names the session inside it by a reference that opens it", async () => {
+    const r = await runCmd(evalCmd, sb, { action: "candidates", flags: { all: true }, cwd: repo.root });
+    assert.equal(r.error, undefined, String(r.error?.message));
+    const named = Object.fromEntries([...r.stdout.matchAll(/rej {2}(wrap-\d) [^\n]*\n\s+rejected: it wrapped session (.+?), which recorded the same work/g)].map((m) => [m[1]!, m[2]!]));
+    assert.deepEqual(Object.keys(named).sort(), ["wrap-1", "wrap-2", "wrap-3"], r.stdout);
+    for (const [wrapper, id] of [["wrap-1", A], ["wrap-2", SPACED], ["wrap-3", "latest"]] as const) {
+      assert.equal(await opens(sb, refIn(`coding.sh show ${named[wrapper]}`, "show")), id, `${wrapper}: ${named[wrapper]}`);
+    }
+    // --json keeps the whole id.
+    const j = await runCmd(evalCmd, sb, { action: "candidates", flags: { all: true }, json: true, cwd: repo.root });
+    assert.equal(j.json.candidates.find((c: { sessionId: string }) => c.sessionId === "wrap-2")?.wrapped, SPACED);
+  });
+});
+
 describe("improve names each session by a reference that opens it", () => {
   let sb: Sandbox;
   /** improveWorld stores: every session lost prompt cache; and every session went wrong after the CLAUDE.md change. */
