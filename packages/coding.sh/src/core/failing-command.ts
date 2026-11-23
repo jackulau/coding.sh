@@ -101,51 +101,58 @@ const PROG = /^[\w.+@:,-]+$/;
 function splitParts(cmd: string): { text: string; last: boolean }[] {
   const out: { text: string; last: boolean }[] = [];
   let cur = "";
+  /** The last character of `cur`: read from `cur`, a string built by `+=`, it would copy all of `cur` each time. */
+  let lastChar = "";
   let quote = "";
   let subst = 0;
   const heredocs: string[] = [];
   const push = (pipe: boolean) => {
     if (cur.trim()) out.push({ text: cur.trim(), last: !pipe });
     cur = "";
+    lastChar = "";
+  };
+  const add = (t: string) => {
+    cur += t;
+    if (t) lastChar = t[t.length - 1]!;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i]!;
     const next = cmd[i + 1];
     if (quote) {
       if (c === "\\" && quote === '"') {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
       } else {
-        cur += c;
+        add(c);
         if (c === quote) quote = "";
       }
       continue;
     }
     if (c === "\\") {
       // A line continuation joins the next line; any other escape keeps its character.
-      if (next === "\n") cur += " ";
-      else cur += c + (next ?? "");
+      if (next === "\n") add(" ");
+      else add(c + (next ?? ""));
       i++;
       continue;
     }
     if (c === "'" || c === '"' || c === "`") {
       quote = c;
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "$" && next === "(") {
       subst++;
-      cur += "$(";
+      add("$(");
       i++;
       continue;
     }
     if (subst > 0) {
       if (c === "(") subst++;
       else if (c === ")") subst--;
-      cur += c;
+      add(c);
       continue;
     }
-    if (c === "#" && (cur === "" || /\s$/.test(cur))) {
+    if (c === "#" && (lastChar === "" || /\s/.test(lastChar))) {
       while (i + 1 < cmd.length && cmd[i + 1] !== "\n") i++;
       continue;
     }
@@ -153,7 +160,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       const m = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(cmd.slice(i));
       if (m) {
         heredocs.push(m[2]!);
-        cur += m[0];
+        add(m[0]);
         i += m[0].length - 1;
         continue;
       }
@@ -182,7 +189,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       if (next === "&") {
         i++;
         push(false);
-      } else if (/[<>]$/.test(cur) || next === ">") cur += c;
+      } else if (lastChar === "<" || lastChar === ">" || next === ">") add(c);
       else push(false);
       continue;
     }
@@ -197,7 +204,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       continue;
     }
     // Subshell parentheses group parts; the parts inside still run.
-    cur += c === "(" || c === ")" ? " " : c;
+    add(c === "(" || c === ")" ? " " : c);
   }
   push(false);
   return out;
@@ -337,20 +344,27 @@ const isPipe = (p: ShellPart): boolean => PS_PIPE.has(psLower(p));
 function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
   const out: { text: string; pipe: boolean }[] = [];
   let cur = "";
+  /** The last character of `cur`: read from `cur`, a string built by `+=`, it would copy all of `cur` each time. */
+  let lastChar = "";
   let quote = "";
   let here = "";
   const nest: string[] = [];
   const push = (pipe: boolean) => {
     if (cur.trim()) out.push({ text: cur.trim(), pipe });
     cur = "";
+    lastChar = "";
+  };
+  const add = (t: string) => {
+    cur += t;
+    if (t) lastChar = t[t.length - 1]!;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i]!;
     const next = cmd[i + 1];
     if (here) {
-      cur += c;
+      add(c);
       if (c === "\n" && cmd.startsWith(here, i + 1)) {
-        cur += here;
+        add(here);
         i += here.length;
         here = "";
       }
@@ -358,15 +372,15 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
     }
     if (quote) {
       if (c === "`" && quote === '"') {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
         continue;
       }
-      cur += c;
+      add(c);
       // A doubled quote is one quote inside the string ('it''s', "say ""hi""").
       if (c === quote) {
         if (next === quote) {
-          cur += next;
+          add(next);
           i++;
         } else quote = "";
       }
@@ -374,7 +388,7 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
     }
     if (c === "@" && (next === "'" || next === '"') && /^\r?\n/.test(cmd.slice(i + 2))) {
       here = `${next}@`;
-      cur += c + next;
+      add(c + next);
       i++;
       continue;
     }
@@ -382,45 +396,45 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
       // A backtick escapes the next character; at a line end it continues the line.
       const nl = /^\r?\n/.exec(cmd.slice(i + 1));
       if (nl) {
-        cur += " ";
+        add(" ");
         i += nl[0].length;
       } else {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
       }
       continue;
     }
     if (c === "'" || c === '"') {
       quote = c;
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "<" && next === "#") {
       const end = cmd.indexOf("#>", i + 2);
       i = end < 0 ? cmd.length : end + 1;
-      cur += " ";
+      add(" ");
       continue;
     }
-    if (c === "#" && (cur === "" || /\s$/.test(cur))) {
+    if (c === "#" && (lastChar === "" || /\s/.test(lastChar))) {
       while (i + 1 < cmd.length && cmd[i + 1] !== "\n") i++;
       continue;
     }
     if (c === "$" && next === "{") {
       const end = cmd.indexOf("}", i + 2);
-      cur += cmd.slice(i, end < 0 ? cmd.length : end + 1);
+      add(cmd.slice(i, end < 0 ? cmd.length : end + 1));
       i = end < 0 ? cmd.length : end;
       continue;
     }
     // Parentheses, $( ), @( ) and a hashtable's @{ } hold an expression, not statements of the line.
     if (c === "(" || (c === "@" && next === "{") || (c === "{" && nest.length)) {
       nest.push(c === "(" ? ")" : "}");
-      cur += c === "@" ? "@{" : c;
+      add(c === "@" ? "@{" : c);
       if (c === "@") i++;
       continue;
     }
     if (nest.length) {
       if (c === nest[nest.length - 1]) nest.pop();
-      cur += c;
+      add(c);
       continue;
     }
     // A script block's statements run too (`ForEach-Object { npm test }`, `if (…) { … }`).
@@ -437,7 +451,7 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
       push(true);
       continue;
     }
-    cur += c;
+    add(c);
   }
   push(false);
   return out;

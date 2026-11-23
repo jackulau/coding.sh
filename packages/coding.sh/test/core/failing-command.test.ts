@@ -70,6 +70,22 @@ describe("shellParts", () => {
       assert.deepEqual(shellParts(cmd, shell).map((p) => p.prog), [prog], label);
     }
   });
+
+  it("reads 80,000 `#`s inside a word or 40,000 `2>&1`s in linear time", () => {
+    const argv = (cmd: string, shell: "sh" | "powershell" = "sh") => shellParts(cmd, shell).map((p) => p.argv);
+    // A `#` that starts a word starts a comment; one inside a word is part of it.
+    assert.deepEqual(argv("echo a#b#c # note"), [["echo", "a#b#c"]]);
+    assert.deepEqual(argv("echo a#b#c # note", "powershell"), [["echo", "a#b#c"]]);
+    assert.deepEqual(argv("grep x f 2>&1 2>&1"), [["grep", "x", "f"]]);
+    const word = "a#".repeat(80000);
+    for (const shell of ["sh", "powershell"] as const) {
+      assertCpuUnder(`#s (${shell})`, () => shellParts(`echo ${word}`, shell));
+      assert.deepEqual(argv(`echo ${word}`, shell), [["echo", word]]);
+    }
+    const cmd = `grep x f ${"2>&1 ".repeat(40000)}`;
+    assertCpuUnder("2>&1s", () => shellParts(cmd));
+    assert.deepEqual(argv(cmd), [["grep", "x", "f"]]);
+  });
 });
 
 describe("launchedCommand", () => {
