@@ -10,8 +10,10 @@
 // No lost wakeups: the marker (`spool/.ingest.pending`) is touched AFTER the
 // spool line is appended and BEFORE the lock is checked. A live holder clears
 // it before each pass and checks it again after releasing (core/ingest.ts), so
-// a kick skipped because an ingest was running is picked up by that ingest. A
-// lock left by a dead holder (crash, SIGKILL) is stale and does not block.
+// a kick skipped because an ingest was running is picked up by that ingest: by
+// another pass, or after its last pass by the background ingest it starts
+// (core/context.ts). A lock left by a dead holder (crash, SIGKILL) is stale
+// and does not block.
 //
 // Skipped for eval runs (CODING_SH_RUN_ID: the runner ingests itself) and when
 // CODING_SH_NO_AUTO_INGEST=1.

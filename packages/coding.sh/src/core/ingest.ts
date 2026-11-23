@@ -25,8 +25,11 @@
 // No lost wakeups: the hook touches `spool/.ingest.pending` after appending an
 // end event and before looking at the lock (spool/kick.ts). The holder clears
 // the marker before each pass and, after releasing, runs another pass when it
-// is back (bounded), so a session that ended mid-ingest is never left waiting
-// for an unrelated trigger.
+// is back, up to MAX_PASSES. When the last pass ends with the marker back, it
+// calls onPassesExhausted, where core/context.ts starts a background ingest,
+// so a session that ended mid-ingest is not left waiting for an unrelated
+// trigger. A run stopped by its deadline or signal leaves the marker for
+// whoever ingests next.
 //
 // Order: spool files are read oldest first (listSpoolFiles), and cursors move
 // at run-level checkpoints, so a tool.end read before its tool.start (another
@@ -150,6 +153,11 @@ export interface IngestOptions {
   onProgress?: (p: { filesPending: number }) => void;
   /** Also fold sessions that have events but no row, and rows tagged fold:error (repairSessions), under the lock. */
   repair?: boolean;
+  /**
+   * Called when the last pass ends with the wake-up marker back: a hook touched it during that pass
+   * and, seeing the lock held, started no ingest. core/context.ts starts a background ingest here.
+   */
+  onPassesExhausted?: () => void;
 }
 
 export interface IngestError {
@@ -307,6 +315,8 @@ async function ingestSpool(opts: IngestOptions): Promise<IngestResult> {
     if (total.pendingFiles || opts.signal?.aborted) break;
     // Checked after release: a hook that saw the lock held touched the marker before it looked.
     if (!existsSync(marker)) break;
+    // The last pass, and the marker is back: hand it to a new ingest rather than run more passes here.
+    if (pass === MAX_PASSES - 1) opts.onPassesExhausted?.();
   }
   return total!;
 }

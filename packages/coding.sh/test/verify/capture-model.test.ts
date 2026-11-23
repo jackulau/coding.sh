@@ -1,9 +1,10 @@
 // A model of capture, checked with test/_model.ts. Hooks append end events to spool files and kick a
 // background ingest. Ingest processes take the lock, clear the wake-up marker, list the files, read
 // each one from its cursors, commit the events with the cursors past them, send them to a sink,
-// release the lock, and run again while the marker is back. Any ingest process can crash between two
-// steps, or stall past the lock's stale limit, so that another process takes the lock over while the
-// first one keeps running.
+// release the lock, and run again while the marker is back. A process whose last pass ends with the
+// marker back starts another ingest. Any ingest process can crash between two steps, or stall past
+// the lock's stale limit, so that another process takes the lock over while the first one keeps
+// running.
 //
 // Each step is one in the code (paths under packages/coding.sh/src):
 // - Hook: spool/hook.ts appends the line, then kicks. spool/write.ts spoolFile picks the first file
@@ -13,7 +14,10 @@
 //   free or stale lock becomes ours; a held one ends the process ("busy"). That is one step here;
 //   lock-model.test.ts checks how acquireLock and breakStale get there.
 // - Passes: core/ingest.ts ingestSpool takes the lock, clears the marker, ingests, releases, and runs
-//   another pass while the marker is back, at most MAX_PASSES.
+//   another pass while the marker is back, at most MAX_PASSES. When the last pass ends with the marker
+//   back, it calls onPassesExhausted, and core/context.ts starts `ingest --background` there
+//   (spawnBackgroundIngest). Here that new ingest takes the slot of the process that started it,
+//   which is done.
 // - Read: the file loop in ingestLocked. It reads the local and sink cursors, skips the file when the
 //   start is at its listed size, and reads from the start to the end of the file as it is then.
 // - Commit: checkpoint in ingestLocked. A store with transactions (SQLite) puts the events and sets
@@ -47,7 +51,9 @@
 // event can land during the first process's pass, which is what the marker is for. One line per file
 // makes the second line start a new file that a listing can miss. CODING_SH_MODEL_BOUND=n allows n
 // more crashes and n more stalls. Three end events with no fault pass too, in 273,428 states (about
-// 6 s), and stay out of the default run to keep it short.
+// 6 s), and stay out of the default run to keep it short. The hand-off after the last pass takes four
+// end events, one for the process and one during each of its three passes, so it gets its own run:
+// four end events one after another, with no fault, in 167,785 states (about 5 s).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
@@ -60,9 +66,10 @@ const MAX_PASSES = 3;
 type Store = "transaction" | "no transaction";
 /**
  * A change to the code that the model must catch: a step moved, or a rule as it was before a fix
- * ("skip what an earlier run stored": every event the put found stored is a repeat).
+ * ("skip what an earlier run stored": every event the put found stored is a repeat; "no hand-off":
+ * the last pass ends with the marker back and starts no ingest).
  */
-type Mutant = "look before mark" | "check before release" | "clear after list" | "cursor before events" | "skip what an earlier run stored";
+type Mutant = "look before mark" | "check before release" | "clear after list" | "cursor before events" | "skip what an earlier run stored" | "no hand-off";
 
 interface Config {
   store: Store;
@@ -70,6 +77,8 @@ interface Config {
   files: number;
   crashes: number;
   stalls: number;
+  /** Each hook starts once the one before it is done, as one session's turns end one after another. */
+  serial?: boolean;
   mutant?: Mutant;
 }
 
@@ -100,7 +109,7 @@ type Pc =
   | "done"
   | "dead";
 
-/** One ingest process: the one hook i started is process i. */
+/** One ingest process: the one hook i started is process i, and so is each ingest it hands off to. */
 interface Proc {
   pc: Pc;
   /** The file the step at pc is about. */
@@ -295,7 +304,7 @@ function captureModel(cfg: Config): Model<Cap> {
     };
     actions.push({
       name: `h${i} picks a file`,
-      guard: (s) => hook(s).pc === "pick",
+      guard: (s) => hook(s).pc === "pick" && (!cfg.serial || i === 0 || s.hooks[i - 1]?.pc === "done"),
       effect: (s) =>
         next(s, (d) => {
           const f = d.files.findIndex((x) => x.length < CAP_LINES);
@@ -579,11 +588,13 @@ function captureModel(cfg: Config): Model<Cap> {
       effect: (s) =>
         next(s, (d) => {
           const me = proc(d, p);
-          const again = d.marker && me.pass + 1 < MAX_PASSES;
           if (cfg.mutant === "check before release") {
-            me.again = again;
+            me.again = d.marker && me.pass + 1 < MAX_PASSES;
             me.pc = "release";
-          } else if (again) d.procs[p] = newProc("acquire", nf, me.pass + 1);
+          } else if (!d.marker) me.pc = "done";
+          else if (me.pass + 1 < MAX_PASSES) d.procs[p] = newProc("acquire", nf, me.pass + 1);
+          // The last pass, and the marker is back: onPassesExhausted starts an ingest, which starts at its first pass.
+          else if (cfg.mutant !== "no hand-off") d.procs[p] = newProc("acquire", nf);
           else me.pc = "done";
         }),
     });
@@ -704,7 +715,7 @@ function boundsFrom(env: NodeJS.ProcessEnv): { crashes: number; stalls: number }
 function run(t: { diagnostic: (m: string) => void }, cfg: Config): CheckResult<Cap> {
   const t0 = performance.now();
   const r = check(captureModel(cfg));
-  const label = `${cfg.store}, ${cfg.crashes} crash(es), ${cfg.stalls} stall(s)${cfg.mutant ? `, mutant "${cfg.mutant}"` : ""}`;
+  const label = `${cfg.hooks} end events${cfg.serial ? " one after another" : ""}, ${cfg.store}, ${cfg.crashes} crash(es), ${cfg.stalls} stall(s)${cfg.mutant ? `, mutant "${cfg.mutant}"` : ""}`;
   t.diagnostic(`${label}: ${r.states} states, ${r.transitions} transitions, depth ${r.depth}, ${Math.round(performance.now() - t0)} ms`);
   const bad = r.violation ?? r.deadlock;
   if (bad && !cfg.mutant) t.diagnostic(`${r.violation ? `${r.violation.invariant}: ${r.violation.message ?? ""}` : "deadlock"}\n${formatTrace(bad.trace, keyOf)}`);
@@ -726,6 +737,13 @@ test("the index and the sink get every event through a crash and a stale lock, o
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
   assert.ok(r.states >= 16_000, `${r.states} states`);
+});
+
+test("an end event during the last pass is ingested by the ingest that pass starts", (t) => {
+  const r = run(t, { hooks: 4, files: 2, store: "transaction", crashes: 0, stalls: 0, serial: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, true);
+  assert.ok(r.states >= 160_000, `${r.states} states`);
 });
 
 test("each step the code orders on purpose breaks an invariant when moved, and each fixed rule when undone", (t) => {
@@ -767,4 +785,9 @@ test("each step the code orders on purpose breaks an invariant when moved, and e
   const stalled = broken("skip what an earlier run stored", { store: "transaction", stalls: 1 });
   assert.equal(stalled.invariant, "a sink cursor covers only sent lines");
   assert.ok(before(stalled.actions, "p0 commits late", "p1 commits") && before(stalled.actions, "p1 commits", "p1 sends F0"), stalled.actions.join(", "));
+
+  // The last pass ends with the marker back and starts no ingest: the end event that set the marker waits.
+  const noHandOff = broken("no hand-off", { hooks: 4, store: "transaction", serial: true });
+  assert.equal(noHandOff.invariant, lost);
+  assert.equal(noHandOff.actions.at(-1), "p0 checks the marker");
 });

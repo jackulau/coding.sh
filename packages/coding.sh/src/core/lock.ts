@@ -303,9 +303,10 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
 
 /**
  * Wake-up marker next to a lock (`.ingest.lock` → `.ingest.pending`): a
- * producer touches it when work arrives that a live holder may have missed;
- * the holder clears it before a pass and re-runs after release when it is
- * back (see core/ingest.ts).
+ * producer touches it when work arrives that a live holder may have missed.
+ * Ingest clears it before each pass and runs another pass after release when
+ * it is back, up to three; when the last one ends with it back, it hands it to
+ * a new background ingest (core/ingest.ts, onPassesExhausted).
  */
 export function wakeMarker(lockPath: string): string {
   return lockPath.replace(/\.lock$/, "") + ".pending";

@@ -108,8 +108,18 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     storeOverridden: !!(storeUrlOverride(env) || env.CODING_SH_BLOB_URL?.trim()),
     async ingest(o = {}) {
       // Lazy: adapters and ingest are only loaded by commands that need them.
-      const [{ ingest }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
-      const r = await ingest({ ...o, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      const [{ ingest }, { ADAPTERS }, { spawnBackgroundIngest }, { ingestCli }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts"), import("../spool/kick.ts"), import("../mcp/launch.ts")]);
+      // The last pass ended with the wake-up marker back: what a hook appended during it goes to a
+      // background ingest, as the hook's own kick would have started (not with CODING_SH_NO_AUTO_INGEST=1).
+      const onPassesExhausted = (): void => {
+        if (env.CODING_SH_NO_AUTO_INGEST === "1") return;
+        try {
+          spawnBackgroundIngest(ingestCli(p.cliPointer), env);
+        } catch {
+          // the marker stays set: the next hook or read starts an ingest
+        }
+      };
+      const r = await ingest({ ...o, onPassesExhausted, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
       // An ingest ran, so whatever stopped the hook's is over, unless the blob store stopped this one too.
       if (r.storeWriteFailed === undefined) clearIngestStopped(p.ingestStopped);
       return r;

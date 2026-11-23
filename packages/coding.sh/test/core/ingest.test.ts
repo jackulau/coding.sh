@@ -663,6 +663,51 @@ describe("ingest", () => {
     assert.equal(existsSync(join(t.env.CODING_SH_HOME, "spool", ".ingest.pending")), false, "marker consumed");
   });
 
+  /** An ingest during which `ending` sessions end one after another: each one's hook appends a line to a new file (read by the next pass) and kicks. */
+  async function endingDuringPasses(ending: number) {
+    const t = setup();
+    const dir = join(t.env.CODING_SH_HOME, "spool", "fake");
+    for (let i = 1; i <= ending; i++) {
+      hooks[`end${i}`] = () => {
+        const raw: Record<string, unknown> = { session: `S${i + 1}`, kind: "turn.end" };
+        if (i < ending) raw.hook = `end${i + 1}`; // the next session ends while this line is read
+        appendFileSync(join(dir, `2026-11-06.${i + 1}.jsonl`), t.line(raw, { pid: i + 1 }));
+        assert.equal(kickIngest("Stop", t.env, () => assert.fail("must not spawn while the lock is held")), undefined);
+      };
+    }
+    t.write(t.line({ session: "S1", kind: "turn.end", hook: "end1" }));
+    let handedOff = 0;
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, onPassesExhausted: () => void handedOff++ };
+    try {
+      const r = await ingest(opts);
+      return { t, r, handedOff, opts, marker: join(t.env.CODING_SH_HOME, "spool", ".ingest.pending") };
+    } finally {
+      for (let i = 1; i <= ending; i++) delete hooks[`end${i}`];
+    }
+  }
+
+  it("hands the wake-up marker to a new ingest when a session ends during each of its three passes", async () => {
+    const { t, r, handedOff, opts, marker } = await endingDuringPasses(3);
+    // Three passes read S1, S2 and S3. S4 ended during the last one: its hook saw the lock held and started nothing.
+    assert.equal(r.lines, 3);
+    assert.equal(await t.index.getSession("S4"), undefined);
+    assert.equal(handedOff, 1, "the ingest asks for another one");
+    assert.equal(existsSync(marker), true, "the marker stays for it");
+    // The ingest the callback starts.
+    const next = await ingest({ ...opts, onPassesExhausted: () => assert.fail("nothing ended during this one") });
+    assert.equal(next.lines, 1);
+    assert.ok(await t.index.getSession("S4"), "S4 ingested");
+    assert.equal(existsSync(marker), false, "marker consumed");
+  });
+
+  it("asks for no other ingest when its last pass ends with the marker gone", async () => {
+    const { t, r, handedOff, marker } = await endingDuringPasses(2);
+    assert.equal(r.lines, 3);
+    assert.ok(await t.index.getSession("S3"), "the third pass read the session that ended during the second");
+    assert.equal(handedOff, 0);
+    assert.equal(existsSync(marker), false);
+  });
+
   it("stops before writing a cursor or sending to a sink once its lock was broken by a peer", async () => {
     const t = setup();
     const lockPath = join(t.env.CODING_SH_HOME, "spool", ".ingest.lock");
