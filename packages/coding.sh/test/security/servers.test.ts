@@ -3,26 +3,33 @@
 // before and after decompression and a body that does not decode, and bounds how long a
 // client may take to send its headers and its body. The eve evals route it serves for
 // the collector refuses a browser page and a foreign Host before it reads anything. The
-// receiver a run starts for its agent redacts with the rules the run was given.
+// receiver a run starts for its agent redacts with the rules the run was given. The MCP
+// server answers a tool call that names a folder git can't start in, and stays up; the git
+// call fails with an error that says why.
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { gzipSync } from "node:zlib";
+import { run as runGit } from "../../src/core/git.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { createEveEvalsHandler, EVE_EVALS_PATH } from "../../src/integrations/eve/evals.ts";
 import { type Receiver, startReceiver } from "../../src/otel/receiver.ts";
 import { startRunReceiver } from "../../src/runner/otel.ts";
+import { makeWorld, cleanup as removeWorlds, RawClient } from "../mcp/helpers.ts";
 import { otlpSpan, otlpTraces, sAttr } from "../otel/_encode.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 
 const dirs: string[] = [];
 const receivers: Receiver[] = [];
+const clients: RawClient[] = [];
 after(async () => {
   for (const rx of receivers) await rx.close().catch(() => {});
+  for (const c of clients) if (c.child.exitCode === null) await c.close();
+  removeWorlds();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
@@ -119,5 +126,36 @@ describe("the OTLP receiver a run starts for its agent", () => {
     } finally {
       await rx.close();
     }
+  });
+});
+
+describe("the MCP server", () => {
+  it("answers a tool call that names a folder git can't start in, and stays up", async () => {
+    const w = makeWorld();
+    const cwd = join(w.root, "work");
+    mkdirSync(cwd);
+    // Windows can't start a process in a folder whose path is 259 characters or longer.
+    const repos = [join(cwd, "x".repeat(300)), join(cwd, "missing")];
+    const c = new RawClient(w.env, cwd);
+    clients.push(c);
+    let code: number | null | undefined;
+    const exited = new Promise<"exited">((r) => c.child.once("exit", (n) => ((code = n), r("exited"))));
+    await c.initialize();
+    for (const repo of repos) {
+      const answer = await Promise.race([c.request("tools/call", { name: "improve", arguments: { repo } }), exited]);
+      assert.notEqual(answer, "exited", `the server ended (exit ${code}) on ${repo.length} characters: ${c.stderr.slice(-400)}`);
+    }
+    const status = await Promise.race([c.request("tools/call", { name: "status", arguments: {} }), exited]);
+    assert.notEqual(status, "exited", "the server answers the next call");
+    assert.equal(await c.close(), 0);
+  });
+
+  it("gets an error that says why when git can't start in a folder", async () => {
+    const w = makeWorld();
+    await assert.rejects(runGit(["--version"], { cwd: join(w.root, "missing") }), /: no folder /);
+    if (process.platform !== "win32") return;
+    const deep = join(w.root, "a".repeat(200), "b".repeat(80));
+    mkdirSync(deep, { recursive: true });
+    await assert.rejects(runGit(["--version"], { cwd: deep }), /: can't start git in a folder whose path is \d+ characters long/);
   });
 });

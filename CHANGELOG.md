@@ -389,6 +389,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** The OTLP receiver that `coding.sh collector` and `compare --otel` start gives a client 20 seconds to send its request headers and 120 seconds for the whole request, as `coding.sh serve` does, instead of the 60 seconds and 5 minutes Node allows by default. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#which-process-serves-what))
 - **Capture.** Spans and logs an agent exports during `compare --otel` are redacted with your `capture.redact` and `capture.redactPatterns` rules, as ingest does, instead of only the built-in secret rules. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#opentelemetry-per-run))
 - **Capture.** The node hook, and ingest when it rewrites a spool side file, replace a value nested too deep to copy with `[redacted:too-deep]`, as the index does. The node hook now writes a payload with a JSON document that deep inside a string, instead of dropping it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
+- **MCP.** On Windows, coding.sh no longer exits when it runs git in a folder whose path is 259 characters or longer, so the MCP server answers a tool call that names one. That git call, or one in a missing folder, fails with an error that says why. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#from-inside-your-agent))
 
 ## [0.1.7] - 2026-11-16
 
