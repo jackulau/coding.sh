@@ -22,6 +22,11 @@ test("verify refuses a tag whose commit is not on main, before any job publishes
   assert.match(verify, /compare\/main\.\.\.\$GITHUB_SHA/);
   assert.match(verify, /identical\|behind\) ;;/);
   assert.ok(verify.indexOf("compare/main...") < verify.indexOf("Tag matches package version"), "the check runs first");
+  // A failed request is tried again, and a request that never succeeds stops the release with
+  // its own error before the case below could read the empty status as "not on main".
+  assert.match(verify, /\n +for try in 1 2 3 4 5; do\n +status=\$\(gh api "repos\/\$GITHUB_REPOSITORY\/compare\/main\.\.\.\$GITHUB_SHA" --jq \.status\) \|\| status=\n +\[ -z "\$status" \] \|\| break\n/, "a failed request is tried again");
+  const noAnswer = verify.indexOf('if [ -z "$status" ]; then\n');
+  assert.ok(noAnswer > -1 && noAnswer < verify.indexOf('case "$status" in'), "no answer fails before the case");
   for (const job of ["github-release", "publish-image", "publish-npm", "publish-pypi"]) {
     const at = release.indexOf(`\n  ${job}:`);
     assert.match(release.slice(at, at + 200), /needs: (verify|\[verify, github-release\])/, `${job} needs verify`);
