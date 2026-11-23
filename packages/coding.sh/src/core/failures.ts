@@ -33,8 +33,11 @@ export interface ToolFailure {
 const REAL: ToolFailure = { cls: "real" };
 const INTERRUPTED: ToolFailure = { cls: "interrupted" };
 
-/** Tools whose bare string input is a command: the shell tools (core/shell-tools.ts), and sh, zsh, exec and command. */
-const takesCommandString = (tool: string) => isShellTool(tool) || /^(?:sh|zsh|exec|command)$/i.test(tool);
+/**
+ * Tools whose bare string input is a command: the shell tools (core/shell-tools.ts), and sh, zsh and command. Not exec:
+ * its bare string input is a Codex code-mode cell, which is JavaScript.
+ */
+const takesCommandString = (tool: string) => isShellTool(tool) || /^(?:sh|zsh|command)$/i.test(tool);
 
 /** Search tools whose ok:false "No files found" is an empty result. */
 const SEARCH_TOOL = /grep|search|glob|find/i;

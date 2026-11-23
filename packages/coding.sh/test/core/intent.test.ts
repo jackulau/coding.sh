@@ -159,6 +159,18 @@ describe("detectTestTamperTrace", () => {
     }
   });
 
+  it("a file change by a Codex code-mode cell is an edit, in the fold as in the trace: the cell's input is JavaScript, not a command", () => {
+    const id = `tu${t + 1}`;
+    const cell = 'text(await tools.exec_command({ cmd: "node fix.js" }))';
+    const diff = "--- a/tests/a.test.js\n+++ b/tests/a.test.js\n@@ -1 +1 @@\n-it('adds', () => {\n+it.skip('adds', () => {\n";
+    const [f] = trace([
+      ev("tool.start", { tool: "exec", toolUseId: id, wrapper: true, input: cell }),
+      ev("file.change", { path: "tests/a.test.js", op: "modify", tool: "exec", toolUseId: id, diff }),
+      ev("tool.end", { tool: "exec", toolUseId: id, wrapper: true, ok: true }),
+    ]);
+    assert.deepEqual([f?.via, f?.shape, f?.severity], ["file", "skip", "high"]);
+  });
+
   it("a skip marker is high without any test result", () => {
     for (const [line, was] of [["@pytest.mark.skip", ""], ["it.skip('adds', () => {", "-it('adds', () => {\n"]] as const) {
       const diff = `--- a/tests/a.test.js\n+++ b/tests/a.test.js\n@@ -1 +1,2 @@\n${was}+${line}\n def x(): pass\n`;

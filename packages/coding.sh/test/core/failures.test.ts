@@ -84,7 +84,9 @@ describe("classifyToolFailure", () => {
   });
 
   it("reads a bare command string from every shell tool, and Droid's Execute as Bash from its command key", () => {
-    for (const tool of ["Bash", "run_command", "shell_command", "powershell", "local_shell_call", "command_execution", "sh", "exec", "command"]) assert.equal(shellCommandOf(tool, "rg foo"), "rg foo", tool);
+    for (const tool of ["Bash", "run_command", "shell_command", "powershell", "local_shell_call", "command_execution", "sh", "command"]) assert.equal(shellCommandOf(tool, "rg foo"), "rg foo", tool);
+    // A bare string sent to exec is a Codex code-mode cell, which is JavaScript, not a command.
+    assert.equal(shellCommandOf("exec", 'text(await tools.exec_command({ cmd: "rg foo" }))'), undefined);
     // The name `execute` alone is too generic to be a shell (it may run a query): a bare string is not its command.
     assert.equal(shellCommandOf("Execute", "rg foo"), undefined);
     const input = { command: "rg -n needle src" };
