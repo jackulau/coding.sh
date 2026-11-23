@@ -87,7 +87,9 @@ describe("tool evals against the coding.sh MCP server", () => {
     // sessionId) and status's work and index fields as open objects paid for it.
     // status's update command (the bin the user's shell runs) and work's PRs fit in a shorter search
     // description and session_tree's run argument.
-    assert.ok(s.surfaceBytes < 44_950, `surface is ${s.surfaceBytes} bytes`);
+    // harness_changes' headless argument (as improve's: a change only headless runs used says so,
+    // and the argument counts them) adds about 80 bytes, less the default its description repeated from since.
+    assert.ok(s.surfaceBytes < 45_050, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
