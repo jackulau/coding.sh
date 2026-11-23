@@ -8,6 +8,10 @@
 //
 // Sinks replay from their own cursors by re-normalizing spool lines, so an
 // offline remote never blocks local capture and catches up when it returns.
+// Delivery to a sink is at least once: a run that dies before its sink cursor
+// moves leaves the lines past it to the next run, which sends them even when
+// the dead run had sent them or stored their events, so a sink can get an
+// event twice.
 //
 // Transcript import (backfill) sends to the sinks too: the events it stores,
 // in batches of the sink's size, with the rows of their sessions as they are
@@ -470,13 +474,20 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
   // An agent can hand the same event over in two lines (Claude Code: the parent's Agent-tool
-  // PostToolUse and the helper's own SubagentStop). The index keeps one copy by id; a sink
-  // gets one too: a line new to the index sends only the events it inserted (a copy of an
-  // event stored earlier is sent by the line that stored it, now or when the sink catches
-  // up), and an id already sent in this run is not sent again (a replay for a sink that is
-  // behind reads both lines).
+  // PostToolUse and the helper's own SubagentStop). The index keeps one copy by id. A sink is
+  // sent an id at most once per pass (one ingestLocked call): an id already sent in this pass
+  // is not sent again, and a line new to the index leaves out an event that an earlier
+  // checkpoint of this pass stored from another line (that line was sent, lies below the
+  // sink cursor, or is sent when the sink catches up). An event stored before this pass is
+  // sent again: the process that stored it may have died before its cursor writes (a store
+  // without transactions) or lost the lock between its commit and its send, so the sink may
+  // never have had it. The cost: the sink gets an event twice when a later pass reads it
+  // again, from the other line of a hand-off, the second copy of one hook firing, or a line
+  // whose events a transcript import stored first. Delivery to a sink is at least once.
   const insertedIds = new InsertedEvents();
   const sentIds = new Map<Sink, Set<string>>();
+  /** Ids this pass's checkpoints inserted (kept only with sinks): a later checkpoint's copy of one is a repeat. */
+  const storedThisPass = new Set<string>();
   let repeats = new Set<string>();
   const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
     const state = sinkStates.get(sink)!;
@@ -573,7 +584,11 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           for (const id of r.ids) fresh.add(id);
         }
       }
-      repeats = sinkStates.size ? new Set(pending.flatMap((e) => (fresh.has(e.id) ? [] : [e.id]))) : repeats;
+      if (sinkStates.size) {
+        // Only a copy of what this pass stored is a repeat; what an earlier pass or process stored goes to the sinks again.
+        repeats = new Set(pending.flatMap((e) => (!fresh.has(e.id) && storedThisPass.has(e.id) ? [e.id] : [])));
+        for (const id of fresh) storedThisPass.add(id);
+      }
       // Hook events in an agent's OTel trace (a traceparent): that trace's spans join their session.
       await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();

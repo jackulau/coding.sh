@@ -8,32 +8,34 @@
 // Each step is one in the code (paths under packages/coding.sh/src):
 // - Hook: spool/hook.ts appends the line, then kicks. spool/write.ts spoolFile picks the first file
 //   under the size cap, and append writes the line with O_APPEND. spool/kick.ts kickIngest touches the
-//   marker (:32), then asks isLocked (:36), and starts `ingest --background` when the lock is not held.
-// - Lock: core/lock.ts acquireLock with waitMs 0 (cli/commands/ingest.ts:86). A free or stale lock
-//   becomes ours; a held one ends the process ("busy"). That is one step here; lock-model.test.ts checks
-//   how acquireLock and breakStale get there.
-// - Passes: core/ingest.ts ingestSpool (:283-306) takes the lock, clears the marker (:295), ingests,
-//   releases (:300), and runs another pass while the marker is back (:305), at most MAX_PASSES.
-// - Read: the file loop in ingestLocked (:648-748). It reads the local and sink cursors (:654-673),
-//   skips the file when the start is at its listed size (:676), and reads from the start to the end
-//   of the file as it is then (:682-701).
-// - Commit: checkpoint (:545-613). A store with transactions (SQLite) puts the events and sets each
-//   advanced file's cursor after a fence, all in one transaction (:564-590). A store without them
-//   (Postgres, ClickHouse) makes the same writes one at a time (inTransaction, :851).
-// - Send: sendToSink (:481-516) reads the sink cursor, leaves out the events of a line read for the
-//   index that the put found already stored (:488), fences and writes, then fences and sets the sink
+//   marker, then asks isLocked, and starts `ingest --background` when the lock is not held.
+// - Lock: core/lock.ts acquireLock with waitMs 0 (the background run in cli/commands/ingest.ts). A
+//   free or stale lock becomes ours; a held one ends the process ("busy"). That is one step here;
+//   lock-model.test.ts checks how acquireLock and breakStale get there.
+// - Passes: core/ingest.ts ingestSpool takes the lock, clears the marker, ingests, releases, and runs
+//   another pass while the marker is back, at most MAX_PASSES.
+// - Read: the file loop in ingestLocked. It reads the local and sink cursors, skips the file when the
+//   start is at its listed size, and reads from the start to the end of the file as it is then.
+// - Commit: checkpoint in ingestLocked. A store with transactions (SQLite) puts the events and sets
+//   each advanced file's cursor after a fence, all in one transaction. A store without them (the
+//   memory store, Postgres, ClickHouse) makes the same writes one at a time (inTransaction).
+// - Send: sendToSink reads the sink cursor and sends the window's lines from it. It leaves out a copy
+//   of an event that an earlier checkpoint of the same pass stored (repeats), so none here, where a
+//   pass has one checkpoint. sinkSend fences and writes, then sendToSink fences and sets the sink
 //   cursor.
-// - Fence: lock.assertHeld (lock.ts:288) passes while the lock file is ours. A fence that passes while
-//   our lock is stale is followed by its write as a separate step, because another process can take
-//   the lock in between.
+// - Fence: lock.assertHeld passes while the lock file is ours. A fence that passes while our lock is
+//   stale is followed by its write as a separate step, because another process can take the lock in
+//   between.
 //
 // Offsets are line numbers: a spool file only grows by whole lines, and the scrub pads lines in place
 // (core/spool-scrub.ts), so a line keeps its offset. Left out: a hook that dies before its kick (its
 // line waits for the next ingest, like a line a crash left), partial writes and torn lines
 // (spool-read.ts and its tests), the heartbeat (here a stalled lock stays stale, which allows more
-// takeovers, not fewer), a second sink, sink failures and backoff, gc and a cursor past the end of a
-// file it recreated, and checkpoints inside a pass (the window is larger than the events here, so
-// each pass has one).
+// takeovers, not fewer), a second sink, sink failures and backoff, checkpoints inside a pass (the
+// window is larger than the events here, so each pass has one), and an event carried by two lines
+// (Claude Code hands a helper's events over twice), with the per-pass dedupe by id that sendToSink
+// does for it. Gc is left out too: a cursor past the end of a file it recreated, and the moment
+// between its last stat of a spool file and the unlink, where a hook's append is lost.
 //
 // docs/design/state-machines.md ("Capture pipeline") describes an older order in places: there the kick
 // (M5) skips when a lock file exists, live or stale, and touches no marker, the holder makes one pass,
@@ -45,7 +47,7 @@
 // event can land during the first process's pass, which is what the marker is for. One line per file
 // makes the second line start a new file that a listing can miss. CODING_SH_MODEL_BOUND=n allows n
 // more crashes and n more stalls. Three end events with no fault pass too, in 273,428 states (about
-// 14 s), so they stay out of the default run.
+// 6 s), and stay out of the default run to keep it short.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
@@ -56,8 +58,11 @@ const CAP_LINES = 1;
 const MAX_PASSES = 3;
 
 type Store = "transaction" | "no transaction";
-/** A change to the code's order that the model must catch. */
-type Mutant = "look before mark" | "check before release" | "clear after list" | "cursor before events";
+/**
+ * A change to the code that the model must catch: a step moved, or a rule as it was before a fix
+ * ("skip what an earlier run stored": every event the put found stored is a repeat).
+ */
+type Mutant = "look before mark" | "check before release" | "clear after list" | "cursor before events" | "skip what an earlier run stored";
 
 interface Config {
   store: Store;
@@ -65,8 +70,6 @@ interface Config {
   files: number;
   crashes: number;
   stalls: number;
-  /** Check what reaches the sink too. */
-  sink: boolean;
   mutant?: Mutant;
 }
 
@@ -110,7 +113,11 @@ interface Proc {
   start: number[];
   /** Where the read stopped (readPos), or -1 for a file not read in this pass. */
   read: number[];
-  /** Events the commit's put found stored already (repeats, ingest.ts:576). */
+  /**
+   * Events the commit's put found stored by an earlier checkpoint of this pass (repeats in
+   * ingestLocked): none, with one checkpoint per pass. Under the mutant "skip what an earlier run
+   * stored", every event the put found stored.
+   */
   repeats: number[];
   /** Events a send whose fence passed will write. */
   out: number[];
@@ -193,9 +200,9 @@ const at = (a: readonly number[], i: number): number => {
   if (x === undefined) throw new Error(`index ${i} out of range`);
   return x;
 };
-/** inspect() says stale: the owner is dead or its lock file is old (lock.ts:118-130). */
+/** inspect() says stale: the owner is dead or its lock file is old (lock.ts inspect). */
 const stale = (s: Cap): boolean => s.lock >= 0 && (s.old || proc(s, s.lock).pc === "dead");
-/** isLocked (lock.ts:138): a live holder whose lock is not stale. */
+/** isLocked (lock.ts): a live holder whose lock is not stale. */
 const held = (s: Cap): boolean => s.lock >= 0 && !stale(s);
 const quiescent = (s: Cap): boolean => s.hooks.every((h) => h.pc === "done") && s.procs.every((p) => STOPPED.has(p.pc));
 const faults = (s: Cap): number => s.crashes + s.stalls;
@@ -207,21 +214,25 @@ const bump = (a: number[], i: number): void => {
   a[i] = Math.min(at(a, i) + 1, 2);
 };
 
-/** The checkpoint's put: what the index lacked is stored, what it had is a repeat. */
-function putEvents(d: Cap, p: Proc): void {
+/**
+ * The checkpoint's put: what the index lacked is stored. Each event is in one line and a pass puts
+ * once, so no event is a repeat (a copy of one this pass stored), except with `skipStored`, the rule
+ * before the fix, where an event stored by anyone before is one.
+ */
+function putEvents(d: Cap, p: Proc, skipStored: boolean): void {
   for (const f of advanced(p)) {
     const lines = d.files[f] ?? [];
     for (let j = at(p.local, f); j < at(p.read, f); j++) {
       const e = at(lines, j);
       bump(d.puts, e);
-      if (d.stored[e]) p.repeats.push(e);
-      else d.stored[e] = 1;
+      if (!d.stored[e]) d.stored[e] = 1;
+      else if (skipStored) p.repeats.push(e);
     }
   }
   p.repeats.sort((a, b) => a - b);
 }
 
-/** What sendToSink writes for file f: the window's lines from the sink cursor, less repeats on lines read for the index (ingest.ts:485-488). */
+/** What sendToSink writes for file f: the window's lines from the sink cursor, less repeats on lines read for the index. */
 function outFor(d: Cap, p: Proc, f: number): number[] {
   const lines = d.files[f] ?? [];
   const out: number[] = [];
@@ -236,6 +247,7 @@ function outFor(d: Cap, p: Proc, f: number): number[] {
 function captureModel(cfg: Config): Model<Cap> {
   const nf = cfg.files;
   const n = cfg.hooks;
+  const skipStored = cfg.mutant === "skip what an earlier run stored";
   const actions: Action<Cap>[] = [];
 
   // Stage changes inside a pass, skipping stages with nothing to do.
@@ -407,7 +419,7 @@ function captureModel(cfg: Config): Model<Cap> {
       effect: (s) =>
         next(s, (d) => {
           const me = proc(d, p);
-          putEvents(d, me);
+          putEvents(d, me, skipStored);
           for (const f of advanced(me)) d.cursor[f] = at(me.read, f);
           toSends(me, 0);
         }),
@@ -432,7 +444,7 @@ function captureModel(cfg: Config): Model<Cap> {
       effect: (s) =>
         next(s, (d) => {
           const me = proc(d, p);
-          putEvents(d, me);
+          putEvents(d, me, skipStored);
           for (const f of advanced(me)) d.cursor[f] = at(me.read, f);
           d.db = -1;
           toSends(me, 0);
@@ -446,7 +458,7 @@ function captureModel(cfg: Config): Model<Cap> {
       effect: (s) =>
         next(s, (d) => {
           const me = proc(d, p);
-          putEvents(d, me);
+          putEvents(d, me, skipStored);
           if (cfg.mutant === "cursor before events") toSends(me, 0);
           else toSets(me, -1);
         }),
@@ -549,7 +561,8 @@ function captureModel(cfg: Config): Model<Cap> {
       guard: (s) => is(s, "release"),
       effect: (s) =>
         next(s, (d) => {
-          // release() removes the lock file when it is ours (lock.ts:293-300).
+          // The lock's release() removes the lock file when it is ours (core/lock.ts). One step here:
+          // lock-model.test.ts has its read and its remove apart.
           if (d.lock === p) {
             d.lock = -1;
             d.old = false;
@@ -615,10 +628,8 @@ function captureModel(cfg: Config): Model<Cap> {
       for (let f = 0; f < nf; f++) if (at(s.cursor, f) !== linesOf(s, f).length) return `all stopped, and F${f} has ${linesOf(s, f).length} lines and cursor ${at(s.cursor, f)}`;
       return s.stored.every((x) => x === 1) || `all stopped, with stored ${s.stored}`;
     },
-    "a final ingest stores every event": (s) => (quiescent(s) ? drained(s, "index") : true),
-  };
-  if (cfg.sink) {
-    invariants["a sink cursor covers only sent lines"] = (s) => {
+    "a final ingest stores every event": (s) => (quiescent(s) ? drained(s, "index", skipStored) : true),
+    "a sink cursor covers only sent lines": (s) => {
       for (let f = 0; f < nf; f++) {
         const lines = linesOf(s, f);
         const c = at(s.sink, f);
@@ -626,15 +637,15 @@ function captureModel(cfg: Config): Model<Cap> {
         for (let j = 0; j < c; j++) if (!s.sent[at(lines, j)]) return `F${f}'s sink cursor ${c} is past line ${j}, whose event ${at(lines, j)} was never sent`;
       }
       return true;
-    };
-    invariants["one delivery without a fault"] = (s) => faults(s) > 0 || s.sent.every((x) => x <= 1) || `deliveries ${s.sent} with no crash or stall`;
-    invariants["every event sent once when all stop without a fault"] = (s) => {
+    },
+    "one delivery without a fault": (s) => faults(s) > 0 || s.sent.every((x) => x <= 1) || `deliveries ${s.sent} with no crash or stall`,
+    "every event sent once when all stop without a fault": (s) => {
       if (!quiescent(s) || faults(s) > 0) return true;
       for (let f = 0; f < nf; f++) if (at(s.sink, f) !== linesOf(s, f).length) return `all stopped, and F${f} has ${linesOf(s, f).length} lines and sink cursor ${at(s.sink, f)}`;
       return s.sent.every((x) => x === 1) || `all stopped, with deliveries ${s.sent}`;
-    };
-    invariants["a final ingest sends every event"] = (s) => (quiescent(s) ? drained(s, "sink") : true);
-  }
+    },
+    "a final ingest sends every event": (s) => (quiescent(s) ? drained(s, "sink", skipStored) : true),
+  };
   return {
     init: {
       files: Array.from({ length: nf }, () => []),
@@ -659,8 +670,8 @@ function captureModel(cfg: Config): Model<Cap> {
   };
 }
 
-/** A crash-free ingest from a state where nothing runs: after it, every event is stored, or sent at least once. */
-function drained(s: Cap, part: "index" | "sink"): true | string {
+/** A crash-free ingest from a state where nothing runs, by the same repeat rule: after it, every event is stored, or sent at least once. */
+function drained(s: Cap, part: "index" | "sink", skipStored: boolean): true | string {
   const d = clone(s);
   const nf = d.files.length;
   const me = newProc("read", nf);
@@ -673,7 +684,7 @@ function drained(s: Cap, part: "index" | "sink"): true | string {
     me.start[f] = start;
     me.read[f] = size;
   }
-  putEvents(d, me);
+  putEvents(d, me, skipStored);
   if (part === "index") return d.stored.every((x) => x === 1) || `after a final ingest, stored ${d.stored}`;
   for (let f = 0; f < nf; f++) {
     if (at(me.read, f) < 0 || at(d.sink, f) >= at(me.read, f)) continue;
@@ -693,7 +704,7 @@ function boundsFrom(env: NodeJS.ProcessEnv): { crashes: number; stalls: number }
 function run(t: { diagnostic: (m: string) => void }, cfg: Config): CheckResult<Cap> {
   const t0 = performance.now();
   const r = check(captureModel(cfg));
-  const label = `${cfg.store}, ${cfg.crashes} crash(es), ${cfg.stalls} stall(s)${cfg.sink ? ", sink" : ""}${cfg.mutant ? `, mutant "${cfg.mutant}"` : ""}`;
+  const label = `${cfg.store}, ${cfg.crashes} crash(es), ${cfg.stalls} stall(s)${cfg.mutant ? `, mutant "${cfg.mutant}"` : ""}`;
   t.diagnostic(`${label}: ${r.states} states, ${r.transitions} transitions, depth ${r.depth}, ${Math.round(performance.now() - t0)} ms`);
   const bad = r.violation ?? r.deadlock;
   if (bad && !cfg.mutant) t.diagnostic(`${r.violation ? `${r.violation.invariant}: ${r.violation.message ?? ""}` : "deadlock"}\n${formatTrace(bad.trace, keyOf)}`);
@@ -703,40 +714,23 @@ function run(t: { diagnostic: (m: string) => void }, cfg: Config): CheckResult<C
 const bounds = boundsFrom(process.env);
 const base = { hooks: 2, files: 2 };
 
-test("the index keeps every event through a crash and a stale lock, on a store with transactions", (t) => {
-  const r = run(t, { ...base, store: "transaction", ...bounds, sink: false });
+test("the index and the sink get every event through a crash and a stale lock, on a store with transactions", (t) => {
+  const r = run(t, { ...base, store: "transaction", ...bounds });
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
   assert.ok(r.states >= 13_000, `${r.states} states`);
 });
 
-test("the index keeps every event through a crash and a stale lock, on a store without transactions", (t) => {
-  const r = run(t, { ...base, store: "no transaction", ...bounds, sink: false });
+test("the index and the sink get every event through a crash and a stale lock, on a store without transactions", (t) => {
+  const r = run(t, { ...base, store: "no transaction", ...bounds });
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
   assert.ok(r.states >= 16_000, `${r.states} states`);
 });
 
-// The sink checks run where they hold at this commit: a store with transactions while no lock goes
-// stale, and a store without them while nothing fails. The wider cases are with the owner of
-// core/ingest.ts.
-test("the sink gets every event once, and again only after a crash, on a store with transactions", (t) => {
-  const r = run(t, { ...base, store: "transaction", crashes: bounds.crashes, stalls: 0, sink: true });
-  assert.equal(r.ok, true);
-  assert.equal(r.complete, true);
-  assert.ok(r.states >= 2_700, `${r.states} states`);
-});
-
-test("the sink gets every event once on a store without transactions", (t) => {
-  const r = run(t, { ...base, store: "no transaction", crashes: 0, stalls: 0, sink: true });
-  assert.equal(r.ok, true);
-  assert.equal(r.complete, true);
-  assert.ok(r.states >= 1_600, `${r.states} states`);
-});
-
-test("each step the code orders on purpose breaks an invariant when moved", (t) => {
-  const broken = (mutant: Mutant, store: Store): { invariant: string; actions: string[] } => {
-    const r = run(t, { ...base, store, crashes: 0, stalls: 0, sink: true, mutant });
+test("each step the code orders on purpose breaks an invariant when moved, and each fixed rule when undone", (t) => {
+  const broken = (mutant: Mutant, cfg: Partial<Config> & { store: Store }): { invariant: string; actions: string[] } => {
+    const r = run(t, { ...base, crashes: 0, stalls: 0, ...cfg, mutant });
     const v = r.violation;
     assert.ok(v, `the mutant "${mutant}" passed`);
     return { invariant: v.invariant, actions: actionsOf(v.trace) };
@@ -745,22 +739,32 @@ test("each step the code orders on purpose breaks an invariant when moved", (t) 
   const lost = "every event stored when all stop without a fault";
 
   // The hook looks at the lock before it touches the marker: the holder can check for the marker in between.
-  const lookFirst = broken("look before mark", "transaction");
+  const lookFirst = broken("look before mark", { store: "transaction" });
   assert.equal(lookFirst.invariant, lost);
   assert.ok(before(lookFirst.actions, "h1 sees the lock held", "p0 checks the marker") && before(lookFirst.actions, "p0 checks the marker", "h1 touches the marker"), lookFirst.actions.join(", "));
 
   // The holder checks for the marker before it releases: a hook that sees the lock held in between is missed.
-  const checkFirst = broken("check before release", "transaction");
+  const checkFirst = broken("check before release", { store: "transaction" });
   assert.equal(checkFirst.invariant, lost);
   assert.ok(before(checkFirst.actions, "p0 checks the marker", "h1 sees the lock held") && before(checkFirst.actions, "h1 sees the lock held", "p0 releases the lock"), checkFirst.actions.join(", "));
 
   // The holder clears the marker after it lists the files: the marker of a line the listing missed is gone.
-  const clearLate = broken("clear after list", "transaction");
+  const clearLate = broken("clear after list", { store: "transaction" });
   assert.equal(clearLate.invariant, lost);
   assert.ok(before(clearLate.actions, "p0 lists the files", "h1 appends") && before(clearLate.actions, "h1 touches the marker", "p0 clears the marker"), clearLate.actions.join(", "));
 
   // A store without transactions sets the cursor before the put: a crash between them loses the line.
-  const cursorFirst = broken("cursor before events", "no transaction");
+  const cursorFirst = broken("cursor before events", { store: "no transaction" });
   assert.equal(cursorFirst.invariant, "a cursor covers only stored lines");
   assert.equal(cursorFirst.actions.at(-1), "p0 sets the F0 cursor");
+
+  // An event the put finds stored is not sent: the process that stored it died before its send, so no one sends it.
+  const crashed = broken("skip what an earlier run stored", { store: "no transaction", crashes: 1 });
+  assert.equal(crashed.invariant, "a final ingest sends every event");
+  assert.ok(before(crashed.actions, "p0 puts the events", "p0 crashes"), crashed.actions.join(", "));
+
+  // The same with transactions and a stale lock: the process that takes over sets the sink cursor past an event no one sent.
+  const stalled = broken("skip what an earlier run stored", { store: "transaction", stalls: 1 });
+  assert.equal(stalled.invariant, "a sink cursor covers only sent lines");
+  assert.ok(before(stalled.actions, "p0 commits late", "p1 commits") && before(stalled.actions, "p1 commits", "p1 sends F0"), stalled.actions.join(", "));
 });

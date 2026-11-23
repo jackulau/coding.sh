@@ -711,6 +711,26 @@ describe("ingest", () => {
     assert.equal(sink.events.length, 1, "the sink gets the new content");
     assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
   });
+
+  it("sends a sink the events of a line that an earlier run stored and died before moving the line's cursor", async () => {
+    const t = setup();
+    t.write(t.line({ session: "s", kind: "notification", events: 2 }));
+    const src = "fake/2026-11-06.1.jsonl";
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    // The memory store has no transactions, like Postgres: the events are in when the run dies at the cursor write after them.
+    const realSet = t.index.setCursor.bind(t.index);
+    t.index.setCursor = async (key, offset) => (key === src ? Promise.reject(new Error("killed")) : realSet(key, offset));
+    await assert.rejects(() => ingest(opts), /killed/);
+    assert.equal((await t.index.listEvents("s")).length, 2, "the events were stored");
+    assert.equal(sink.events.length, 0, "and not sent");
+    t.index.setCursor = realSet;
+    const r = await ingest(opts);
+    assert.equal(r.events, 0, "nothing new to the index");
+    assert.equal(sink.events.length, 2, "the next run sends the events the index already had");
+    assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
+  });
 });
 
 /**
@@ -1258,7 +1278,7 @@ describe("gateway enrichment stored while a session is folded (qa:proxy-6)", () 
   });
 });
 
-describe("a helper's events reach each sink once", () => {
+describe("a helper's events handed over in two lines", () => {
   // Claude Code hands a helper's events over twice: the parent's PostToolUse(Agent) and the helper's own SubagentStop.
   const spoolLines = (): string[] => {
     const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8").split("\n").filter(Boolean);
@@ -1314,7 +1334,7 @@ describe("a helper's events reach each sink once", () => {
     }
   });
 
-  it("the two lines in two runs", async () => {
+  it("the two lines in two runs: the second run sends the helper's events again", async () => {
     const h = await home();
     try {
       const lines = spoolLines();
@@ -1323,7 +1343,13 @@ describe("a helper's events reach each sink once", () => {
       await h.run(sink);
       h.write(lines.at(-1)!);
       await h.run(sink);
-      await assertOnce(h, sink);
+      // An event an earlier run stored is sent again, since that run may have died before sending it: delivery is at least once.
+      const ids = sink.events.map((e) => e.id);
+      assert.deepEqual([...new Set(ids)].sort(), await h.stored(), "the sink got what the index stored");
+      const twice = sink.events.filter((e, i) => ids.indexOf(e.id) !== i);
+      assert.ok(twice.length > 0);
+      assert.ok(twice.every((e) => e.sessionId.endsWith(":sub:abc123") || e.kind.startsWith("subagent.")), "only the events both lines carry come twice");
+      assert.equal(new Set(twice.map((e) => e.id)).size, twice.length, "none more than twice");
     } finally {
       await h.close();
     }

@@ -20,11 +20,12 @@
 //   rows and the same events, none lost or stored twice. An ingest after it finds nothing new.
 // - With no crash, each line is consumed once (IngestResult.lines) and each event is inserted once
 //   (IngestResult.events), and a sink gets each event exactly once.
-// - With crashes on SQLite, a sink gets every event at least once.
+// - With crashes, a sink gets every event at least once, on either store.
 //
 // A line's events come from the real normalizer (core/ingest.ts spoolNormalizer) reading the reference
 // spool: event ids depend on the line and its offset, and every case writes the same lines in the same
-// order. The sink checks run on SQLite only, as in the model, where they hold with transactions.
+// order. No event of these fixtures is carried by two lines. One that is (Claude Code hands a helper's
+// events over twice) can reach a sink twice when its two lines are read in different runs.
 //
 // Left out: two ingests at once and a stalled lock holder. SQLite's BEGIN IMMEDIATE waits synchronously,
 // so two ingests in one process cannot interleave; capture-model.test.ts checks them. A crash here is a
@@ -294,19 +295,28 @@ test("runs that crash at any store call lose nothing on SQLite, and the sink get
   assert.ok(seen.crashes > 0, "no run crashed");
 });
 
-test("runs that crash at any store call lose nothing on a store without transactions", async (t) => {
+test("runs that crash at any store call lose nothing on a store without transactions, and the sink gets every event", async (t) => {
   const seen = { crashes: 0, runs: 0 };
   await forAll(
     casesGen(STOPS, CRASHES),
     async (runs) => {
-      const o = await runCase("memory", runs, false);
+      const o = await runCase("memory", runs, true);
       seen.crashes += o.crashes;
       seen.runs += runs.length;
+      assert.deepEqual(allIds.filter((id) => !must(o.got).has(id)), [], "events the sink never got");
     },
     { runs: 3, label: "crashes on memory", maxShrinks: 100 },
   );
   t.diagnostic(`${seen.runs} runs, ${seen.crashes} crashed`);
   assert.ok(seen.crashes > 0, "no run crashed");
+});
+
+test("a run that dies between storing a line's events and moving its cursor, on a store without transactions: the next run sends them", async () => {
+  // The test above found this case: the second run stores the first line's events, then crashes at
+  // its 13th store call, before the line's cursor is written. The final ingest reads the line again.
+  const o = await runCase("memory", [{ append: 0, every: 3, stop: "none", at: 2, crash: 0 }, { append: 1, every: 2, stop: "none", at: 1, crash: 13 }], true);
+  assert.equal(o.crashes, 1);
+  assert.deepEqual(allIds.filter((id) => !must(o.got).has(id)), [], "events the sink never got");
 });
 
 function must<T>(v: T | undefined): T {
