@@ -308,6 +308,23 @@
       ],
       "additionalProperties": false
     },
+    "CallTally": {
+      "description": "Session.stats.edits and Session.stats.shells: tool calls of one kind that ended, and how many of them failed for real.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "number"
+        },
+        "failed": {
+          "description": "Calls that failed for real (core/failures.ts): not a shell command whose exit 1 is an answer\n(no match, a probe, files that differ), not a call the person stopped. Absent when none.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "additionalProperties": false
+    },
     "CompactionRefetchStats": {
       "description": "Session.stats.compactionRefetches: read-only calls that fetched again a result a\ncompaction took out of the context, with nothing written to it in between.",
       "type": "object",
@@ -1118,6 +1135,21 @@
                 "$ref": "#/$defs/PullRequestRef"
               }
             },
+            "turnsByModel": {
+              "description": "Turns by the model that ran them: how many, how the person's next prompt pushed back, how many\nthe person stopped, and how long they ran (core/turn-stats.ts). Only in a session launched\ninteractively that is not a subagent; the key \"\" holds the turns of a session with no model.\nUnset in other sessions, and when the person sent no prompt.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/TurnTally"
+              }
+            },
+            "edits": {
+              "description": "File-edit calls (write, edit, patch, delete) on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended.",
+              "$ref": "#/$defs/CallTally"
+            },
+            "shells": {
+              "description": "Shell calls on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended.",
+              "$ref": "#/$defs/CallTally"
+            },
             "foldError": {
               "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",
               "type": "string"
@@ -1344,6 +1376,54 @@
         "toolErrors",
         "filesChanged",
         "tokens"
+      ],
+      "additionalProperties": false
+    },
+    "TurnTally": {
+      "description": "One model's turns in Session.stats.turnsByModel (core/turn-stats.ts). A turn is a prompt the\nperson sent and the agent's work until their next prompt.",
+      "type": "object",
+      "properties": {
+        "turns": {
+          "description": "Turns the model ran: it made most of the turn's main-thread model calls, or the turn made none and it is the session's model.",
+          "type": "number"
+        },
+        "replied": {
+          "description": "Turns the person answered with a prompt that has text: what `pushback` counts out of. Absent when none.",
+          "type": "number"
+        },
+        "pushback": {
+          "description": "Those prompts that pushed back on the turn before them, by kind. Absent when none did.",
+          "type": "object",
+          "properties": {
+            "intent": {
+              "type": "number"
+            },
+            "undo": {
+              "type": "number"
+            },
+            "redo": {
+              "type": "number"
+            },
+            "broken": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "cancelled": {
+          "description": "Turns the person stopped. Absent when none, and in a session whose agent does not record it (docs/ADAPTERS.md).",
+          "type": "number"
+        },
+        "durationsMs": {
+          "description": "How long turns ran (ms), from the prompt to the end of the turn's last work, for up to 500 turns. Absent when none did any work.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "turns"
       ],
       "additionalProperties": false
     },

@@ -17,6 +17,9 @@
 // pushback. Nor is a phrase that names a feature ("add an undo button", "a retry loop that will
 // try again"), a condition or a check ("if that doesn't work, use the fallback", "make sure the
 // test still fails without the fix"), or a question ("is it still failing?").
+import type { PushbackKind } from "../schema/index.ts";
+
+export type { PushbackKind };
 
 const PUSHBACK_START = /^(?:no\b|nope\b|stop\b|wait\b|don'?t\b|do not\b|undo\b|revert\b|wrong\b|why did you\b|that'?s (?:not|wrong)\b|this is (?:not|wrong)\b|not what\b|you (?:broke|didn'?t|forgot|missed)\b|still (?:fail|broken|not)\w*\b|it (?:still )?(?:doesn'?t|didn'?t) work\b|actually\b)/i;
 const PUSHBACK_ANY = /\b(?:that'?s wrong|you broke|not what i (?:asked|wanted)|didn'?t work|still (?:failing|fails|broken)|try again|please revert|undo (?:that|this|it)|that is wrong)\b/i;
@@ -27,8 +30,8 @@ export function isPushback(text: string): boolean {
   return PUSHBACK_START.test(t) || PUSHBACK_ANY.test(t);
 }
 
-export const PUSHBACK_KINDS = ["intent", "undo", "redo", "broken"] as const;
-export type PushbackKind = (typeof PUSHBACK_KINDS)[number];
+/** Every kind, in the order a prompt that matches two takes the first. */
+export const PUSHBACK_KINDS = ["intent", "undo", "redo", "broken"] as const satisfies readonly PushbackKind[];
 
 /** Words a prompt can open with before the part that names the kind: "no, undo that", "ok, try again". */
 const LEAD = String.raw`^(?:(?:no|nope|nah|ok|okay|hmm+|ugh+|um+|uh+|please|pls|wait|sorry|actually|well|so|hey|stop)\b[\s,.!:;-]*)*`;
