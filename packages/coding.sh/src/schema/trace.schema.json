@@ -1411,7 +1411,11 @@
           "additionalProperties": false
         },
         "cancelled": {
-          "description": "Turns the person stopped. Absent when none, and in a session whose agent does not record it (docs/ADAPTERS.md).",
+          "description": "Turns the person stopped, of the turns whose capture records it. Absent when none.",
+          "type": "number"
+        },
+        "cancelNotRecorded": {
+          "description": "Turns whose capture does not record a turn the person stopped (docs/ADAPTERS.md): an agent that\nrecords none, or a T3 Code thread built from T3 Code's own store. Absent when none.",
           "type": "number"
         },
         "durationsMs": {

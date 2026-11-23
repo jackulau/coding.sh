@@ -180,6 +180,23 @@ describe("cancelled turns", () => {
     assert.deepEqual(turns(events), { "gpt-5": { turns: 1, durationsMs: [5_000] } });
   });
 
+  test("a turn whose capture records no stop counts as not recorded, never as cancelled", () => {
+    const gemini = { agent: "gemini-cli" } as const;
+    const events = [hostLink(0), begin(0, {}, gemini), prompt(0, "fix test_div", gemini), llm(1, "gemini-2.5-pro", gemini), turnEnd(4, {}, gemini), prompt(10, "and run it", gemini)];
+    assert.deepEqual(turns(events), { "gemini-2.5-pro": { turns: 2, replied: 1, cancelNotRecorded: 2, durationsMs: [4_000] } });
+  });
+
+  test("a T3 Code thread built from T3 Code's store records no stop, though the agent it ran does", () => {
+    // Every event is T3 Code's: its host link names the provider thread and the agent, Claude Code.
+    const t3 = { agent: "t3code" } as const;
+    const link = { ...hostLink(0), payload: { type: "host-link", via: "t3code", provider: "claude-code", t3ProviderThreadId: "pt-1", launch: "interactive" } } as AgentEvent;
+    // The turn end built from T3 Code's store says only whether the turn completed (ok): not completing is no stop.
+    const events = [link, begin(0, { source: "store", via: "t3code", provider: "claude-code" }, t3), prompt(1, "fix test_div", t3), llm(1, "model-a", t3), turnEnd(4, { ok: false }, t3), prompt(10, "use pytest.approx", t3)];
+    const s = buildSession(events);
+    assert.deepEqual([s.agent, s.host], ["claude-code", "t3code"]);
+    assert.deepEqual(s.stats.turnsByModel, { "model-a": { turns: 2, replied: 1, cancelNotRecorded: 2, durationsMs: [3_000] } });
+  });
+
   test("every known agent records cancelled turns or is named here as recording none", () => {
     // The scorecard prints "not recorded" for these. Adding an agent means deciding which list it is in.
     const none = ["gemini-cli", "antigravity", "copilot-cli", "amp", "droid", "goose", "aider", "devin", "t3code", "wrapper"];

@@ -25,7 +25,7 @@ const STORE: Session[] = [
   mkSession("a2", t + 1, { model: "m-a", stats: { launch: "interactive", turnsByModel: { "m-a": { turns: 10, replied: 10, pushback: { intent: 1 }, durationsMs: durations(10, 3000) } }, shells: { calls: 10 } } }),
   mkSession("b1", t + 2, { agent: "codex", model: "m-b", stats: { launch: "interactive", turnsByModel: { "m-b": { turns: 12, replied: 11, pushback: { redo: 4, broken: 2 }, durationsMs: durations(12, 5000) } }, edits: { calls: 20, failed: 6 }, shells: { calls: 25, failed: 1 } } }),
   // A gemini-cli capture records no stopped turn: its turns stay out of the cancelled row.
-  mkSession("b2", t + 3, { agent: "gemini-cli", model: "m-b", stats: { launch: "interactive", turnsByModel: { "m-b": { turns: 3, replied: 2 } } } }),
+  mkSession("b2", t + 3, { agent: "gemini-cli", model: "m-b", stats: { launch: "interactive", turnsByModel: { "m-b": { turns: 3, replied: 2, cancelNotRecorded: 3 } } } }),
   // A subagent's and a headless run's calls count in the tool rows; neither has turns.
   mkSession("a-sub", t + 4, { model: "m-a", parent: { sessionId: "a1", type: "Explore" }, stats: { launch: "interactive", edits: { calls: 5, failed: 1 } } }),
   mkSession("b-headless", t + 5, { agent: "codex", model: "m-b", stats: { launch: "headless", shells: { calls: 5, failed: 5 } } }),

@@ -1145,6 +1145,45 @@ describe("T3 prompts an agent made, and threads a person started", () => {
   });
 });
 
+describe("T3 turns a person stopped, in a thread read from T3's store", () => {
+  // The store-built turn end keeps only whether the turn completed (ok), not its status.
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("a Codex thread whose rollout is not on disk counts its turns as not recorded, never as cancelled", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-cx", { provider: "codex", title: "Fix the flaky test", created: T(1) });
+    providerThread(db, "pt-cx", "thr-cx", "codex", "codex-not-on-disk", 1);
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, 'thr-cx', NULL, 'node-1', 'user', 0, ?, ?, ?)");
+    msg.run("m1", T(1), T(1), J({ text: "Fix the flaky test", createdBy: "user" }));
+    msg.run("m2", T(3), T(3), J({ text: "Now run the whole suite", createdBy: "user" }));
+    const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, 'thr-cx', 'pt-cx', 'node-1', NULL, ?, ?, ?, ?, ?)");
+    turn.run("tu1", 1, "completed", T(1), T(2), J({ status: "completed" }));
+    turn.run("tu2", 2, "interrupted", T(3), T(4), J({ status: "interrupted" }));
+    db.close();
+    const events = (await collect(backfillT3(testCtx().ctx))).filter((e) => e.sessionId === "codex-not-on-disk");
+    assert.ok(events.some((e) => e.kind === "turn.end"));
+    assert.ok(events.every((e) => e.agent === "t3code"), "every event is T3 Code's");
+    const s = buildSession(events);
+    assert.deepEqual([s.agent, s.host, s.stats.launch], ["codex", "t3code", "interactive"]);
+    // Codex's own rollout records a stop; here it would read 0 of 2 cancelled.
+    assert.deepEqual(s.stats.turnsByModel, { "gpt-5.5": { turns: 2, replied: 1, cancelNotRecorded: 2, durationsMs: [60_000, 60_000] } });
+  });
+});
+
 describe("T3 prompts an agent made, in a thread read from its Codex or Claude transcript", () => {
   // The transcript does not say who made a prompt; T3's store does. Each thread: the person's
   // prompt and a turn, another thread's message after the turn ended, a notification while the

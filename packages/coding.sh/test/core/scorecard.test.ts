@@ -6,13 +6,14 @@ import { medianInterval, newcombeDiff, wilson } from "../../src/stats/interval.t
 
 let n = 0;
 /** A session row with only what the scorecard reads. */
-function sess(o: { agent?: string; model?: string; launch?: "headless" | "interactive"; parent?: Session["parent"]; turns?: Record<string, TurnTally>; edits?: [number, number?]; shells?: [number, number?] }): Session {
+function sess(o: { agent?: string; host?: string; model?: string; launch?: "headless" | "interactive"; parent?: Session["parent"]; turns?: Record<string, TurnTally>; edits?: [number, number?]; shells?: [number, number?] }): Session {
   const stats: Session["stats"] = { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 };
   if (o.launch) stats.launch = o.launch;
   if (o.turns) stats.turnsByModel = o.turns;
   if (o.edits) stats.edits = o.edits[1] ? { calls: o.edits[0], failed: o.edits[1] } : { calls: o.edits[0] };
   if (o.shells) stats.shells = o.shells[1] ? { calls: o.shells[0], failed: o.shells[1] } : { calls: o.shells[0] };
   const s: Session = { id: `s${++n}`, agent: o.agent ?? "claude-code", title: "t", startedAt: 0, flags: [], stats };
+  if (o.host) s.host = o.host;
   if (o.model) s.model = o.model;
   if (o.parent) s.parent = o.parent;
   return s;
@@ -68,12 +69,14 @@ describe("scorecardOf", () => {
     assert.equal(card.difference, undefined);
   });
 
-  it("leaves cancelled out for agents that do not record it: the group lists their turns instead of a 0", () => {
+  it("leaves cancelled out for turns whose capture does not record it: the group lists them instead of a 0", () => {
     const card = scorecardOf(
       [
-        interactive({ m: { turns: 4 } }, { agent: "gemini-cli", model: "m" }),
+        interactive({ m: { turns: 4, cancelNotRecorded: 4 } }, { agent: "gemini-cli", model: "m" }),
         interactive({ m: { turns: 2, cancelled: 1 } }, { model: "m" }),
-        interactive({ g: { turns: 3 } }, { agent: "gemini-cli", model: "g" }),
+        interactive({ g: { turns: 3, cancelNotRecorded: 3 } }, { agent: "gemini-cli", model: "g" }),
+        // A T3 Code thread built from T3 Code's store: its agent records a stop, the host's store does not.
+        interactive({ g: { turns: 5, cancelNotRecorded: 5 } }, { host: "t3code", model: "g" }),
       ],
       "model",
     );
@@ -82,7 +85,7 @@ describe("scorecardOf", () => {
     assert.deepEqual(m.cancelNotRecorded, { "gemini-cli": 4 });
     const g = card.groups.find((x) => x.key === "g")!;
     assert.equal(g.cancelled, undefined);
-    assert.deepEqual(g.cancelNotRecorded, { "gemini-cli": 3 });
+    assert.deepEqual(g.cancelNotRecorded, { "gemini-cli": 3, t3code: 5 });
     // Neither group has a cancelled row the other can be set against.
     assert.equal(card.difference!.cancelled, undefined);
   });

@@ -14,7 +14,9 @@
 //   counts in `replied`, and pushbackKind (core/pushback.ts) names how it pushed back, if it did.
 // - cancelled: the person stopped the turn. Claude Code writes a "[Request interrupted by user"
 //   prompt; Codex, OpenCode, Cursor and Pi say so on the turn's end (STOPPED). CANCEL_AGENTS names
-//   the agents that record it.
+//   the agents that record it. A turn whose prompt another agent's capture holds counts in
+//   cancelNotRecorded instead, never in cancelled: a T3 Code thread built from T3 Code's own store
+//   has only T3 Code's events, whatever agent the thread ran.
 // - durationsMs: from the prompt to the end of the turn's last work (a model call, a tool call, a
 //   message, a turn end the agent recorded, the person stopping it), on every thread, with the time
 //   it waited on the person (a permission prompt) or on a background task. A transcript's
@@ -67,6 +69,8 @@ interface ModelTurns {
   replied: number;
   pushback: Partial<Record<PushbackKind, number>>;
   cancelled: number;
+  /** Turns whose capture does not record a stop: cancelled does not count them. */
+  notRecorded: number;
   durations: number[];
 }
 
@@ -81,6 +85,8 @@ interface OpenTurn {
   proxy: Map<string, number>;
   /** The person stopped it. */
   cancelled?: true;
+  /** Its prompt came from the capture of an agent that does not record a stop (not in CANCEL_AGENTS). */
+  notRecorded?: true;
   /** The session was resumed after its last work: nothing more counts in it. */
   idle?: true;
 }
@@ -120,7 +126,7 @@ export interface TurnFacts {
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
-const noTurns = (): ModelTurns => ({ turns: 0, replied: 0, pushback: {}, cancelled: 0, durations: [] });
+const noTurns = (): ModelTurns => ({ turns: 0, replied: 0, pushback: {}, cancelled: 0, notRecorded: 0, durations: [] });
 
 /** Folds the next event (in time order). Enrichment events never reach it. */
 export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): void {
@@ -130,6 +136,7 @@ export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): v
     if (o.by === "person") {
       if (t) close(s, t, str(e.payload.text));
       s.turn = { at: e.ts, own: new Map(), otel: new Map(), proxy: new Map() };
+      if (!CANCEL_AGENTS.has(e.agent)) s.turn.notRecorded = true;
     } else if (o.by === "interrupt" && t && !t.idle) {
       t.cancelled = true;
       t.end = Math.max(t.end ?? e.ts, e.ts);
@@ -173,10 +180,11 @@ function turnModel(t: OpenTurn): string {
   return "";
 }
 
-/** Counts a turn in its model's tally: the turn, whether the person stopped it, and how long it ran. */
+/** Counts a turn in its model's tally: the turn, whether the person stopped it (or that its capture does not say), and how long it ran. */
 function count(m: ModelTurns, t: OpenTurn): void {
   m.turns++;
-  if (t.cancelled) m.cancelled++;
+  if (t.notRecorded) m.notRecorded++;
+  else if (t.cancelled) m.cancelled++;
   const ms = t.end === undefined ? 0 : Math.round(t.end - t.at);
   if (ms > 0 && m.durations.length < SAMPLES_MAX) m.durations.push(ms);
 }
@@ -267,6 +275,7 @@ export function turnsByModelOf(s: TurnStatsState, model: string | undefined): Re
     to.turns += m.turns;
     to.replied += m.replied;
     to.cancelled += m.cancelled;
+    to.notRecorded += m.notRecorded;
     for (const kind of PUSHBACK_KINDS) {
       const n = m.pushback[kind];
       if (n) to.pushback[kind] = (to.pushback[kind] ?? 0) + n;
@@ -289,6 +298,7 @@ export function turnsByModelOf(s: TurnStatsState, model: string | undefined): Re
     if (m.replied) t.replied = m.replied;
     if (Object.keys(m.pushback).length) t.pushback = m.pushback;
     if (m.cancelled) t.cancelled = m.cancelled;
+    if (m.notRecorded) t.cancelNotRecorded = m.notRecorded;
     if (m.durations.length) t.durationsMs = m.durations;
     out[k] = t;
   }

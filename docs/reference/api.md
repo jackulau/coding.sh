@@ -954,6 +954,7 @@ Limits:
 | `stats.turnsByModel.<model>.replied` | Turns the person answered with a prompt that has text. Absent when zero |
 | `stats.turnsByModel.<model>.pushback` | Of the replied turns, the ones that next prompt pushed back on, by kind: `intent`, `undo`, `redo` or `broken`. A prompt takes the first kind it matches in its first 400 characters. Absent when none |
 | `stats.turnsByModel.<model>.cancelled` | Turns the person stopped. coding.sh reads a stopped turn only from Claude Code, Codex, OpenCode, Cursor and Pi captures. Absent when zero |
+| `stats.turnsByModel.<model>.cancelNotRecorded` | Turns whose capture records no stopped turn: another agent's, or a T3 Code thread built from T3 Code's own store, whatever agent ran it. `cancelled` does not count them. Absent when zero |
 | `stats.turnsByModel.<model>.durationsMs` | Each turn's time (ms), from its prompt to the end of its last work on any thread, waits on the person included. Up to 500. Absent when no turn did work |
 | `stats.edits`, `stats.shells` (`calls`, `failed`) | File edit calls and shell calls that ended, and how many failed for real, by the rule `stats.toolErrors` uses. A call two capture paths recorded counts once. `failed` is absent when zero, and each field when no such call ended |
 

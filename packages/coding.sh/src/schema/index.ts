@@ -377,8 +377,13 @@ export interface TurnTally {
   replied?: number;
   /** Those prompts that pushed back on the turn before them, by kind. Absent when none did. */
   pushback?: Partial<Record<PushbackKind, number>>;
-  /** Turns the person stopped. Absent when none, and in a session whose agent does not record it (docs/ADAPTERS.md). */
+  /** Turns the person stopped, of the turns whose capture records it. Absent when none. */
   cancelled?: number;
+  /**
+   * Turns whose capture does not record a turn the person stopped (docs/ADAPTERS.md): an agent that
+   * records none, or a T3 Code thread built from T3 Code's own store. Absent when none.
+   */
+  cancelNotRecorded?: number;
   /** How long turns ran (ms), from the prompt to the end of the turn's last work, for up to 500 turns. Absent when none did any work. */
   durationsMs?: number[];
 }

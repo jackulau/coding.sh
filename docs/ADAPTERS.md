@@ -136,10 +136,12 @@ counts (`STOPPED` in `src/core/turn-stats.ts`):
 | Cursor CLI | The stop hook's `status: "aborted"` |
 | Pi | `agent_settled` with `aborted`, or an assistant message whose stop reason is `aborted` |
 
-Other agents mark none, or coding.sh has no capture that shows how they mark one, so
-`coding.sh stats --scorecard` leaves their turns out of its cancelled row. With
-`capture.mode = "metadata"` a Claude Code stop has no text, so it counts as the person's next
-prompt, not as a stopped turn.
+Other agents mark none, or coding.sh has no capture that shows how they mark one. A thread built
+from T3 Code's own store marks none either, whatever agent ran it: coding.sh reads only whether
+each of its turns completed. Those turns count in `stats.turnsByModel.<model>.cancelNotRecorded`,
+and `coding.sh stats --scorecard` leaves them out of its cancelled row and names the capture they
+came from (`t3code` for a thread built from T3 Code's store). With `capture.mode = "metadata"` a
+Claude Code stop has no text, so it counts as the person's next prompt, not as a stopped turn.
 
 ## Replay
 

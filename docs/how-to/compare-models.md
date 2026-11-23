@@ -99,9 +99,9 @@ for the build" and "actually, also add a test" are not pushback.
   included, each under its session's model.
 - A failed call counts only when it failed for real. A search that found nothing, a probe such as
   `test -f`, a `diff` that found differences and a call you stopped are not failures.
-- Cancelled turns count only for agents whose captures record a stopped turn: `claude-code`,
-  `codex`, `opencode`, `cursor` and `pi`. A column with only other agents' turns says
-  `not recorded`, never 0.
+- Cancelled turns count only turns whose capture records a stopped turn: the captures of
+  `claude-code`, `codex`, `opencode`, `cursor` and `pi`. A thread built from T3 Code's own store
+  records none, whatever agent ran it. A column with only other turns says `not recorded`, never 0.
 - The notes under the table say which sessions and turns a row left out.
 
 ## Narrow it down

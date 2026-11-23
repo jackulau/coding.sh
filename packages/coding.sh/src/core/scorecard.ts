@@ -6,8 +6,11 @@
 //   interactively, the only sessions with turnsByModel: a headless prompt is no person's reaction,
 //   and a subagent's prompt comes from its parent. By model, a turn counts under the model that ran
 //   it; by agent, under its session's agent.
-// - Cancelled counts only the sessions of agents whose captures record a stopped turn
-//   (CANCEL_AGENTS). A group with no such session has no cancelled row: "not recorded", never 0.
+// - Cancelled counts only the turns whose capture records a stopped turn; the fold counts the others
+//   in TurnTally.cancelNotRecorded. A group with none of the first has no cancelled row: "not
+//   recorded", never 0. The others are listed by the agent whose capture was read: the session's,
+//   or its host's when the session's agent records stops (a T3 Code thread built from T3 Code's
+//   own store).
 // - Tool rows (failed file edits, failed shell commands) count every session's calls, subagents and
 //   headless runs included, under that session's own model (Session.model) or agent.
 // - A rate is k of n with its Wilson 95% interval, and the median turn duration has the
@@ -53,9 +56,9 @@ export interface ScorecardGroup {
   turns?: { n: number; sessions: number };
   /** Of the turns the person answered with a prompt, the ones that prompt pushed back on; byKind splits them, each out of the same turns. */
   pushback?: ScorecardRate & { byKind: Record<PushbackKind, ScorecardRate> };
-  /** Turns the person stopped, out of the turns of sessions whose agent records it. */
+  /** Turns the person stopped, out of the turns whose capture records it. */
   cancelled?: ScorecardRate;
-  /** Turns left out of cancelled, by agent: their captures do not record a stopped turn. */
+  /** Turns left out of cancelled, by the agent whose capture was read: it does not record a stopped turn. */
   cancelNotRecorded?: Record<string, number>;
   duration?: ScorecardDuration;
   /** File-edit calls that failed for real, out of the file-edit calls that ended. */
@@ -149,6 +152,7 @@ interface SessionTurns {
   replied: number;
   pushback: Record<PushbackKind, number>;
   cancelled: number;
+  notRecorded: number;
   durations: number[];
 }
 
@@ -156,6 +160,7 @@ function addTally(to: SessionTurns, t: TurnTally): void {
   to.turns += t.turns;
   to.replied += t.replied ?? 0;
   to.cancelled += t.cancelled ?? 0;
+  to.notRecorded += t.cancelNotRecorded ?? 0;
   for (const kind of PUSHBACK_KINDS) to.pushback[kind] += t.pushback?.[kind] ?? 0;
   if (t.durationsMs) for (const d of t.durationsMs) to.durations.push(d);
 }
@@ -200,10 +205,12 @@ export function scorecardOf(sessions: readonly Session[], by: ScorecardBy): Scor
     for (const [model, t] of Object.entries(byModel)) {
       const key = by === "model" ? model : s.agent;
       let to = mine.get(key);
-      if (!to) mine.set(key, (to = { turns: 0, replied: 0, pushback: { intent: 0, undo: 0, redo: 0, broken: 0 }, cancelled: 0, durations: [] }));
+      if (!to) mine.set(key, (to = { turns: 0, replied: 0, pushback: { intent: 0, undo: 0, redo: 0, broken: 0 }, cancelled: 0, notRecorded: 0, durations: [] }));
       addTally(to, t);
     }
-    const records = CANCEL_AGENTS.has(s.agent);
+    // Whose capture holds the turns that record no stop: an agent that records stops has them only
+    // when its host's capture was read.
+    const capture = CANCEL_AGENTS.has(s.agent) ? (s.host ?? s.agent) : s.agent;
     for (const [key, t] of mine) {
       if (!t.turns) continue;
       const a = acc(key);
@@ -214,11 +221,13 @@ export function scorecardOf(sessions: readonly Session[], by: ScorecardBy): Scor
         a.repliedSessions++;
         for (const kind of PUSHBACK_KINDS) a.pushback[kind] += t.pushback[kind];
       }
-      if (records) {
-        a.cancelTurns += t.turns;
+      const recorded = t.turns - t.notRecorded;
+      if (recorded > 0) {
+        a.cancelTurns += recorded;
         a.cancelled += t.cancelled;
         a.cancelSessions++;
-      } else a.notRecorded.set(s.agent, (a.notRecorded.get(s.agent) ?? 0) + t.turns);
+      }
+      if (t.notRecorded) a.notRecorded.set(capture, (a.notRecorded.get(capture) ?? 0) + t.notRecorded);
       if (t.durations.length) {
         for (const d of t.durations) a.durations.push(d);
         a.durationSessions++;

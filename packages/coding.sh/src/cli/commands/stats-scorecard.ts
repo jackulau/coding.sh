@@ -166,7 +166,7 @@ function leftOutParts(l: ScorecardLeftOut): string[] {
   return parts;
 }
 
-/** The cancelled row's coverage, when a column counted turns of agents that do not record a stopped turn. */
+/** The cancelled row's coverage, when a column counted turns whose capture does not record a stopped turn. */
 function cancelLeftOut(groups: readonly ScorecardGroup[]): string | undefined {
   const turns = new Map<string, number>();
   for (const g of groups) for (const [agent, n] of Object.entries(g.cancelNotRecorded ?? {})) turns.set(agent, (turns.get(agent) ?? 0) + n);
