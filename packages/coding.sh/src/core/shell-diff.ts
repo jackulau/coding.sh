@@ -125,6 +125,51 @@ export interface SimpleCommand {
 }
 
 /**
+ * The directory a run of `cd`s leads to, each step as `posix.join(dir, to)` gives it, or `to` as
+ * written when there is no directory yet or `to` is absolute. A step costs the length of `to`,
+ * not of the directory: the segments are kept on a stack, and each directory string extends the
+ * one for the segment before it, so a `cd a && cd a && …` chain stays linear. The step it returns
+ * takes `to` and returns the directory after it.
+ */
+function cdChain(): (to: string) => string {
+  let dir: string | undefined;
+  /** The directory as written, until a step joins something to it (it is not normalized until then). */
+  let written: string | undefined;
+  let absolute = false;
+  const segs: string[] = [];
+  /** heads[n]: the first n segments as a path, the root `/` included when absolute. */
+  const heads: string[] = [""];
+  const add = (path: string) => {
+    for (const s of path.split("/")) {
+      if (s === "" || s === ".") continue;
+      if (s === "..") {
+        if (segs.length && segs[segs.length - 1] !== "..") {
+          segs.pop();
+          continue;
+        }
+        // Nothing is above the root; a relative path keeps its leading `..`.
+        if (absolute) continue;
+      }
+      segs.push(s);
+      heads[segs.length] = segs.length > 1 ? `${heads[segs.length - 1]}/${s}` : absolute ? `/${s}` : s;
+    }
+  };
+  return (to) => {
+    if (dir === undefined || /^(?:\/|[A-Za-z]:\/|~)/.test(to)) return (dir = written = to);
+    if (written !== undefined) {
+      absolute = written.startsWith("/");
+      segs.length = 0;
+      add(written);
+      written = undefined;
+    }
+    add(to);
+    const slash = to.endsWith("/");
+    const head = heads[segs.length] as string;
+    return (dir = segs.length ? (slash ? `${head}/` : head) : absolute ? "/" : slash ? "./" : ".");
+  };
+}
+
+/**
  * The simple commands of a shell command line: split on `&&`, `||`, `;`, `|`,
  * `&` and newlines, heredoc bodies skipped, each as its unquoted words.
  * Best effort: no subshells or quoting across segments.
@@ -132,6 +177,7 @@ export interface SimpleCommand {
 export function simpleCommands(command: string): SimpleCommand[] {
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
+  let cd: ((to: string) => string) | undefined;
   const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
     const words = wordsOf(seg).map(unquote);
@@ -151,10 +197,7 @@ export function simpleCommands(command: string): SimpleCommand[] {
     const cmd = name.replace(/^.*\//, "");
     const args = rest.slice(1);
     out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
-    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) {
-      const to = args[0].replace(/\\/g, "/");
-      dir = dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(to) ? posix.join(dir, to) : to;
-    }
+    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
   }
   return out;
 }
