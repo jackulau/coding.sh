@@ -757,6 +757,7 @@ describe("ingest", () => {
     assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
   });
 
+
   it("sends a sink the events of a line that an earlier run stored and died before moving the line's cursor", async () => {
     const t = setup();
     t.write(t.line({ session: "s", kind: "notification", events: 2 }));
@@ -1029,6 +1030,51 @@ describe("transcript import sends to the sinks (qa:server-7)", () => {
     } finally {
       await h.close();
     }
+  });
+
+  it("a Claude Code session imported before its spool is read: the sink holds what the store holds, each event once", async () => {
+    const h = await claudeHome(true);
+    try {
+      const bf = await h.transcripts();
+      assert.ok(bf.events > 0);
+      const sp = await h.spool();
+      assert.ok(sp.lines > 0);
+      assert.deepEqual(sp.sinks, [{ name: "team", sent: sp.events, ok: true }], "the spool sends what it stored, not its copies of what the import stored");
+      const ids = h.sink.events.map((e) => e.id);
+      assert.equal(new Set(ids).size, ids.length, "no event twice");
+      const stored: string[] = [];
+      for (const s of await h.index.listSessions()) for (const e of await h.index.listEvents(s.id)) stored.push(e.id);
+      assert.deepEqual([...ids].sort(), stored.sort(), "the sink holds what the store holds");
+      await assertSinkHasSession(h.index, h.sink, SID);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a prompt two hooks spool after an import stored it reaches the sink once, as the import's copy", async () => {
+    const t = setup();
+    t.config.sinks = [sinkConfig("team")];
+    const sink = new RecordingSink("team", "full");
+    const at = 1_700_000_100_000;
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield { id: "t1", v: 0, sessionId: "p", ts: at, agent: "fake", kind: "user.message", payload: { text: "Fix the bug" } };
+      },
+    };
+    await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] });
+    // Hooks in two settings files spool the prompt twice under one id, and two ingest runs read the copies.
+    const prompt = t.line({ session: "p", kind: "user.message", text: "Fix the bug" }, { ts: at + 100, event: "UserPromptSubmit" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    for (const i of [1, 2]) {
+      t.write(prompt, t.line({ session: "p", kind: "notification", i }));
+      await ingest(opts);
+    }
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual(sink.events.filter((e) => e.kind === "user.message").map((e) => e.source), ["transcript"], "the sink holds the prompt once, as the import's copy");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("p")).map((e) => e.id).sort(), "the sink holds what the store holds");
   });
 
   it("a home with transcripts only sends its sessions", async () => {

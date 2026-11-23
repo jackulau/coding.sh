@@ -493,10 +493,12 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   // One event can come in two or three lines: Claude Code hands a helper's events over twice (the
   // parent's Agent-tool PostToolUse and the helper's own SubagentStop), and hooks in two settings
   // files spool one firing twice (firingKey gives both copies the same ids). A transcript import
-  // can store and send an event before its line is read. The index keeps one copy by id, and so
-  // does a sink: an id goes out at most once per pass (one ingestLocked call), and a line new to
-  // the index leaves out the events its put found stored (repeats). The line or import that stored
-  // them sent them, lies below the sink cursor, or is sent when the sink catches up.
+  // can store and send an event before its line is read, under the same id or, for the kinds
+  // message-copies.ts matches, an id of its own. The index keeps one copy, and so does a sink: an
+  // id goes out at most once per pass (one ingestLocked call), a line new to the index leaves out
+  // the events its put found stored (repeats), and a live copy of what an import stored goes to
+  // neither. The line or import that stored them sent them, lies below the sink cursor, or is sent
+  // when the sink catches up.
   //
   // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
   // every event:
@@ -504,26 +506,32 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   //   puts and its cursor writes. Before the puts, each file's two in-flight keys are set, after a
   //   fence each, to how far this run read, and never below the larger one a run before it left.
   //   A later run takes the lines from the local cursor up to the larger key as suspect. Two keys,
-  //   because a process that stalled past the stale limit can still make one write after another
-  //   process took the lock over, and that write can lower a key: if it is key A, the fence before
-  //   key B fails and the stalled process puts nothing; if it is key B, its key A was written before
-  //   the takeover.
+  //   because a process that stalled past the stale limit carries on after another process took the
+  //   lock over until its next fence: it makes the write after the last fence it passed, and the
+  //   unfenced puts that follow that write. That write can lower a key: if it is key A, the fence
+  //   before key B fails and the stalled process puts nothing; if it is key B, its key A was written
+  //   before the takeover.
   // - A store with transactions commits the puts and the cursors together, but a holder that
   //   stalled can commit after the takeover and then not send. So the checkpoint reads each file's
   //   cursor again in its transaction: the lines below a cursor that moved past where this run
   //   started are suspect, and the cursor is set to the larger of the two, so that a later
   //   checkpoint or run still finds them.
   //
-  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, or an
-  // older build's gc ran:
+  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, an
+  // older build's gc ran, or a transcript import runs beside this run on a store with no
+  // putEventsReturningIds (Postgres, ClickHouse):
   // - a suspect line carries an event another line or an import sent;
   // - a run crashes between a send and its sink-cursor write, and the next run sends those lines;
   // - a holder that stalled past the stale limit sends lines that the process which took the lock
   //   over sends too, or its late sink-cursor write moves the cursor back over lines that process
   //   sent;
-  // - a sink catches up after a failed send from lines that carry an event another line sent;
+  // - a sink catches up after a failed send from lines that carry an event another line sent, or a
+  //   live copy of an event an import sent (lines below the local cursor send every event);
   // - an older build's gc left a deleted file's in-flight keys, and a new file at the same path
-  //   grows as long as the larger key: its lines below that key are suspect.
+  //   grows as long as the larger key: its lines below that key are suspect;
+  // - InsertedEvents reads the stored ids of a store with no putEventsReturningIds before the put,
+  //   and an import, which holds the sink lock and not this one, stores an event in between: the
+  //   put counts it as new, so both send it.
   // On a store without transactions, a run of an older build that crashes between its puts and
   // its cursor writes leaves no in-flight keys, and a sink misses the events of those lines.
   const insertedIds = new InsertedEvents();
@@ -788,11 +796,16 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           // Outside the spool directory: never ours to rewrite.
         }
       }
+      // What the line stores and sends. A live event that copies what a transcript import stored first
+      // (a prompt, a reply, a session start or end, a compaction) stays out of the index and the sinks:
+      // the import sent its own copy. The import does the same with its copies of what the spool stored.
+      let kept = events;
       if (rec.offset >= fr.local) {
         result.lines++;
         windowLines++;
-        // A prompt a backfill already stored stays out of the local index (sinks still get it).
-        for (const e of events) if (!(await copies.isCopy(e))) pending.push(e);
+        kept = [];
+        for (const e of events) if (!(await copies.isCopy(e))) kept.push(e);
+        pending.push(...kept);
         for (const e of events) {
           touched.add(e.sessionId);
           if ((e.kind === "turn.end" || e.kind === "session.end") && !isBackfill(e) && !e.repo?.snapshot) {
@@ -800,7 +813,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           }
         }
       }
-      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events, stored: rec.offset >= fr.local });
+      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events: kept, stored: rec.offset >= fr.local });
       // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
       if (windowEvents >= checkpointEvents) {
