@@ -67,7 +67,7 @@ match becomes `[redacted:<kind>]`.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
-| `secrets` | Private keys, also in base64; API keys and tokens from Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm, Vercel, coding.sh and more than twenty other services and tools whose keys start with a fixed prefix; Azure storage account keys; JWTs; `Authorization` headers with any scheme; cookies; passwords in URLs, with or without a user name; URL signatures; `.netrc` passwords; values next to names like `password`, `token`, `api_key` or `client_secret` | yes |
+| `secrets` | Private keys, also in base64; API keys and tokens from over thirty services and tools, such as Anthropic, OpenAI, GitHub and AWS; JWTs; `Authorization` headers; cookies; passwords and signatures in URLs; `.netrc` passwords; values next to names like `password` or `client_secret` | yes |
 | `env` | The values of your environment variables whose names hold `KEY`, `TOKEN`, `SECRET`, `PASSW`, `PWD`, `CREDENTIAL`, `AUTH`, `COOKIE` or `SESSION` | no |
 | `pii` | Email addresses, phone numbers, card numbers, IBANs and national ids | no |
 | `email`, `phone`, `card`, `iban`, `national-id` | One kind of personal data | no |
@@ -145,13 +145,11 @@ proxy has no auth: anyone who can reach its port can send calls through it.
 The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
 what agents run on Windows) redacts the payload first, with `capture.redact` and
 `capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
-spool. A string that holds a JSON document, such as a tool's output, is redacted as that document
-too, so a value that only its key marks as secret is replaced, also when a rule has changed the
-text around it.
+spool.
 
-To stay fast, the node hook loads those rules only for a payload whose text may hold a secret, or
-when your `config.toml` sets other rules; the rules would leave any other payload as it is. If it
-can't load them, it writes no line for that payload and logs the error to `spool/errors.log`.
+To stay fast, the node hook loads those rules only for a payload that may hold a secret, the only
+kind they would change, or when your `config.toml` sets other rules. If it can't load them, it
+writes no line for that payload and logs the error to `spool/errors.log`.
 
 The line records how many values the node hook replaced, by rule, and ingest adds those counts to the
 stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies them. The POSIX sh hook
