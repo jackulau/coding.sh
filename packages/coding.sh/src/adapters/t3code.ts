@@ -24,6 +24,11 @@
 // every session, open until T3 resolves them (core/waiting.ts host requests).
 // Every session also gets a "host-link" notification with payload.via =
 // "t3code"; buildSession then sets agent "t3code" and provider = the agent T3 ran.
+// The host link of a thread a person started (its first prompt is the person's) says
+// launch "interactive". In a session built from the store, a user-role message an agent
+// made (a provider's prompt, an MCP tool, a notification, another thread) is a
+// user.message with from: "agent". A Codex or Claude transcript does not say who made a
+// prompt, and the codex and claude-code adapters store those events first.
 // A thread's first provider thread is top level; later ones (provider switch)
 // and T3 subagent threads are child sessions. Threads that never reached a
 // provider are `t3code-<threadId>`.
@@ -136,6 +141,8 @@ interface StoreMessage {
   ts: number;
   /** Provider thread it belongs to, when known. */
   pt?: string;
+  /** Who made it, when the store says (v2: createdBy, creationSource and the fields an agent's message carries). */
+  by?: "user" | "agent";
 }
 
 interface StoreTurn {
@@ -426,7 +433,9 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
   for (const m of rows.messages) {
     if (m.role !== "user" && m.role !== "assistant") continue;
     const c = await clipText(ctx, m.text);
-    em.emit(m.role === "user" ? "user.message" : "assistant.message", { text: c.value, truncated: c.truncated || undefined }, { key: [m.id], ts: m.ts, blobs: blobList(c.blob) });
+    // A user-role message an agent made is not the person's prompt (core/wait-stats.ts).
+    const from = m.role === "user" && m.by === "agent" ? "agent" : undefined;
+    em.emit(m.role === "user" ? "user.message" : "assistant.message", { text: c.value, truncated: c.truncated || undefined, from }, { key: [m.id], ts: m.ts, blobs: blobList(c.blob) });
     last = Math.max(last, m.ts);
   }
   for (const tu of rows.turns) {
@@ -501,14 +510,18 @@ function requestEvents(ctx: NormalizeContext, p: SessionPlan, requests: StoreReq
   return em.events;
 }
 
-/** The notification that attributes a session to T3 Code, plus the edge to its parent. */
-function linkEvents(ctx: NormalizeContext, p: SessionPlan): AgentEvent[] {
+/**
+ * The notification that attributes a session to T3 Code, plus the edge to its parent. `launch` is
+ * "interactive" for a thread a person started (personStarted); the session's launch is then the
+ * host's, not the one its agent's start names (T3 drives Claude Code through the Agent SDK).
+ */
+function linkEvents(ctx: NormalizeContext, p: SessionPlan, launch?: "interactive"): AgentEvent[] {
   const t = p.thread;
   const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: t.cwd, model: p.pt?.model ?? t.model }, ["t3", p.sessionId, "link"]);
   // The thread title titles the session (core/sessions.ts) and names the thread in show.
   const title = t.title?.slice(0, 280);
   const message = title ? `T3 Code thread: ${title}` : "T3 Code thread";
-  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message }, { key: ["host-link"] });
+  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message, launch }, { key: ["host-link"] });
   // T3's cost is a running total: reported, never summed into usage.
   if (p.pt?.costUsd !== undefined) em.emit("notification", { type: "usage-report", via: T3_AGENT, reportedUsage: { costUsd: p.pt.costUsd } }, { key: ["usage-report", p.pt.updated], ts: Math.max(p.start, p.pt.updated) });
   if (p.parent) em.emit("subagent.start", { subagentId: p.sessionId, type: p.parent.type, childSessionId: p.sessionId }, { sessionId: p.parent.sessionId, key: [p.sessionId], model: undefined });
@@ -531,8 +544,17 @@ function plansFor(t: Thread, primary: Map<string, string>, starts: Map<string, n
   }));
 }
 
+/**
+ * A thread a person started: its first user-role message is the person's (v2 createdBy "user"), and it is
+ * not a subagent's thread. A v1 store, or a v2 message that does not say who made it, does not tell.
+ */
+function personStarted(t: Thread, rows: StoreRows): boolean {
+  return t.relation !== "subagent" && rows.messages.find((m) => m.role === "user")?.by === "user";
+}
+
 async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number): AsyncIterable<AgentEvent> {
   const plans = plansFor(t, primary, starts);
+  const launch = personStarted(t, rows) ? "interactive" : undefined;
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
@@ -542,7 +564,7 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
     else if (!path) {
       events = await storeEvents(ctx, p, { messages: rows.messages.filter(mine), turns: rows.turns.filter(mine), items: rows.items.filter(mine), totals: p === plans[0] ? rows.totals : undefined }, primary);
     }
-    events.push(...linkEvents(ctx, p), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
+    events.push(...linkEvents(ctx, p, launch), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
     // A session with activity inside the window is imported whole, as the codex and claude-code backfills do:
     // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
     // cutoff lost its T3 attribution and thread title.
@@ -639,13 +661,24 @@ function readV2Workflows(db: DatabaseSync): Map<string, { runId: string; agentId
   return out;
 }
 
+/** creationSource values of a message an agent made: a provider's own prompt (a subagent's task), an MCP tool, T3's server. */
+const AGENT_SOURCES = new Set(["provider", "mcp", "server"]);
+/** Payload fields only an agent's message carries: another thread sent it, a notification, a delegated result, a workflow step. */
+const AGENT_FIELDS = ["senderThreadId", "notification", "delegatedCompletion", "workflowScript"];
+
+/** Who made a v2 message, from its payload: "agent" when any field says an agent did, "user" when createdBy says so, else unknown. */
+function messageBy(pl: Row): "user" | "agent" | undefined {
+  if (pl.createdBy === "agent" || AGENT_SOURCES.has(str(pl.creationSource) ?? "") || AGENT_FIELDS.some((k) => pl[k] !== undefined && pl[k] !== null)) return "agent";
+  return pl.createdBy === "user" ? "user" : undefined;
+}
+
 function readV2Rows(db: DatabaseSync, threadId: string, runPt: Map<string, string>): StoreRows {
   const messages: StoreMessage[] = [];
   for (const r of db.prepare("SELECT * FROM orchestration_v2_projection_messages WHERE thread_id = ? AND streaming = 0 ORDER BY created_at, message_id").all(threadId) as Row[]) {
     const pl = parse(r.payload_json);
     const text = str(pl.text);
     if (!text) continue;
-    messages.push({ id: String(r.message_id), role: String(r.role), text, ts: ms(r.created_at) ?? 0, pt: r.run_id ? runPt.get(String(r.run_id)) : undefined });
+    messages.push({ id: String(r.message_id), role: String(r.role), text, ts: ms(r.created_at) ?? 0, pt: r.run_id ? runPt.get(String(r.run_id)) : undefined, by: messageBy(pl) });
   }
   const turns: StoreTurn[] = [];
   if (hasTable(db, "orchestration_v2_projection_provider_turns")) {
@@ -999,7 +1032,8 @@ export const t3code: Adapter = {
   //    request with "no active turn" ends interrupted, not failed.
   // 15 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A provider instance id (claudeHub, codex-work) maps to the agent its driver kind names.
   // 16 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  parseVersion: 16,
+  // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a thread a person started has an interactive launch (host-link launch).
+  parseVersion: 17,
 
   async detect() {
     const env = process.env;

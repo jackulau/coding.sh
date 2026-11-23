@@ -994,3 +994,105 @@ describe("T3 provider instances", () => {
     assert.equal((await index.listEvents("hub-session-not-on-disk", { kinds: ["user.message"] })).length, 1);
   });
 });
+
+describe("T3 prompts an agent made, and threads a person started", () => {
+  // A v2 message says who made it: createdBy "user" for the person; createdBy "agent", a
+  // creationSource (provider, mcp, server) or a field only an agent's message carries
+  // (senderThreadId, notification, delegatedCompletion) for an agent.
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  let events: AgentEvent[];
+  before(async () => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', ?, 0, ?, ?, ?)");
+    const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, ?, 'node-1', NULL, ?, 'completed', ?, ?, ?)");
+    // A thread a person started: their prompts (one sent while a turn ran), prompts agents made, and a secret request.
+    thread(db, "thr-person", { provider: "grok", title: "Fix the flaky test", created: T(1) });
+    providerThread(db, "pt-person", "thr-person", "grok", "grok-person", 1);
+    const said = (id: string, at: string, role: string, payload: Record<string, unknown>) => msg.run(id, "thr-person", role, at, at, J(payload));
+    said("m1", T(1), "user", { text: "Fix the flaky test", createdBy: "user" });
+    said("m2", T(1, 20), "assistant", { text: "Fixed: the test waited on a timer." });
+    said("m3", T(3), "user", { text: "Review the diff on the other branch", senderThreadId: "thr-other" });
+    said("m4", T(3, 10), "assistant", { text: "The diff looks right." });
+    said("m5", T(6), "user", { text: "Now run the whole suite", createdBy: "user" });
+    said("m10", T(6, 10), "user", { text: "and the linter", createdBy: "user" });
+    said("m6", T(7), "user", { text: "Background task finished", notification: { kind: "task" } });
+    said("m7", T(7, 30), "user", { text: "The other thread finished the review.", delegatedCompletion: { taskId: "t1" } });
+    said("m8", T(8), "user", { text: "Opened the pull request", creationSource: "mcp" });
+    said("m9", T(9), "user", { text: "Continue with the next step", createdBy: "agent" });
+    turn.run("tu1", "thr-person", "pt-person", 1, T(1), T(1, 30), J({ status: "completed" }));
+    turn.run("tu2", "thr-person", "pt-person", 2, T(3), T(3, 30), J({ status: "completed" }));
+    turn.run("tu3", "thr-person", "pt-person", 3, T(6), T(6, 30), J({ status: "completed" }));
+    db.prepare("INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('req-secret', 'thr-person', 'node-1', 'tu2', 'secret', 'resolved', ?, ?, ?)").run(T(3, 5), T(3, 25), J({ id: "req-secret", kind: "secret", status: "resolved" }));
+    // A subagent's thread, even one whose first prompt says the person made it, and a thread that does not say.
+    thread(db, "thr-person-sub", { provider: "grok", title: "Find the flaky test", created: T(4), payload: { lineage: { parentThreadId: "thr-person", relationshipToParent: "subagent", rootThreadId: "thr-person" } } });
+    providerThread(db, "pt-person-sub", "thr-person-sub", "grok", "grok-person-sub", 1);
+    msg.run("ms1", "thr-person-sub", "user", T(4), T(4), J({ text: "Find the flaky test", createdBy: "user" }));
+    thread(db, "thr-unknown", { provider: "grok", title: "List files", created: T(2) });
+    providerThread(db, "pt-unknown", "thr-unknown", "grok", "grok-unknown", 1);
+    msg.run("mu1", "thr-unknown", "user", T(2), T(2), J({ text: "List the files" }));
+    db.close();
+    events = await collect(backfillT3(testCtx().ctx));
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("marks a prompt an agent made from: agent, and none of the person's", () => {
+    assertWellFormed(events);
+    const prompts = events.filter((e) => e.sessionId === "grok-person" && e.kind === "user.message").sort((a, b) => a.ts - b.ts);
+    assert.deepEqual(
+      prompts.map((e) => [e.payload.text, e.payload.from]),
+      [
+        ["Fix the flaky test", undefined],
+        ["Review the diff on the other branch", "agent"],
+        ["Now run the whole suite", undefined],
+        ["and the linter", undefined],
+        ["Background task finished", "agent"],
+        ["The other thread finished the review.", "agent"],
+        ["Opened the pull request", "agent"],
+        ["Continue with the next step", "agent"],
+      ],
+    );
+  });
+
+  it("a thread a person started is launched interactively; a subagent's thread and one that does not say have no launch", () => {
+    const link = (id: string) => events.find((e) => e.sessionId === id && e.payload.type === "host-link");
+    const launch = (id: string) => buildSession(events.filter((e) => e.sessionId === id)).stats.launch;
+    assert.equal(link("grok-person")?.payload.launch, "interactive");
+    assert.equal(launch("grok-person"), "interactive");
+    for (const id of ["grok-person-sub", "grok-unknown"]) {
+      assert.ok(link(id), id);
+      assert.equal(link(id)?.payload.launch, undefined, id);
+      assert.equal(launch(id), undefined, id);
+    }
+  });
+
+  it("stats.waits counts the turn waits the person ended apart from the ones an agent's prompt ended, the steer and the secret request", async () => {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    const s = await index.getSession("grok-person");
+    assert.equal(s?.stats.launch, "interactive");
+    // Turn waits: 10:01:30 to 10:03 (another thread's message ended it), 10:03:30 to 10:06 (the person),
+    // 10:06:30 to 10:07 (a notification). The secret request: 10:03:05 to 10:03:25.
+    assert.deepEqual(s?.stats.waits, {
+      count: 2,
+      ms: 170_000,
+      byKind: { request: { count: 1, ms: 20_000 }, turn: { count: 1, ms: 150_000 } },
+      agent: { count: 2, ms: 120_000 },
+      steers: 1,
+    });
+    // A thread that does not say who started it counts no turn waits.
+    assert.equal((await index.getSession("grok-unknown"))?.stats.waits, undefined);
+  });
+});
