@@ -209,7 +209,7 @@ names both parts:
 
 ```text
 coding.sh: repricing cost estimates: 400 of 1,000 sessions (40%)
-coding.sh: index upgraded in 31.2s: migrate 1.2s, reprice 23.5s. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
+coding.sh: index upgraded in 24.7s: migrate 1.2s, reprice 23.5s. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
 ```
 
 - **Another command waits.** A command that opens the index while another process upgrades it

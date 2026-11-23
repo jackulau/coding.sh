@@ -756,7 +756,7 @@ export const COMMANDS: CommandSpec[] = [
       AGENT_ONE,
       { ...SINCE, default: "30d" },
       LIMIT(20),
-      { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
+      { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first (waits up to 30 s while another process reprices or rebuilds stats)" },
       { name: "baseline", type: "boolean", desc: "With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list" },
       WHERE("sessions"),
       FRESH,

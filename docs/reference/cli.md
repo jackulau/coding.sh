@@ -1126,7 +1126,7 @@ coding.sh usage [options]
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
-| `--reprice` |  | Recompute estimated costs from the current price table first. |
+| `--reprice` |  | Recompute estimated costs from the current price table first (waits up to 30 s while another process reprices or rebuilds stats) |
 | `--baseline` |  | With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
