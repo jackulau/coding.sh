@@ -812,6 +812,12 @@ export interface AgentRunOutput {
   stdoutTail: string;
   stderrTail: string;
   /**
+   * Set only when the agent's program never started because the spawn itself
+   * failed (not found, not executable): Node's message, `spawn claude ENOENT`.
+   * A program that ran and exited 127 on its own leaves it unset.
+   */
+  spawnError?: string;
+  /**
    * The agent's final answer (the last stream-json `result`, else its stdout),
    * clipped. Set by the runner; the verifier reads it from CODING_SH_AGENT_OUTPUT.
    */

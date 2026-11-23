@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { which } from "../../src/adapters/_shared/detect.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
@@ -20,8 +21,8 @@ let root = "";
 let home = "";
 let env: Record<string, string> = {};
 
-function cli(args: string[], cwd = home) {
-  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd, encoding: "utf8", timeout: 120_000 });
+function cli(args: string[], cwd = home, extra: Record<string, string> = {}) {
+  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: { ...env, ...extra }, cwd, encoding: "utf8", timeout: 120_000 });
 }
 
 const CHECKLIST = {
@@ -218,6 +219,28 @@ describe("eval import + compare --tag", () => {
 
     assert.equal(cli(["eval", "validate"]).status, 2);
     assert.equal(cli(["eval", "validate", "--tag", "no-such-tag"]).status, 1);
+  });
+
+  it("eval validate names the commands in its errors as the user's shell runs them, in text and --json", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const d = join(root, "validate-noref", "noref");
+    mkdirSync(join(d, "repo"), { recursive: true });
+    writeFileSync(join(d, "repo", "README.md"), "# app\n");
+    writeFileSync(join(d, "task.json"), JSON.stringify({ name: "vn-noref", verifier: { command: "exit 1" } }));
+    writeFileSync(join(d, "instruction.md"), "Create done.txt.\n");
+    assert.equal(cli(["eval", "import", d]).status, 0);
+    // Started with npx, the steps to add a reference name npx's form, which runs in the user's shell.
+    const npx = { npm_command: "exec" };
+    const bin = nextStepBin({ ...env, ...npx });
+    const text = cli(["eval", "validate", "vn-noref", "--k", "1"], home, npx);
+    assert.equal(text.status, 1, text.stdout + text.stderr);
+    assert.ok((text.stdout + text.stderr).includes(`add one with ${bin} eval export `), text.stdout + text.stderr);
+    assert.ok((text.stdout + text.stderr).includes(`then ${bin} eval import <dir> and ${bin} eval validate `), text.stdout + text.stderr);
+    const json = cli(["eval", "validate", "vn-noref", "--k", "1", "--json"], home, npx);
+    assert.equal(json.status, 1, json.stdout + json.stderr);
+    const doc = JSON.parse(json.stdout) as { outcome: string; errors: string[] };
+    assert.equal(doc.outcome, "rejected");
+    assert.ok(doc.errors.some((e) => e.includes(`add one with ${bin} eval export `)), json.stdout);
   });
 
   it("judge grade outside a run: predicate-only checklists need no model; usage rows land in CODING_SH_GRADER_USAGE", (t) => {
