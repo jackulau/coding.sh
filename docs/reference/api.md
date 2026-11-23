@@ -967,7 +967,7 @@ Limits:
 - A session with `stats.foldError` holds only what the events say directly: the agent, the first and last event times, the cwd and `stats.events`, plus the `fold:error` tag. `coding.sh ingest` folds it again, and `coding.sh doctor` counts these sessions.
 - The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
 - A shell call writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
-- A shell call is a call to any agent's shell tool, Antigravity's `run_command` and Droid's `Execute` included.
+- A shell call is a call to any agent's shell tool, Antigravity's `run_command`, Droid's `Execute` and Devin's `exec` included. Their commands count the same for these stats, `unapprovedActions`, `test-tamper` and [commit attribution](../how-to/attribute-commits.md).
 - PowerShell's `Set-Content`, `Add-Content` and `Out-File` count too. A file written both by an edit tool and by a shell call counts once.
 - A relative path resolves from the folder the call names (`workdir`, `cwd`, Antigravity's `Cwd`, Gemini's `dir_path` or `directory`) and any `cd` before it.
 - In a working directory on a Windows drive, `C:\x`, `c:/x` and Git Bash's `/c/x` are one file, named by an edit tool or by a shell call.

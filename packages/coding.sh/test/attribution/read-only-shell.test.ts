@@ -21,6 +21,16 @@ const bash = (s: Ses, n: number, command: string) => [
   event(s, "tool.start", { tool: "Bash", toolUseId: `b${n}`, input: { command } }, s.startedAt + n * 1000),
   event(s, "tool.end", { tool: "Bash", toolUseId: `b${n}`, ok: true, output: "" }, s.startedAt + n * 1000 + 1),
 ];
+/** A shell call through another agent's shell tool, shaped as its adapter stores it. */
+const shellCall = (s: Ses, n: number, tool: string, input: Record<string, unknown>) => [
+  event(s, "tool.start", { tool, toolUseId: `c${n}`, input }, s.startedAt + n * 1000),
+  event(s, "tool.end", { tool, toolUseId: `c${n}`, ok: true, output: "" }, s.startedAt + n * 1000 + 1),
+];
+/** A command as Antigravity's run_command and Droid's Execute store it (test/fixtures/adapters/antigravity, droid). */
+const OTHER_SHELLS: [string, (command: string, root: string) => Record<string, unknown>][] = [
+  ["run_command", (command, root) => ({ CommandLine: command, Cwd: root })],
+  ["Execute", (command) => ({ command })],
+];
 const write_ = (s: Ses, n: number, file: string, content: string) => [
   event(s, "tool.start", { tool: "Write", toolUseId: `w${n}`, input: { file_path: file, content } }, s.startedAt + n * 1000),
   event(s, "tool.end", { tool: "Write", toolUseId: `w${n}`, ok: true }, s.startedAt + n * 1000 + 1),
@@ -68,5 +78,15 @@ describe("a session that only listed files", () => {
   test("a build command could have written the file, so the lower credit stays", async () => {
     const { rec } = await scenario("csh-ls-build-", (s) => bash(s, 1, "npm run build"));
     assert.deepEqual(rec.attributions.map((a) => a.path).sort(), ["src/own.ts", "src/person.ts"]);
+  });
+
+  test("through Antigravity's run_command or Droid's Execute, as through Bash", async () => {
+    for (const [tool, input] of OTHER_SHELLS) {
+      const ls = await scenario(`csh-ls-only-${tool}-`, (s, root) => shellCall(s, 1, tool, input("ls -la src", root)));
+      assert.equal(ls.source, undefined, tool);
+      assert.deepEqual(ls.rec.attributions, [], tool);
+      const build = await scenario(`csh-ls-build-${tool}-`, (s, root) => shellCall(s, 1, tool, input("npm run build", root)));
+      assert.deepEqual(build.rec.attributions.map((a) => a.path).sort(), ["src/own.ts", "src/person.ts"], tool);
+    }
   });
 });
