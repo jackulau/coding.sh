@@ -10,7 +10,8 @@ import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { viewCliError } from "./views.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, rejectAgentTypos, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, wholeRef, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, rejectAgentTypos, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
+import { printedRefs } from "../../core/session-ref.ts";
 import { ago, clean, duration, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -156,11 +157,13 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
     const tty = out.stdoutTTY;
+    // Every stored id is read only when a row's id prints shorter: one that is long, needs quoting,
+    // or is `latest` or `last` (the word opens the newest session).
+    const refs = await printedRefs(ctx.index, { whole: sessions.map((s) => s.id) });
     out.table(
       ["ID", "AGENT", "STARTED", "DURATION", "TURNS", "TOOLS", "TITLE"],
       sessions.map((s) => [
-        // A session whose id is `latest` or `last` prints its alias: the word opens the newest session.
-        wholeRef(s.id),
+        refs.whole(s.id),
         // A session a host app drove names it: --agent t3code lists it, and the row says why.
         s.host ? `${s.agent} via ${s.host}` : s.agent,
         ago(s.startedAt),
