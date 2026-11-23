@@ -16,6 +16,8 @@ export const SHORT_ID_MIN = 8;
 export const MAX_CANDIDATES = 10;
 
 const SUB = ":sub:";
+/** What the server puts before an SDK session id in the default project that holds a `/` (server/project.ts scopeSessionId). */
+const SCOPE = "default/";
 
 /** Longest prefix coding.sh prints: a longer shortest prefix prints as an alias. */
 const MAX_REF = 40;
@@ -165,8 +167,8 @@ export function matchRef(set: IdSet, ref: string): RefMatch | undefined {
     const m = pick(set.withPrefix(ref));
     if (m) return m;
   }
-  if (ref.includes("/") && !ref.startsWith("default/")) {
-    const scoped = `default/${ref}`;
+  if (ref.includes("/") && !ref.startsWith(SCOPE)) {
+    const scoped = `${SCOPE}${ref}`;
     if (set.has(scoped)) return { id: scoped };
     const m = pick(set.withPrefix(scoped));
     if (m) return m;
@@ -197,8 +199,13 @@ export function shortSessionId(id: string): string {
   return id.split(SUB).map((part) => part.slice(0, SHORT_ID_MIN)).join(SUB);
 }
 
-/** The smallest n in [lo, hi] for which `ok(n)` holds, when ok is false below some n and true from it on; undefined when ok(hi) is false. */
-function smallest(lo: number, hi: number, ok: (n: number) => boolean): number | undefined {
+/**
+ * The smallest n in [lo, hi] for which `ok(n)` holds, or undefined. Each n up to `inOrderTo` is
+ * tried in turn; above it, ok must be false below some n and true from it on, and the rest is
+ * found by bisecting.
+ */
+function smallest(lo: number, hi: number, ok: (n: number) => boolean, inOrderTo = 0): number | undefined {
+  for (; lo <= Math.min(hi, inOrderTo); lo++) if (ok(lo)) return lo;
   if (lo > hi || !ok(hi)) return undefined;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
@@ -206,6 +213,13 @@ function smallest(lo: number, hi: number, ok: (n: number) => boolean): number | 
     else lo = mid + 1;
   }
   return lo;
+}
+
+/** How many characters `a` and `b` start with in common. */
+function common(a: string, b: string): number {
+  let n = 0;
+  while (n < a.length && n < b.length && a[n] === b[n]) n++;
+  return n;
 }
 
 /** True when matchRef takes `ref` to `id` and nothing else. */
@@ -248,7 +262,17 @@ function shortestPrefix(set: IdSet, id: string): string {
   const cut = id.lastIndexOf(SUB);
   const tail = cut >= 0 ? id.slice(cut + SUB.length) : "";
   if (tail.length >= SHORT_ID_MIN && !tail.includes(":")) {
-    const n = smallest(SHORT_ID_MIN, Math.min(tail.length, best.length - 1), (k) => names(set, tail.slice(0, k), id));
+    // A longer prefix of the own id names fewer ids, except up to the last length where matchRef can
+    // read it another way: as an alias (x_ and 8 to 14 alias digits), as the start of the whole id (or
+    // of the whole id after `default/`), or, once it holds a /, as an SDK id without `default/`. Those
+    // lengths are tried in turn, and the rest is bisected.
+    const inOrderTo = Math.max(
+      tail.startsWith(ALIAS) ? ALIAS.length + ALIAS_MAX : 0,
+      tail.indexOf("/"),
+      common(id, tail),
+      id.startsWith(SCOPE) ? common(id.slice(SCOPE.length), tail) : 0,
+    );
+    const n = smallest(SHORT_ID_MIN, Math.min(tail.length, best.length - 1), (k) => names(set, tail.slice(0, k), id), inOrderTo);
     if (n !== undefined) best = tail.slice(0, n);
   }
   if (cut >= 0) {
@@ -257,8 +281,10 @@ function shortestPrefix(set: IdSet, id: string): string {
     if (s.length < best.length && names(set, s, id)) best = s;
     return best;
   }
-  // A prefix: longer prefixes name fewer ids, so the shortest that names this one is found by bisecting.
-  const n = smallest(SHORT_ID_MIN, id.length - 1, (k) => names(set, id.slice(0, k), id));
+  // A prefix: longer prefixes name fewer ids, so the shortest that names this one is found by
+  // bisecting. An id that starts with x_ tries each length up to 16 in turn first: x_ and 8 to 14
+  // alias digits can read as another id's alias.
+  const n = smallest(SHORT_ID_MIN, id.length - 1, (k) => names(set, id.slice(0, k), id), id.startsWith(ALIAS) ? ALIAS.length + ALIAS_MAX : 0);
   return n === undefined ? best : id.slice(0, n);
 }
 

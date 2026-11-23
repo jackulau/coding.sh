@@ -116,8 +116,52 @@ describe("an id whose shortest prefix is long or needs quoting prints an alias",
     assert.equal(shortestRef(s, LONG_A), "x_d52r41f3j", "a stored id takes the alias, so the alias grows");
     assert.deepEqual(matchRef(s, "x_8n2twz83"), { id: LONG_B }, "the alias comes before a prefix");
     assert.equal(shortestRef(s, LONG_B), "x_8n2twz83h", "an alias a stored id starts with grows too, so it never reads as a prefix of that id");
-    const sdk = shortestRef(s, "x_8n2twz83-sdk");
-    assert.equal(resolves(s, sdk), "x_8n2twz83-sdk", sdk);
+    // Its first 10 characters read as LONG_B's alias, and its first 8 name it.
+    assert.equal(shortestRef(s, "x_8n2twz83-sdk"), "x_8n2twz");
+    assert.equal(resolves(s, "x_8n2twz"), "x_8n2twz83-sdk");
+  });
+});
+
+describe("a printed reference is the shortest that names the session, even where a longer one names another", () => {
+  /** 44 characters, so it may print an alias, x_pdd6m28zw… */
+  const RUN = "run-0123456789012345678901234567890123456789";
+
+  test("an id that starts with another id's alias prints the 8 characters that name it", () => {
+    const s = new IdSet([RUN, "x_pdd6m28zw"]);
+    assert.equal(resolves(s, "x_pdd6m28z"), RUN);
+    assert.equal(shortestRef(s, "x_pdd6m28zw"), "x_pdd6m2");
+    assert.equal(resolves(s, "x_pdd6m2"), "x_pdd6m28zw");
+  });
+
+  test("a subagent whose own id is another id's alias prints 8 characters of it", () => {
+    const sub = `${RUN}:sub:x_pdd6m28z`;
+    const s = new IdSet([RUN, sub]);
+    assert.equal(shortestRef(s, sub), "x_pdd6m2");
+    assert.equal(resolves(s, "x_pdd6m2"), sub);
+  });
+
+  test("a subagent whose own id starts its whole id prints the prefix the whole id starts with", () => {
+    // Its parent is not stored, and another subagent has the same own id.
+    const sub = "q2222222:sub:q22222222";
+    const s = new IdSet(["7c3e9d10-", sub, "7c3e9d10-:sub:q22222222"]);
+    assert.equal(shortestRef(s, sub), "q2222222");
+    assert.equal(resolves(s, "q2222222"), sub);
+    assert.deepEqual(matchRef(s, "q22222222"), { ambiguous: ["7c3e9d10-:sub:q22222222", sub] });
+  });
+
+  test("a subagent whose own id holds a / prints the prefix before it when longer ones read as an SDK id", () => {
+    const sub = `${PARENT}:sub:tenant-7/conv-1`;
+    const s = new IdSet([PARENT, sub, "default/tenant-7/conv-9"]);
+    assert.equal(shortestRef(s, sub), "tenant-7");
+    assert.equal(resolves(s, "tenant-7"), sub);
+    assert.equal(resolves(s, "tenant-7/co"), "default/tenant-7/conv-9");
+  });
+
+  test("a subagent under default/ whose own id starts its id after default/ prints the prefix that reads as an SDK id", () => {
+    const sub = "default/tenant-7/conv-1:sub:tenant-7/conv-12345";
+    const s = new IdSet([sub, "other-run:sub:tenant-7/conv-12345"]);
+    assert.equal(shortestRef(s, sub), "tenant-7/");
+    assert.equal(resolves(s, "tenant-7/"), sub);
   });
 });
 
