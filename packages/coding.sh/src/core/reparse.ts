@@ -68,6 +68,11 @@
 // short lock holds. Its progress is kept (REFOLD_AFTER), so a cut-short pass
 // resumes; the stamp it finished is kept under REFOLD_CURSOR, so a store last
 // folded by another build is folded again once.
+// A fold that throws tags its session fold:error (core/ingest.ts FoldError).
+// A session whose refold throws anything else (a store error) is reported and
+// skipped, on purpose, so one bad session does not hold up the rest: the pass
+// goes on and still sets REFOLD_CURSOR, so that session keeps its old row
+// until its next event folds it again, or `ingest --rebuild`.
 //
 // Repricing: when the price table changed since stored costs were estimated
 // (core/reprice.ts), a run reprices them, so opening the index does not wait
