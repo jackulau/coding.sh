@@ -761,53 +761,43 @@ prints `-` under TOOLS and `show` says so on its Turns row.
 - A session that wrote a prompt cache of at least one block over at least three turns, but read back fewer tokens than it wrote, is tagged `cache:low`.
 - [`coding.sh usage --cache`](https://coding.sh/docs/cli/usage) reports the hit rate, breaks and their cost per group. `exp compare` adds the `cache breaks / run` and `cache waste / run` metrics.
 
-**Retrieval.** `stats.retrieval` counts the files a session read, the searches it ran, and the files
-it read and then edited. It is absent when the session read and searched nothing.
+**Retrieval.** `stats.retrieval` counts a session's reads and searches, and the files it read and
+then edited. It is absent when the session read and searched nothing.
 
 | Field | Meaning |
 |---|---|
 | `reads` | Tool calls that read a file, failed ones included |
 | `filesRead` | Distinct files those reads named |
-| `editedAfterRead` | Of the files read, those the session edited after it read them, with an edit tool or a shell write. Read precision is `editedAfterRead / filesRead` |
+| `editedAfterRead` | Files read and then edited, by an edit tool or a shell write. Read precision is `editedAfterRead / filesRead` |
 | `searches` | Tool calls that searched for or listed files |
 | `emptySearches` | Searches that found nothing. Absent when none |
-| `web` | Web searches and page fetches (WebSearch, WebFetch). Absent when none |
-| `beforeFirstEdit` | Reads and searches before the session's first edit. A call that did both counts once. Absent when the session edited nothing |
+| `web` | Web searches and page fetches. Absent when none |
+| `beforeFirstEdit` | Calls that read or searched before the first edit. Absent when the session edited nothing |
 
 | Term | What counts |
 |---|---|
-| Read | A read tool (Read, `read_file`, `view`, an editor tool's `view` command), or a shell command that prints a file: `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` and PowerShell's `Get-Content` |
-| Search | Grep, Glob and the other agents' search and list tools, or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `Select-String` and `Get-ChildItem` |
-| Shell line | One call, split on `&&`, `\|\|`, `;` and new lines. `cd`, `pushd` and `Set-Location` move the directory later paths resolve against. A line that reads and searches counts in both. Heredoc bodies are skipped |
-| Pipeline | Counts as its first command: `grep x \| head` is a search, and `cat f \| head` reads `f`. A read piped into a filter (`cat f \| grep x`) is a search. A search that removes or rewrites what it found (`find . -delete`, `rg -l x \| xargs sed -i ...`) is neither |
-| Empty search | A search that succeeded and printed nothing, whose tool said "No matches found" or "No files found", or that exited with status 1 and printed nothing. `grep -q` and a search sent to a file (`> out.txt`) are empty only on status 1. A call that also read is never empty |
-| Cut or stopped | A search that was stopped, or whose output was cut, is never empty. One whose output was not recorded is empty only on status 1 |
-| File | Keyed as `filesChanged` keys it: relative to the session's working directory when inside it. On Windows, `C:\x`, `C:/x` and Git Bash's `/c/x` are one file |
-| No file | A read that failed or was stopped names no file, nor does a path that is a variable or a glob. A shell line that failed keeps its files unless an error line names one ("No such file or directory") |
-| Subagent | Calls count in the session whose events hold them. A Claude Code subagent is its own session (`<session>:sub:<id>`). An agent that records a subagent's calls in its parent's events counts them there |
+| Read | A read tool (Read, `read_file`, `view`), or `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` or `Get-Content` |
+| Search | A search or list tool (Grep, Glob), or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `Select-String` or `Get-ChildItem` |
+| Shell line | One call, split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
+| Pipeline | Counts as its first command, but `cat f \| grep x` is a search. A search that deletes or rewrites what it found (`find . -delete`) is neither |
+| Empty search | A search that printed nothing, said "No matches found" or "No files found", or exited 1 with no output. `grep -q` and `grep x > out` are empty only on status 1. A line that also read is never empty |
+| File | Keyed as in `filesChanged`: relative to the working directory when inside it. `C:\x`, `C:/x` and `/c/x` are one file |
+| Subagent | Its calls count in the session whose events hold them. A Claude Code subagent is its own session |
 
 Limits:
 
-- MCP tools never count, so a file an MCP server read is not a read.
-- A command coding.sh does not know as a reader (`awk`, `xxd`, a script) is not a read.
+- An MCP tool's reads and searches do not count.
+- A command coding.sh does not know as a reader (`awk`, a script) is not a read.
 - `cat a b c` is one read of three files.
-- A `cd` inside a subshell moves the rest of the line too.
-- A `git show` path is taken from the directory the call ran in, not the repository root.
-- Case is kept past the drive letter, so `A.ts` and `a.ts` are two files.
+- A search that was stopped, or whose output was cut, is never empty.
+- A failed or stopped read names no file, nor does a path that is a variable or a glob. A failed shell line keeps its files unless an error names one.
+- A `cd` in a subshell moves the rest of the line too.
+- A `git show` path resolves from the call's directory, not the repository root.
+- Case counts past the drive letter: `A.ts` and `a.ts` are two files.
 
 [`coding.sh show`](cli.md#codingsh-show) prints one line, such as
 `Retrieval  42 reads of 12 files (4 later edited), 18 searches (3 found nothing), first edit after 31 reads and searches`.
-
-[`coding.sh stats --json`](cli.md#codingsh-stats) adds `retrieval`, the totals over the window's
-sessions that match `--where`, each subagent session on its own. It is absent when no session in
-the window read or searched. `--where files>=1` keeps the sessions that changed a file.
-
-| Field | Meaning |
-|---|---|
-| `sessions` | Sessions with `stats.retrieval` |
-| `reads`, `filesRead`, `editedAfterRead`, `searches`, `emptySearches`, `web` | The sessions' fields, summed |
-| `beforeFirstEdit` | Summed over the sessions that edited a file, which `editedSessions` counts |
-| `truncated` | `true` when the store has no query compiler and stopped at 20,000 sessions |
+`coding.sh stats --json` adds totals over a window: see [`GET /api/metrics`](#get-apimetrics).
 
 **Launch and forks.**
 
@@ -1467,6 +1457,18 @@ With `scope=all` and the same range and filters, `totals.sessions`, `toolCalls`,
 
 A bad `bucket`, `by`, `tz`, `groups` or time, `since` not before `until`, more than 400 buckets, or
 a bad `where` answers 400 with the reason: `{"error":"bucket must be day or week","status":400}`.
+
+[`coding.sh stats --json`](cli.md#codingsh-stats) also prints `retrieval`, which this route does
+not: the [`stats.retrieval`](#get-apisessionsid) totals of the window's sessions that match
+`--where`, each subagent session on its own. It is absent when no session in the window read or
+searched. `--where files>=1` keeps the sessions that changed a file.
+
+| Field | Meaning |
+|---|---|
+| `sessions` | Sessions with `stats.retrieval` |
+| `reads`, `filesRead`, `editedAfterRead`, `searches`, `emptySearches`, `web` | The sessions' fields, summed |
+| `beforeFirstEdit` | Summed over the sessions that edited a file, which `editedSessions` counts |
+| `truncated` | `true` when the store has no query compiler and stopped at 20,000 sessions |
 
 ### `GET /api/facets`
 
