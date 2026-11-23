@@ -2,6 +2,7 @@
 // session that wrote each line (src/attribution/blame.ts). Read-only on git.
 import { resolve } from "node:path";
 import { blameFile, parseBlameTarget } from "../../attribution/blame.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { shortSessionId, str, withContext } from "../common.ts";
 import { cliCommand } from "../next-steps.ts";
 import { plural } from "../output.ts";
@@ -44,7 +45,8 @@ export async function run(c: CommandContext): Promise<number> {
         ["SESSION", "AGENT", "MODEL", "LINES"],
         b.sessions.map((s) => [s.id, s.agent, s.model ?? "-", String(s.lines)]),
       );
-      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", b.sessions[0]!.id]));
+      // By a reference that opens it when pasted (core/session-ref.ts): an id can be `latest`, which opens the newest session.
+      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", (await shortener(ctx.index))(b.sessions[0]!.id)]));
     }
     return 0;
   });
