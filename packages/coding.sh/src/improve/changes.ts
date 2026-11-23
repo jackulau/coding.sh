@@ -399,15 +399,16 @@ export const HEADLESS_KINDS = "claude -p, an Agent SDK, codex exec";
 
 /**
  * The reason for a change no counted session ran with (no-sessions-after) while `headless`
- * headless sessions did, left out without --headless: it says so and how to count them, where
- * decide's "No captured session ran" would be false. "Only" when no other session ran since it:
- * none with no git HEAD (noHead) and none with no tool call (after.idle).
+ * headless sessions did, left out without --headless: it says so and how to count them (`option`:
+ * --headless, or the MCP tools' `headless: true`), where decide's "No captured session ran" would
+ * be false. "Only" when no other session ran since it: none with no git HEAD (noHead) and none
+ * with no tool call (after.idle).
  */
-export function headlessReason(e: ChangeEffect, headless: number): string {
-  if (!e.noHead && !e.after.idle) return `Only headless sessions ran with this change: ${headless} (${HEADLESS_KINDS}). --headless counts them.`;
+export function headlessReason(e: ChangeEffect, headless: number, option = "--headless"): string {
+  if (!e.noHead && !e.after.idle) return `Only headless sessions ran with this change: ${headless} (${HEADLESS_KINDS}). ${option} counts them.`;
   const many = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
   const unknown = e.noHead ? ` ${many(e.noHead, "other session")} since it recorded no git HEAD, so ${e.noHead === 1 ? "its" : "their"} version can't be told.` : "";
-  return `${many(headless, "headless session")} ran with this change (${HEADLESS_KINDS}); --headless counts them.${unknown}`;
+  return `${many(headless, "headless session")} ran with this change (${HEADLESS_KINDS}); ${option} counts them.${unknown}`;
 }
 
 export interface EffectsOptions {

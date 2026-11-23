@@ -1,13 +1,15 @@
-// coding.sh tree <session|run>: a whole multi-agent run as one tree — the
-// top-level agent, the subagents it spawned, their subagents, with per-node
-// cost, tokens, duration and tool calls, rolled-up totals and the worst flag
-// for the whole loop. A fan-out of separate agent processes that share a run id
-// (CODING_SH_RUN_ID) groups into one run; pass that id (or --run).
+// coding.sh tree <session|run>: a multi-agent run as one tree — the session,
+// the subagents it spawned, their subagents, with per-node cost, tokens,
+// duration and tool calls, rolled-up totals and the worst flag for the loop.
+// From a subagent, the tree starts at that subagent and one line names the
+// sessions above it; --all starts at the top-level agent. A fan-out of separate
+// agent processes that share a run id (CODING_SH_RUN_ID) groups into one run;
+// pass that id (or --run).
 import { costNote } from "../../core/pricing.ts";
-import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
+import { buildRunTree, buildSessionTree, buildSubtree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, shortSessionId, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -25,12 +27,15 @@ function nodeSummary(s: Session) {
   };
 }
 
+/** A session's role in --json: "root" for a top-level agent (depth 0), else its subagent type. */
+const roleOf = (s: Session, depth: number): string => (depth === 0 ? "root" : (s.parent?.type ?? "subagent"));
+
 function nodeJson(n: TreeNode): Record<string, unknown> {
   const s = n.session;
   return {
     ...sessionJson(s),
     depth: n.depth,
-    role: n.depth === 0 ? "root" : (s.parent?.type ?? "subagent"),
+    role: roleOf(s, n.depth),
     children: n.children.map(nodeJson),
   };
 }
@@ -39,8 +44,9 @@ function nodeJson(n: TreeNode): Record<string, unknown> {
 function treeJson(t: Tree, offset: number, limit: number) {
   const worst = worstNode(t.roots);
   const page = pageTree(t.roots, offset, limit);
-  const doc: Record<string, unknown> = {
-    ...(t.runId ? { runId: t.runId } : {}),
+  const doc: Record<string, unknown> = { ...(t.runId ? { runId: t.runId } : {}) };
+  if (t.ancestors?.length) doc.ancestors = t.ancestors.map((a, depth) => ({ id: a.id, agent: a.agent, role: roleOf(a, depth) }));
+  Object.assign(doc, {
     totals: {
       sessions: t.totals.sessions,
       usage: tidyNumbers(t.totals.usage),
@@ -50,20 +56,20 @@ function treeJson(t: Tree, offset: number, limit: number) {
       durationMs: t.totals.wallMs !== undefined ? Math.round(t.totals.wallMs) : null,
       flags: t.totals.flags,
     },
-    worst: worst ? { id: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,
+    worst: worst ? { id: worst.session.id, role: roleOf(worst.session, worst.depth), flags: worstFirst(worst.session.flags) } : null,
     tree: page.roots.map(nodeJson),
-  };
+  });
   if (page.next !== undefined) Object.assign(doc, { nextCursor: String(page.next), truncated: true });
   return doc;
 }
 
-/** "└ 9f1c2e  reviewer  sonnet  12s  18 tools  $0.03  [premature-completion]  title" */
-function printNode(out: Output, n: TreeNode, isRoot: boolean): void {
+/** "└ 9f1c2e  reviewer  sonnet  12s  18 tools  $0.03  [premature-completion]  title", indented from the depth `base` of the printed root. */
+function printNode(out: Output, n: TreeNode, isRoot: boolean, base: number): void {
   const s = n.session;
   const { costUsd, durationMs, toolCalls, toolErrors } = nodeSummary(s);
-  const indent = "  ".repeat(n.depth);
+  const indent = "  ".repeat(n.depth - base);
   const branch = isRoot ? "" : "└ ";
-  const role = isRoot ? s.agent : (s.parent?.type ?? s.agent);
+  const role = n.depth === 0 ? s.agent : (s.parent?.type ?? s.agent);
   const parts = [
     s.id,
     out.style(role, "bold"),
@@ -76,13 +82,18 @@ function printNode(out: Output, n: TreeNode, isRoot: boolean): void {
   const flagText = flags.length ? out.style(`[${flags.join(" ")}]`, "yellow") : "";
   const title = oneLine(clean(s.title ?? ""), 48);
   out.print(`${indent}${branch}${parts.join("  ")}${flagText ? `  ${flagText}` : ""}${title ? `  ${out.style(title, "faint")}` : ""}`);
-  for (const c of n.children) printNode(out, c, false);
+  for (const c of n.children) printNode(out, c, false, base);
 }
+
+/** "in: 1a2b3c4d claude-code › 5e6f7a8b Explore": the sessions above a subtree, from the top, by short id and role. */
+const ancestorsLine = (ancestors: readonly Session[]): string =>
+  `in: ${ancestors.map((a, depth) => `${shortSessionId(a.id)} ${depth === 0 ? a.agent : (a.parent?.type ?? "subagent")}`).join(" › ")}`;
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const arg = c.positionals[0]!;
   const forceRun = c.flags.run === true;
+  const whole = c.flags.all === true;
   const limit = positiveInt(c.flags.limit, "limit") ?? TREE_PAGE_NODES;
   const cursor = typeof c.flags.cursor === "string" ? c.flags.cursor : undefined;
   if (cursor !== undefined && !/^\d{1,9}$/.test(cursor)) throw new UsageError(`--cursor must be the nextCursor of the last page, got ${JSON.stringify(cursor)}`, { reason: "invalid_argument" });
@@ -95,7 +106,8 @@ export async function run(c: CommandContext): Promise<number> {
       // Try the argument as a session first; fall back to a run id.
       try {
         const s = await resolveSession(ctx, arg);
-        tree = await buildSessionTree(ctx.index, s.id);
+        // The tree under the session; --all, the whole tree from its top-level agent.
+        tree = whole ? await buildSessionTree(ctx.index, s.id) : await buildSubtree(ctx.index, s.id);
         label = tree && tree.roots[0] ? treeLabel(tree.roots[0]!.session) : s.id;
       } catch (e) {
         tree = await buildRunTree(ctx.index, arg);
@@ -138,7 +150,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (t.flags.length) out.print(`  ${out.style(`flags across the loop: ${t.flags.join(", ")}`, "yellow")}`);
     out.print();
 
-    for (const r of tree.roots) printNode(out, r, true);
+    if (tree.ancestors?.length) out.print(out.style(ancestorsLine(tree.ancestors), "faint"));
+    for (const r of tree.roots) printNode(out, r, true, r.depth);
 
     const worst = worstNode(tree.roots);
     if (worst) {
@@ -149,6 +162,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.print(`  ${which} ${w.id}: ${worstFirst(w.flags).join(", ")}`);
       out.next("Open it", `coding.sh show ${w.id}`);
     }
+    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${tree.roots[0]!.session.id} --all`);
     return 0;
   }, { create: false });
 }

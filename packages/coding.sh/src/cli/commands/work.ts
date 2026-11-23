@@ -138,7 +138,7 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const badge = i.probablyClosed ? `${out.style("probably closed", "yellow")}  ` : "";
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
-  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
+  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repoMain ?? i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
   if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
@@ -150,7 +150,8 @@ export const prStateText = (state: PullRequestRef["state"]): string => (state ==
 
 /**
  * How a PR is named next to an item: "#12" for a PR of the item's own repo, "owner/name#12" for one of
- * another repo. A PR repo is the item's own when its name is the item folder's name. When none is (a
+ * another repo. A PR repo is the item's own when its name is the item folder's name (in a linked worktree,
+ * the main checkout's folder: callers pass WorkItem.repoMain first). When none is (a
  * clone can sit in a folder of another name), the PRs are its own while they all share one repo and the
  * sessions opened, merged or closed them: a PR only linked, such as one read for research, is not.
  */
@@ -194,15 +195,20 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 // ------------------------------------------------------------ one item
 
 /**
+ * What matchItem finds: the item, or for a prefix several items' ids share the newest MAX_CANDIDATES
+ * of them and whether there are more, or nothing.
+ */
+export type ItemMatch = { item: WorkItem; sessions: Session[]; shortId: (id: string) => string } | { ambiguous: WorkItem[]; more: boolean } | undefined;
+
+/**
  * The item an id names: an item id (w + 6 hex), or a prefix of at least MIN_ID_PREFIX characters that
  * one item's id in the window starts with (matched as session ids are, core/session-ref.ts matchRef),
- * else a session in one, by any reference `show` takes (cli/common.ts resolveSession: a prefix, a
- * subagent id, latest). Unknown: exit 1; an ambiguous prefix lists its candidates. `shortId` is how the
- * item's next step names a session.
+ * else a session in one, by any reference `show` takes (`resolve`, which returns undefined for none:
+ * a prefix, a subagent id, latest). `shortId` is how the item's next step names a session. `work show`
+ * and the MCP work tool's `id` find an item this way, and each words its own errors.
  */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
-  const w = windowOf(c);
-  const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
+export async function matchItem(ctx: Context, ref: string, since: number, overlay: WorkOverlay, now: number | undefined, resolve: (ref: string) => Promise<Session | undefined>): Promise<ItemMatch> {
+  const { sessions } = await loadWorkSessions(ctx.index, { since });
   const shortId = await shortener(ctx.index);
   const queue = (ss: Session[]) => buildWorkQueue(ss, { all: true, overlay, now, shortId }).items;
   // A session id names the item it is in before a run item it started (whose rootId it is).
@@ -212,16 +218,14 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
   const m = item ? undefined : matchRef(new IdSet(items.map((i) => i.id)), ref);
   if (m && "ambiguous" in m) {
     const ids = new Set(m.ambiguous);
-    throw ambiguousItemError(ref, items.filter((i) => ids.has(i.id)), w);
+    const all = items.filter((i) => ids.has(i.id)).sort((x, y) => y.startedAt - x.startedAt);
+    return { ambiguous: all.slice(0, MAX_CANDIDATES), more: all.length > MAX_CANDIDATES };
   }
   if (m) item = items.find((i) => i.id === m.id);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
     // Any other reference to a session: its full id, then the item it is in. A session outside the
     // window is added with its stored parents, and the sessions grouped again.
-    const s = await resolveSession(ctx, ref).catch((e: unknown) => {
-      if (e instanceof CliError && e.reason === "not_found") return undefined;
-      throw e;
-    });
+    const s = await resolve(ref);
     if (s) {
       item = pick(items, s.id);
       const have = new Set(sessions.map((x) => x.id));
@@ -234,23 +238,35 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
       item ??= pick(queue(sessions), s.id);
     }
   }
-  if (!item) {
+  return item && { item, sessions, shortId };
+}
+
+/** matchItem in the window of --since. Unknown: exit 1; an ambiguous prefix lists its candidates. */
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
+  const w = windowOf(c);
+  const found = await matchItem(ctx, ref, w.since, overlay, now, (r) =>
+    resolveSession(ctx, r).catch((e: unknown) => {
+      if (e instanceof CliError && e.reason === "not_found") return undefined;
+      throw e;
+    }),
+  );
+  if (found && "ambiguous" in found) throw ambiguousItemError(ref, found, w);
+  if (!found) {
     // A reference too short to look up says so, as `show` does.
     const short = ref.length < MIN_ID_PREFIX && ref !== "latest" && ref !== "last" ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
     throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
-  return { item, sessions, shortId };
+  return found;
 }
 
 /** A prefix several items' ids share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
-function ambiguousItemError(ref: string, items: WorkItem[], w: Window): CliError {
-  const shown = [...items].sort((x, y) => y.startedAt - x.startedAt).slice(0, MAX_CANDIDATES);
+function ambiguousItemError(ref: string, { ambiguous: shown, more }: { ambiguous: WorkItem[]; more: boolean }, w: Window): CliError {
   const lines = shown.map((i) => `  ${i.id}  ${i.agent}  ${ago(i.startedAt)}  ${oneLine(i.title ?? "", 50)}`.trimEnd());
-  if (items.length > shown.length) lines.push(`  …and more`);
+  if (more) lines.push(`  …and more`);
   return new CliError(`Work item id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
     reason: "ambiguous",
     next: ["Pass one of these ids, more of the id, or list work items:", `coding.sh work --all --since ${w.sinceText}`],
-    data: { candidates: shown.map((i) => ({ id: i.id, agent: i.agent, startedAt: new Date(i.startedAt).toISOString(), title: i.title ?? null })), more: items.length > shown.length },
+    data: { candidates: shown.map((i) => ({ id: i.id, agent: i.agent, startedAt: new Date(i.startedAt).toISOString(), title: i.title ?? null })), more },
   });
 }
 
@@ -270,7 +286,8 @@ async function show(c: CommandContext): Promise<number> {
     const overlay = readOverlay(ctx.paths.work);
     const { item, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
-    const files = new Set(await workFiles(ctx.index, item, sessions));
+    // As of the last ingest when the index is old, as the list judges the item: a review item's reason counts from then.
+    const files = new Set(await workFiles(ctx.index, item, sessions, stale?.at));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
@@ -322,7 +339,7 @@ async function show(c: CommandContext): Promise<number> {
     }
     if (item.prs) {
       const prs = item.prs;
-      const ref = (p: PullRequestRef) => prRef(p, prs, item.repo ?? item.cwd);
+      const ref = (p: PullRequestRef) => prRef(p, prs, item.repoMain ?? item.repo ?? item.cwd);
       out.row(prs.length === 1 ? "PR" : "PRs", prs.map((p) => `${ref(p)} ${prStateText(p.state)}`).join(", "), "none", true);
       for (const p of prs) out.print(`    ${ref(p)}  ${prStateText(p.state)}  ${p.url ?? "(no URL: the sessions named it by number only)"}  ${out.style(ago(p.at), "faint")}`);
     }

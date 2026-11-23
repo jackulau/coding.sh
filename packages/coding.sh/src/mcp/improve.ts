@@ -8,7 +8,7 @@ import type { Context } from "../core/context.ts";
 import { repoRoot } from "../core/git.ts";
 import { parseSince } from "../cli/args.ts";
 import type { ChangeEffect, GroupStats } from "../improve/changes.ts";
-import { findChanges, findIssues, isHeadless, modelProvider, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
+import { findChanges, findIssues, headlessAfter, isHeadless, modelProvider, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf, withHeadless, type ChangeOptions } from "../improve/report.ts";
 import { clip, iso, matchesPlace, pathPlace } from "./data.ts";
 import { ToolError } from "./protocol.ts";
 
@@ -74,9 +74,10 @@ function flaggedList(g: GroupStats, max: number): Obj {
 /**
  * One change, compact: what changed, the verdict and why, and the counts behind it.
  * `full` adds the lines, the before/after counts with the sessions still flagged
- * after it (up to `flagged`), and the new lines' uptake.
+ * after it (up to `flagged`), and the new lines' uptake. `headlessLeftOut`: the
+ * headless sessions that ran after a change no counted session ran with.
  */
-export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: number } = {}): Obj {
+export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: number; headlessLeftOut?: number | undefined } = {}): Obj {
   const c = e.change;
   return {
     commit: c.short,
@@ -85,6 +86,7 @@ export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: nu
     files: c.files.map((f) => f.path),
     verdict: e.verdict,
     reason: e.reason,
+    ...(o.headlessLeftOut ? { headlessLeftOut: o.headlessLeftOut } : {}),
     ...(o.full
       ? {
           added: c.added.slice(0, 8).map((l) => clip(l, 200)),
@@ -98,6 +100,19 @@ export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: nu
         }
       : {}),
   };
+}
+
+/** What a change's reason says counts the headless sessions it leaves out: the tools' argument, not the CLI's --headless. */
+const HEADLESS_ARG = "headless: true";
+
+/**
+ * The changes, compact (changeSummary). One no counted session ran with while headless
+ * sessions did says so, how many (headlessLeftOut) and that `headless: true` counts them,
+ * where "No captured session ran" would be false.
+ */
+async function summaries(ctx: Context, root: string, opts: ChangeOptions, changes: readonly ChangeEffect[], o: { full?: boolean; flagged?: number } = {}): Promise<Obj[]> {
+  const leftOut = await headlessAfter(ctx.index, root, opts, changes);
+  return withHeadless(changes, leftOut, HEADLESS_ARG).map((e) => changeSummary(e, { ...o, headlessLeftOut: leftOut.get(e.change.commit) }));
 }
 
 /** The improve tool: ranked issues with the line that fixes each, then the recent harness changes' verdicts. */
@@ -114,7 +129,8 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
   const sessions = a.headless ? all : all.filter((s) => !isHeadless(s));
   const testCommand = await testCommandOf(p.root);
   const issues = await findIssues(ctx.index, sessions, { ...(p.root ? { repoRoot: p.root } : {}), ...(testCommand ? { testCommand } : {}) });
-  const changes = p.root ? await findChanges(ctx.index, p.root, { since: c.now - 30 * DAY, limit: 3, ...(agents.length ? { agents } : {}), ...(a.headless ? { headless: true } : {}) }) : [];
+  const changeOpts: ChangeOptions = { since: c.now - 30 * DAY, limit: 3, ...(agents.length ? { agents } : {}), headless: a.headless === true };
+  const changes = p.root ? await summaries(ctx, p.root, changeOpts, await findChanges(ctx.index, p.root, changeOpts)) : [];
   const provider = modelProvider(c.env);
   const limit = a.limit ?? 5;
   const top = issues.slice(0, limit);
@@ -140,7 +156,7 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
       };
     }),
     ...(issues.length > top.length ? { more: issues.length - top.length } : {}),
-    changes: changes.map((e) => changeSummary(e)),
+    changes,
     ...(p.root ? {} : { note: "Not in a git repo: pass repo to see whether its AGENTS.md or CLAUDE.md changes helped." }),
   };
 }
@@ -155,13 +171,14 @@ export async function harnessChangesReport(ctx: Context, a: ImproveArgs & { comm
     throw new ToolError(`repo ${p.root} ${why}: harness_changes reads a repo's git history. Pass a git repo's path or a captured repo's folder name (sessions_list shows them).`);
   }
   const from = since(a.since, a.commit ? "365d" : "30d", c.now);
-  const all = await findChanges(ctx.index, p.root, { since: from, limit: a.commit ? 50 : (a.limit ?? 5), ...(a.agent ? { agents: [a.agent] } : {}) });
+  const opts: ChangeOptions = { since: from, limit: a.commit ? 50 : (a.limit ?? 5), ...(a.agent ? { agents: [a.agent] } : {}), headless: a.headless === true };
+  const all = await findChanges(ctx.index, p.root, opts);
   const commit = a.commit?.trim().toLowerCase();
   const picked = commit ? all.filter((e) => e.change.commit.startsWith(commit)) : all;
   if (commit && !picked.length) throw new ToolError(`No harness change ${JSON.stringify(a.commit)} in ${p.root} since ${iso(from)}. Call harness_changes without commit to list them.`);
   return {
     repo: p.root,
-    changes: picked.map((e) => changeSummary(e, { full: true, flagged: commit ? FLAGGED_COMMIT : FLAGGED_LIST })),
+    changes: await summaries(ctx, p.root, opts, picked, { full: true, flagged: commit ? FLAGGED_COMMIT : FLAGGED_LIST }),
     ...(picked.length ? {} : { note: "No commits changed AGENTS.md, CLAUDE.md, GEMINI.md, a rule or a skill in this window." }),
   };
 }

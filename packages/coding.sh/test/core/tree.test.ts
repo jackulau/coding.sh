@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { buildRunTree, buildSessionTree, rootOf, subagentsOf, treeTotals, worstFirst, worstNode } from "../../src/core/tree.ts";
+import { buildRunTree, buildSessionTree, buildSubtree, rootOf, subagentsOf, treeTotals, worstFirst, worstNode } from "../../src/core/tree.ts";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 
 const T0 = Date.UTC(2026, 10, 8, 9);
@@ -90,6 +90,33 @@ describe("a parent session and its subagents are one tree", () => {
     const worst = worstNode(fromRoot.roots);
     assert.equal(worst?.session.id, "root:sub:a2", "the flagged subagent is the one to fix first");
     assert.deepEqual(worstFirst(worst!.session.flags), ["premature-completion"]);
+  });
+
+  // `tree <subagent>` printed the whole run of its top-level agent: 688 lines for one subagent.
+  it("buildSubtree starts at the session asked for and names the sessions above it", async () => {
+    const index = new MemoryIndexStore();
+    const root = session({ id: "root", dt: 0, dur: 100, usage: { inputTokens: 1000, outputTokens: 200, costUsd: 0.1 } });
+    const sub1 = session({ id: "root:sub:a1", dt: 5, dur: 30, startPayload: { source: "subagent", parentSessionId: "root", subagentId: "a1", subagentType: "reviewer" } });
+    const sub2 = session({ id: "root:sub:a2", dt: 40, dur: 50, startPayload: { source: "subagent", parentSessionId: "root", subagentId: "a2", subagentType: "fixer" }, usage: { inputTokens: 600, outputTokens: 120, costUsd: 0.2 } });
+    const grand = session({ id: "root:sub:a2:sub:b1", dt: 45, dur: 20, startPayload: { source: "subagent", parentSessionId: "root:sub:a2", subagentId: "b1", subagentType: "searcher" } });
+    for (const s of [root, sub1, sub2, grand]) await index.upsertSession(s);
+
+    const fixer = await buildSubtree(index, "root:sub:a2");
+    assert.ok(fixer);
+    assert.deepEqual(fixer.flat.map((x) => [x.session.id, x.depth]), [["root:sub:a2", 1], ["root:sub:a2:sub:b1", 2]], "depths count from the top-level agent");
+    assert.deepEqual(fixer.ancestors?.map((a) => a.id), ["root"]);
+    assert.equal(fixer.totals.sessions, 2);
+    assert.ok(Math.abs((fixer.totals.usage.costUsd ?? 0) - (0.2 + 0.01)) < 1e-9, "totals cover the subtree only");
+
+    const leaf = await buildSubtree(index, "root:sub:a2:sub:b1");
+    assert.deepEqual(leaf?.ancestors?.map((a) => a.id), ["root", "root:sub:a2"], "the top-level agent first");
+    assert.deepEqual(leaf?.flat.map((x) => [x.session.id, x.depth]), [["root:sub:a2:sub:b1", 2]]);
+
+    // From a top-level session: the tree buildSessionTree builds, with no ancestors.
+    const top = await buildSubtree(index, "root");
+    assert.deepEqual(top, await buildSessionTree(index, "root"));
+    assert.equal("ancestors" in top!, false);
+    assert.equal(await buildSubtree(index, "no-such-session"), undefined);
   });
 
   // A read of the newest N children counted N and dropped the first subagents.
@@ -176,6 +203,8 @@ describe("guards", () => {
     assert.ok(root === "cyc-a" || root === "cyc-b");
     const tree = await buildSessionTree(index, "cyc-a");
     assert.ok(tree && tree.totals.sessions <= 2, "the cycle is broken, every session counted once");
+    const sub = await buildSubtree(index, "cyc-a");
+    assert.deepEqual([sub?.ancestors?.map((a) => a.id), sub?.flat.map((x) => x.session.id)], [["cyc-b"], ["cyc-a"]], "a session above is not listed below too");
   });
 
   it("treeTotals over an empty forest is zeroed", () => {

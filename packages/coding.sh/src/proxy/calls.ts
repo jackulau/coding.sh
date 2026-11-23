@@ -3,6 +3,7 @@
 // And what changed between two calls, in the order the provider's prompt cache
 // reads a request (tools, then system, then messages), so a cache miss comes
 // with its cause.
+import { AmbiguousRef, findSessionRef } from "../core/session-ref.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { getMessages, isStoredMessages } from "./blocks.ts";
@@ -71,7 +72,8 @@ export async function previousCall(index: IndexStore, e: AgentEvent): Promise<Ag
  * The llm.call a reference names: an event id, a unique id prefix (6+
  * characters), or `<session>#<n>`: the n-th model call of a session (1-based;
  * `#-1` is the last; counting proxy-logged calls only when the session has
- * any). The session part may be an id prefix, or `latest`.
+ * any). The session part is any reference `show` takes for a session (an id,
+ * a prefix, the alias printed for a long id: findSessionRef), or `latest`.
  */
 export async function resolveCall(index: IndexStore, ref: string): Promise<AgentEvent> {
   const hash = ref.lastIndexOf("#");
@@ -79,11 +81,15 @@ export async function resolveCall(index: IndexStore, ref: string): Promise<Agent
     const sref = ref.slice(0, hash);
     const n = Number(ref.slice(hash + 1));
     if (!Number.isInteger(n) || n === 0) throw new CallRefError(`${JSON.stringify(ref)}: after # comes a call number, 1 for the first, -1 for the last`, "not_found");
-    let sid = sref === "latest" || sref === "last" ? (await index.listSessions({ limit: 1, parentSessionId: null }))[0]?.id : (await index.getSession(sref))?.id;
-    if (!sid && sref.length >= 4) {
-      const ids = index.sessionIdsByPrefix ? await index.sessionIdsByPrefix(sref, 2) : (await index.listSessions()).map((s) => s.id).filter((x) => x.startsWith(sref)).slice(0, 2);
-      if (ids.length > 1) throw new CallRefError(`Session id prefix ${JSON.stringify(sref)} is ambiguous`, "ambiguous", ids);
-      sid = ids[0];
+    let sid: string | undefined;
+    if (sref === "latest" || sref === "last") sid = (await index.listSessions({ limit: 1, parentSessionId: null }))[0]?.id;
+    else {
+      try {
+        sid = (await findSessionRef(index, sref))?.id;
+      } catch (err) {
+        if (err instanceof AmbiguousRef) throw new CallRefError(err.message, "ambiguous", err.candidates.map((c) => c.id));
+        throw err;
+      }
     }
     if (!sid) throw new CallRefError(`Can't find session ${JSON.stringify(sref)}`, "not_found");
     const calls = await sessionCalls(index, sid);
