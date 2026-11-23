@@ -950,6 +950,23 @@ describe("T3 store copies", () => {
       rmSync(wal, { recursive: true, force: true });
     }
   });
+
+  it("threads a pass out of time left are read by the next pass, though T3 Code wrote nothing since", async () => {
+    const full = await run();
+    assert.deepEqual(full.errors, []);
+    const index = new MemoryIndexStore();
+    const cenv = { ...process.env };
+    const late = () => backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv, deadline: Date.now() - 1 });
+    const first = await late();
+    assert.deepEqual(first.errors, []);
+    assert.ok(first.pendingFiles > 0 && first.events < full.events, `${first.events} of ${full.events} events, ${first.pendingFiles} pending`);
+    const rest = await run(index);
+    assert.deepEqual([rest.errors, rest.pendingFiles], [[], 0]);
+    assert.equal(first.events + rest.events, full.events);
+    // Every thread read: the store's fingerprint stands for them, so a pass out of time has nothing left to do.
+    const idle = await late();
+    assert.deepEqual([idle.events, idle.pendingFiles, idle.errors], [0, 0, []]);
+  });
 });
 
 describe("T3 provider instances", () => {

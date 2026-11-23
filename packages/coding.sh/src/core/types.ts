@@ -764,6 +764,13 @@ export interface BackfillFile {
   path: string;
   size: number;
   mtimeMs: number;
+  /**
+   * A fingerprint of a whole store, asked about before the files in it (T3 Code's database): when it
+   * is unchanged the walk skips them all. It is not a file read, and its cursors are set only when the
+   * walk reads every changed file after it, so a file left for lateness, a stop or a failure is looked
+   * at again next run.
+   */
+  covers?: true;
 }
 
 export interface BackfillOpts {
