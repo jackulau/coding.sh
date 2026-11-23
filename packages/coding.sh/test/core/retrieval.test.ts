@@ -372,6 +372,10 @@ describe("Session.stats.retrieval", () => {
     ]) assert.equal(failed("cat a.ts b.ts", error), 1, error);
     // Two paths with one base name: an error that names it drops both.
     assert.equal(failed("cat src/a.ts lib/a.ts b.ts", "cat: lib/a.ts: No such file or directory"), 1);
+    // A name with a character that is not a file name character inside it is named whole too.
+    assert.equal(failed("cat c++.ts a.ts", "cat: c++.ts: No such file or directory"), 1);
+    assert.equal(failed("cat icon@2x.png a.ts", "cat: icon@2x.png: No such file or directory"), 1);
+    assert.equal(failed("cat 'my notes.md' a.ts", "cat: 'my notes.md': No such file or directory"), 1);
   });
 
   it("a failed `cat` of 5,000 files, its error naming each missing one, is folded in linear time", () => {
@@ -394,6 +398,14 @@ describe("Session.stats.retrieval", () => {
     const crafted = bash(`cat ${names.join(" ")}`, { ok: false, output: `Exit code 1\ncat: x${":b".repeat(20_000)}: No such file or directory` });
     assertCpuUnder("names held only inside longer names", () => buildSession(crafted));
     assert.equal(buildSession(crafted).stats.retrieval?.filesRead, 300);
+  });
+
+  it("a failed shell line is folded in linear time when its error names many file names whole, each inside the next", () => {
+    // `a`, `a+a`, `a+a+a`, ...: `+` is not a file name character, so the error line names every name whole at each `a` past its length.
+    const names = Array.from({ length: 300 }, (_, j) => `${"a+".repeat(j)}a`);
+    const crafted = bash(`cat ${names.join(" ")}`, { ok: false, output: `Exit code 1\ncat: ${"a+".repeat(79_999)}a: No such file or directory` });
+    assertCpuUnder("names named whole inside longer names", () => buildSession(crafted));
+    assert.equal(buildSession(crafted).stats.retrieval?.filesRead, 0);
   });
 
   it("an empty search: no output, No matches found, No files found, or exit 1 with nothing printed", () => {
