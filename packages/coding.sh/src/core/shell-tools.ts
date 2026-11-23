@@ -7,8 +7,10 @@
 //
 // No imports: core/memory-events.ts reads COMMAND_KEYS, and the stores load that file.
 
-/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`; Droid's `Execute` takes `{command}`. */
-const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command", "execute"]);
+/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`. */
+const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command"]);
+/** Tool names too generic to be a shell by name: a shell call only with a command line. */
+const SHELL_IF_COMMAND: ReadonlySet<string> = new Set(["exec", "execute"]);
 
 /** Where a shell call's input holds its command line, in the order they are read. Antigravity's `run_command` names it `CommandLine`. */
 export const COMMAND_KEYS = ["command", "cmd", "script", "commandLine", "CommandLine"] as const;
@@ -21,12 +23,13 @@ export function isShellTool(tool: string): boolean {
 }
 
 /**
- * A shell call: a shell tool, or an `exec` call with a command line (Devin's shell tool,
- * `{command, shell_id}`). The name `exec` alone is too generic to count: a Codex code-mode cell is
- * an `exec` call whose input is JavaScript.
+ * A shell call: a shell tool, or an `exec` or `execute` call with a command line (Devin's shell
+ * tool, `{command, shell_id}`; Droid's `Execute`, `{command}`). Those names alone are too generic
+ * to count: a Codex code-mode cell is an `exec` call whose input is JavaScript, and an `execute`
+ * tool may run a query.
  */
 export function isShellCall(tool: string, input: unknown): boolean {
-  return isShellTool(tool) || (tool.toLowerCase() === "exec" && isRecord(input) && typeof input.command === "string");
+  return isShellTool(tool) || (SHELL_IF_COMMAND.has(tool.toLowerCase()) && isRecord(input) && typeof input.command === "string");
 }
 
 /** The first command key of a tool input that holds a string or an argv array of strings, as written. */

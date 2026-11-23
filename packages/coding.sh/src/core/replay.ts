@@ -211,10 +211,10 @@ const READ = new Set(["read", "read_file", "readfile", "view", "view_file", "ope
 const NOTEBOOK = new Set(["notebookedit", "notebook_edit", "edit_notebook"]);
 /**
  * Shell steps beyond the shell tools (core/shell-tools.ts): Pi's `user_bash` (a command the person
- * typed), `exec` (Devin's shell; a Codex code-mode cell is a wrapper, which replay skips) and
- * `run_in_terminal`.
+ * typed), `exec` (Devin's shell; a Codex code-mode cell is a wrapper, which replay skips), `execute`
+ * (Droid's shell) and `run_in_terminal`.
  */
-const REPLAY_SHELLS = new Set(["user_bash", "exec", "run_in_terminal"]);
+const REPLAY_SHELLS = new Set(["user_bash", "exec", "execute", "run_in_terminal"]);
 
 type Family = "write" | "edit" | "multi" | "patch" | "delete" | "read" | "notebook" | "shell" | "other";
 const EDITS = new Set<Family>(["write", "edit", "multi", "patch", "delete"]);

@@ -58,6 +58,7 @@ describe("isReadOnlyToolStart", () => {
     ["exec_command", { cmd: "wc -l a.ts" }],
     ["exec", { command: "cat a.ts", shell_id: "default" }],
     ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo" }],
+    ["Execute", { command: "cat a.ts" }],
   ];
   const no: [string, unknown][] = [
     ["Edit", { file_path: "a.ts" }],
@@ -115,6 +116,11 @@ describe("duplicate fetches", () => {
     assert.equal(dups([...agy("cat a.ts", "A"), ...agy("cat  a.ts", "A")]), 1);
     assert.equal(dups([...call("Grep", { pattern: "foo" }), ...agy("cat a.ts"), ...call("Grep", { pattern: "foo" })]), 1, "a read-only command keeps it");
     assert.equal(dups([...call("Grep", { pattern: "foo" }), ...agy("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...agy("ls"), ...call("Grep", { pattern: "foo" })]), 1, "a listing keeps it");
+    // Droid's `Execute` {command} is a shell; an `execute` call with no command line (a query tool) is not.
+    const droid = (command: string) => call("Execute", { command });
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...droid("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...call("execute", { query: "SELECT 1" }), ...call("Grep", { pattern: "foo" })]), 1, "a query keeps it");
   });
 
   it("a subagent's read is not a repeat of its parent's; a compaction clears the context", () => {

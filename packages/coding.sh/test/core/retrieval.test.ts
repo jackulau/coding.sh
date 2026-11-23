@@ -93,7 +93,7 @@ describe("classifyRetrieval", () => {
     ]);
   });
 
-  it("a search that prints counts (`grep -c`, `| wc -l`) is marked so; a read piped into `wc` stays a read", () => {
+  it("a search whose pipeline ends in a count (`grep -c`, `| wc -l`) is marked so; a read piped into `wc` stays a read", () => {
     bashKinds([
       ["grep -c foo a.ts", "search (count)"],
       ["grep -rc foo src", "search (count)"],
@@ -109,6 +109,14 @@ describe("classifyRetrieval", () => {
       ["grep -c foo a.ts; ls", "search"],
       ["findstr /c:foo a.ts", "search"],
       ["cat a.ts | wc -l", "read a.ts"],
+      // The pipeline's last command decides: a later grep counts only with `-c`, and any other command reshapes the counts.
+      ["grep -rn foo src | grep -c bar", "search (count)"],
+      ["grep -rn foo src | head -5 | wc -l", "search (count)"],
+      ["grep -c foo a.ts b.ts | tail -1", "search"],
+      ["grep -c foo a.ts b.ts | grep ':0$'", "search"],
+      // ripgrep's `-r` takes a value (`-rc` replaces each match with "c"); ag's `-r` recurses.
+      ["rg -rc foo src", "search"],
+      ["ag -rc foo src", "search (count)"],
     ]);
   });
 
@@ -386,6 +394,8 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rc foo src", { ok: false, output: "Exit code 1\nsrc/a.ts:0\nsrc/b.ts:0" })), 1);
     assert.equal(empty(bash("grep -rn foo src | wc -l", { output: '{"stdout":"0\\n","stderr":"","interrupted":false,"isImage":false}' })), 1);
     assert.equal(empty(bash("ls src | wc -l", { output: "       0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | wc", { output: "      0       0       0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | grep -c bar", { ok: false, output: "Exit code 1\n0" })), 1);
     // The lines a literal `echo` in the command prints are not what the search found.
     assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "no matches" })), 1);
     assert.equal(empty(bash('echo "--- src ---"; grep -rn foo src', { ok: false, output: "Exit code 1\n--- src ---" })), 1);
@@ -418,6 +428,9 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rn foo src | wc -l", { output: "3" })), 0);
     assert.equal(empty(bash("grep 0 nums.txt", { output: "0" })), 0);
     assert.equal(empty(bash("grep -c foo a.ts b.ts", { ok: false, output: "Exit code 2\na.ts:0\ngrep: b.ts: No such file or directory" })), 0);
+    // Counts a later command reshaped: one file's (`| tail -1`), or the files that counted none.
+    assert.equal(empty(bash("grep -c foo a.ts b.ts | tail -1", { output: "b.ts:0" })), 0);
+    assert.equal(empty(bash("grep -c foo a.ts b.ts | grep ':0$'", { output: "b.ts:0" })), 0);
     // A match or an error beside what an `echo` printed, and a quiet search, whose status says nothing here.
     assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "src/a.ts:3: foo" })), 0);
     assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "grep: src: No such file or directory\nno matches" })), 0);

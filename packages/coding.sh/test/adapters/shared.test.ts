@@ -21,6 +21,7 @@ import {
   parsePatch,
   parseTestOutput,
   isShellCall,
+  isShellTool,
   PROBE_TIMEOUT_MS,
   probeVersion,
   removeTomlBlock,
@@ -165,6 +166,10 @@ describe("file-change derivation", () => {
     // Antigravity's shell is `run_command` {CommandLine, Cwd}; Droid's is `Execute` {command}.
     assert.equal(shellCommandOf("run_command", { CommandLine: "npm test", Cwd: "/work/demo" }), "npm test");
     assert.equal(shellCommandOf("Execute", { command: "pytest -q" }), "pytest -q");
+    // An `execute` with no command line is another tool, such as one that runs a query.
+    assert.equal(isShellCall("execute", { query: "SELECT 1" }), false);
+    assert.equal(shellCommandOf("execute", { query: "SELECT 1" }), undefined);
+    assert.equal(isShellTool("Execute"), false);
   });
 });
 
