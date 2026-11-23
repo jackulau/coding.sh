@@ -38,18 +38,23 @@ import type { Context } from "../../core/context.ts";
 /** By id or unique name. */
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
 
+/** Text that ends where a package runner names its package: npx, pnpx, bunx, bun x, npm exec, pnpm dlx and the like (flags included), -p or --package. */
+const PACKAGE_RUNNER = /(?:\b(?:npx|pnpx|bunx|x|exec|dlx)(?: +-{1,2}[\w-]+(?:=\S*)?)* |(?<![\w-])-p |--package[= ])$/;
+
 /**
  * A note or message that names coding.sh commands mid-sentence ("…, then coding.sh eval validate
  * <task>"), with each command named as the user's shell runs it: nextStepBin (`codingsh` in
  * PowerShell or cmd, the npx form under npx), and `run "--"` where PowerShell would drop a bare
  * `--`. out.next and out.command rewrite only a leading `coding.sh`. A `coding.sh` that is not
- * followed by one of the CLI's commands (a path, the product's name) stays as it is.
+ * followed by one of the CLI's commands (a path, the product's name) stays as it is, and so does
+ * one after npx or another package runner: there it names the npm package, and codingsh in its
+ * place would name a package that is not ours.
  */
 export function commandsForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const bin = nextStepBin(env, platform);
   if (bin === "coding.sh") return text;
-  return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)( --(?= |$))?/g, (m, name: string, dashes: string | undefined) => {
-    if (!findCommand(name)) return m;
+  return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)( --(?= |$))?/g, (m, name: string, dashes: string | undefined, at: number) => {
+    if (!findCommand(name) || PACKAGE_RUNNER.test(text.slice(Math.max(0, at - 120), at))) return m;
     return name === "run" && dashes ? runCommand(env, "", platform).trimEnd() : `${bin} ${name}${dashes ?? ""}`;
   });
 }

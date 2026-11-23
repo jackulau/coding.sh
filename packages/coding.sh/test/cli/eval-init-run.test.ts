@@ -80,6 +80,12 @@ describe("commandsForShell", () => {
     const text = "The coding.sh hook bin is missing; ~/.coding.sh/spool and ./coding.sh build stay, as does coding.sh.";
     assert.equal(commandsForShell(text, {}, "win32"), text);
   });
+  it("leaves the coding.sh a package runner names alone: it is the npm package, and npx codingsh is not ours", () => {
+    const text = "or npx coding.sh init, npx -y coding.sh doctor, pnpm dlx coding.sh ui, bun x coding.sh show, npm exec -- coding.sh sessions, npm exec --registry=https://registry.npmjs.org/ -- coding.sh init, npx -p coding.sh init or npm exec --package=coding.sh init";
+    for (const [env, platform] of [[{}, "win32"], [{ npm_command: "exec" }, "win32"], [{ npm_command: "exec" }, "linux"]] as const) {
+      assert.equal(commandsForShell(text, env, platform), text, `${platform} ${JSON.stringify(env)}`);
+    }
+  });
 });
 
 describe("eval init + eval run: cases", () => {
