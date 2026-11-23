@@ -526,10 +526,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   @container (width < 52.6rem) { .session-table > * { --c-repo: ; } .session-table .repo-cell { display: none; } }
   @container (width < 45.7rem) { .session-table > * { --c-act: ; } .session-table .act-cell { display: none; } }
 }
-/* Agent over model, so neither is cut to a prefix. */
+/* Agent over model, so neither is cut to a prefix. A host app that drove the agent follows its
+   name, muted ("claude-code via T3 Code"): if the line is cut, the cut falls on the host, and the
+   cell's title has the whole line. */
 .agent-cell { display: grid; line-height: 1.3; }
 .agent-cell > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.agent-cell .sub { font-size: 11px; }
+.agent-cell .sub, .agent-cell .host { font-size: 11px; }
+.agent-cell .host { color: var(--text-muted); }
 .row-meta { display: none; }
 .row.child { background: color-mix(in srgb, var(--raised) 35%, transparent); }
 .row.child .row-main { padding-left: calc(var(--depth, 1) * 1.1rem); }
@@ -567,7 +570,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   /* Every badge stays, wrapping to a second line instead of being clipped. */
   .row-badges { height: auto; overflow: visible; gap: 0.3rem; }
   .table.one-repo .repo-cell { display: none; }
-  .row-cells .agent-cell .sub { font-size: inherit; }
+  .row-cells .agent-cell .sub, .row-cells .agent-cell .host { font-size: inherit; }
   .row-cells .num { text-align: left; }
 }
 
@@ -3854,7 +3857,7 @@ function sessionList(view) {
         h("span", { class: "row-title truncate", dir: "auto", title: sessionTitle(s) }, depth ? h("span", { class: "sub-mark", "aria-hidden": "true" }, "↳ ") : null, sessionTitle(s)),
         h("span", { class: "row-badges" }, toggle, testsBadge(s), failedReqs, rowFlags(s.flags))),
       h("div", { class: "row-cells" },
-        h("span", { class: "cell agent-cell", title: [s.agent + viaHost(s), s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
+        h("span", { class: "cell agent-cell", title: [s.agent + viaHost(s), s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent, s.host ? h("span", { class: "host" }, viaHost(s)) : null), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
         h("span", { class: "cell muted repo-cell" + (repoLabel(s) ? "" : " is-none"), title: repoDir(s) }, repoLabel(s) || "—"),
         h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, h("span", { class: "sep" }, " · "), actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),

@@ -375,7 +375,7 @@ coding.sh proxy [action] [options]
 | Action | What it does |
 |---|---|
 | [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
-| [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
+| [`stop`](#codingsh-proxy-stop) | Stop the running proxy: it finishes the calls in flight first, for up to 10 s |
 | [`env`](#codingsh-proxy-env) | Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy |
 
 | Option | Default | Description |
@@ -416,7 +416,7 @@ coding.sh proxy status
 
 ### `coding.sh proxy stop`
 
-Stop the background proxy.
+Stop the running proxy: it finishes the calls in flight first, for up to 10 s.
 
 ```text
 coding.sh proxy stop
@@ -913,7 +913,7 @@ coding.sh alert list
 
 - States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:&lt;NAME&gt; averages the scores of that name given to those sessions (coding.sh score, a judge, a review).
 - A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and three headers keyed with the alert's secret: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=&lt;HMAC-SHA256 of "&lt;timestamp&gt;.&lt;body&gt;"&gt;, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body alone&gt;, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. A command gets the same JSON on stdin and succeeds by exiting 0; on Windows it runs in cmd.exe.
-- Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
+- Each notification is tried 3 times, 1 s and then 2 s apart. A change that was not delivered is sent again by the next check. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on: the next check sends the changes it missed.
 - alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute, the first a minute after it starts. The hook and the read commands never run alerts.
 - Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.
 
@@ -945,6 +945,7 @@ coding.sh alert add <NAME> [options]
 ```sh
 coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
 coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
+coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify "command:node C:\alerts\notify.mjs"
 coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
 coding.sh alert add helpful --measure score:helpful --under 0.5 --window 1d --notify webhook:https://example.com/hook
 ```
@@ -1055,7 +1056,7 @@ coding.sh budget set <PERIOD> <USD> [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent's sessions. |
-| `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+| `--repo <PATH|NAME>` |  | Only sessions in this repo, as sessions --repo counts them: a path (stored absolute; matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--where <QUERY>` |  | Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-\*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256. |
 
 ```sh
@@ -1124,6 +1125,7 @@ coding.sh usage [options]
 | `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`, `mcp`, `skill`, `subagent`. |
 | `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change, and the estimate by token type. Not with --by mcp, skill or subagent. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo, as sessions --repo and a repo budget count them: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--reprice` |  | Recompute estimated costs from the current price table first. |
@@ -1136,6 +1138,7 @@ coding.sh usage
 coding.sh usage --baseline
 coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
+coding.sh usage --repo . --since today
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 coding.sh usage --by mcp
 coding.sh usage --by subagent --json
@@ -2434,7 +2437,7 @@ coding.sh review create <QUEUE> [options]
 | `--where <QUERY>` |  | The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
 | `--config <NAME>` |  | The score config every item is scored with (coding.sh score configs); it must exist. |
 | `--sample <N>` |  | Pick N of the matching sessions at random (default: all of them) |
-| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it. |
+| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only the key with that name sees it, while the CLI sees every item. |
 
 ```sh
 coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20

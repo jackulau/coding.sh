@@ -56,7 +56,8 @@ This points Claude Code (`ANTHROPIC_BASE_URL` in `settings.json`) and Codex (a `
 in `config.toml`) at `coding.sh proxy` on `127.0.0.1:4320` and starts it. Both agents name their
 session on every call, so each call lands in the session their hooks capture. An agent that already
 calls a gateway or CLIProxyAPI keeps calling it, through the proxy. For other clients,
-`eval "$(coding.sh proxy env)"` sets `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`. See
+`eval "$(coding.sh proxy env)"` sets `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`
+(in PowerShell, `codingsh proxy env | Invoke-Expression`). See
 [Capture with the proxy](../how-to/capture-with-proxy.md).
 
 ## OpenTelemetry

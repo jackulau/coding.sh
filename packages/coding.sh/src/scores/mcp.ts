@@ -2,8 +2,11 @@
 // through the same checks as the CLI and /api/scores, and score_add_batch
 // writes up to 100 with those checks, all or none.
 import type { Context } from "../core/context.ts";
+import { AmbiguousRef, findSessionRef } from "../core/session-ref.ts";
 import type { IndexStore, Score, ScoreFilter, Session } from "../core/types.ts";
 import { parseSince } from "../cli/args.ts";
+import { noSessionsHint } from "../cli/first-session.ts";
+import { clip, iso } from "../mcp/data.ts";
 import type { ToolCtx } from "../mcp/tools.ts";
 import { ToolError, type ToolDef } from "../mcp/protocol.ts";
 import { addScore, listScores, SCORE_SOURCES, SCORE_TARGETS, ScoreError, whoami } from "./scores.ts";
@@ -38,13 +41,42 @@ const MAX_BATCH = 100;
 
 const toolError = (e: unknown): unknown => (e instanceof ScoreError ? new ToolError(e.message) : e);
 
-/** A session id, "latest", or undefined. */
-async function sessionId(ctx: Context, raw: unknown): Promise<string | undefined> {
+/**
+ * A session reference as the CLI and the other MCP tools read it (core/session-ref.ts): an id, a
+ * unique prefix of one, or "latest". An id no session has comes back as given, so score_add says the
+ * session is not found and score_list finds nothing. `seen` remembers the answers over a batch.
+ */
+async function sessionId(ctx: Context, raw: unknown, seen?: Map<string, string>): Promise<string | undefined> {
   if (typeof raw !== "string" || !raw) return undefined;
-  if (raw !== "latest") return raw;
-  const [s] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
-  if (!s) throw new ToolError("No sessions captured yet.");
-  return (s as Session).id;
+  const known = seen?.get(raw);
+  if (known !== undefined) return known;
+  let s: Session | undefined;
+  try {
+    s = await findSessionRef(ctx.index, raw);
+  } catch (e) {
+    if (!(e instanceof AmbiguousRef)) throw e;
+    const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
+    const candidates = e.candidates.map((x) => {
+      const c: Record<string, unknown> = { sessionId: x.id, shortId: x.shortId, agent: x.agent, startedAt: iso(x.startedAt) };
+      if (x.title) c.title = clip(x.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { reason: "ambiguous", candidates };
+    if (e.more) data.more = true;
+    throw new ToolError(`Session id prefix ${JSON.stringify(raw)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
+  }
+  if (!s && (raw === "latest" || raw === "last")) throw new ToolError(noSessionsHint(ctx.env));
+  const id = s?.id ?? raw;
+  seen?.set(raw, id);
+  return id;
+}
+
+/** score_add's session references, read in place: the target id of a session score, and sessionId. */
+async function readSessionRefs(ctx: Context, body: Obj, seen?: Map<string, string>): Promise<void> {
+  const target = (body.target ?? "session") === "session" ? await sessionId(ctx, body.targetId, seen) : undefined;
+  if (target !== undefined) body.targetId = target;
+  const session = await sessionId(ctx, body.sessionId, seen);
+  if (session !== undefined) body.sessionId = session;
 }
 
 export function scoreTools(): ToolDef<ToolCtx>[] {
@@ -72,7 +104,7 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
         const ctx = await c.store();
         const f: ScoreFilter = { limit: typeof a.limit === "number" ? Math.min(200, Math.max(1, Math.floor(a.limit))) : 50 };
         if (typeof a.target === "string") f.target = a.target as ScoreFilter["target"];
-        if (typeof a.targetId === "string" && a.targetId) f.targetId = a.targetId;
+        if (typeof a.targetId === "string" && a.targetId) f.targetId = a.target === "session" ? (await sessionId(ctx, a.targetId))! : a.targetId;
         const sid = await sessionId(ctx, a.sessionId);
         if (sid) f.sessionId = sid;
         if (typeof a.name === "string" && a.name) f.name = a.name;
@@ -98,8 +130,7 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
       async run(a: Obj, c: ToolCtx) {
         const ctx = await c.store();
         const body: Obj = { ...a };
-        if ((a.target ?? "session") === "session" && a.targetId === "latest") body.targetId = await sessionId(ctx, "latest");
-        else if (a.sessionId === "latest") body.sessionId = await sessionId(ctx, "latest");
+        await readSessionRefs(ctx, body);
         const r = await addScore(ctx.index, body, { by: whoami(), source: "api", now: c.now() }).catch((e) => Promise.reject(toolError(e)));
         return { score: r.score, created: r.created, changed: r.changed };
       },
@@ -123,17 +154,17 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
         const now = c.now();
         const by = whoami();
         const items: { score: Score; created: boolean; changed: boolean }[] = [];
+        const seen = new Map<string, string>();
         for (const [i, raw] of list.entries()) {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ToolError(`scores[${i}]: must be an object`);
           const body: Obj = { ...(raw as Obj) };
           try {
-            if ((body.target ?? "session") === "session" && body.targetId === "latest") body.targetId = await sessionId(ctx, "latest");
-            else if (body.sessionId === "latest") body.sessionId = await sessionId(ctx, "latest");
+            await readSessionRefs(ctx, body, seen);
             const r = await addScore(view, body, { by, source: "api", now });
             items.push(r);
           } catch (e) {
             const err = toolError(e);
-            if (err instanceof ToolError) throw new ToolError(`scores[${i}]: ${err.message}; none of the ${list.length} scores were stored`);
+            if (err instanceof ToolError) throw new ToolError(`scores[${i}]: ${err.message}; none of the ${list.length} scores were stored`, err.error);
             throw err;
           }
         }

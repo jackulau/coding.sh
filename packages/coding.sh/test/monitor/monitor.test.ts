@@ -19,7 +19,7 @@ import { paths } from "../../src/core/paths.ts";
 import { SIGNATURE_HEADER, SIGNATURE_V2_HEADER, signBody, TIMESTAMP_HEADER } from "../../src/alerts/notify.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
-import { readMonitors, shownUrl } from "../../src/monitor/state.ts";
+import { localDay, readMonitors, shownUrl, updateMonitors } from "../../src/monitor/state.ts";
 import { startMonitorTimer } from "../../src/monitor/timer.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
@@ -265,6 +265,17 @@ describe("monitor --judge", () => {
     assert.equal(def.spend!.usd, 6);
     assert.match(def.lastError!.message, /max-usd-day/);
     assert.equal((await monitorScores(sb)).length, 2);
+  });
+
+  it("monitor list shows a spend and a cap under a cent as amounts, not as $0.00", async () => {
+    const sb = box();
+    const rubric = join(sb.root, "rubric.md");
+    writeFileSync(rubric, "Was the answer correct?\n");
+    await add(sb, "cheap", { judge: rubric, "max-usd-day": 0.0001 });
+    await updateMonitors(paths(sb.env).monitors, (doc) => ({ doc: { ...doc, monitors: doc.monitors.map((m) => ({ ...m, spend: { day: localDay(Date.now()), usd: 0.00054 } })) }, result: undefined }));
+    const r = await runCmd(monitorCmd, sb, { action: "list" });
+    assert.equal(r.error, undefined, String(r.error));
+    assert.match(r.stdout, /\(\$0\.0005\/\$0\.0001 today\)/);
   });
 });
 

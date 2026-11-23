@@ -269,6 +269,19 @@ describe("review on the CLI and /api/review on the local ui", () => {
     const n = cli(["review", "create", "s", "--where", "agent:codex", "--config", "correct", "--sample", "0"]);
     assert.equal(n.status, 2, n.stderr);
   });
+
+  test("printed commands run in the user's shell: the item's command in --json, and the query that matched nothing", () => {
+    // PowerShell and cmd set no MSYSTEM or SHELL; there the CLI is codingsh, and a query takes double quotes.
+    const ps = { MSYSTEM: undefined, SHELL: undefined };
+    const win = process.platform === "win32";
+    const bin = win ? "codingsh" : "coding.sh";
+    ok(["review", "create", "ps", "--where", "agent:codex", "--config", "correct"]);
+    assert.equal(JSON.parse(ok(["review", "next", "ps", "--json"], ps).stdout).next.command, `${bin} review done ps 1 <true|false>`);
+    assert.equal(JSON.parse(ok(["review", "skip", "ps", "1", "--json"], ps).stdout).next.command, `${bin} review done ps 2 <true|false>`);
+    const none = cli(["review", "create", "none", "--where", "agent:nobody is:flagged", "--config", "correct"], ps);
+    assert.equal(none.status, 1, none.stderr);
+    assert.match(none.stderr, new RegExp(`^\\s*${bin.replace(".", "\\.")} sessions --where ${win ? '"agent:nobody is:flagged"' : "'agent:nobody is:flagged'"}$`, "m"));
+  });
 });
 
 describe("/api/review through the viewer handler (as serve mounts it)", () => {
