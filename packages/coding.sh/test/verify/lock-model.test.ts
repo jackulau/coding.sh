@@ -1,23 +1,22 @@
 // A model of the ingest lock, checked with test/_model.ts. Contenders run acquireLock with waitMs 0, as a
-// background ingest does (cli/commands/ingest.ts:86), hold the lock through a fenced write, and release
-// it. Any of them can crash between two steps, or stall past the stale limit.
+// background ingest does (cli/commands/ingest.ts), hold the lock through a fenced write, and release it.
+// Any of them can crash between two steps, or stall past the stale limit.
 //
 // Each step is one in core/lock.ts (paths under packages/coding.sh/src):
-// - acquireLock (:250-263): tryCreate the lock with O_EXCL (:210-232), or else inspect it (:118-130). A
-//   missing file is free (try again); a dead holder on this host, or an mtime past staleMs, is stale
-//   (break it); anything else is held, which with waitMs 0 ends the attempt as busy.
-// - breakStale (:183-198): take the guard `<lock>.break` with O_EXCL. When another process has it,
-//   judge the guard: stale (a dead holder, or older than 10 s) is removed with removeIfSame and the
-//   attempt starts over; held is busy. Under the guard, judge the lock again and remove it with
-//   removeIfSame when it is still stale. Then remove the guard if it still carries our nonce: a read,
-//   then a remove.
-// - removeIfSame (:150-173): rename the file aside. When it is the file judged (inode, mtime and
-//   content), remove it. Otherwise link it back, which fails when a new file took the name, and remove
-//   the aside name. Renaming and comparing are one step here, and so are linking and removing: no other
-//   process uses the aside name.
-// - Holding: assertHeld (:288-292) passes while the lock file carries our nonce, and the write it
-//   guards is a separate step. The heartbeat (:272-284) reads the lock, then touches whatever file is
-//   there. release (:293-300) reads the lock, then removes it.
+// - acquireLock: tryCreate the lock with O_EXCL, or else inspect it. A missing file is free (try again);
+//   a dead holder on this host, or an mtime past staleMs, is stale (break it); anything else is held,
+//   which with waitMs 0 ends the attempt as busy.
+// - breakStale: take the guard `<lock>.break` with O_EXCL. When another process has it, judge the
+//   guard: stale (a dead holder, or older than 10 s) is removed with removeIfSame and the attempt starts
+//   over; held is busy. Under the guard, judge the lock again and remove it with removeIfSame when it is
+//   still stale. Then remove the guard if it still carries our nonce: a read, then a remove.
+// - removeIfSame: rename the file aside. When it is the file judged (inode, mtime and content), remove
+//   it. Otherwise link it back, which fails when a new file took the name, and remove the aside name.
+//   Renaming and comparing are one step here, and so are linking and removing: no other process uses
+//   the aside name.
+// - Holding: assertHeld passes while the lock file carries our nonce, and the write it guards is a
+//   separate step. The heartbeat reads the lock, then touches whatever file is there. release reads the
+//   lock, then removes it.
 // A crash leaves the process's files behind with a dead pid, which a contender on the same host judges
 // stale at once. A stall ages the file the process holds past its limit (10 s for the guard, staleMs
 // for the lock); a process holds one of the two at a time. A file no live process refreshes can age
@@ -25,15 +24,19 @@
 //
 // Checked: without a stall, one process holds the lock, one breaker works under the guard, no holder
 // loses its lock, only a dead process's lock file is removed, and a run leaves only a crashed process's
-// files. With stalls, each stall lets in at most one more holder. Two mutants show the guard and the
-// second judgment are both needed.
+// files. With stalls, each stall lets in at most one more holder, and the windows the header of
+// core/lock.ts names are reached: a release that stalls between its read and its remove removes the
+// lock a peer took, a holder that never stalled loses its lock, and a breaker that stalls under the
+// guard lets a second one work beside it. Two mutants show the guard and the second judgment are both
+// needed.
 //
 // Left out: hosts that share the folder (the mtime decides there, as after a stall); a torn lock file
-// from a crash between create and write (judged by its mtime alone, so stale only after staleMs); a file
-// replaced between the stat and the read of one inspect (the same race as a replacement between the
-// judgment and the rename); file systems without hard links, where the link back always fails; the exit
-// handler (:237-246, the same read and remove as release); and waiting with waitMs above 0, which gives
-// more attempts, like more rounds here.
+// from a crash between create and write (judged by its mtime alone, so stale only after staleMs); a
+// file replaced between the stat and the read of one inspect, which are one step here (that judgment
+// matches no file, so removeIfSame renames the new file aside and links it back, the same moment as
+// after a stalled release: the new file's owner can fail a fence meanwhile); file systems without hard
+// links, where the link back always fails; the exit handler (releaseAllOnExit, the same read and remove
+// as release); and waiting with waitMs above 0, which gives more attempts, like more rounds here.
 //
 // Bounds: three contenders with one attempt each, one crash, and no stall or one: 1,433 and 37,635
 // states. Three is the fewest where one holder dies and two contenders race to break its lock, and one
@@ -218,7 +221,7 @@ function lockModel(cfg: Config): Model<Lk> {
       me.seen = { id: l.id, mt: l.mt };
       me.pc = cfg.mutant === "remove without the guard" ? "remove" : "guard";
     });
-    // The mutant: docs/design/state-machines.md M3, `rmSync(lock)` once isStale said so.
+    // The mutant: the lock before the guard, which removed the file with rmSync once isStale said so.
     step("removes the lock", "remove", () => true, (d, me) => {
       if (d.lock) removed(d, d.lock);
       d.lock = null;
@@ -450,6 +453,27 @@ test("with one stall two processes can hold the lock, and never three", (t) => {
   const two = reaches(cfg, "two holders", (s) => holders(s) === 2).violation?.trace;
   assert.ok(two, "a stall lets a second process take the lock");
   assert.ok(actionsOf(two).some((a) => a.endsWith("stalls past the stale limit")));
+});
+
+test("a stall opens the windows core/lock.ts names", () => {
+  // One attempt each, whatever the bound: a second attempt gives the same windows by other shortest traces.
+  const cfg: Config = { procs: 3, rounds: 1, crashes: 1, stalls: 1 };
+  // A release that stalls between its read and its remove removes the lock a peer took meanwhile.
+  const removed = reaches(cfg, "a holder's lock removed", (s) => s.brokeLive).violation?.trace;
+  assert.ok(removed, "a holder's lock is removed after a stall");
+  const names = actionsOf(removed);
+  const remover = /^(p\d) removes the lock it released$/.exec(names.at(-1) ?? "")?.[1];
+  assert.ok(remover, names.at(-1));
+  const read = names.indexOf(`${remover} releases and finds its lock`);
+  assert.ok(read >= 0 && names.indexOf(`${remover} stalls past the stale limit`) > read, "it stalled inside release");
+  // A breaker that judged the stalled holder's file renames a peer's fresh lock aside, and the peer loses it.
+  const lost = reaches(cfg, "a holder that never stalled loses its lock", (s) => s.procs.some((x) => !x.dead && x.lost && !x.stalled)).violation?.trace;
+  assert.ok(lost, "a holder that never stalled loses its lock");
+  assert.ok(actionsOf(lost).some((a) => a.endsWith("renames another file aside")));
+  // A breaker that stalls under the guard has its guard judged stale and taken over.
+  const breaking = reaches(cfg, "two breakers", (s) => breakers(s) === 2).violation?.trace;
+  assert.ok(breaking, "two processes work under the guard after a stall");
+  assert.ok(actionsOf(breaking).some((a) => a.endsWith("judges the guard stale")));
 });
 
 test("each check the code makes on purpose breaks an invariant when left out", (t) => {
