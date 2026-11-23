@@ -60,4 +60,11 @@ describe("simpleCommands", () => {
       assert.equal(dirOf(cmd), deep);
     }
   });
+
+  it("skips 100,000 leading assignments in linear time", () => {
+    const cmd = `${"A=1 ".repeat(100000)}cat x`;
+    assertCpuUnder("assignments", () => simpleCommands(cmd));
+    assert.deepEqual(argv(cmd), [["cat", "x"]]);
+    assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
+  });
 });

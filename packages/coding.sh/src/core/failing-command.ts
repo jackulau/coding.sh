@@ -236,31 +236,33 @@ function sendsAway(op: string, target: string): boolean {
 
 /** One part's program and arguments, or undefined for a header or a part with no program. */
 function partOf(text: string, last: boolean): ShellPart | undefined {
-  let w = words(text);
+  const w = words(text);
   if (HEADERS.has(w[0] ?? "")) return undefined;
   let timed = false;
   let away = false;
+  /** The first word not yet skipped: keywords, assignments, redirects and wrappers come before the program. */
+  let k = 0;
   for (;;) {
-    const x = w[0];
+    const x = w[k];
     if (x === undefined) return undefined;
-    if (KEYWORDS.has(x) || ASSIGNMENT.test(x)) w = w.slice(1);
+    if (KEYWORDS.has(x) || ASSIGNMENT.test(x)) k++;
     else if (REDIRECT.test(x)) {
-      const r = redirectOf(x, w[1])!;
+      const r = redirectOf(x, w[k + 1])!;
       if (sendsAway(r.op, r.target)) away = true;
-      w = w.slice(r.skip ? 2 : 1);
+      k += r.skip ? 2 : 1;
     } else if (WRAPPERS.has(unquote(x))) {
       const name = unquote(x);
       if (name === "timeout" || name === "gtimeout") timed = true;
-      w = w.slice(1);
+      k++;
       const valued = FLAG_VALUE[name];
-      while (w[0] !== undefined && (w[0].startsWith("-") || (name === "env" && ASSIGNMENT.test(w[0])))) w = w.slice(valued?.has(w[0]) ? 2 : 1);
+      for (let y = w[k]; y !== undefined && (y.startsWith("-") || (name === "env" && ASSIGNMENT.test(y))); y = w[k]) k += valued?.has(y) ? 2 : 1;
       // timeout's duration (60, 5m, 1.5s) comes before the command.
-      if ((name === "timeout" || name === "gtimeout") && /^\d/.test(w[0] ?? "")) w = w.slice(1);
+      if ((name === "timeout" || name === "gtimeout") && /^\d/.test(w[k] ?? "")) k++;
     } else break;
   }
   const argv: string[] = [];
   let quiet = false;
-  for (let i = 0; i < w.length; i++) {
+  for (let i = k; i < w.length; i++) {
     const x = w[i]!;
     const r = redirectOf(x, w[i + 1]);
     if (r) {
@@ -321,6 +323,8 @@ const PS_PIPE = new Set([
 const PS_HEADERS = new Set(["if", "elseif", "while", "for", "foreach", "switch", "until", "catch", "function", "filter", "workflow", "param", "trap", "throw", "break", "continue", "class", "enum", "data"]);
 /** PowerShell words that start a statement without being its command: `try`, `else`, the call operator `&`, dot-sourcing. */
 const PS_SKIP = new Set(["try", "else", "finally", "do", "begin", "process", "end", "&", "."]);
+/** The longest word of PS_HEADERS and PS_SKIP. Lowercasing never shortens a word, so a longer word is in neither. */
+const PS_LONGEST = Math.max(...[...PS_HEADERS, ...PS_SKIP].map((x) => x.length));
 const PS_REDIRECT = /^(?:[\d*]?>>?(?:&[1-6])?|<)/;
 
 const psLower = (p: ShellPart): string => (p.ps && p.prog ? p.prog.toLowerCase() : "");
@@ -444,28 +448,33 @@ const psWords = (text: string): string[] => text.match(/(?:[^\s"'`]+|`[\s\S]?|"(
 
 /** One PowerShell statement's program and arguments, or undefined for a header, an expression or an empty statement. */
 function psPartOf(text: string): ShellPart | undefined {
-  let w = psWords(text);
+  const w = psWords(text);
   // `& $exe`, `& "C:\x\tool.exe"`: the call operator runs what follows, a value included.
   let called = false;
+  /** The first word not yet skipped. */
+  let k = 0;
   for (;;) {
-    const x = w[0];
+    const x = w[k];
     if (x === undefined) return undefined;
-    const lower = x.toLowerCase();
+    // `$a=$a=…` strips one assignment at a time: lowercasing the rest at each step would copy it each time.
+    const lower = x.length > PS_LONGEST ? "" : x.toLowerCase();
     if (PS_HEADERS.has(lower)) return undefined;
     if (PS_SKIP.has(lower)) {
       if (lower === "&" || lower === ".") called = true;
-      w = w.slice(1);
+      k++;
     }
     // `$out = npm test`, `$env:CI = 1`: the command is what comes after the assignment.
-    else if (/^\$[\w:?]+$/.test(x) && /^(?:[-+*/%]|\?\?)?=$/.test(w[1] ?? "")) w = w.slice(2);
+    else if (/^\$[\w:?]+$/.test(x) && /^(?:[-+*/%]|\?\?)?=$/.test(w[k + 1] ?? "")) k += 2;
     else if (/^\$[\w:]+[-+*/%]?=(?!=)/.test(x)) {
+      // `$x=npm`: the word goes on as what follows the `=`.
       const rest = x.replace(/^\$[\w:]+[-+*/%]?=/, "");
-      w = rest ? [rest, ...w.slice(1)] : w.slice(1);
+      if (rest) w[k] = rest;
+      else k++;
     } else break;
   }
   const argv: string[] = [];
   let away = false;
-  for (let i = 0; i < w.length; i++) {
+  for (let i = k; i < w.length; i++) {
     const x = w[i]!;
     const r = PS_REDIRECT.exec(x);
     if (r) {

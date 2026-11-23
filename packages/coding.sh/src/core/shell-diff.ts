@@ -192,10 +192,11 @@ export function simpleCommands(command: string): SimpleCommand[] {
         if (target) redirects.push({ path: target, append: r[1] === ">>" });
       } else rest.push(w);
     }
-    while (rest.length && (/^[A-Za-z_]\w*=/.test(rest[0] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[0] as string))) rest.shift();
-    const name = rest[0] ?? "";
+    let k = 0;
+    while (k < rest.length && (/^[A-Za-z_]\w*=/.test(rest[k] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[k] as string))) k++;
+    const name = rest[k] ?? "";
     const cmd = name.replace(/^.*\//, "");
-    const args = rest.slice(1);
+    const args = rest.slice(k + 1);
     out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
     if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
   }
