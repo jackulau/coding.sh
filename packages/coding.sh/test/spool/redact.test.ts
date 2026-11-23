@@ -67,8 +67,9 @@ const fake: Adapter = {
 const adapters = new Map([["fake", fake]]);
 
 function payload(session: string, pad: number): string {
-  // A tool result that is itself JSON text, with an env file in one of its strings.
-  const doc = JSON.stringify({ stdout: `loaded\nAPI_TOKEN=${HIDDEN}\n` }, null, 2);
+  // A tool result that is itself JSON text, with an env file in one of its strings. Only
+  // secret-assignment knows the name CREDENTIALS; a name like API_TOKEN is found in the text too.
+  const doc = JSON.stringify({ stdout: `loaded\nGOOGLE_CREDENTIALS=${HIDDEN}\n` }, null, 2);
   return JSON.stringify({ session, cwd: "/w", text: `token ${GITHUB} key ${ANTHROPIC} id ${AWS} ${"y".repeat(pad)}`, doc });
 }
 
@@ -171,6 +172,19 @@ describe("the hook redacts before it writes", () => {
     assert.deepEqual(tally.kinds, { "github-token": 1 });
     const plain = { a: ["b", { c: "d" }] };
     assert.deepEqual(redactPayload(r, plain, redactionTally()), plain);
+  });
+
+  it("redactPayload redacts a document inside a document next to a value the rules replace, and counts each value once", () => {
+    const r = createRedactor();
+    // The password is too short for the text rules: only its key in the inner document shows it
+    // is secret. In the outer document's text, the rule that takes the log's value takes the
+    // backslash of the escaped quote after it too.
+    const inner = JSON.stringify({ password: "hunter", log: `the password is ${HIDDEN}` });
+    const tally = redactionTally();
+    const clean = redactPayload(r, { tool_response: { stdout: JSON.stringify({ content: inner }) } }, tally) as { tool_response: { stdout: string } };
+    const doc: unknown = JSON.parse((JSON.parse(clean.tool_response.stdout) as { content: string }).content);
+    assert.deepEqual(doc, { password: "[redacted:secret-field]", log: "the password is [redacted:prose-secret]" });
+    assert.deepEqual(tally.kinds, { "secret-field": 1, "prose-secret": 1 });
   });
 
   it("withSpoolRedactions adds the line's counts to the event's", () => {

@@ -1,11 +1,13 @@
 // R1-13: per-run OpenTelemetry. The agent process gets an OTLP endpoint, a
 // TRACEPARENT from the run id and coding_sh.run_id in its resource attributes;
 // a stub agent that exports a span through them lands in the index tagged with
-// the run, in the run's session. Off by default, with no env change.
+// the run, in the run's session, redacted with the run's rules. Off by default,
+// with no env change.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { after, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { createRedactor } from "../../src/core/redact.ts";
 import type { RunSpec } from "../../src/core/types.ts";
 import { runExperiment } from "../../src/runner/experiment.ts";
 import { CLAUDE_TELEMETRY_ENV, otelEnv, runTraceContext, withRunAttribute } from "../../src/runner/otel.ts";
@@ -32,19 +34,35 @@ const span = { traceId, spanId: "a1b2c3d4e5f60718", parentSpanId: parentId, name
     { key: "gen_ai.usage.output_tokens", value: { intValue: "30" } },
     { key: "session.id", value: { stringValue: process.argv[1] } },
   ] };
-const body = { resourceSpans: [{ resource: { attributes: resource }, scopeSpans: [{ scope: { name: "stub" }, spans: [span] }] }] };
+const spans = [span];
+// A second argument: the agent also reports a tool call that returned that text.
+if (process.argv[2]) spans.push({ traceId, spanId: "a1b2c3d4e5f60719", parentSpanId: parentId, name: "execute_tool Bash", kind: 1, startTimeUnixNano: ns(now - 40), endTimeUnixNano: ns(now - 10), status: {},
+  attributes: [
+    { key: "gen_ai.operation.name", value: { stringValue: "execute_tool" } },
+    { key: "gen_ai.tool.name", value: { stringValue: "Bash" } },
+    { key: "gen_ai.tool.call.id", value: { stringValue: "call_1" } },
+    { key: "gen_ai.tool.call.result", value: { stringValue: process.argv[2] } },
+    { key: "session.id", value: { stringValue: process.argv[1] } },
+  ] });
+const body = { resourceSpans: [{ resource: { attributes: resource }, scopeSpans: [{ scope: { name: "stub" }, spans }] }] };
 fetch(env.OTEL_EXPORTER_OTLP_ENDPOINT + "/v1/traces", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   .then((r) => process.exit(r.ok ? 0 : 3), () => process.exit(4));
 `;
 
-/** An agent whose process exports its span, then fixes the bug. */
-const otlpAgent = () =>
+/** An agent whose process exports its span (and a tool call returning `toolResult`), then fixes the bug. */
+const otlpAgent = (toolResult?: string) =>
   fakeAdapter({
     act: async (spec: RunSpec) => {
-      await run(process.execPath, ["-e", STUB, `sess-${spec.runId}`], { env: { ...process.env, ...spec.env } });
+      const args = ["-e", STUB, `sess-${spec.runId}`];
+      if (toolResult) args.push(toolResult);
+      await run(process.execPath, args, { env: { ...process.env, ...spec.env } });
       return undefined;
     },
   });
+
+/** The run's own rules: a ticket number is redacted only by the pattern the run was given. */
+const ticketRedactor = () => createRedactor({ patterns: ["ticket-[0-9]{5}"] });
+const TOOL_RESULT = "closed ticket-48151";
 
 const OTEL_KEYS = /^(OTEL_|TRACEPARENT$|CLAUDE_CODE_ENABLE_TELEMETRY$|CLAUDE_CODE_ENHANCED)/;
 
@@ -91,16 +109,29 @@ describe("per-run OpenTelemetry", () => {
     assert.deepEqual((await index.listSessions({ runId: r.id })).map((s) => s.id), [`sess-${r.id}`]);
   });
 
-  it("runExperiment otel: true — one receiver for every run, each span tagged with its own run", async () => {
+  it("otel: true — what the agent exports is redacted with the run's rules", async () => {
+    const w = await toyWorld();
+    const index = new MemoryIndexStore();
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter: otlpAgent(TOOL_RESULT), blobs: w.blobs, index, git: w.git, runsDir: w.runsDir, otel: true, redactor: ticketRedactor() });
+    assert.equal(r.error, undefined);
+    const stored = JSON.stringify(await index.listEvents(`sess-${r.id}`));
+    assert.match(stored, /closed \[redacted:pattern\]/, "the tool result is stored, redacted");
+    assert.doesNotMatch(stored, /ticket-48151/);
+  });
+
+  it("runExperiment otel: true — one receiver for every run, each span tagged with its own run and redacted with the experiment's rules", async () => {
     const w = await toyWorld();
     const index = new MemoryIndexStore();
     const bundles = [await w.mkBundle("a", "x"), await w.mkBundle("b", "y")];
-    const r = await runExperiment({ tasks: [w.task], bundles, adapterFor: () => otlpAgent(), blobs: w.blobs, index, git: w.git, runsDir: w.runsDir, otel: true, concurrency: 2 });
+    const r = await runExperiment({ tasks: [w.task], bundles, adapterFor: () => otlpAgent(TOOL_RESULT), blobs: w.blobs, index, git: w.git, runsDir: w.runsDir, otel: true, concurrency: 2, redactor: ticketRedactor() });
     assert.equal(r.results.length, 2);
     for (const run of r.results) {
       const s = await index.getSession(`sess-${run.id}`);
       assert.equal(s?.runId, run.id);
       assert.equal(run.traceId, runTraceContext(run.id).traceId);
+      const stored = JSON.stringify(await index.listEvents(`sess-${run.id}`));
+      assert.match(stored, /closed \[redacted:pattern\]/, "the tool result is stored, redacted");
+      assert.doesNotMatch(stored, /ticket-48151/);
     }
   });
 });
