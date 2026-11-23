@@ -885,7 +885,7 @@ skills). It is what `coding.sh harness audit` counts.
 
 - A session with `stats.foldError` holds only what the events say directly: the agent, the first and last event times, the cwd and `stats.events`, plus the `fold:error` tag. `coding.sh ingest` folds it again, and `coding.sh doctor` counts these sessions.
 - The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
-- A shell call writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
+- A shell call (any agent's shell tool, Antigravity's `run_command` and Droid's `Execute` included) writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
 - PowerShell's `Set-Content`, `Add-Content` and `Out-File` count too. A file written both by an edit tool and by a shell call counts once.
 - Reads, deletes, `/dev/null`, paths with a variable or a glob, and paths outside the working directory (`/tmp`, `~`) do not count.
 - Neither does a call the user stopped or turned down, nor a script that writes files without naming them in the command (`python fix.py`).

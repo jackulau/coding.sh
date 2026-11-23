@@ -162,6 +162,9 @@ describe("file-change derivation", () => {
     assert.equal(isShellCall("exec", { command: "ls" }), true);
     assert.equal(isShellCall("exec", { code: "ls" }), false);
     assert.equal(isShellCall("Bash", undefined), true);
+    // Antigravity's shell is `run_command` {CommandLine, Cwd}; Droid's is `Execute` {command}.
+    assert.equal(shellCommandOf("run_command", { CommandLine: "npm test", Cwd: "/work/demo" }), "npm test");
+    assert.equal(shellCommandOf("Execute", { command: "pytest -q" }), "pytest -q");
   });
 });
 
@@ -353,6 +356,8 @@ describe("skillLoadsOf", async () => {
       ],
     ],
     ["Bash", { command: "bat --plain .codex/skills/x/README.md | head -5" }, [{ name: "x", path: ".codex/skills/x/README.md", resource: "README.md" }]],
+    ["run_command", { CommandLine: "cat ~/.gemini/skills/pdf/SKILL.md", Cwd: "/work/demo" }, [{ name: "pdf", path: "~/.gemini/skills/pdf/SKILL.md", resource: "SKILL.md" }]],
+    ["Execute", { command: "head -40 .agents/skills/xlsx/SKILL.md" }, [{ name: "xlsx", path: ".agents/skills/xlsx/SKILL.md", resource: "SKILL.md" }]],
     ["ReadMcpResourceTool", { server: "skills", uri: "skill://pdf/SKILL.md" }, [{ name: "pdf", path: "skill://pdf/SKILL.md", resource: "SKILL.md" }]],
     // Not loads: substitutions, traversal, globs, variables, writes, edits, other dirs, other tools.
     ["Bash", { command: "cat $(echo .claude/skills/pdf/SKILL.md)" }, []],

@@ -228,6 +228,14 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 3, filesRead: 3, editedAfterRead: 2, searches: 0, beforeFirstEdit: 3 });
   });
 
+  it("a shell write through Droid's Execute or Antigravity's run_command edits the file it names", () => {
+    for (const [tool, input] of [["Execute", { command: "sed -i 's/x/y/' a.ts" }], ["run_command", { CommandLine: "sed -i 's/x/y/' a.ts", Cwd: "/work/demo" }]] as const) {
+      const s = buildSession([...read("a.ts"), ...call(tool, input)]);
+      assert.equal(s.stats.filesChanged, 1, tool);
+      assert.deepEqual(s.stats.retrieval, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 }, tool);
+    }
+  });
+
   it("a relative read from an event with no cwd resolves against the session's", () => {
     const r = retrieval(ev("user.message", { text: "hi" }), read("../README.md", { at: { cwd: undefined } }), edit("/work/README.md"));
     assert.deepEqual(r, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });

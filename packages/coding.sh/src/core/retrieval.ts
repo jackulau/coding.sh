@@ -61,7 +61,7 @@ export function classifyRetrieval(tool: unknown, input: unknown): RetrievalCall 
   if (typeof tool !== "string" || !tool) return undefined;
   const t = tool.toLowerCase();
   if (t.startsWith("mcp__")) return undefined;
-  const command = shellCommandOf(tool, input) ?? otherShellCommand(t, input);
+  const command = shellCommandOf(tool, input);
   if (command !== undefined) return shellRetrieval(command, isPowerShellTool(tool) || /powershell/i.test(tool), startDir(input));
   if (WEB.has(t)) return { read: false, search: false, web: true, paths: [] };
   if (SEARCH_TOOLS.has(t) || SEARCHES.has(t)) return { read: false, search: true, web: false, paths: [] };
@@ -82,17 +82,6 @@ function readPaths(i: Record<string, unknown>): string[] {
   if (key) add(i[key]);
   if (Array.isArray(i.paths)) for (const v of i.paths) add(v);
   return [...out];
-}
-
-/** Shell tools beyond the shared list (lower case): Antigravity's `run_command` ({CommandLine, Cwd}) and Droid's `Execute` ({command}). */
-const OTHER_SHELLS = new Set(["run_command", "execute"]);
-
-/** The command line of an OTHER_SHELLS call, or undefined when it has none. */
-function otherShellCommand(t: string, input: unknown): string | undefined {
-  if (!OTHER_SHELLS.has(t) || !input || typeof input !== "object") return undefined;
-  const i = input as Record<string, unknown>;
-  const c = i.CommandLine ?? i.command ?? i.commandLine ?? i.cmd;
-  return typeof c === "string" ? c : undefined;
 }
 
 /** The directory a shell call starts in, relative to the event's cwd: its `workdir`, `cwd` or `Cwd` input, else "" (the cwd itself). */

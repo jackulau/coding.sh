@@ -5,7 +5,8 @@ import { commandOrigin, normalizeTracePath } from "../../core/shell-diff.ts";
 import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, runsElsewhere, runsTests, structuredPatchDiff, unifiedDiff, writesNothing, type FileChangeInfo } from "./heuristics.ts";
 import { arr, blobList, fieldLimit, isObj, obj, outputText, str, type Emitter } from "./normalize.ts";
 
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
+/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`; Droid's `Execute` takes `{command}`. */
+const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command", "execute"]);
 const WRITE_TOOLS = new Set(["write", "write_file", "create_file", "writefile", "write_to_file"]);
 const EDIT_TOOLS = new Set(["edit", "str_replace", "str_replace_editor", "str_replace_based_edit_tool", "search_replace", "replace", "edit_file", "strreplace", "replace_in_file"]);
 const MULTIEDIT_TOOLS = new Set(["multiedit", "multi_edit"]);
@@ -32,7 +33,7 @@ export function shellCommandOf(tool: string, input: unknown): string | undefined
   if (!isShellCall(tool, input) && !(isObj(input) && (typeof input.command === "string" || Array.isArray(input.command)) && lc(tool).includes("shell"))) return undefined;
   if (typeof input === "string") return input;
   const i = obj(input);
-  const c = i.command ?? i.cmd ?? i.commandLine ?? i.script;
+  const c = i.command ?? i.cmd ?? i.commandLine ?? i.CommandLine ?? i.script;
   if (typeof c === "string") return c;
   if (Array.isArray(c)) {
     const parts = c.filter((x): x is string => typeof x === "string");

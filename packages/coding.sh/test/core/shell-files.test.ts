@@ -44,6 +44,8 @@ describe("shellCallFiles", () => {
     assert.deepEqual(shellCallFiles("exec_command", { cmd: ["bash", "-lc", "echo x > a.txt"] }, "/w"), ["a.txt"]);
     assert.deepEqual(shellCallFiles("Read", { command: "echo x > a.txt" }, "/w"), []);
     assert.deepEqual(shellCallFiles("exec", { command: "echo x > a.txt", shell_id: "default" }, "/w"), ["a.txt"], "Devin CLI's shell");
+    assert.deepEqual(shellCallFiles("Execute", { command: "sed -i s/x/y/ a.ts" }, "/w"), ["a.ts"], "Droid's shell");
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "echo x > a.txt" }, "/w"), ["a.txt"], "Antigravity's shell");
     assert.deepEqual(shellCallFiles("exec", { code: "echo x > a.txt" }, "/w"), [], "an exec with no command line");
     assert.deepEqual(shellCallFiles(undefined, { command: "echo x > a.txt" }, "/w"), []);
   });
