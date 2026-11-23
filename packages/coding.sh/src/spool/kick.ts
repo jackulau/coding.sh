@@ -25,7 +25,7 @@ import { paths } from "../core/paths.ts";
 /** Hook events that end a turn or a session, across agents. */
 export const END_EVENT = /^(stop|session[._-]?end|session\.idle|afteragent)$/i;
 
-export type KickSpawner = (command: string, args: string[], options: { detached: true; stdio: "ignore"; windowsHide: true; env: NodeJS.ProcessEnv }) => { unref(): void };
+export type KickSpawner = (command: string, args: string[], options: { detached: true; stdio: "ignore"; windowsHide: true; env: NodeJS.ProcessEnv }) => { unref(): void; on(event: "error", listener: (err: Error) => void): unknown };
 
 /** Returns the CLI path a background ingest was started with, or undefined when skipped. */
 export function kickIngest(event: string, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner): string | undefined {
@@ -56,6 +56,9 @@ export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.Proce
   if (!cli || !existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
   const child = run(process.execPath, [cli, "ingest", "--background", ...extra], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  // A spawn that fails (node gone after an upgrade, no process slots) reports it here, after this
+  // returns: unheard, it would end the process that started it. The marker stays for the next kick.
+  child.on("error", () => {});
   child.unref();
   return cli;
 }
@@ -94,6 +97,7 @@ export function kickProxy(event: string, env: NodeJS.ProcessEnv = process.env, s
   if (!cli || !existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
   const child = run(process.execPath, [cli, "proxy", "--background"], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  child.on("error", () => {}); // as in spawnBackgroundIngest: a failed spawn must not end the hook
   child.unref();
   return cli;
 }

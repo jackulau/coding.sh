@@ -472,6 +472,7 @@ grouped by area, with links to the docs for the details.
 - **Install.** `uninstall` removes coding.sh from an agent's other config files when it can't read or parse one of them, leaves that file as it is, prints the error and exits 1. Before, it removed nothing from that agent and could say that nothing was installed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#uninstall))
 - **Capture.** On Windows, the node hook writes an event whose agent name Windows keeps for a device, such as `con` or `nul.txt`, or ends in a dot, which Windows drops from a folder name, under `spool/unknown`, as it does for other names that are not safe folder names. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Work.** After `work snooze`, the note and `work snooze --help` say the item shows only while it is in a more urgent bucket until the snooze ends. Before, they said it comes back sooner, as if the snooze ended. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#acknowledging-and-snoozing))
+- **MCP.** The MCP server and read commands no longer exit when they cannot start the background ingest they hand pending captures to, as when an upgrade removed the node binary they run on. The captures wait for the next ingest. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#output-and-updates))
 
 ## [0.1.7] - 2026-11-16
 

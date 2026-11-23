@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -98,5 +99,35 @@ describe("openContext ingest/gc", () => {
     } finally {
       await ctx.close();
     }
+  });
+
+  it("an ingest whose background hand-off cannot start node does not crash the process", () => {
+    const home = join(root, "home6");
+    const cli = join(root, "crash-cli.mjs");
+    writeFileSync(cli, "");
+    const script = join(root, "crash-ingest.mjs");
+    // The node binary this process started from is gone (an upgrade removed it): spawn reports ENOENT on 'error', after it returns.
+    writeFileSync(
+      script,
+      [
+        `import { mkdirSync, writeFileSync } from "node:fs";`,
+        `import { dirname, join } from "node:path";`,
+        `const [ctxUrl, home, cli] = process.argv.slice(2);`,
+        `const { openContext } = await import(ctxUrl);`,
+        `mkdirSync(join(home, "spool"), { recursive: true });`,
+        `const ctx = await openContext({ env: { CODING_SH_HOME: home, HOME: dirname(home) } });`,
+        `mkdirSync(dirname(ctx.paths.cliPointer), { recursive: true });`,
+        `writeFileSync(ctx.paths.cliPointer, cli);`,
+        `process.execPath = join(home, "gone", "node");`,
+        `const marker = join(home, "spool", ".ingest.pending");`,
+        `await ctx.ingest({ onProgress: () => writeFileSync(marker, "") });`,
+        `await new Promise((r) => setTimeout(r, 200));`,
+        `await ctx.close();`,
+        `process.stdout.write("survived\\n");`,
+      ].join("\n"),
+    );
+    const ctxUrl = new URL("../../src/core/context.ts", import.meta.url).href;
+    const r = spawnSync(process.execPath, ["--no-warnings", script, ctxUrl, home, cli], { encoding: "utf8", timeout: 60_000, windowsHide: true, env: { ...process.env, NODE_OPTIONS: undefined } });
+    assert.equal(r.stdout.trim(), "survived", `exit ${r.status}: ${r.stderr.split("\n").filter((l) => /Error|spawn/.test(l)).slice(0, 3).join(" | ")}`);
   });
 });
