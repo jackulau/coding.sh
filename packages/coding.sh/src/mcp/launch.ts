@@ -1,6 +1,6 @@
 // How agents launch the coding.sh MCP server. Kept free of server imports so
 // init and the config printer stay light.
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { paths } from "../core/paths.ts";
 import type { McpServerSpec } from "../core/types.ts";
@@ -22,6 +22,19 @@ export function runningCli(argv1: string | undefined = process.argv[1]): string 
     // gone or unreadable: judge the path as given
   }
   return /^cli\.m?js$/.test(basename(entry)) ? entry : undefined;
+}
+
+/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded at `pointer`. */
+export function ingestCli(pointer: string): string | undefined {
+  const argv1 = process.argv[1];
+  if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
+  const running = runningCli();
+  if (running) return running;
+  try {
+    return readFileSync(pointer, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

@@ -17,8 +17,14 @@
 //   from its row and events read again inside it: an ingest's store-and-fold of the session
 //   (one transaction too) falls before or after it, and a pass stopped halfway leaves the old
 //   costs for the next pass to find. Where it has none, the pass holds the ingest lock around
-//   each session's writes, as the refold does, and a later pass refreshes totals that a pass
-//   stopped between the two left behind the session's events.
+//   each session's writes, and a later pass refreshes totals that a pass stopped between the
+//   two left behind the session's events. It holds the lock for a second at most at a time
+//   and leaves it free for a quarter second between holds, so an ingest waiting for it gets a turn.
+// Reads and hooks that find a pass holding a lock leave the wake marker (spool/kick.ts) to it, as
+// they do to an ingest. So between holds, while the marker is set, the pass runs an ingest
+// (onWake: `usage --reprice`), or starts a background ingest and keeps off the lock until that
+// ingest holds it (the kick repriceLock set: an open). A pass with neither, or whose background
+// ingest never took the lock, leaves the spool to the next ingest.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
 // Opening the index (store/factory.ts) leaves the pass to the background ingest that
@@ -31,19 +37,24 @@
 // pass fails) rather than run without it.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentEvent, CostByTokenType, Session } from "../schema/index.ts";
 import { repriceProgress } from "../store/upgrade.ts";
 import { sha256Hex } from "./ids.ts";
-import { acquireLock, type Lock } from "./lock.ts";
+import { acquireLock, isLocked, wakeMarker, type Lock } from "./lock.ts";
 import { priceEvent, PRICING_RULES_VERSION, pricesFor, TOKEN_TYPES, type Prices } from "./pricing.ts";
 import { billedCallOf, buildSession } from "./sessions.ts";
 import type { EventCost, IndexStore } from "./types.ts";
 
 export const REPRICE_CURSOR = "pricing:repriced";
 const KINDS = ["llm.call", "notification", "span"];
-/** Longest the pass holds the ingest lock at a time, so ingests waiting for it get turns (as core/reparse.ts LOCK_HOLD_MS). */
+/** Longest the pass holds the ingest lock at a time (as core/reparse.ts LOCK_HOLD_MS); it checks the wake marker after each hold. */
 const HOLD_MS = 1_000;
+/** How long the pass leaves the ingest lock free between holds: an ingest waiting for it looks every 100 ms (core/lock.ts). */
+const PAUSE_MS = 250;
+/** Longest the pass keeps off the ingest lock for a background ingest it started to take it. */
+const HANDOFF_MS = 10_000;
 
 /** Positive int that changes whenever the effective price table, or the rules that look it up, do. */
 export function priceStamp(prices: Prices, rules: number = PRICING_RULES_VERSION): number {
@@ -63,10 +74,16 @@ export interface RepriceOptions {
   force?: boolean;
   /**
    * Runs `fn` over the stored sessions in order. The background ingest passes its short lock holds. Default: one after
-   * another, under the ingest lock repriceLock set when the store has no transactions (up to 5 s of waiting for it, 30 s
-   * when forced; busy longer, LockBusyError).
+   * another, in stretches of a second; when the store has no transactions, each stretch holds the ingest lock
+   * repriceLock set (up to 5 s of waiting for it, 30 s when forced; busy longer, LockBusyError), with a pause between.
    */
   each?: (sessions: Session[], fn: (prev: Session) => Promise<void>) => Promise<void>;
+  /**
+   * With the default `each`: run between stretches while the ingest lock's wake marker is set (a hook or a read left
+   * spool lines waiting): an ingest that takes the lock without waiting. Default: a background ingest started with the
+   * kick repriceLock set, if any. Its errors are not the pass's: the marker stays for the next ingest.
+   */
+  onWake?: () => Promise<void>;
   /** True for a session the pass leaves out: the caller repriced it already, right before its fold (core/reparse.ts). */
   skip?: (id: string) => boolean;
   /** Sessions looked at so far, of all of them. Default: a line where a person waits, after 2 s (store/upgrade.ts repriceProgress). */
@@ -80,16 +97,17 @@ export interface RepriceOptions {
   lock?: string | false;
 }
 
-/** The lock files a store's pass holds, by store: set where the store is opened (store/factory.ts). */
-const locks = new WeakMap<IndexStore, { pass: string; ingest: string | undefined }>();
+/** The lock files a store's pass holds, by store, and how it starts a background ingest: set where the store is opened (store/factory.ts). */
+const locks = new WeakMap<IndexStore, { pass: string; ingest: string | undefined; kick: (() => boolean) | undefined }>();
 
 /**
  * Sets the lock files a pass on this store holds: `path`, the one the refold of its home holds for a whole
  * run (core/reparse.ts), and `ingest`, that home's ingest lock, held around each session's writes when the
- * store has no transactions.
+ * store has no transactions. `kick` starts a background ingest of that home's spool (false: none started); a
+ * pass with no onWake hands the spool to one when the lock's wake marker is set.
  */
-export function repriceLock(index: IndexStore, path: string, ingest?: string): void {
-  locks.set(index, { pass: path, ingest });
+export function repriceLock(index: IndexStore, path: string, ingest?: string, kick?: () => boolean): void {
+  locks.set(index, { pass: path, ingest, kick });
 }
 
 /** No lock file can be made where the pass needs one (a read-only home). */
@@ -116,7 +134,9 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
     if (lock && !opts.force && (await index.getCursor(REPRICE_CURSOR)) === stamp) return none;
     // A store without transactions: each session's writes under the ingest lock, so an ingest's store-and-fold falls before or after them.
     const held: { lock?: Lock } = {};
-    const each = opts.each ?? sessionsUnder(index.transaction ? undefined : set?.ingest, opts.force ? 30_000 : 5_000, held);
+    const ingest = set?.ingest;
+    const onWake = opts.onWake ?? (ingest && set?.kick ? handOff(ingest, set.kick) : undefined);
+    const each = opts.each ?? sessionsUnder(ingest, !index.transaction, opts.force ? 30_000 : 5_000, held, onWake);
     const progress = opts.onProgress ?? repriceProgress();
     const all = (await index.listSessions({})).filter((s) => !opts.skip?.(s.id));
     let events = 0;
@@ -151,22 +171,56 @@ async function takeLock(path: string, waitMs: number): Promise<Lock> {
 }
 
 /**
- * The pass's own `each`: the sessions in order, under the ingest lock at `path` when one is given and the spool
- * exists (an ingest takes it only then), held HOLD_MS at most at a time. `held` holds the lock while it is held.
+ * The pass's own `each`: the sessions in order, in stretches of HOLD_MS at most. With `hold` (a store without
+ * transactions), each stretch holds the ingest lock at `ingest` when the spool exists (an ingest takes it only then),
+ * and the lock stays free PAUSE_MS before the next, so an ingest waiting for it gets it. Between stretches, while the
+ * lock's wake marker is set, `onWake` runs. `held` holds the lock while it is held.
  */
-function sessionsUnder(path: string | undefined, waitMs: number, held: { lock?: Lock }): NonNullable<RepriceOptions["each"]> {
+function sessionsUnder(ingest: string | undefined, hold: boolean, waitMs: number, held: { lock?: Lock }, onWake?: () => Promise<void>): NonNullable<RepriceOptions["each"]> {
+  const marker = ingest && wakeMarker(ingest);
   return async (list, fn) => {
     let i = 0;
     while (i < list.length) {
-      held.lock = path && existsSync(dirname(path)) ? await takeLock(path, waitMs) : undefined;
+      const lock = hold && ingest && existsSync(dirname(ingest)) ? await takeLock(ingest, waitMs) : undefined;
+      held.lock = lock;
       const until = Date.now() + HOLD_MS;
       try {
         do await fn(list[i++]!);
-        while (i < list.length && (!held.lock || Date.now() < until));
+        while (i < list.length && Date.now() < until);
       } finally {
-        held.lock?.release();
+        lock?.release();
         held.lock = undefined;
       }
+      if (i >= list.length) break;
+      // A hook or a read that found the lock held (or a read that found the pass running) left the spool to the pass.
+      if (onWake && marker && existsSync(marker)) await onWake().catch(() => {});
+      if (lock) await sleep(PAUSE_MS);
+    }
+  };
+}
+
+/**
+ * An onWake that hands the spool to a background ingest: `kick` starts one, and the pass keeps off the ingest lock
+ * until it holds the lock or the marker is gone (another ingest took it), HANDOFF_MS at most. When none starts, or
+ * none takes the lock in time, the pass starts no more: the spool waits for the next ingest. While an ingest holds
+ * the lock it starts none: that ingest runs again for the marker (core/ingest.ts), as the hook leaves it to it.
+ */
+function handOff(lockPath: string, kick: () => boolean): () => Promise<void> {
+  const marker = wakeMarker(lockPath);
+  let done = false;
+  return async () => {
+    if (done || isLocked(lockPath)) return;
+    if (!kick()) {
+      done = true;
+      return;
+    }
+    const until = Date.now() + HANDOFF_MS;
+    while (!isLocked(lockPath) && existsSync(marker)) {
+      if (Date.now() >= until) {
+        done = true;
+        return;
+      }
+      await sleep(50);
     }
   };
 }

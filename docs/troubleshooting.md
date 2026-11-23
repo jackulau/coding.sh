@@ -219,9 +219,12 @@ coding.sh: index upgraded in 24.7s: migrate 1.2s, reprice 23.5s. The index as it
   waits and prints that process's progress (`waiting for another coding.sh (pid …)`).
 - **Stopped halfway.** The upgrade runs in one transaction. If it is stopped, the index stays as it
   was and the next command starts it again. A repricing stopped halfway is finished by the next.
-- **Repricing beside an ingest.** Repricing writes each session's costs and totals in one
-  transaction on SQLite, under the ingest lock on other stores, so events stored meanwhile stay in
-  the totals.
+- **Repricing beside an ingest.** Events stored during a repricing stay in the totals: on SQLite
+  each session's costs and totals commit as one, and on other stores repricing holds the ingest
+  lock around them, a second at a time.
+- **New captures during a repricing.** Reads show what is indexed; the repricing has the rest
+  ingested between its steps. A repricing run with `--store` or `--blobs`, or with
+  `CODING_SH_NO_AUTO_INGEST=1` outside `usage --reprice`, leaves them to the next ingest.
 - **A read-only home.** Where coding.sh can't make its lock file in the home, estimates wait to be
   repriced by a command that can, and `coding.sh usage --reprice` fails with the reason.
 - **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished.

@@ -18,7 +18,7 @@ import { timeMs } from "../helpers-timing.ts";
 import { cli, event, seed, session } from "../query/_seed.ts";
 
 const FILES = 2000;
-const NOTE = /2000 files not yet ingested; a re-parse is running/;
+const NOTE = /2000 files not yet ingested; a re-parse or repricing is running/;
 
 describe("reads while a re-parse holds the store", () => {
   let env: TmpEnv;

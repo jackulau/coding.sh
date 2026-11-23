@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, describe, it } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { defaultConfig } from "../../src/core/config.ts";
-import { acquireLock } from "../../src/core/lock.ts";
+import { acquireLock, isLocked, wakeMarker } from "../../src/core/lock.ts";
 import { PRICING_RULES_VERSION, pricesFor } from "../../src/core/pricing.ts";
 import { priceStamp, repriceEvents, REPRICE_CURSOR, repriceLock, repriceStored } from "../../src/core/reprice.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { openIndexStore } from "../../src/store/factory.ts";
+import { openIndexStore, registerIndexStore } from "../../src/store/factory.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
@@ -38,6 +39,39 @@ async function seed(store: IndexStore) {
 }
 
 const costs = async (store: IndexStore) => Object.fromEntries((await store.listEvents("s1")).map((e) => [e.id, e.usage?.costUsd]));
+
+/** `store` with `n` sessions (s0, s1, …) of one unpriced call each, $5 once priced. */
+async function withCalls<T extends IndexStore>(store: T, n: number): Promise<T> {
+  for (let i = 0; i < n; i++) {
+    const events = [ev(`c${i}`, { sessionId: `s${i}`, model: "claude-opus-4-5", usage: { inputTokens: M } })];
+    await store.putEvents(events);
+    await store.upsertSession(buildSession(events));
+  }
+  return store;
+}
+
+/** `get()` once it gives a value, polled every 25 ms for `ms` at most. */
+async function poll<T>(get: () => T | undefined, ms: number): Promise<T | undefined> {
+  const end = Date.now() + ms;
+  let v = get();
+  while (v === undefined && Date.now() < end) {
+    await sleep(25);
+    v = get();
+  }
+  return v;
+}
+
+/** Each read of `store`'s events takes 10 ms while `slow()` says so, as over the network to Postgres or ClickHouse; `during` runs at each. */
+function slowReads(store: IndexStore, slow: () => boolean, during: () => void = () => {}): void {
+  const list = store.listEvents.bind(store);
+  store.listEvents = async (id, o) => {
+    if (slow()) {
+      during();
+      await sleep(10);
+    }
+    return list(id, o);
+  };
+}
 
 for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sqlite", () => SqliteIndexStore.open(":memory:")]] as const) {
   describe(`repriceStored (${name})`, () => {
@@ -318,6 +352,110 @@ describe("a reprice pass beside an ingest in another process", () => {
     await store.close();
   });
 
+  it("a store without transactions: an ingest waiting for the ingest lock gets it between the pass's holds", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-turns-"));
+    roots.push(root);
+    const spool = join(root, "spool");
+    mkdirSync(spool);
+    const store = new MemoryIndexStore();
+    for (let i = 0; i < 400; i++) {
+      const events = [ev(`c${i}`, { sessionId: `s${i}`, model: "claude-opus-4-5", usage: { inputTokens: M } })];
+      await store.putEvents(events);
+      await store.upsertSession(buildSession(events));
+    }
+    repriceLock(store, join(root, "reparse.lock"), join(spool, ".ingest.lock"));
+    // Reads take a few ms each, as over the network to Postgres or ClickHouse, while the ingest below waits.
+    let waiting = true;
+    const list = store.listEvents.bind(store);
+    store.listEvents = async (id, o) => {
+      if (waiting) await new Promise((r) => setTimeout(r, 10));
+      return list(id, o);
+    };
+    // An ingest in another process (a read's, which waits 1.5 s) asks for the lock while the pass runs.
+    const got = new Promise<boolean>((resolve) => {
+      setTimeout(() => {
+        acquireLock(join(spool, ".ingest.lock"), { waitMs: 1_500 })
+          .then((l) => (l.release(), true), () => false)
+          .then((ok) => {
+            waiting = false;
+            resolve(ok);
+          });
+      }, 100);
+    });
+    assert.equal((await repriceStored(store, undefined, { onProgress: () => {} })).ran, true);
+    assert.equal(await got, true, "HOLD_MS: the waiting ingest gets a turn between two holds");
+    await store.close();
+  });
+
+  it("a store without transactions: a wake marker left during a hold starts a background ingest, and the pass keeps off the lock until it holds it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-wake-"));
+    roots.push(root);
+    mkdirSync(join(root, "spool"));
+    const lockPath = join(root, "spool", ".ingest.lock");
+    const marker = wakeMarker(lockPath);
+    const store = await withCalls(new MemoryIndexStore(), 100);
+    let ingested = false;
+    slowReads(store, () => !ingested);
+    // The open's kick (store/factory.ts): `ingest --background`, which starts a moment later and takes the lock without waiting.
+    let kicks = 0;
+    repriceLock(store, join(root, "reparse.lock"), lockPath, () => {
+      kicks++;
+      setTimeout(() => {
+        void acquireLock(lockPath, { waitMs: 0 }).then(async (l) => {
+          rmSync(marker, { force: true });
+          await sleep(50);
+          l.release();
+          ingested = true;
+        }, () => {});
+      }, 300);
+      return true;
+    });
+    // A hook at a session end finds the pass holding the lock: it leaves the marker and starts nothing (spool/kick.ts).
+    const hook = setTimeout(() => writeFileSync(marker, ""), 100);
+    try {
+      assert.equal((await repriceStored(store, undefined, { onProgress: () => {} })).ran, true);
+    } finally {
+      clearTimeout(hook);
+    }
+    assert.equal(kicks, 1, "one background ingest started for the marker");
+    assert.equal(ingested, true, "it took the lock with no wait");
+    assert.equal(existsSync(marker), false);
+    assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
+    await store.close();
+  });
+
+  it("sqlite: the pass holds no ingest lock, and its onWake (`usage --reprice`'s) ingests between stretches while the wake marker is set", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-onwake-"));
+    roots.push(root);
+    mkdirSync(join(root, "spool"));
+    const lockPath = join(root, "spool", ".ingest.lock");
+    const marker = wakeMarker(lockPath);
+    const store = await withCalls(await SqliteIndexStore.open(join(root, "index.db")), 100);
+    repriceLock(store, join(root, "reparse.lock"), lockPath);
+    let ingests = 0;
+    let held = false;
+    slowReads(store, () => ingests === 0, () => (held ||= isLocked(lockPath)));
+    // A read that found the pass running left the marker (cli/common.ts reparseBacklog).
+    const read = setTimeout(() => writeFileSync(marker, ""), 100);
+    const onWake = async () => {
+      // As wakeIngest (core/context.ts): an ingest that takes the lock only if it is free now, and clears the marker.
+      const l = await acquireLock(lockPath, { waitMs: 0 });
+      rmSync(marker, { force: true });
+      l.release();
+      ingests++;
+    };
+    try {
+      assert.equal((await repriceStored(store, undefined, { force: true, onWake, onProgress: () => {} })).ran, true);
+      assert.equal(ingests, 1);
+      assert.equal(held, false, "a store with transactions leaves the ingest lock to ingests");
+      assert.equal(existsSync(marker), false);
+      assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
+    } finally {
+      clearTimeout(read);
+      await store.close();
+    }
+  });
+
   it("sqlite: repriceEvents (the refold's) leaves a call alone that a gateway companion billed after its first read", async () => {
     const store = await SqliteIndexStore.open(":memory:");
     const events = [ev("start", { kind: "session.start", ts: 900 }), ev("call", { model: "claude-opus-4-5", usage: { inputTokens: M } })];
@@ -363,6 +501,66 @@ describe("opening the index reprices it", () => {
     const store = await openIndexStore(`sqlite://${path}`, defaultConfig({ CODING_SH_HOME: root, HOME: root }));
     assert.equal((await costs(store)).plain, 5);
     assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 5 + 9 + 25 + 7 + 15);
+    await store.close();
+  });
+
+  it("a store without transactions: a hook's wake marker during the open's pass starts `ingest --background` with the CLI init recorded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-kick-"));
+    roots.push(root);
+    const home = join(root, "home");
+    mkdirSync(join(home, "spool"), { recursive: true });
+    mkdirSync(join(home, "bin"));
+    const lockPath = join(home, "spool", ".ingest.lock");
+    const report = join(root, "ingest.json");
+    // Stands in for the CLI: takes the ingest lock without waiting and clears the marker, as `ingest --background` does, then says how it ran.
+    const cli = join(root, "cli.mjs");
+    writeFileSync(cli, [
+      `import { rmSync, writeFileSync } from "node:fs";`,
+      `const out = { pid: process.pid, args: process.argv.slice(2), home: process.env.CODING_SH_HOME };`,
+      `try {`,
+      `  const { acquireLock, wakeMarker } = await import(${JSON.stringify(new URL("../../src/core/lock.ts", import.meta.url).href)});`,
+      `  const lock = await acquireLock(${JSON.stringify(lockPath)}, { waitMs: 0 });`,
+      `  rmSync(wakeMarker(${JSON.stringify(lockPath)}), { force: true });`,
+      `  await new Promise((r) => setTimeout(r, 100));`,
+      `  lock.release();`,
+      `} catch (e) {`,
+      `  out.error = String(e);`,
+      `}`,
+      `writeFileSync(${JSON.stringify(report)}, JSON.stringify(out));`,
+    ].join("\n"));
+    writeFileSync(join(home, "bin", "cli-path"), cli);
+    const store = await withCalls(new MemoryIndexStore(), 100);
+    slowReads(store, () => !existsSync(report));
+    registerIndexStore("reprice-kick", () => store);
+    const env: NodeJS.ProcessEnv = { ...process.env, CODING_SH_HOME: home, HOME: root, USERPROFILE: root };
+    for (const k of ["CODING_SH_NO_AUTO_INGEST", "CODING_SH_RUN_ID", "CODING_SH_STORE_URL", "CODING_SH_BLOB_URL"]) delete env[k];
+    const hook = setTimeout(() => writeFileSync(wakeMarker(lockPath), ""), 100);
+    try {
+      assert.equal(await openIndexStore("reprice-kick://", defaultConfig({ CODING_SH_HOME: home, HOME: root }), { env }), store);
+    } finally {
+      clearTimeout(hook);
+    }
+    const ran = await poll(() => {
+      try {
+        return JSON.parse(readFileSync(report, "utf8")) as { pid: number; args: string[]; home: string; error?: string };
+      } catch {
+        return undefined; // not written yet
+      }
+    }, 10_000);
+    // The ingest exits once it has reported: wait for that (or stop it) before the test's folder goes.
+    const gone = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return undefined;
+      } catch {
+        return true;
+      }
+    };
+    if (ran && !(await poll(() => gone(ran.pid), 5_000))) process.kill(ran.pid);
+    assert.deepEqual(ran && { args: ran.args, home: ran.home, error: ran.error }, { args: ["ingest", "--background"], home, error: undefined });
+    assert.equal(existsSync(wakeMarker(lockPath)), false);
+    assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
+    assert.ok((await store.getCursor(REPRICE_CURSOR)) > 0, "the pass finished");
     await store.close();
   });
 });
