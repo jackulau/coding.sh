@@ -527,6 +527,21 @@ describe("session usage rollup", () => {
     assert.equal(est.usage.estimatedCostUsd, undefined);
   });
 
+  it("a nested call that reports a cost of 0 beats the wrapper's estimate, as does a reported part too small to change the sum", () => {
+    // A free model, or a gateway that bills nothing, under a wrapper priced at $4.
+    const wrapper = ev("llm.call", { costEstimated: true }, { model: "claude-opus-5-5", traceId: "t", spanId: "w", usage: { inputTokens: 1_000_000, costUsd: 4 } });
+    const free = ev("llm.call", {}, { model: "claude-opus-5-5", traceId: "t", spanId: "n", parentSpanId: "w", usage: { inputTokens: 1_000_000, costUsd: 0 } });
+    const s = buildSession([wrapper, free]);
+    assert.deepEqual(s.stats.usage, { inputTokens: 1_000_000, costUsd: 0 });
+    assert.deepEqual(s.stats.duplicateUsage, { calls: 1, tokens: 1_000_000, costUsd: 4 });
+    // 1e-12 reported beside 1e6 estimated: the nested sum less its estimates rounds to 0, and the nested calls count all the same.
+    const big = ev("llm.call", { costEstimated: true }, { traceId: "t", spanId: "e", parentSpanId: "w", usage: { inputTokens: 999_999, costUsd: 1e6 } });
+    const tiny = ev("llm.call", {}, { traceId: "t", spanId: "r", parentSpanId: "w", usage: { inputTokens: 1, costUsd: 1e-12 } });
+    const mixed = rollupUsage([wrapper, big, tiny]).usage;
+    assert.equal(mixed.costUsd, 1e6);
+    assert.equal(mixed.estimatedCostUsd, 1e6);
+  });
+
   it("fills fields the wrapper lacks from its nested calls", () => {
     const r = rollupUsage([llm("a", undefined, { inputTokens: 100 }), llm("b", "a", { inputTokens: 90, cacheReadTokens: 10 }), llm("c", "a", { cacheReadTokens: 5 })]);
     assert.deepEqual(r.usage, { inputTokens: 100, cacheReadTokens: 15 });

@@ -625,6 +625,10 @@ fast, long-context or US-only rates (`batch+long-context` for both). `payload.co
 its estimate by token type at the same rates, so the parts add up to `usage.costUsd`. A reported or
 gateway-billed cost has no split.
 
+A model call nested in another of the same trace (a framework's span around the provider's call)
+counts once. The outer call keeps its own figures and takes the rest from the calls nested in it. A
+cost a nested call reported, even $0, beats an estimate on the outer call.
+
 **Agent and host.**
 
 | Field | Meaning |

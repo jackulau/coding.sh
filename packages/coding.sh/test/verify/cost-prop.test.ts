@@ -17,9 +17,9 @@
 // - A session's token counts and cost are the sums over the calls it counts, plus its latest usage
 //   snapshot. A call that repeats an earlier call's responseId, or replays one, counts once. A wrapper
 //   span over a call with the same tokens counts once, with its own values, except that a cost the
-//   nested call reported beats the wrapper's estimate. The estimated part is the sum of the estimates
-//   counted, and its splits by token type and by tier add up to it. What was left out is the duplicate
-//   count, tokens and cost.
+//   nested call reported, 0 included, beats the wrapper's estimate. The estimated part is the sum of
+//   the estimates counted, and its splits by token type and by tier add up to it. What was left out is
+//   the duplicate count, tokens and cost.
 //
 // Calls are drawn over every model in the built-in table, with provider prefixes, dated and variant
 // suffixes, family fallbacks and an unknown model; prompts near each long-context threshold; and the
@@ -348,8 +348,7 @@ function sessionEvents(s: Subject, c: SessionCase): { events: AgentEvent[]; grou
     if (c.spans) {
       call.traceId = "trace";
       call.spanId = `s${i}`;
-      // A reported cost of 0 inside a wrapper is left out.
-      if (sc.wrap && sc.rid === undefined && !sc.replay && sc.call.reported !== 0) {
+      if (sc.wrap && sc.rid === undefined && !sc.replay) {
         wrapper = callEvent({ ...sc.call, reported: sc.wrapperReports ? (sc.call.reported ?? sc.wrapperCost) : undefined }, `w${i}`, call.ts - 3);
         wrapper.traceId = "trace";
         wrapper.spanId = `w${i}`;
@@ -412,7 +411,7 @@ function expected(groups: readonly Group[], snapshot: AgentEvent | undefined): E
         leaveOut(call);
       }
       const own = wrapper.usage?.costUsd;
-      const callReported = carries(call) && !isEstimate(call) && costOf(call) > 0;
+      const callReported = carries(call) && call.usage?.costUsd !== undefined && !isEstimate(call);
       if (own !== undefined && !(isEstimate(wrapper) && callReported)) count(wrapper, own, isEstimate(wrapper) ? own : 0, wrapper.payload.priceTier);
       else count(wrapper, costOf(call), isEstimate(call) ? costOf(call) : 0, call.payload.priceTier);
       continue;
