@@ -51,7 +51,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Qwen Code | `~/.qwen/projects/<cwd>/chats/*.jsonl` | `qwen -p "…" -o stream-json -m M --yolo --max-session-turns N --max-wall-time 10m` | `QWEN_HOME`, `--system-prompt`, `QWEN_SYSTEM_MD` | A |
 | Crush | SQLite `./.crush/crush.db` | `crush run -q -y -m prov/model -c cwd -D datadir` (text output only) | `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` | B |
 | Aider | `.aider.chat.history.md` (markdown, no session id). Usage from its `Tokens: … sent, … received` and `Cost: $… message, $… session` lines. Live (`coding.sh run -- aider`): one `llm.call` per reply, with exact tokens and cost from Aider's analytics log (a temp file passed as `AIDER_ANALYTICS_LOG`, or the log you named with `--analytics-log`, the env var or `.aider.conf.yml`; a named log that two Aider sessions write at once counts both in each) and the cache split from the chat history's usage lines. `inputTokens` is the uncached part: Aider's "sent" counts cache reads once and cache writes twice. A cost of 0 (no price for the model) is stored as unknown. | `aider -m "…" --yes-always --no-auto-commits --model M --no-stream --no-pretty` | `-c file`, `--read CONVENTIONS.md` | C |
-| T3 Code | SQLite `$T3CODE_HOME/userdata/statev2.sqlite` (default `~/.t3`; `orchestration_v2_projection_*`), v1 `state.sqlite`. Read as copies. A Codex `exec` cell built from the store is ok when its script completed with no command exiting nonzero, or still runs, as in the codex adapter; a tool request that "has no active turn" counts as interrupted, not as a tool error. | None (desktop GUI) | — | B |
+| T3 Code | SQLite `$T3CODE_HOME/userdata/statev2.sqlite` (default `~/.t3`; `orchestration_v2_projection_*`), v1 `state.sqlite`. Read where it is while T3 Code has it open, otherwise from a copy ([store reads](#host-apps-t3-code)). A Codex `exec` cell built from the store is ok when its script completed with no command exiting nonzero, or still runs, as in the codex adapter; a tool request that "has no active turn" counts as interrupted, not as a tool error. | None (desktop GUI) | — | B |
 | Devin CLI | SQLite `cli/sessions.db` in its sessions folder (`DEVIN_SESSIONS_DIR` moves it). Not read, so there is no backfill. | `devin -p --permission-mode dangerous --respect-workspace-trust false --model M --export f -- "…"`; usage from the `--export` file (ATIF). Without a login it waits at a login picker, so the run stops and says so. (U: not run with a login) | `DEVIN_CONFIG_HOME`, `DEVIN_SESSIONS_DIR`. Eval runs turn every `read_config_from` import off, set `process_model` to `in-process` and copy the login file (`credentials.toml`). | A |
 
 **History on read.** Before `coding.sh init` installs its hooks, a read (`usage`, `sessions`,
@@ -193,9 +193,17 @@ order.
   `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
   The re-parse reads T3's store and adds the T3 rows such a session lacks. It runs once after the T3
   adapter's parse version changes, once on a store an older coding.sh kept, and on `ingest --rebuild`.
-- **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
-  failed copy is a backfill error. The next read removes copies a killed read left. A read that kills its
-  import child at its deadline waits up to a second for the child to let go of its copy, then removes it.
+- **Store reads:** while the T3 store is in WAL mode and its `-wal` and `-shm` files exist, as they do while
+  T3 Code has it open, it is read where it is: read-only, with no copy. Each thread's rows are read in one
+  short read transaction, so they come from one snapshot of the store. A WAL reader doesn't block the writer,
+  so T3 Code keeps writing during the read. The read writes nothing to the store or its WAL; like any reader,
+  it keeps its read locks in `-shm`.
+- **Store copies:** otherwise the store is read from a copy in the temp directory: in rollback-journal mode,
+  with no `-wal` or `-shm`, or when the store is locked. A copy is made only when the temp directory's volume
+  would still have as much space free as the copy takes, up to 2 GB. When it wouldn't, the backfill fails
+  with an error that names the space needed, the space free and the folder; a copy that fails is a backfill
+  error too. The next read removes copies a killed read left. A read that kills its import child at its
+  deadline waits up to a second for the child to let go of its copy, then removes it.
 
 ## Known breakage to design around
 
@@ -278,7 +286,10 @@ order.
   - Per-agent hook timeouts: never assume 30s, and keep the hook under 50 ms.
   - Windows path quoting.
   - Transcripts are often flushed after Stop, so debounce transcript reads at ingest.
-  - Copy SQLite databases before reading (WAL locks).
+  - Copy SQLite databases before reading (WAL locks): `openSqliteCopy` in `more/_util.ts`, which makes no
+    copy that would leave less space free in the temp directory than it takes, up to 2 GB. A big database
+    its agent keeps open in WAL mode can be read in place with `openSqliteInPlace`, which falls back to a
+    copy when the database is not in WAL mode or has no `-wal` and `-shm` files.
   - Backfill follows symlinks and Windows junctions in transcript directories (a mirror of another
     machine's `~/.claude/projects`, say) and skips links that point nowhere.
 
