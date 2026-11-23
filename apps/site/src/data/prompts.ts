@@ -13,8 +13,9 @@ export interface QuickstartPath {
 
 const STOP = "If a release-age policy or a permission error blocks an install, stop and ask me instead of changing it.";
 // npm also installs an extensionless sh script named coding.sh, and PowerShell and cmd open it instead of
-// running coding.sh.cmd. codingsh is the same CLI (docs/guides/install.md#windows).
-const WIN = "On Windows, in PowerShell or cmd, run codingsh instead of coding.sh.";
+// running coding.sh.cmd; npx on Windows runs its command through cmd from any shell. codingsh is the same
+// CLI from the same npm package (docs/guides/install.md#windows), so the rule names the npx form and the package.
+const WIN = "On Windows, run npx -p coding.sh codingsh for npx coding.sh, and in PowerShell or cmd, codingsh for an installed coding.sh. The npm package stays coding.sh.";
 
 export const SETUP_PROMPT = `Set up coding.sh on this machine. It needs Node.js 22.16 or newer. ${WIN}
 

@@ -53,8 +53,9 @@ and opens the viewer. Read it first: ${abs("/install")}. In a non-interactive sh
 curl -fsSL https://coding.sh/install | CODING_SH_YES=1 CODING_SH_NO_UI=1 sh
 \`\`\`
 
-On Windows, run the script in Git Bash. In PowerShell or cmd, install with \`npm install -g coding.sh\` and run
-\`codingsh\` wherever this page says \`coding.sh\`: there, \`coding.sh\` opens npm's sh script instead of running it.
+On Windows, run the script in Git Bash, and \`npx -p coding.sh codingsh\` for \`npx coding.sh\` in any shell. In PowerShell
+or cmd, install with \`npm install -g coding.sh\`, then type \`codingsh\` for an installed \`coding.sh\`: there, \`coding.sh\`
+opens npm's sh script instead of running it.
 
 ## 2. Install the capture hooks
 
