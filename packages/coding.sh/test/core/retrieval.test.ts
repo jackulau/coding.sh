@@ -9,6 +9,7 @@ import { deserialize, serialize } from "node:v8";
 import { classifyRetrieval, retrievalTotals } from "../../src/core/retrieval.ts";
 import { buildSession, foldSession, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind, RetrievalStats, Session } from "../../src/schema/index.ts";
+import { assertCpuUnder } from "../helpers-timing.ts";
 
 let n = 0;
 let clock = Date.UTC(2026, 10, 7, 9);
@@ -121,6 +122,15 @@ describe("classifyRetrieval", () => {
     assert.equal(kind("Bash", { command: `git ${"-C a ".repeat(50000)}show HEAD:x` }), "read");
     const ms = performance.now() - t0;
     assert.ok(ms < 5000, `${Math.round(ms)} ms`);
+  });
+
+  it("a PowerShell list of 20,000 files, with a space after or before each comma, is read in linear time", () => {
+    const files = Array.from({ length: 20000 }, (_, i) => `f${i}.ts`);
+    for (const comma of [", ", " ,"]) {
+      const input = { command: `Get-Content ${files.join(comma)}` };
+      assertCpuUnder(JSON.stringify(comma), () => classifyRetrieval("PowerShell", input));
+      assert.deepEqual(classifyRetrieval("PowerShell", input)?.paths, files);
+    }
   });
 
   it("a pipeline that removes or edits what it found is not a search", () => {
@@ -257,6 +267,20 @@ describe("Session.stats.retrieval", () => {
     // A shell line fails as a whole: only the file its error names was not read.
     const r = retrieval(bash("cat a.ts b.ts", { ok: false, output: "Exit code 1\nx\ncat: b.ts: No such file or directory" }), edit("a.ts"));
     assert.deepEqual(r, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });
+  });
+
+  it("a failed `cat` of 5,000 files, its error naming each missing one, is folded in linear time", () => {
+    const files = Array.from({ length: 5000 }, (_, i) => `f${i}.ts`);
+    const missing = (gone: (i: number) => boolean) => {
+      const output = ["Exit code 1", ...files.filter((_, i) => gone(i)).map((f) => `cat: ${f}: No such file or directory`)].join("\n");
+      return bash(`cat ${files.join(" ")}`, { ok: false, output });
+    };
+    const all = missing(() => true);
+    assertCpuUnder("every file missing", () => buildSession(all));
+    assert.deepEqual(buildSession(all).stats.retrieval, { reads: 1, filesRead: 0, editedAfterRead: 0, searches: 0 });
+    const odd = missing((i) => i % 2 === 1);
+    assertCpuUnder("every other file missing", () => buildSession(odd));
+    assert.equal(buildSession(odd).stats.retrieval?.filesRead, 2500);
   });
 
   it("an empty search: no output, No matches found, No files found, or exit 1 with nothing printed", () => {

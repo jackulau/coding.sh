@@ -23,8 +23,8 @@ import { shellCommandOf } from "../adapters/_shared/tools.ts";
 import type { AgentEvent, RetrievalStats, Session } from "../schema/index.ts";
 import { exitCodeOf, isPowerShellTool, shellParts, type ShellPart } from "./failing-command.ts";
 import type { ToolFailure } from "./failures.ts";
-import { changeKey } from "./sessions.ts";
-import { normalizeTracePath, operandsOf } from "./shell-diff.ts";
+import { changeKeyer } from "./sessions.ts";
+import { normalizeTracePath, operandsOf, slashed } from "./shell-diff.ts";
 import { ABSOLUTE, PS_COMMON } from "./shell-files.ts";
 // waste.ts imports sessions.ts, which imports this file: its sets are read inside functions only.
 import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
@@ -339,9 +339,13 @@ function psWord(w: string): { text: string; literal: boolean } {
   return { text, literal };
 }
 
+/** Words with no quote, escape, variable, glob or backslash: each is its own text (sh, PowerShell). */
+const SH_PLAIN = /^[^'"\\$`*?[\]{}]*$/;
+const PS_PLAIN = /^[^'"`$*?[\](){}@\\]*$/;
+
 /** A word as an operand: its literal text with `/` separators, or MARK and the word when it is not literal. A flag stays as written. */
 function unq(raw: string, ps: boolean): string {
-  if (raw.startsWith("-")) return raw;
+  if (raw.startsWith("-") || (ps ? PS_PLAIN : SH_PLAIN).test(raw)) return raw;
   const { text, literal } = ps ? psWord(raw) : shWord(raw);
   return literal ? text.replace(/\\/g, "/") : MARK + raw;
 }
@@ -585,7 +589,14 @@ function psArgs(raw: readonly string[], valued: readonly string[]): PsArgs {
   // `a, b` is three words and `a,b` one: a comma list goes on while a word ends or starts with a comma.
   const take = (i: number): [string[], number] => {
     let text = raw[i] ?? "";
-    while (i + 1 < raw.length && (text.endsWith(",") || raw[i + 1]!.startsWith(","))) text += raw[++i];
+    // `tail`, the last word that is not empty, ends as `text` does. `text.endsWith` would copy all
+    // of `text`, built by `+=`, on every step.
+    let tail = text;
+    while (i + 1 < raw.length && (tail.endsWith(",") || raw[i + 1]!.startsWith(","))) {
+      const w = raw[++i]!;
+      text += w;
+      if (w) tail = w;
+    }
     return [items(text), i];
   };
   for (let i = 0; i < raw.length; i++) {
@@ -720,11 +731,17 @@ function bodyText(v: unknown): string {
     t = keep.filter((l) => !NO_OUTPUT.test(l.trim())).join("\n");
   }
   // Copilot CLI ends a shell result with `<shellId: 3 completed with exit code 1>`.
-  t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
-  const lines = t.split("\n");
-  let i = 0;
-  while (i < lines.length && (HEADER_LINE.test(lines[i]!.trim()) || (i === 0 && !lines[i]!.trim()))) i++;
-  const body = lines.slice(i).join("\n").trim();
+  if (t.includes("<shellId: ")) t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
+  // Header lines, and a blank first line, come off the top; the body is the text from the first other line.
+  let start = 0;
+  for (let first = true; ; first = false) {
+    const nl = t.indexOf("\n", start);
+    const line = t.slice(start, nl < 0 ? t.length : nl).trim();
+    if (!HEADER_LINE.test(line) && (!first || line)) break;
+    if (nl < 0) return "";
+    start = nl + 1;
+  }
+  const body = t.slice(start).trim();
   return NO_OUTPUT.test(body) ? "" : body;
 }
 
@@ -745,9 +762,12 @@ function shapeEmpty(output: unknown): boolean | undefined {
   if (r.mode === "count" && typeof r.numMatches === "number") return r.numMatches === 0;
   if (typeof r.numFiles === "number") return r.numFiles === 0;
   if (Array.isArray(r.filenames)) return r.filenames.length === 0;
-  if (typeof r.stdout === "string" || typeof r.stderr === "string") return !`${typeof r.stdout === "string" ? r.stdout : ""}${typeof r.stderr === "string" ? r.stderr : ""}`.trim();
+  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout) && blank(r.stderr);
   return undefined;
 }
+
+/** Not a string, or only white space. */
+const blank = (v: unknown): boolean => typeof v !== "string" || !v.trim();
 
 const num = (m: RegExpExecArray | null): number | undefined => (m ? Number(m[1]) : undefined);
 
@@ -774,7 +794,7 @@ function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: bo
   const printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
   const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
   if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
-  if (p.ok === false) return exitStatus(p) === 1 && !printed;
+  if (p.ok === false) return !printed && exitStatus(p) === 1;
   if (none.test(printed)) return true;
   if (quiet || ((p.output === undefined || p.output === null) && (p.error === undefined || p.error === null))) return false;
   return !printed;
@@ -822,23 +842,28 @@ const MAX_QUEUES = 64;
 const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|cannot (?:open|read|access)|does not exist|is a directory|permission denied|access (?:is )?denied/i;
 
 /**
- * A read path as a filesChanged key (sessions.ts changeKey): relative to the session's cwd when
+ * Read paths as filesChanged keys (sessions.ts changeKey): relative to the session's cwd when
  * inside it, else absolute. A relative path is joined to the event's cwd first; Git Bash's `/c/x`
- * is `C:/x`, with the drive letter in the cwd's case.
+ * is `C:/x`, with the drive letter in the cwd's case. The cwds are read once for all of a call's paths.
  */
-function keyOf(path: string, eventCwd: string | undefined, cwd: string | undefined): string | undefined {
-  let p = path.replace(/\\/g, "/");
+function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
   const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (base && /^[A-Za-z]:/.test(base)) {
-    p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-    if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === base[0]!.toLowerCase()) p = base[0] + p.slice(1);
-  }
-  if (base && /^(?:\/|[A-Za-z]:\/)/.test(base) && !ABSOLUTE.test(p)) p = posix.join(base, p);
-  const k = posix.normalize(changeKey(p, eventCwd, cwd));
-  return k === "" || k === "." ? undefined : k;
+  const drive = base && /^[A-Za-z]:/.test(base) ? base[0]! : undefined;
+  const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
+  const change = changeKeyer(eventCwd, cwd);
+  return (path) => {
+    let p = slashed(path);
+    if (drive) {
+      if (p[0] === "/") p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+      if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === drive.toLowerCase()) p = drive + p.slice(1);
+    }
+    if (rooted && !ABSOLUTE.test(p)) p = posix.join(base!, p);
+    const k = posix.normalize(change(p));
+    return k === "" || k === "." ? undefined : k;
+  };
 }
 
-/** An edit's filesChanged key in keyOf's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
+/** An edit's filesChanged key in keyer's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
   const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -858,7 +883,7 @@ function begin(s: RetrievalState, e: AgentEvent, cwd: string | undefined): Pendi
   if (c.read) s.reads++;
   if (c.search) s.searches++;
   s.calls++;
-  const keys = [...new Set(c.paths.map((p) => keyOf(p, e.cwd, cwd)).filter((k): k is string => k !== undefined))];
+  const keys = [...new Set(c.paths.map(keyer(e.cwd, cwd)).filter((k): k is string => k !== undefined))];
   for (const k of keys) s.files.set(k, (s.files.get(k) ?? 0) + 1);
   const pending: Pending = { keys };
   if (c.shell) pending.shell = true;
@@ -876,6 +901,62 @@ function drop(s: RetrievalState, key: string): void {
   }
 }
 
+/**
+ * The needles that some line holds, as `lines.some((l) => l.includes(n))` finds each, in one pass
+ * over the lines (Aho–Corasick): a failed `cat` of many files is not a scan of the output per file.
+ */
+function heldBy(needles: readonly string[], lines: readonly string[]): Set<string> {
+  const held = new Set<string>();
+  if (!lines.length) return held;
+  // A trie of the needles by UTF-16 code unit, the unit `includes` compares; ends[s]: the needles that end at state s.
+  const next: Map<number, number>[] = [new Map()];
+  const ends: string[][] = [[]];
+  for (const n of needles) {
+    // Every line holds "".
+    if (!n) held.add(n);
+    let s = 0;
+    for (let i = 0; i < n.length; i++) {
+      const c = n.charCodeAt(i);
+      let t = next[s]!.get(c);
+      if (t === undefined) {
+        t = next.length;
+        next[s]!.set(c, t);
+        next.push(new Map());
+        ends.push([]);
+      }
+      s = t;
+    }
+    ends[s]!.push(n);
+  }
+  // fail[s]: the state of the longest proper suffix of s's text that starts a needle, breadth first.
+  const fail: number[] = new Array<number>(next.length).fill(0);
+  const order = [...next[0]!.values()];
+  for (let q = 0; q < order.length; q++) {
+    const s = order[q]!;
+    for (const [c, t] of next[s]!) {
+      let f = fail[s]!;
+      while (f && !next[f]!.has(c)) f = fail[f]!;
+      fail[t] = next[f]!.get(c) ?? 0;
+      order.push(t);
+    }
+  }
+  /** States whose needles, and their suffixes' needles, are in `held`. */
+  const done = new Uint8Array(next.length);
+  for (const line of lines) {
+    let s = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line.charCodeAt(i);
+      while (s && !next[s]!.has(c)) s = fail[s]!;
+      s = next[s]!.get(c) ?? 0;
+      for (let o = s; o && !done[o]; o = fail[o]!) {
+        done[o] = 1;
+        for (const n of ends[o]!) held.add(n);
+      }
+    }
+  }
+  return held;
+}
+
 /** Settles a call at its end: a read that failed reads no file, a search may have found nothing. */
 function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: ToolFailure | undefined): void {
   const p = e.payload;
@@ -883,10 +964,15 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   else if (p.ok === false && pending.keys.length) {
     // A shell line fails as a whole: a file counts as not read when an error line names it.
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
-    for (const k of pending.keys) if (lines.some((l) => l.includes(posix.basename(k)))) drop(s, k);
+    const names = pending.keys.map((k) => posix.basename(k));
+    const named = heldBy(names, lines);
+    for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
   if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
 }
+
+/** The queue a call without a tool-use id waits in: by subagent and tool. Built only for such calls. */
+const queueOf = (e: AgentEvent): string => `${e.subagentId ?? ""}\u0000${typeof e.payload.tool === "string" ? e.payload.tool.toLowerCase() : ""}`;
 
 /**
  * Folds the next event. `cwd`: the session's working directory. `seen`: the tool-use ids the
@@ -898,7 +984,6 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
   const p = e.payload;
   if (p.wrapper === true) return;
   const id = typeof p.toolUseId === "string" && p.toolUseId ? p.toolUseId : undefined;
-  const queue = `${e.subagentId ?? ""}\u0000${typeof p.tool === "string" ? p.tool.toLowerCase() : ""}`;
   if (e.kind === "tool.start") {
     if (id) {
       if (o.seen.has(id)) return;
@@ -908,6 +993,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
       if (s.open.size > MAX_OPEN) s.open.delete(s.open.keys().next().value!);
       return;
     }
+    const queue = queueOf(e);
     let q = s.idless.get(queue);
     if (!q) {
       if (s.idless.size >= MAX_QUEUES) s.idless.delete(s.idless.keys().next().value!);
@@ -926,6 +1012,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
     }
     if (o.seen.has(id)) return;
   } else {
+    const queue = queueOf(e);
     const q = s.idless.get(queue);
     if (q) {
       const pending = q.shift();
