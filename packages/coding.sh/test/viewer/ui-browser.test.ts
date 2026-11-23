@@ -17,7 +17,7 @@ const chrome = findChrome();
 // Every CI leg (Linux, Windows) has a Chrome: there, a skipped viewer suite is a bug.
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 const T0 = 1_762_400_000_000;
-// Real-looking ids: long enough that the eval command overflows a phone screen.
+// Real-looking ids. A command with the full id (what coding.sh serve copies) overflows a phone screen.
 const PARENT = "4b9889a2-c0d2-4046-9d28-6b07d00c01a8";
 const CHILD = `${PARENT}:sub:af5b468e7213397e9`;
 const BIG = "d6639e3e-6257-4741-aae9-e9979064bf0b";
@@ -262,13 +262,16 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     }
   });
 
-  test("at 390px the session page does not scroll sideways; the command scrolls in its box", async () => {
+  test("at 390px the session page does not scroll sideways; a long command scrolls in its box", async () => {
     await open(sessionHash(PARENT), true);
     try {
       const m = await page.eval(`(() => {
         // The eval command sits behind More details on a phone.
         document.querySelector('.facts-more').click();
         const code = document.querySelector('.make-eval .cmd code');
+        // This viewer names the session by its short reference, which fits. coding.sh serve names it by
+        // its full id, which does not: the command must scroll in its box, not widen the page.
+        code.textContent = ${JSON.stringify(`coding.sh eval new ${PARENT}`)};
         return { scrollWidth: document.documentElement.scrollWidth, vw: window.innerWidth,
           head: document.querySelector('.detail-head').getBoundingClientRect().right,
           codeScrolls: code.scrollWidth > code.clientWidth };
