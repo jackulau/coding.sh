@@ -357,6 +357,12 @@ const minutes = (ms: number): string => (ms >= 3600_000 ? `${(ms / 3600_000).toF
 const USER_TURN_BEFORE = new Set(["turn.end", "session.end", "notification", "error"]);
 /** Events that open with the user coming back. */
 const USER_TURN_AFTER = new Set(["user.message", "session.start"]);
+/**
+ * A host's mark that an agent sent the next prompt (HOST_AGENT_PROMPT in core/waiting.ts, from T3 Code).
+ * It is stamped just before that prompt and is no activity, so a quiet gap runs on past it to the prompt.
+ * Spelled out here, not imported: waiting.ts loads sessions.ts, which reads DERAIL_FLAGS as it loads.
+ */
+const AGENT_PROMPT_MARK = "agent_prompt";
 
 /** A tool expected to sit for a long time: polling, sleeping, a subagent, a question to the user. */
 function hangExempt(e: AgentEvent): boolean {
@@ -717,6 +723,7 @@ function npStep(p: NoProgress, x: Ev | undefined, c: Call | undefined, t: Derail
 // ---------------------------------------------------------------- stalled
 
 function stallStep(st: Stall, e: AgentEvent, index: number, t: DerailThresholds): void {
+  if (e.kind === "notification" && e.payload.type === AGENT_PROMPT_MARK) return;
   const prev = st.prev;
   st.prev = { kind: e.kind, ts: e.ts };
   // A gap with nothing running is the user's or the machine's (asleep, waiting on a prompt), not a hang.

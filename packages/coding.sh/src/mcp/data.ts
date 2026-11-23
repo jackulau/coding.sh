@@ -12,6 +12,7 @@ import { apportion, splitOf, TOKEN_TYPES } from "../core/pricing.ts";
 import { failureFlags, isBackfillEvent } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
+import { isAgentPromptMark } from "../core/waiting.ts";
 import { sessionMatcher } from "../query/run.ts";
 import { repoGroup, windowsSpelling, type Node, type Query } from "../query/where.ts";
 import { isBare, repoPath } from "../core/git.ts";
@@ -415,6 +416,8 @@ export function timeline(events: AgentEvent[], startedAt: number): TimelineEntry
         push("compact", `context compacted (${str(p.trigger) ?? "auto"})`);
         break;
       case "notification": {
+        // A host's marker that an agent sent the next prompt is bookkeeping, at a time it made up.
+        if (isAgentPromptMark(e)) break;
         // A weight edit or a checkpoint. An edit with no readable field still gets its line: push() leaves out an empty one.
         const weights = weightsEventText(p);
         if (weights !== undefined) push("weights", clip(weights, 240) || "no details recorded");
