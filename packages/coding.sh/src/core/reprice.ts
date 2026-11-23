@@ -8,7 +8,10 @@
 // - a call a gateway companion billed (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice. A companion with no billed cost bills nothing, and
-//   its call is priced like any other;
+//   its call is priced like any other. A session's events are read again right
+//   before its writes, in one transaction with them where the store has
+//   transactions, so a companion stored since the first read is seen (without
+//   transactions, one stored between that second read and the writes is not);
 // - each changed session gets its usage totals (and cache-break cost) refolded, nothing else.
 //   Where the store has transactions (SQLite), a session's new costs and totals commit as one,
 //   from its row and events read again inside it: an ingest's store-and-fold of the session
@@ -183,28 +186,29 @@ export async function repriceEvents(index: IndexStore, prev: Session, prices: Pr
  */
 async function repriceSession(index: IndexStore, listed: Session, prices: Prices, totals: boolean, guard: () => void = () => {}): Promise<{ events: number; changed: boolean }> {
   const unchanged = { events: 0, changed: false };
-  const costs = await dueCosts(index, listed, prices, totals);
-  if (!costs) return unchanged;
-  if (totals && index.transaction) {
-    return index.transaction(async () => {
-      // Read again under the write lock: costs and a row another process wrote since count, and a session deleted since stays deleted.
-      const cur = await index.getSession(listed.id);
-      const now = cur && (await dueCosts(index, cur, prices, totals));
-      if (!now) return unchanged;
-      guard();
-      const events = now.length ? await index.setEventCosts!(now) : 0;
-      await index.upsertSession(withUsage(cur, buildSession(await index.listEvents(cur.id), cur)));
-      return { events, changed: true };
-    });
-  }
-  guard();
-  const events = costs.length ? await index.setEventCosts!(costs) : 0;
-  if (totals) {
+  if (!(await dueCosts(index, listed, prices, totals))) return unchanged;
+  // Read again right before the writes, in one transaction with them where the store has transactions: a gateway
+  // companion stored since the read above (`coding.sh gateway enrich`, another process) is seen, so the call it bills
+  // gets no estimate on top of the companion's correction. With `totals` the row is read again too: costs and a row
+  // another process wrote since count, and a session deleted since stays deleted.
+  return inTransaction(index, async () => {
+    const cur = totals ? await index.getSession(listed.id) : listed;
+    if (!cur) return unchanged;
+    const costs = await dueCosts(index, cur, prices, totals);
+    if (!costs) return unchanged;
     guard();
-    await refreshTotals(index, listed.id);
-  }
-  return { events, changed: true };
+    const events = costs.length ? await index.setEventCosts!(costs) : 0;
+    if (totals) {
+      guard();
+      // In a transaction the row and events read under its write lock are the ones to fold; without one, read them again.
+      if (index.transaction) await index.upsertSession(withUsage(cur, buildSession(await index.listEvents(cur.id), cur)));
+      else await refreshTotals(index, cur.id);
+    }
+    return { events, changed: true };
+  });
 }
+
+const inTransaction = <T>(index: IndexStore, fn: () => Promise<T>): Promise<T> => (index.transaction ? index.transaction(fn) : fn());
 
 /**
  * The new costs of a session's events: estimates added, changed, or removed where no price backs one now. Undefined when

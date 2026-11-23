@@ -12,11 +12,23 @@ const MULTIEDIT_TOOLS = new Set(["multiedit", "multi_edit"]);
 const PATCH_TOOLS = new Set(["apply_patch", "patch", "applypatch"]);
 const DELETE_TOOLS = new Set(["delete_file", "delete", "deletefile"]);
 const NOTEBOOK_TOOLS = new Set(["notebookedit", "notebook_edit", "edit_notebook"]);
+const READ_TOOLS = new Set(["read", "view", "read_file", "readfile", "view_file", "read_many_files", "notebookread"]);
 
 const lc = (s: string) => s.toLowerCase();
 
 export function isShellTool(tool: string): boolean {
   return SHELL_TOOLS.has(lc(tool));
+}
+
+/** A tool that writes, edits, patches or deletes files. */
+export function isFileEditTool(tool: string): boolean {
+  const t = lc(tool);
+  return WRITE_TOOLS.has(t) || EDIT_TOOLS.has(t) || MULTIEDIT_TOOLS.has(t) || PATCH_TOOLS.has(t) || DELETE_TOOLS.has(t) || NOTEBOOK_TOOLS.has(t);
+}
+
+/** A tool that reads the files it names. */
+export function isFileReadTool(tool: string): boolean {
+  return READ_TOOLS.has(lc(tool));
 }
 
 /**
@@ -249,7 +261,6 @@ export interface SkillLoad {
 }
 
 const SKILL_TOOLS = new Set(["skill", "activate_skill", "load_skill"]);
-const SKILL_READ_TOOLS = new Set(["read", "view", "read_file", "readfile", "view_file", "read_many_files", "notebookread"]);
 const SKILL_SHELL_READERS = new Set(["cat", "head", "tail", "sed", "less", "more", "bat", "nl"]);
 /** An agent's skills dir, then the skill's directory (past one dot container, Codex's `.system/`), then the file. */
 const SKILL_PATH = /(?:^|\/)(?:\.claude|\.agents|\.codex|\.cursor|\.gemini|\.github|\.pi\/agent|\.config\/opencode)\/skills\/(?:\.[^/]+\/)?([^/]+)\/(.+)$/;
@@ -304,7 +315,7 @@ export function skillLoadsOf(tool: string, input: unknown, _cwd?: string): Skill
         break;
       }
     }
-  } else if (SKILL_READ_TOOLS.has(t)) {
+  } else if (READ_TOOLS.has(t)) {
     const paths = [i.file_path, i.filePath, i.path, i.absolute_path, i.absolutePath, i.AbsolutePath, i.target_file, i.targetFile, ...arr(i.paths)];
     for (const p of paths) {
       const l = typeof p === "string" ? skillPathLoad(p) : undefined;

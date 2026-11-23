@@ -1596,7 +1596,8 @@ export class SqliteIndexStore implements IndexStore {
     // Only the numbers metrics add up, read with json_extract: no full stats parse per session.
     const x = (path: string) => `json_extract(s.stats, '$.${path}')`;
     const cols = ["usage.inputTokens", "usage.outputTokens", "usage.cacheReadTokens", "usage.cacheWriteTokens", "usage.costUsd", "usage.estimatedCostUsd", "toolCalls", "toolErrors", "latency.llmCalls", "llmErrors.count", "latency.llmP95Ms", "latency.ttftP50Ms"];
-    const sql = `SELECT s.id, s.parent_session_id, s.started_at, s.agent, s.model, coalesce(json_extract(s.repo, '$.main'), s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}
+    // stats.waits comes as its JSON text (a small object, absent in most sessions).
+    const sql = `SELECT s.id, s.parent_session_id, s.started_at, s.agent, s.model, coalesce(json_extract(s.repo, '$.main'), s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}, ${x("waits")} AS waits
       FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
     const keys = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "toolCalls", "toolErrors", "llmCalls", "llmErrors", "llmP95Ms", "ttftP50Ms"] as const;
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => {
@@ -1608,6 +1609,8 @@ export class SqliteIndexStore implements IndexStore {
         const v = num(r[`c${i}`]);
         if (v !== undefined) m[k] = v;
       });
+      const waits = parse<MetricRow["waits"]>(r.waits);
+      if (waits) m.waits = waits;
       return m;
     });
   }

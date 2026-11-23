@@ -65,7 +65,7 @@ export interface RunExperimentOpts {
   runsDir?: string;
   /** Extra test globs for each run's tamper check. */
   testGlobs?: string[];
-  /** Redacts each run's kept verifier output (RunTaskOpts.redactor). */
+  /** Redacts each run's kept verifier output, and what its agent exports with `otel: true` (RunTaskOpts.redactor). */
   redactor?: Redactor;
   /** Agent-only routing per arm (see RunTaskOpts.route). */
   route?: AgentRoute;
@@ -315,7 +315,7 @@ export async function runExperiment(
   // Runs that fail on infrastructure in a row (a dead login) stop the run like a drain: no new run starts.
   const infraStop = infraStopFor(o.retry);
   // One OTLP receiver for every run of the experiment.
-  const receiver = o.otel === true ? await startRunReceiver(o.index, o.blobs) : undefined;
+  const receiver = o.otel === true ? await startRunReceiver(o.index, o.blobs, o.redactor) : undefined;
   const otel: RunOtel | undefined = receiver ?? (o.otel && o.otel !== true ? o.otel : undefined);
   // Sequential: each (arm, attempt) is a stream that runs its tasks in order, carrying HOME state.
   const seq = o.sequence;

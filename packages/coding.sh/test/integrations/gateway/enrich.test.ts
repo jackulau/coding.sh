@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import { repriceStored } from "../../../src/core/reprice.ts";
 import { buildSession } from "../../../src/core/sessions.ts";
-import { createGatewayClient, parseGeneration } from "../../../src/integrations/gateway/client.ts";
+import type { IndexStore } from "../../../src/core/types.ts";
+import { createGatewayClient, parseGeneration, type GatewayClient } from "../../../src/integrations/gateway/client.ts";
 import { enrichSessions, genCacheKey } from "../../../src/integrations/gateway/enrich.ts";
 import { decodeTraceJson } from "../../../src/otel/json.ts";
 import { mapTraces, TraceSessionMap } from "../../../src/otel/map.ts";
 import { defaultEnricher } from "../../../src/otel/receiver.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import { MemoryIndexStore } from "../../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../../src/store/sqlite.ts";
 import { MemBlobs } from "../../otel/_memstore.ts";
 import { aiSdkExport, drainExport, GEN_ID, GEN_ID_2 } from "./_fixtures.ts";
 import { generationData, startMockGateway, TEST_KEY, type MockGateway } from "./_mock.ts";
@@ -206,4 +209,80 @@ describe("gateway enrich", () => {
     assert.equal(g.usage, undefined, "billed equals reported: no delta");
     assert.ok((await index.getSession("cc"))!.flags.includes("gateway:vercel"));
   });
+});
+
+describe("gateway enrich while a reprice runs (the background ingest, another process)", () => {
+  const BILLED = 0.3;
+  /** A call stored before local pricing: tokens, no cost, so a reprice gives it an estimate. */
+  const EVENTS = [start("s1"), call("s1", 1, { responseId: GEN_ID })];
+  const billedClient = (before?: () => Promise<unknown>): GatewayClient => ({
+    baseUrl: "http://gateway.invalid",
+    async generation(id) {
+      await before?.();
+      return { status: "ok", info: { id, totalCostUsd: BILLED, provider: "together" } };
+    },
+  });
+  async function seeded(index: IndexStore): Promise<IndexStore> {
+    await index.putEvents(EVENTS);
+    await index.upsertSession(buildSession(EVENTS));
+    return index;
+  }
+  /** The session costs what the gateway billed: the call's cost plus the companion's correction, counted once. */
+  async function billedOnce(index: IndexStore): Promise<void> {
+    const evs = await index.listEvents("s1");
+    const c = evs.find((e) => e.kind === "llm.call")!;
+    const g = evs.find((e) => e.source === "gateway")!;
+    for (const [label, s] of [["stored row", (await index.getSession("s1"))!], ["fresh fold", buildSession(evs)]] as const) {
+      const cost = s.stats.usage?.costUsd;
+      assert.ok(cost !== undefined && Math.abs(cost - BILLED) < 1e-9, `${label}: session cost ${cost}, billed ${BILLED}`);
+    }
+    assert.equal(g.usage?.costUsd ?? 0, Math.round((BILLED - (c.usage?.costUsd ?? 0)) * 1e10) / 1e10, "the correction is billed minus the cost the call has");
+  }
+
+  for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sqlite", () => SqliteIndexStore.open(":memory:")]] as const) {
+    it(`${name}: a reprice while the lookup is out gives the call an estimate, and the correction is taken against it`, async () => {
+      const index = await seeded(await open());
+      try {
+        const r = await enrichSessions({ index, sessions: await index.listSessions(), client: billedClient(() => repriceStored(index)) });
+        assert.equal(r.enriched, 1);
+        const c = (await index.listEvents("s1", { kinds: ["llm.call"] }))[0]!;
+        assert.equal(c.payload.costEstimated, true, "the reprice ran before the companion was written");
+        assert.ok((c.usage?.costUsd ?? 0) > 0);
+        await billedOnce(index);
+        const g = (await index.listEvents("s1")).find((e) => e.source === "gateway")!;
+        assert.equal(g.payload.reportedCostUsd, c.usage?.costUsd);
+        // A later pass leaves the billed call alone.
+        assert.equal((await repriceStored(index, undefined, { force: true })).events, 0);
+        await billedOnce(index);
+      } finally {
+        await index.close();
+      }
+    });
+
+    it(`${name}: a reprice that read the session before the companion was stored leaves the billed call unpriced`, async () => {
+      const index = await seeded(await open());
+      try {
+        const sessions = await index.listSessions();
+        // Enrich stores its companion right after the reprice's first read of the session.
+        const read = index.listEvents.bind(index);
+        let between: (() => Promise<unknown>) | undefined;
+        index.listEvents = async (...args) => {
+          const out = await read(...args);
+          const run = between;
+          between = undefined;
+          await run?.();
+          return out;
+        };
+        between = () => enrichSessions({ index, sessions, client: billedClient() });
+        const r = await repriceStored(index);
+        assert.equal(between, undefined, "enrich ran during the reprice");
+        assert.deepEqual(r, { ran: true, events: 0, sessions: 0 });
+        const c = (await index.listEvents("s1", { kinds: ["llm.call"] }))[0]!;
+        assert.equal(c.usage?.costUsd, undefined, "no estimate on top of the gateway's bill");
+        await billedOnce(index);
+      } finally {
+        await index.close();
+      }
+    });
+  }
 });

@@ -112,6 +112,27 @@ test("a failure's seed replays the same failure", async () => {
   await assert.rejects(forAll(gen.bool, () => true, { env: { CODING_SH_PROP_SEED: "-3" } }), /CODING_SH_PROP_SEED must be/);
 });
 
+test("a failure past the default count names the run's CODING_SH_PROP_RUNS, and its hint replays it", async () => {
+  const g = gen.int(0, 2 ** 30);
+  const seed = 77;
+  const values = sample(g, 1000, seed);
+  // The first case past the default 100 whose value no earlier case had: the property first fails there.
+  const k = values.findIndex((v, i) => i >= 100 && !values.slice(0, i).includes(v));
+  assert.ok(k >= 100);
+  const prop = (n: number) => n !== values[k];
+  const f = await failure(g, prop, { seed, env: { CODING_SH_PROP_RUNS: "1000" } });
+  assert.equal(f.caseIndex, k);
+  const vars = /Replay: ((?:CODING_SH_PROP_\w+=\S+ )+)node /.exec(f.message)?.[1];
+  assert.ok(vars, f.message);
+  const env = Object.fromEntries(vars.trim().split(" ").map((v) => v.split("=")));
+  assert.deepEqual(env, { CODING_SH_PROP_SEED: "77", CODING_SH_PROP_RUNS: "1000" });
+  const again = await failure(g, prop, { env });
+  assert.equal(again.caseIndex, k);
+  assert.deepEqual(again.counterexample, f.counterexample);
+  // The seed alone stops at the default count, before the failing case.
+  assert.equal((await forAll(g, prop, { env: { CODING_SH_PROP_SEED: "77" } })).runs, 100);
+});
+
 test("a passing property runs the cases asked for; CODING_SH_PROP_RUNS raises the count, never lowers it", async () => {
   const count = async (opts: ForAllOptions) => {
     let n = 0;

@@ -1,11 +1,13 @@
 // Redaction (core/redact.ts createRedactor and redactBlobValue, spool/redact.ts redactPayload), checked on
 // generated text and values. A text is built from pieces: filler words, separators (spaces, line ends,
 // quotes, brackets, accented and CJK letters, an emoji), a secret in each format the secret rules know
-// (vendor tokens, private keys, bearer and basic credentials, a password in a URL, a secret in a query,
-// an env assignment, a JSON or YAML field, a secret named in prose), and text that looks like a secret
-// but is not one (commit and content hashes, UUIDs, code and prose that name a token). A value nests
-// such text in objects and arrays, with secret-named keys, command lines with a secret flag, and strings
-// that hold a JSON document. The properties:
+// (vendor tokens, private keys as text and in base64, bearer and basic credentials, other Authorization
+// and Cookie headers, a password in a URL or a .netrc entry, a secret in a query, an account key in a
+// connection string, an env assignment, a JSON or YAML field, a value after a secret name and = or :,
+// a secret named in prose), and text that looks like a secret but is not one (commit and content
+// hashes, UUIDs, code and prose that name a token). A value nests such text in objects and arrays,
+// with secret-named keys, command lines with a secret flag, and strings that hold a JSON document.
+// The properties:
 //
 // - No 12 characters in a row of a generated secret are left: in the text, in any string of a value, or
 //   in a JSON document a string holds. A secret-named key keeps its key and holds a marker, and so does
@@ -84,6 +86,33 @@ const VENDOR: Gen<Part[]>[] = [
   gen.map(chars(ALNUM, 36), (s) => [secret("npm-token", ["npm", s].join("_"))]),
   gen.map(gen.tuple(gen.pick(["ik", "rk"]), chars(B64URL, 32, 40)), ([k, s]) => [secret("coding-sh-key", ["csh", k, s].join("_"))]),
   gen.map(chars(B64URL, 20, 40), (s) => [secret("vercel-ai-gateway-key", ["vck", s].join("_"))]),
+  gen.map(chars(ALNUM, 34), (s) => [secret("huggingface-token", ["hf", s].join("_"))]),
+  gen.map(chars(ALNUM, 52), (s) => [secret("groq-key", ["gsk", s].join("_"))]),
+  gen.map(chars(ALNUM, 37), (s) => [secret("replicate-token", ["r8", s].join("_"))]),
+  gen.map(chars(ALNUM, 80), (s) => [secret("xai-key", ["xai", s].join("-"))]),
+  gen.map(chars(ALNUM, 48), (s) => [secret("perplexity-key", ["pplx", s].join("-"))]),
+  gen.map(chars(B64URL, 30, 120), (s) => [secret("google-oauth-token", ["ya29", s].join("."))]),
+  gen.map(chars(B64URL, 28), (s) => [secret("google-oauth-secret", ["GOCSPX", s].join("-"))]),
+  gen.map(gen.tuple(chars(B64URL, 22), chars(B64URL, 43)), ([a, b]) => [secret("sendgrid-key", ["SG", a, b].join("."))]),
+  gen.map(gen.tuple(gen.char("opr"), chars(HEX, 64)), ([c, s]) => [secret("digitalocean-token", [["do", c].join(""), "v1", s].join("_"))]),
+  gen.map(gen.tuple(gen.pick(["at", "ca", "pa", "ss"]), chars(HEX, 32)), ([p, s]) => [secret("shopify-token", [["shp", p].join(""), s].join("_"))]),
+  gen.map(chars(B64URL, 60, 120), (s) => [secret("pypi-token", ["pypi", ["AgE", s].join("")].join("-"))]),
+  gen.map(gen.tuple(gen.pick(["pat", "oat"]), chars(B64URL, 27)), ([k, s]) => [secret("docker-token", ["dckr", k, s].join("_"))]),
+  gen.map(gen.tuple(gen.pick(["api", "oauth"]), chars(ALNUM, 40)), ([k, s]) => [secret("linear-key", ["lin", k, s].join("_"))]),
+  gen.map(gen.tuple(gen.char("sbr"), mixed(24, 96)), ([c, s]) => [secret("vault-token", [["hv", c].join(""), s].join("."))]),
+  gen.map(chars(ALNUM, 32), (s) => [secret("stripe-webhook-secret", ["whsec", s].join("_"))]),
+  gen.map(chars(B64URL, 50, 120), (s) => [secret("atlassian-token", ["ATATT3", s].join(""))]),
+  gen.map(gen.tuple(chars(HEX, 32), gen.pick(["", "-2"])), ([s, n]) => [secret("databricks-token", ["dapi", s, n].join(""))]),
+  gen.map(chars("023456789ACDEFGHJKLMNPQRSTUVWXYZ", 58), (s) => [secret("age-secret-key", ["AGE", "SECRET", "KEY", ["1", s].join("")].join("-"))]),
+  gen.map(gen.tuple(chars(HEX, 24), chars(HEX, 34)), ([a, b]) => [secret("postman-key", ["PMAK", a, b].join("-"))]),
+  gen.map(gen.tuple(gen.char("su"), chars(ALNUM, 40, 80)), ([c, s]) => [secret("sentry-token", [["sntry", c].join(""), s].join("_"))]),
+  gen.map(chars(`${ALNUM}_`, 60, 80), (s) => [secret("pinecone-key", ["pcsk", s].join("_"))]),
+  gen.map(gen.tuple(gen.pick(["pt", "sk"]), chars(HEX, 32), chars(HEX, 10)), ([k, a, b]) => [secret("langsmith-key", ["lsv2", k, a, b].join("_"))]),
+  gen.map(chars(ALNUM, 32), (s) => [secret("tavily-key", ["tvly", s].join("-"))]),
+  gen.map(chars(B64URL, 64), (s) => [secret("nvidia-key", ["nvapi", s].join("-"))]),
+  gen.map(gen.tuple(chars(ALNUM, 32), chars(HEX, 8)), ([a, b]) => [secret("grafana-token", ["glsa", a, b].join("_"))]),
+  gen.map(chars(ALNUM, 32, 80), (s) => [secret("grafana-token", ["glc", s].join("_"))]),
+  gen.map(chars(B64URL, 40), (s) => [secret("figma-token", ["figd", s].join("_"))]),
   gen.map(gen.tuple(chars(`${ALNUM}_`, 20, 60), chars(`${ALNUM}_`, 20, 60), chars(`${ALNUM}_`, 20, 60)), ([a, b, c]) => [
     secret("jwt", [`eyJ${a}`, `eyJ${b}`, c].join(".")),
   ]),
@@ -131,6 +160,40 @@ const URL_SECRET: Gen<Part[]> = gen.map(
   ([name, v, tail]) => [plain(`https://api.example.com/v1/items?${name}=`), secret("url-secret", v), plain(tail)],
 );
 
+/** An Authorization header with a scheme other than Bearer or Basic. */
+const AUTH_HEADER: Gen<Part[]> = gen.map(
+  gen.tuple(gen.pick(["Authorization: Token ", "authorization: ApiKey ", "Proxy-Authorization: SSWS "]), mixed(12, 40)),
+  ([before, v]) => [plain(before), secret("auth-header", v)],
+);
+
+/** A Cookie header on a line of its own: the rule takes the rest of the line. */
+const COOKIE: Gen<Part[]> = gen.map(
+  gen.tuple(gen.pick(["Cookie: ", "Set-Cookie: ", "cookie: "]), gen.pick(["session=", "sid=", "auth_token="]), mixed(16, 32)),
+  ([header, name, v]) => [plain(header + name), secret("cookie", v), plain("\n")],
+);
+
+/** A .netrc entry, on one line or several. */
+const NETRC: Gen<Part[]> = gen.map(
+  gen.tuple(gen.pick(["machine api.example.com login deploy password ", "default login ci password ", "machine github.com\n  login bot\n  password "]), mixed(12, 24)),
+  ([before, v]) => [plain(before), secret("netrc", v)],
+);
+
+/** An Azure storage connection string. */
+const AZURE: Gen<Part[]> = gen.map(chars(BASE64, 86), (s) => [
+  plain("DefaultEndpointsProtocol=https;AccountName=demo;AccountKey="),
+  secret("azure-storage-key", `${s}==`),
+  plain(";EndpointSuffix=core.windows.net"),
+]);
+
+/** A private key in base64, as a kubeconfig holds one. */
+const ENCODED_KEY: Gen<Part[]> = gen.map(
+  gen.tuple(gen.pick(PEM_KINDS), gen.array(chars(BASE64, 64), { minLength: 2, maxLength: 4, avgLength: 3 })),
+  ([kind, lines]) => [
+    plain("client-key-data: "),
+    secret("encoded-private-key", Buffer.from(`-----BEGIN ${kind}-----\n${lines.join("\n")}\n-----END ${kind}-----\n`).toString("base64")),
+  ],
+);
+
 /** A secret its name marks: [the rule meant to find it, text before it, text after it]. */
 const NAMED: [string, string, string][] = [
   ["secret-assignment", "export DB_PASSWORD=", ""],
@@ -149,13 +212,28 @@ const NAMED: [string, string, string][] = [
   ["prose-secret", "token: ", ""],
   ["prose-secret", "secret: ", ""],
   ["prose-secret", "the passcode is ", ""],
+  ["secret-value", "DB_PASSWORD = ", ""],
+  ["secret-value", "client_secret: ", ""],
+  ["secret-value", "access_token = ", ""],
+  ["secret-value", 'x_api_key = "', '"'],
 ];
 
 /** A secret that a prefix or a name before it marks; `quotes` admits the forms that hold a double quote. */
 function context(quotes: boolean): Gen<Part[]> {
   const named = NAMED.filter(([, before, after]) => quotes || !`${before}${after}`.includes('"'));
   const byName = gen.map(gen.tuple(gen.pick(named), mixed(12, 24)), ([[kind, before, after], v]) => [plain(before), secret(kind, v), plain(after)]);
-  return gen.frequency<Part[]>([1, BEARER], [1, BASIC], [1, URL_PASSWORD], [1, URL_SECRET], [5, byName]);
+  return gen.frequency<Part[]>(
+    [1, BEARER],
+    [1, BASIC],
+    [1, AUTH_HEADER],
+    [1, COOKIE],
+    [1, URL_PASSWORD],
+    [1, URL_SECRET],
+    [1, NETRC],
+    [1, AZURE],
+    [1, ENCODED_KEY],
+    [5, byName],
+  );
 }
 
 const UUID: Gen<string> = gen.map(
@@ -583,7 +661,7 @@ test("the cases cover every secret rule, and their secret-named keys and flags a
   const r = createRedactor();
   for (const form of ARGV) assert.deepEqual(r.value(form("Ab3dEf6hIj9k")), form(marker("secret-flag")));
   const kinds = new Set<string>();
-  for (const n of sample(TEXT, 300, 1)) for (const p of partsOf(n)) if (p.kind) kinds.add(p.kind);
+  for (const n of sample(TEXT, 2000, 1)) for (const p of partsOf(n)) if (p.kind) kinds.add(p.kind);
   assert.deepEqual([...kinds].sort(), [...new Set(r.rules.map((x) => x.kind))].sort());
 });
 
@@ -614,7 +692,7 @@ test("each check fails on a redactor with a secret rule taken out or a pattern t
   };
   const mutants: [string, Redactor, Gen<Node>, (r: Redactor, n: Node) => void, RegExp][] = [
     ["text, no github-token rule", without("github-token"), TEXT, checkText, /the github-token secret is left/],
-    ["value, no secret-assignment rule", without("secret-assignment"), VALUE, checkValue, /the secret-assignment secret is left/],
+    ["value, no secret-value rule", without("secret-value"), VALUE, checkValue, /the secret-value secret is left/],
     ["payload, no private-key rule", without("private-key"), PAYLOAD, checkPayload, /the private-key secret is left/],
     ["blob, no bearer rule", without("bearer"), BLOB, checkBlob, /the bearer secret is left/],
     ["text, a pattern for ]", createRedactor({ patterns: ["\\]"] }), TEXT, checkText, /again changed it/],

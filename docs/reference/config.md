@@ -20,6 +20,8 @@ A repo file arrives with `git clone`, so it may only make capture more private:
 - Its `capture.redactPatterns` are literal text, not regular expressions, and an empty entry is
   skipped. Put a regular expression in your own `~/.coding.sh/config.toml`.
 - `capture.mode` can only become `metadata`, and `capture.maxInlineBytes` can only go down.
+- `snapshot.enabled` can only become `false`, and `snapshot.maxFiles` and `snapshot.timeoutMs`
+  can only go down.
 - It can add `refine.protect` patterns but not turn `refine.autoProtect` off.
 - It can never set sinks or stores.
 
@@ -67,7 +69,7 @@ Redaction runs at ingest, before anything is written to the index, blobs or sink
 
 A snapshot records a repo's working tree, untracked files included and ignored files left out, as
 a commit in a shadow repo under `~/.coding.sh/repos`. Two things take one, and a repo's own
-`.coding.sh/config.toml` can set these keys for both:
+`.coding.sh/config.toml` can turn snapshots off or lower their limits for both:
 
 - `coding.sh run --` snapshots the repo before and after the command, and records the files that
   changed between the two.

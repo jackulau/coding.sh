@@ -59,7 +59,10 @@
 // host's parse version differs from the one under relinkCursor (once on a store
 // an older build stamped, never on a new one), and on `ingest --rebuild`, the
 // re-parse reads the host's store and adds its rows to every stored session it
-// links that is not the host's yet ("relinked"), as a fresh import would.
+// links that is not the host's yet ("relinked"), as a fresh import would. A row
+// of the host's that such a session stores from the host's older parse (same
+// id, another payload: a T3 host link with no launch, a T3 prompt with no
+// `from`) is replaced, so the host's parse bump reaches those sessions too.
 //
 // Refold: when the fold stamp changes (core/sessions.ts foldStamp: the
 // SESSION_FOLD_VERSION of how stats and flags are derived from stored events,
@@ -221,7 +224,7 @@ export interface ReparseResult {
   keptSessions: KeptSession[];
   /** Deleted: the adapter now reports them as copies of another stored session. */
   copiesRemoved: number;
-  /** Sessions of another agent that a host's store links, given the host's rows they lacked (its link). */
+  /** Sessions of another agent that a host's store links, given the host's rows they lacked (its link) or had from an older parse. */
   relinked: number;
   /** Rows deleted and inserted. */
   removed: number;
@@ -517,13 +520,31 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     // A fold that throws leaves the session a row tagged fold:error (recomputeSession); reported here.
     const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
 
-    /** Adds the transcript rows a stored session lacks (deduped as at ingest) and folds it again; the rows added. */
-    const topUp = async (id: string, stored: AgentEvent[], transcript: AgentEvent[]): Promise<number> => {
+    /**
+     * Adds the transcript rows a stored session lacks (deduped as at ingest) and folds it again; the rows
+     * written. With `relink` (the rows are a host's store read for a session it links), the host's own
+     * rows the session stores under the same id are compared too: one an older parse of the host stored
+     * with another payload is replaced, as rebuild replaces a changed row.
+     */
+    const topUp = async (id: string, stored: AgentEvent[], transcript: AgentEvent[], relink = false): Promise<number> => {
       const add = await dedupe(stored.filter((e) => !isBackfillEvent(e)), [...stored.filter(isBackfillEvent), ...transcript]);
-      const have = new Set(stored.map((e) => e.id));
-      const fresh = add.filter((e) => !have.has(e.id));
-      if (!fresh.length) return 0;
-      const r = await index.replaceSessionEvents!(id, [], await toolDurationFiller(viewOf([...stored, ...fresh]))(fresh));
+      const byId = new Map(stored.map((e) => [e.id, e]));
+      const fresh = add.filter((e) => !byId.has(e.id));
+      // The host's rows the session stores already, read again: each compared with its stored copy once.
+      const reread = new Map<string, AgentEvent>();
+      if (relink) for (const e of transcript) if (HOSTS.includes(e.agent) && !reread.has(e.id) && byId.has(e.id) && isBackfillEvent(byId.get(e.id)!)) reread.set(e.id, e);
+      const remove: string[] = [];
+      const write: AgentEvent[] = [];
+      for (const e of await toolDurationFiller(viewOf([...stored, ...fresh]))([...fresh, ...reread.values()])) {
+        const was = byId.get(e.id);
+        const row = was ? keepRedactionCounts(was, e) : e;
+        if (was && canonical(was) === canonical(row)) continue;
+        if (was) remove.push(e.id);
+        write.push(row);
+      }
+      if (!write.length) return 0;
+      const r = await index.replaceSessionEvents!(id, remove, write);
+      result.removed += r.removed;
       result.inserted += r.inserted;
       if (await recomputeSession(index, id, { linker, repo, onFoldError })) owed.delete(id);
       return r.inserted;
@@ -535,9 +556,9 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       // Repriced before its rows are read, so a fold below counts the new costs.
       if (repricing && !repriced.has(id)) await reprice(agent !== undefined ? targetRows.get(id) : await index.getSession(id));
       const stored = await index.listEvents(id);
-      // Not a target: a session a host links, given the host's rows it lacks.
+      // Not a target: a session a host links, given the host's rows it lacks or stores from an older parse.
       if (agent === undefined) {
-        if (await topUp(id, stored, transcript ?? [])) relinked.add(id);
+        if (await topUp(id, stored, transcript ?? [], true)) relinked.add(id);
         return;
       }
       const version = versionOf(adapters, agent)!;

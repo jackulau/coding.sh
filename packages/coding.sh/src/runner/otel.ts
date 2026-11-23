@@ -6,7 +6,9 @@
 // session.id. Claude Code also needs its telemetry switches (CLAUDE_TELEMETRY_ENV).
 // Only the agent sees this env: setup and the verifier do not. Off by default.
 import { createHash } from "node:crypto";
+import type { Redactor } from "../core/redact.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
+import type { ReceiverOptions } from "../otel/receiver.ts";
 
 /** What a run's agent exports to: an endpoint, and a wait for exports still in flight once it exits. */
 export interface RunOtel {
@@ -75,13 +77,16 @@ const QUIET_MS = 300;
 const MAX_WAIT_MS = 2000;
 
 /**
- * An OTLP receiver on 127.0.0.1 and an ephemeral port that writes into `index`.
+ * An OTLP receiver on 127.0.0.1 and an ephemeral port that writes into `index`, redacting with
+ * `redactor` (the run's capture rules; default: the built-in secret rules).
  * `settle` waits until no export has arrived for QUIET_MS (at most MAX_WAIT_MS).
  */
-export async function startRunReceiver(index: IndexStore, blobs: BlobStore): Promise<RunOtel & { close: () => Promise<void> }> {
+export async function startRunReceiver(index: IndexStore, blobs: BlobStore, redactor?: Redactor): Promise<RunOtel & { close: () => Promise<void> }> {
   const { startReceiver } = await import("../otel/receiver.ts");
   let last = Date.now();
-  const rx = await startReceiver({ port: 0, store: index, blobs, onBatch: () => void (last = Date.now()) });
+  const opts: ReceiverOptions = { port: 0, store: index, blobs, onBatch: () => void (last = Date.now()) };
+  if (redactor) opts.redactor = redactor;
+  const rx = await startReceiver(opts);
   const settle = async () => {
     const until = Date.now() + MAX_WAIT_MS;
     last = Math.max(last, Date.now() - QUIET_MS / 2);

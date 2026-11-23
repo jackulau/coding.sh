@@ -1,9 +1,11 @@
 // `coding.sh sessions`: what counts as empty, the hidden-count footer, how
-// many sessions matched against how many are shown, and the host app a row names.
+// many sessions matched against how many are shown, the host app a row names, and
+// the alias sessions, tree and show print for a session whose id is `latest`.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import * as sessions from "../../src/cli/commands/sessions.ts";
 import * as show from "../../src/cli/commands/show.ts";
+import * as tree from "../../src/cli/commands/tree.ts";
 import { buildSession, isEmptySession } from "../../src/core/sessions.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
@@ -112,5 +114,49 @@ describe("sessions list and show: a session a host app drove", () => {
   test("show's Agent row names the host; a session no host drove reads as before", async () => {
     assert.match((await runCmd(show, sb, { positionals: ["hosted"] })).stdout, /^ {2}Agent +claude-code {2}via t3code$/m);
     assert.match((await runCmd(show, sb, { positionals: ["direct"] })).stdout, /^ {2}Agent +claude-code$/m);
+  });
+});
+
+describe("sessions, tree and show: a session whose id is latest prints its x_ alias, since latest opens the newest session", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  const NEWER = "0f3c9d10-aaaa-4000-8000-000000000001";
+  const SUB = "latest:sub:a0123456789abcdef";
+  const under = (id: string, at: number, title: string) => mkSession(id, at, { title, parent: { sessionId: "latest", type: "Explore" } } as never);
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      mkSession("latest", now - 3000, { title: "fix the build", flags: ["premature-completion"] }),
+      under(SUB, now - 2950, "look around"),
+      // 51 subagents in all: show --json lists 50 and names the command for the rest.
+      ...Array.from({ length: 50 }, (_, i) => under(`latest:sub:k${String(i).padStart(2, "0")}`, now - 2900 + i, `step ${i}`)),
+      mkSession(NEWER, now - 1000, { title: "newer work" }),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("the ID cell is the alias, which opens it", async () => {
+    const r = await runCmd(sessions, sb);
+    assert.deepEqual(r.stdout.trim().split("\n").slice(1).map((l) => l.split("\t")[0]), [NEWER, "x_brf2qjp3"]);
+    assert.match((await runCmd(show, sb, { positionals: ["x_brf2qjp3"] })).stdout, /^ {2}Session +latest$/m);
+  });
+
+  test("tree prints the alias for its node, the line to fix first and the command that opens it", async () => {
+    const r = await runCmd(tree, sb, { positionals: ["x_brf2qjp3"] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /^x_brf2qjp3 {2}claude-code/m, r.stdout);
+    assert.match(r.stdout, /the top-level agent x_brf2qjp3: premature-completion/);
+    // The next step goes to stderr, and names `codingsh` in PowerShell and cmd (next-steps.ts nextStepBin).
+    assert.match(r.stderr, /coding\.?sh show x_brf2qjp3\b/);
+  });
+
+  test("a subagent's tree names it by the alias on the in: line", async () => {
+    const r = await runCmd(tree, sb, { positionals: [SUB] });
+    assert.match(r.stdout, /^in: x_brf2qjp3 claude-code$/m, r.stdout);
+  });
+
+  test("show --json names the command for the rest of its subagents by the alias", async () => {
+    const doc = (await runCmd(show, sb, { positionals: ["x_brf2qjp3"], json: true })).json;
+    assert.deepEqual({ truncated: doc.subagentsTruncated, rest: doc.subagentsRest }, { truncated: true, rest: "coding.sh tree x_brf2qjp3 --json" });
   });
 });

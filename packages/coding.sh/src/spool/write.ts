@@ -45,10 +45,14 @@ import { paths } from "../core/paths.ts";
  */
 export const MAX_INLINE_LINE_BYTES = 1023;
 
-/** Agent ids become directory names: keep them path-safe. */
+/**
+ * Agent ids become directory names: keep them path-safe. A name Windows keeps for a device
+ * (`con`, `nul.txt`) or one ending in a dot, which Windows drops, would not name its own folder.
+ */
 export function safeAgentId(agent: string | undefined): string {
   const a = (agent ?? "").trim().toLowerCase();
-  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(a) && !a.includes("..") ? a : "unknown";
+  const ok = /^[a-z0-9][a-z0-9._-]{0,63}$/.test(a) && !a.includes("..") && !a.endsWith(".");
+  return ok && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/.test(a) ? a : "unknown";
 }
 
 export function spoolDir(agent: string, env: NodeJS.ProcessEnv = process.env): string {

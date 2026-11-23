@@ -5,6 +5,7 @@ import { before, describe, it } from "node:test";
 import { deserialize, serialize } from "node:v8";
 import { DERAIL_THRESHOLDS, derailsOf, derailState, detectDerails, foldDerails, LATE_END_CALLS, progressMetrics, type DerailState } from "../../src/core/derail.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS } from "../../src/core/waiting.ts";
 import { createGrader } from "../../src/graders/index.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 
@@ -180,6 +181,19 @@ describe("derail detection", () => {
       assert.deepEqual(flags([ev("assistant.message", { text: "a" }), ev("llm.call", {}, { gap: 30 * MIN })]), [], "nothing running: asleep or waiting");
       reset();
       assert.deepEqual(flags([ev("tool.start", { tool: "Bash", toolUseId: "t", input: { command: "x" } }), ev("notification", { message: "needs permission" }), ev("tool.end", { tool: "Bash", toolUseId: "t", ok: false }, { gap: 30 * MIN })]), [], "waiting on a permission prompt");
+    });
+
+    it("ends a quiet gap at an agent's prompt, not at the host's marker stamped before it", () => {
+      // T3 Code marks a prompt an agent sent with a notification stamped just before it
+      // (adapters/t3code.ts). The marker is no activity: the gap still ends at the prompt.
+      reset();
+      const run = ev("tool.start", { tool: "Bash", toolUseId: "t", input: { command: "npm run e2e" } });
+      const told = ev("user.message", { text: "Also run the lint" }, { gap: 20 * MIN });
+      const end = ev("tool.end", { tool: "Bash", toolUseId: "t", ok: false }, { gap: MIN });
+      const mark: AgentEvent = { id: "mark", v: 0, sessionId: "s", ts: told.ts - HOST_MARK_SLACK_MS - 1, agent: "claude-code", kind: "notification", payload: { type: HOST_AGENT_PROMPT, via: "t3code", promptId: told.id, at: told.ts } };
+      assert.deepEqual(flags([run, told, end]), []);
+      assert.deepEqual(flags([run, mark, told, end]), []);
+      assert.equal(buildSession([run, mark, told, end]).flags.includes("stalled"), false);
     });
   });
 

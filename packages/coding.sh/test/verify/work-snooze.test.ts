@@ -5,6 +5,8 @@
 // shorter snooze left it in the queue (the earlier snooze, still on the earlier cause's session,
 // ended later and named the old bucket), and when the shorter one ended, the earlier one hid the
 // item again. The snoozes here are written by snoozeItem, which `coding.sh work snooze` calls.
+// A review of the fix found that a shorter time window could leave that session out of the item,
+// so each snooze now also holds the item's id, and the item's next snooze removes it wherever it is.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildWorkQueue, type WorkItem } from "../../src/core/work.ts";
@@ -76,16 +78,51 @@ test("a shorter snooze after a move to a more urgent bucket hides the item, and 
   assert.equal(back.bucket, "stalled", "the earlier snooze was replaced");
 });
 
+test("a new snooze replaces the earlier one on a session that the time window leaves out", () => {
+  // p and its subagent c1 started 3 days ago, and c1 has been quiet since: stalled. c2 started 2 hours
+  // ago and has ended. A 7-day window loads all three. A 1-day window loads c2 and, as c2's parent, p
+  // (core/work.ts loadWorkSessions), but not c1: the same item, without c1.
+  const DAY = 24 * HOUR;
+  const OLD = T0 - 3 * DAY;
+  const root = (waiting: Waiting): Session => ({ ...main(waiting), startedAt: OLD, stats: { ...main(waiting).stats, latency: { wallMs: waiting.at - OLD } } });
+  const c1: Session = { ...sub, id: "p:sub:c1", parent: { sessionId: "p", subagentId: "c1" }, startedAt: OLD };
+  const c2: Session = { ...sub, id: "p:sub:c2", parent: { sessionId: "p", subagentId: "c2" }, startedAt: T0 - 2 * HOUR, endedAt: T0 - HOUR };
+  const overlay = emptyOverlay();
+  const turn = root({ kind: "turn", at: T0 - 5 * MIN });
+  const stalled = itemAt([turn, c1, c2], T0, overlay);
+  assert.equal(stalled.bucket, "stalled");
+  assert.equal(stalled.cause?.sessionId, c1.id);
+  snooze(overlay, stalled, T0, 4 * HOUR);
+
+  // p asks for a permission, and the item is snoozed again through the 1-day window.
+  const prompt = root({ kind: "permission", at: T0 + 9 * MIN, toolUseId: "t1" });
+  const blocked = itemAt([prompt, c2], T0 + 10 * MIN, overlay);
+  assert.equal(blocked.id, stalled.id, "the same item through both windows");
+  assert.equal(blocked.bucket, "blocked");
+  snooze(overlay, blocked, T0 + 10 * MIN, 30 * MIN);
+
+  // Through the 7-day window, the snooze just made hides the item: the earlier one is gone from c1 too.
+  const hidden = itemAt([prompt, c1, c2], T0 + 10 * MIN, overlay);
+  assert.equal(hidden.hidden, "snoozed", "the snooze just made hides the item");
+  assert.equal(hidden.next, `snoozed until ${new Date(T0 + 40 * MIN).toISOString()}`);
+
+  // It ends after 30 minutes, and the earlier, longer snooze does not hide the item again.
+  assert.equal(itemAt([prompt, c1, c2], T0 + 41 * MIN, overlay).bucket, "blocked");
+  const answered = root({ kind: "turn", at: T0 + 45 * MIN });
+  assert.equal(itemAt([answered, c1, c2], T0 + 50 * MIN, overlay).bucket, "stalled", "the earlier snooze was replaced");
+});
+
 test("a snooze of another item is kept, even one that ends at the same time and names the same bucket", () => {
   const overlay = emptyOverlay();
+  // Another item's snooze from a file written before snoozes held their item's id.
   addSnooze(overlay, ["other"], { until: T0 + HOUR, bucket: "review" });
   // Another item, snoozed at the same moment as the first snooze below, for as long, from the same bucket.
-  addSnooze(overlay, ["twin"], { until: T0 + 2 * HOUR, bucket: "stalled" });
+  addSnooze(overlay, ["twin"], { until: T0 + 2 * HOUR, bucket: "stalled", item: "w000000" });
   const turn = main({ kind: "turn", at: T0 - 5 * MIN });
   snooze(overlay, itemAt([turn, sub], T0, overlay), T0, 2 * HOUR);
-  assert.deepEqual(overlay.snoozes.p, overlay.snoozes.twin, "the first snooze equals the other item's");
+  assert.deepEqual({ ...overlay.snoozes.p, item: "w000000" }, overlay.snoozes.twin, "the first snooze equals the other item's but for the item id");
   snooze(overlay, itemAt([turn, sub], T0, overlay), T0 + MIN, 3 * HOUR);
   assert.deepEqual(overlay.snoozes.other, { until: T0 + HOUR, bucket: "review" });
-  assert.deepEqual(overlay.snoozes.twin, { until: T0 + 2 * HOUR, bucket: "stalled" });
+  assert.deepEqual(overlay.snoozes.twin, { until: T0 + 2 * HOUR, bucket: "stalled", item: "w000000" });
   assert.deepEqual(Object.keys(overlay.snoozes).sort(), ["other", "p", "p:sub:a1", "twin"]);
 });
