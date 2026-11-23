@@ -22,9 +22,11 @@
 //   and leaves it free for a quarter second between holds, so an ingest waiting for it gets a turn.
 // Reads and hooks that find a pass holding a lock leave the wake marker (spool/kick.ts) to it, as
 // they do to an ingest. So between holds, while the marker is set, the pass runs an ingest
-// (onWake: `usage --reprice`), or starts a background ingest and keeps off the lock until that
-// ingest holds it (the kick repriceLock set: an open). A pass with neither, or whose background
-// ingest never took the lock, leaves the spool to the next ingest.
+// (onWake: `usage --reprice`), or starts a background ingest (the kick repriceLock set: an open).
+// A pass that holds the ingest lock (a store without transactions) keeps off it until that ingest
+// holds it; one that never holds it goes on at once and starts one per HANDOFF_MS at most while the
+// marker stays. A pass with neither leaves the spool to the next ingest, as does a pass that holds
+// the lock once a background ingest it started never took it.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
 // Opening the index (store/factory.ts) leaves the pass to the background ingest that
@@ -53,7 +55,7 @@ const KINDS = ["llm.call", "notification", "span"];
 const HOLD_MS = 1_000;
 /** How long the pass leaves the ingest lock free between holds: an ingest waiting for it looks every 100 ms (core/lock.ts). */
 const PAUSE_MS = 250;
-/** Longest the pass keeps off the ingest lock for a background ingest it started to take it. */
+/** Longest the pass keeps off the ingest lock for a background ingest it started to take it; with transactions, the least time between two it starts. */
 const HANDOFF_MS = 10_000;
 
 /** Positive int that changes whenever the effective price table, or the rules that look it up, do. */
@@ -135,7 +137,7 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
     // A store without transactions: each session's writes under the ingest lock, so an ingest's store-and-fold falls before or after them.
     const held: { lock?: Lock } = {};
     const ingest = set?.ingest;
-    const onWake = opts.onWake ?? (ingest && set?.kick ? handOff(ingest, set.kick) : undefined);
+    const onWake = opts.onWake ?? (ingest && set?.kick ? handOff(ingest, set.kick, !index.transaction) : undefined);
     const each = opts.each ?? sessionsUnder(ingest, !index.transaction, opts.force ? 30_000 : 5_000, held, onWake);
     const progress = opts.onProgress ?? repriceProgress();
     const all = (await index.listSessions({})).filter((s) => !opts.skip?.(s.id));
@@ -200,20 +202,27 @@ function sessionsUnder(ingest: string | undefined, hold: boolean, waitMs: number
 }
 
 /**
- * An onWake that hands the spool to a background ingest: `kick` starts one, and the pass keeps off the ingest lock
- * until it holds the lock or the marker is gone (another ingest took it), HANDOFF_MS at most. When none starts, or
- * none takes the lock in time, the pass starts no more: the spool waits for the next ingest. While an ingest holds
- * the lock it starts none: that ingest runs again for the marker (core/ingest.ts), as the hook leaves it to it.
+ * An onWake that hands the spool to a background ingest that `kick` starts. With `wait` (a store without
+ * transactions: the pass takes the ingest lock again after a pause), the pass keeps off the ingest lock until that
+ * ingest holds it or the marker is gone (another ingest took it), HANDOFF_MS at most. Without it (the pass never
+ * holds the ingest lock, so the ingest takes it whenever it starts), the pass goes on at once, and starts one per
+ * HANDOFF_MS at most while the marker stays. When none starts, or one it waited for never took the lock, it starts
+ * no more: the spool waits for the next ingest. While an ingest holds the lock it starts none: that ingest runs again
+ * for the marker (core/ingest.ts), as the hook leaves it to it.
  */
-function handOff(lockPath: string, kick: () => boolean): () => Promise<void> {
+function handOff(lockPath: string, kick: () => boolean, wait: boolean): () => Promise<void> {
   const marker = wakeMarker(lockPath);
   let done = false;
+  let kicked = -Infinity;
   return async () => {
     if (done || isLocked(lockPath)) return;
+    if (!wait && Date.now() - kicked < HANDOFF_MS) return;
     if (!kick()) {
       done = true;
       return;
     }
+    kicked = Date.now();
+    if (!wait) return;
     const until = Date.now() + HANDOFF_MS;
     while (!isLocked(lockPath) && existsSync(marker)) {
       if (Date.now() >= until) {

@@ -61,13 +61,13 @@ async function poll<T>(get: () => T | undefined, ms: number): Promise<T | undefi
   return v;
 }
 
-/** Each read of `store`'s events takes 10 ms while `slow()` says so, as over the network to Postgres or ClickHouse; `during` runs at each. */
-function slowReads(store: IndexStore, slow: () => boolean, during: () => void = () => {}): void {
+/** Each read of `store`'s events takes `ms` while `slow()` says so, as over the network to Postgres or ClickHouse; `during` runs at each. */
+function slowReads(store: IndexStore, slow: () => boolean, during: () => void = () => {}, ms = 10): void {
   const list = store.listEvents.bind(store);
   store.listEvents = async (id, o) => {
     if (slow()) {
       during();
-      await sleep(10);
+      await sleep(ms);
     }
     return list(id, o);
   };
@@ -422,6 +422,59 @@ describe("a reprice pass beside an ingest in another process", () => {
     assert.equal(existsSync(marker), false);
     assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
     await store.close();
+  });
+
+  it("a store without transactions: when no background ingest starts, the pass tries once while the marker stays", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-nokick-"));
+    roots.push(root);
+    mkdirSync(join(root, "spool"));
+    const lockPath = join(root, "spool", ".ingest.lock");
+    const marker = wakeMarker(lockPath);
+    // Two reads of 40 ms or more a session: three stretches of a second at least, so the pass looks at the marker twice.
+    const store = await withCalls(new MemoryIndexStore(), 27);
+    slowReads(store, () => true, () => {}, 40);
+    // No CLI to start (store/factory.ts ingestKick: spawnBackgroundIngest found none).
+    let kicks = 0;
+    repriceLock(store, join(root, "reparse.lock"), lockPath, () => {
+      kicks++;
+      return false;
+    });
+    writeFileSync(marker, "");
+    try {
+      assert.equal((await repriceStored(store, undefined, { onProgress: () => {} })).ran, true);
+      assert.equal(kicks, 1, "a kick that started nothing is not tried again");
+      assert.equal(existsSync(marker), true, "the marker stays for the next ingest");
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("sqlite: a wake marker starts a background ingest and the pass goes on at once, starting one per HANDOFF_MS at most", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-kicknowait-"));
+    roots.push(root);
+    mkdirSync(join(root, "spool"));
+    const lockPath = join(root, "spool", ".ingest.lock");
+    const marker = wakeMarker(lockPath);
+    // As above: three stretches at least, so the pass looks at the marker twice.
+    const store = await withCalls(await SqliteIndexStore.open(join(root, "index.db")), 27);
+    slowReads(store, () => true, () => {}, 40);
+    // A background ingest that never takes the lock: the pass, which never holds it, has nothing to keep off.
+    let kicks = 0;
+    repriceLock(store, join(root, "reparse.lock"), lockPath, () => {
+      kicks++;
+      return true;
+    });
+    writeFileSync(marker, "");
+    const t0 = Date.now();
+    try {
+      assert.equal((await repriceStored(store, undefined, { onProgress: () => {} })).ran, true);
+      const ms = Date.now() - t0;
+      assert.ok(ms < 10_000, `the pass waited for the ingest: ${ms} ms`);
+      assert.equal(kicks, 1, "one background ingest started in the pass's first 10 s");
+      assert.equal((await store.getSession("s26"))!.stats.usage?.costUsd, 5);
+    } finally {
+      await store.close();
+    }
   });
 
   it("sqlite: the pass holds no ingest lock, and its onWake (`usage --reprice`'s) ingests between stretches while the wake marker is set", async () => {
