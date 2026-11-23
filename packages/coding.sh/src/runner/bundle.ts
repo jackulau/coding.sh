@@ -2,7 +2,7 @@
 // model, flags, env, removals) plus overlay files stored as blobs; its id is
 // the sha256 of that content, so "same harness" is decidable.
 import { chmod, lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
-import { basename, dirname, extname, join, posix, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { userHome } from "../core/paths.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { parseToml } from "../core/toml.ts";
@@ -201,10 +201,53 @@ export function userFile(rel: string, home: string, claudeDir: string): string {
   return join(home, rel);
 }
 
+/** Whether `path` is below `dir` (inside it, and not `dir` itself). */
+function below(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return !!rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * The repo-relative keys that name the file a "~/" key names: the same name in the same folder,
+ * the folder compared by real path. Claude Code's config dir inside the project
+ * (CLAUDE_CONFIG_DIR=<dir>/cc), or the home snapshotted as the project, puts one file under a
+ * project glob and a user glob. Dropping these keys records it once, as the user file, so the id
+ * does not depend on the folder the snapshot ran in. A project below the user dir (a repo in
+ * ~/.claude/skills/) keeps its files, and so does a project file that is a link to a user file:
+ * Claude Code loads each as a project file too. Only keys that hold the same blob are compared.
+ */
+async function userDuplicates(files: Record<string, BlobRef>, pathOf: ReadonlyMap<string, string>, o: { dir: string; claudeDir: string; home: string }): Promise<string[]> {
+  const user = new Map<BlobRef, [key: string, path: string][]>();
+  for (const [key, path] of pathOf) {
+    const ref = files[key];
+    if (key.startsWith("~/") && ref) user.set(ref, [...(user.get(ref) ?? []), [key, path]]);
+  }
+  const project = [...pathOf].filter(([key]) => !key.startsWith("~/") && user.has(files[key] ?? ""));
+  if (!project.length) return [];
+  const real = (p: string) => realpath(p).catch(() => resolve(p));
+  // A folder reached through a link is the same folder; a link to a file is a file of its own.
+  const entry = async (p: string) => join(await real(dirname(p)), basename(p));
+  const dir = await real(o.dir);
+  // A project below the user dir keeps its files.
+  const keeps = { claude: below(await real(o.claudeDir), dir), home: below(await real(o.home), dir) };
+  const out: string[] = [];
+  for (const [key, path] of project) {
+    const mine = await entry(path);
+    for (const [userKey, userPath] of user.get(files[key] ?? "") ?? []) {
+      if (userKey.startsWith("~/.claude/") ? keeps.claude : keeps.home) continue;
+      if ((await entry(userPath)) !== mine) continue;
+      out.push(key);
+      break;
+    }
+  }
+  return out;
+}
+
 export async function bundleFromDir(o: BundleFromDirOpts): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
   const home = o.home ?? userHome();
   const claudeDir = o.claudeDir ?? join(home, ".claude");
+  const pathOf = new Map<string, string>();
   for (const inc of o.include) {
     const user = inc.startsWith("~/");
     // "~/.claude/…" is Claude Code's config dir, which $CLAUDE_CONFIG_DIR moves; the key stays "~/.claude/…".
@@ -214,8 +257,10 @@ export async function bundleFromDir(o: BundleFromDirOpts): Promise<HarnessBundle
     const key = claude ? "~/.claude/" : user ? "~/" : "";
     for (const rel of await collect(base, pat)) {
       files[key + rel] = await o.blobs.put(await readFile(join(base, rel)));
+      pathOf.set(key + rel, join(base, rel));
     }
   }
+  for (const key of await userDuplicates(files, pathOf, { dir: o.dir, claudeDir, home })) delete files[key];
   for (const [target, src] of Object.entries(o.files ?? {})) {
     const abs = resolve(o.dir, src.startsWith("~/") ? userFile(src.slice(2), home, claudeDir) : src);
     files[target] = await o.blobs.put(await readFile(abs));

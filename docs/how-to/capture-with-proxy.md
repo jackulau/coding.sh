@@ -264,6 +264,7 @@ latest call first. Only hashes are printed, never the descriptions. Every flag:
 | Each call is its own `proxy-<hash>` session | Send `x-coding-sh-session: <id>`. Claude Code and Codex send their session id themselves. |
 | `diff-calls` says "is the first model call of its session; name two calls" | The call has no earlier call in its session. Pass two call ids. |
 | Nothing is logged | `coding.sh proxy status`, then check that the client reads the base URL from step 2. |
+| `proxy env` says `No proxy answers on http://127.0.0.1:4320` | No proxy runs on that port. `coding.sh proxy --background` starts one. The note goes to stderr; the lines `proxy env` prints stay the same. |
 | Port 4320 is in use | `coding.sh proxy --port 0` picks a free port; `proxy env` prints it. |
 
 :::more What the proxy forwards and stores
@@ -307,6 +308,10 @@ key's project. See [Self-host for a team](https://coding.sh/docs/how-to/self-hos
 coding.sh uninstall --proxy        # stop routing agents through the proxy, keep the hooks
 coding.sh proxy stop
 ```
+
+`proxy stop` asks the proxy to stop over its own port, with a secret from `~/.coding.sh/proxy.json` (mode 600 where the OS has file modes). The proxy stops listening, lets the calls in flight finish, and exits. A request without the secret gets an error and changes nothing.
+
+If the proxy is still running after 10 seconds, `proxy stop` ends it and says so. A proxy that an older version started is stopped with a signal, as before.
 
 ## Next steps
 

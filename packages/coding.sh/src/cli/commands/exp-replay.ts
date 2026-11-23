@@ -21,12 +21,16 @@ import { proxySettings } from "../../proxy/state.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str } from "../common.ts";
 import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import { CliError, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { callOrFail } from "./diff-calls.ts";
 import { cancelledWarning, runArms } from "./exp.ts";
 
 const money = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : usd(n));
+
+/** The replay as the user ran it, with --dry-run: the cost, with no key needed. In-process (no argv), a placeholder. */
+const dryRunCommand = (c: CommandContext) => (c.argv ? cliCommand(c.env, [...c.argv, "--dry-run"]) : `${cliCommand(c.env, ["exp", "replay"])} … --dry-run`);
 
 async function gather(c: CommandContext, ctx: Context): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];
@@ -125,7 +129,8 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
     if (!hasReplayAuth(p, c.env)) {
       throw new CliError(`exp replay calls the ${p === "anthropic" ? "Anthropic" : "OpenAI"} API with your own key, and $${key} is not set`, {
         reason: "missing_api_key",
-        next: [`export ${key}=…   (the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in $${REPLAY_OAUTH_ENV} works too` : ""})`, "See the cost first: coding.sh exp replay … --dry-run"],
+        // A shell comment, not parentheses: the whole line runs as printed in sh and PowerShell.
+        next: [`${envLine(c.env, key, "...")}   # the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in $${REPLAY_OAUTH_ENV} works too` : ""}`, `See the cost first: ${dryRunCommand(c)}`],
       });
     }
   }
