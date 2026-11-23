@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { isPlumbing, shellParts } from "../core/failing-command.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
+import { commandLineOf, isShellCall } from "../core/shell-tools.ts";
 import { stringifyToml } from "../core/toml.ts";
 import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, RepoState, Session } from "../core/types.ts";
 import { safeJoin, safeWrite, toPosix } from "../runner/fsutil.ts";
@@ -81,28 +82,14 @@ function textOf(e: AgentEvent): string | undefined {
   return typeof t === "string" && t.trim() !== "" ? t : undefined;
 }
 
-const SHELL_TOOLS = new Set(["bash", "shell", "exec_command", "run_shell_command", "terminal", "run_terminal_cmd", "local_shell", "exec"]);
-
-/** The shell command line from a tool.start event, when it is a shell tool. */
+/**
+ * The shell command line from a tool.start event, when it is a shell call (core/shell-tools.ts):
+ * every command key read, and a Codex `["bash", "-lc", "npm test"]` unwrapped to its script.
+ */
 export function shellCommandOf(e: AgentEvent): string | undefined {
   if (e.kind !== "tool.start") return undefined;
-  const tool = String(e.payload.tool ?? "").toLowerCase();
-  if (!SHELL_TOOLS.has(tool)) return undefined;
-  const input = e.payload.input as unknown;
-  const raw =
-    typeof input === "string"
-      ? input
-      : input && typeof input === "object"
-        ? ((input as Record<string, unknown>).command ?? (input as Record<string, unknown>).cmd)
-        : undefined;
-  if (typeof raw === "string") return raw;
-  if (Array.isArray(raw) && raw.every((x) => typeof x === "string")) {
-    // Codex style: ["bash", "-lc", "npm test"]
-    const a = raw as string[];
-    if (a.length >= 3 && /(^|\/)(ba|z)?sh$/.test(a[0] as string) && /^-l?c$/.test(a[1] as string)) return a.slice(2).join(" ");
-    return a.join(" ");
-  }
-  return undefined;
+  const tool = String(e.payload.tool ?? "");
+  return isShellCall(tool, e.payload.input) ? commandLineOf(e.payload.input) : undefined;
 }
 
 const TEST_RE =

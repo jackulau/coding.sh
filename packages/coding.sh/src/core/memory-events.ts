@@ -15,8 +15,9 @@
 //   that text names none. One case is lost: a tool that reads "." in a
 //   session whose own directory is named like such a file.
 //
-// No imports beyond types: the stores load this file.
+// No imports beyond types and core/shell-tools.ts, which imports nothing: the stores load this file.
 import type { AgentEvent } from "../schema/index.ts";
+import { COMMAND_KEYS } from "./shell-tools.ts";
 
 /** Event kinds the audit reads. */
 export const MEMORY_EVENT_KINDS = ["tool.start", "notification", "file.change"];
@@ -39,8 +40,8 @@ export const MEMORY_PAYLOAD_KEYS: Readonly<Record<string, readonly string[]>> = 
 export const INPUT_PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "target_file", "notebook_path"] as const;
 /** Where a Skill call names its skill. */
 export const SKILL_INPUT_KEYS = ["skill", "name", "command"] as const;
-/** Where a tool input holds a shell command, or a REPL cell's code (core/sessions.ts commandOf reads these). */
-export const COMMAND_INPUT_KEYS = ["command", "cmd", "script", "commandLine", "CommandLine", "code"] as const;
+/** Where a tool input holds a shell command (core/shell-tools.ts), or a REPL cell's code (core/sessions.ts commandOf reads these). */
+export const COMMAND_INPUT_KEYS = [...COMMAND_KEYS, "code"] as const;
 /** Fields of a tool.start's `payload.input` the audit reads. An input that is a string (a bare command) is kept whole. */
 export const MEMORY_INPUT_KEYS: readonly string[] = [...new Set<string>([...SKILL_INPUT_KEYS, ...INPUT_PATH_KEYS, ...COMMAND_INPUT_KEYS])];
 
