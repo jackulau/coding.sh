@@ -425,7 +425,7 @@ async function snooze(c: CommandContext): Promise<number> {
     out.ok(`Snoozed ${item.id} until ${localTime(until, now)}`);
     // Blocked is the most urgent bucket: nothing brings the item back sooner, not even a new prompt.
     if (bucket === BUCKETS[0]) out.note(`Nothing is more urgent than ${BUCKET_LABELS[bucket].toLowerCase()}, so it stays hidden until then, even if it waits on you again.`);
-    else out.note(`It comes back sooner if it moves to a more urgent bucket than ${BUCKET_LABELS[bucket].toLowerCase()}.`);
+    else out.note(`Until then it shows only while it is in a bucket more urgent than ${BUCKET_LABELS[bucket].toLowerCase()}.`);
     return 0;
   });
 }

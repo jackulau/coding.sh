@@ -1852,7 +1852,7 @@ export const COMMANDS: CommandSpec[] = [
       },
       {
         name: "snooze",
-        summary: "Hide an item for a while; it comes back sooner if it moves to a more urgent bucket",
+        summary: "Hide an item for a while; until then it shows only while it is in a more urgent bucket",
         args: [
           { name: "id", desc: "Work item id, or a session id in the item", required: true },
           { name: "duration", desc: "How long: 30m, 2h, 1d, 2w", required: true },
