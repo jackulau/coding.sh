@@ -243,6 +243,34 @@ describe("sessions, tree, search and status: ids over 200 characters that hold %
   });
 });
 
+describe("tree: the Fix first line names a flagged subagent by the reference its node prints", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  const TOP = `t3code-thread%3Aproj%253Ademo%253A${"abcdefghij".repeat(17)}-fix`;
+  // A Claude Code subagent of TOP, and the only flagged node: the one to fix first.
+  const SUB = `${TOP}:sub:a89abcdef01234567`;
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      mkSession(TOP, now - 3000, { title: "the run" }),
+      mkSession(SUB, now - 2900, { title: "look around", parent: { sessionId: TOP, type: "Explore" }, flags: ["looping"] } as never),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("the node and the Fix first line print 8 characters of the subagent's own id, which show opens", async () => {
+    const r = await runCmd(tree, sb, { positionals: [TOP] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /^ {2}└ a89abcde {2}Explore/m, r.stdout);
+    const lines = r.stdout.split("\n");
+    const fix = lines.indexOf("Fix first");
+    assert.ok(fix >= 0, r.stdout);
+    assert.equal(lines[fix + 1], "  subagent Explore a89abcde: looping");
+    assert.doesNotMatch(r.stdout, /t3code-thread/, "no line prints an id over 200 characters");
+    assert.equal(await opens(sb, "a89abcde"), SUB);
+  });
+});
+
 describe("sessions and tree: a store of 36-character ids prints them whole, as before, and reads the stored ids only for the in: line", () => {
   let sb: Sandbox;
   const now = Date.now();

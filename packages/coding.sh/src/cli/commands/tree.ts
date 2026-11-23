@@ -166,7 +166,7 @@ export async function run(c: CommandContext): Promise<number> {
       const w = worst.session;
       const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
-      out.print(`  ${which} ${wholeRef(w.id)}: ${worstFirst(w.flags).join(", ")}`);
+      out.print(`  ${which} ${refs.whole(w.id)}: ${worstFirst(w.flags).join(", ")}`);
       out.next("Open it", `coding.sh show ${wholeRef(w.id)}`);
     }
     if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${wholeRef(tree.roots[0]!.session.id)} --all`);
