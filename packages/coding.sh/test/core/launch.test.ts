@@ -1,6 +1,7 @@
 // Headless sessions (`claude -p`, `codex exec`, an Agent SDK) are told apart from
 // interactive ones: stats.launch, from the start's entrypoint (Claude Code) or
-// originator and launch source (Codex), on real captures and live hook lines.
+// originator and launch source (Codex), on real captures and live hook lines. A host
+// app's link (T3 Code) that names a launch sets it over the start's.
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -54,6 +55,28 @@ describe("stats.launch", () => {
       const all = sessions(await collect(claudeCode.backfill!(testCtx().ctx)));
       assert.ok(all.size > 0);
       for (const s of all.values()) assert.equal(s.stats.launch, "headless", `${dir} ${s.id}`);
+    }
+  });
+
+  it("a host link's launch beats the agent's start: T3 Code runs Claude Code through the Agent SDK, which reads as headless", async () => {
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "real", "config");
+    const events = await collect(claudeCode.backfill!(testCtx().ctx));
+    const link = (sessionId: string, ts: number, launch?: string): AgentEvent => {
+      const payload: Record<string, unknown> = { type: "host-link", via: "t3code" };
+      if (launch) payload.launch = launch;
+      return { id: `link-${sessionId}`, v: 0, sessionId, ts, agent: "t3code", kind: "notification", payload };
+    };
+    const all = sessions(events);
+    assert.ok(all.size > 0);
+    for (const s of all.values()) {
+      const own = events.filter((e) => e.sessionId === s.id);
+      const t0 = Math.min(...own.map((e) => e.ts));
+      assert.equal(s.stats.launch, "headless", s.id);
+      // T3 Code's link can come before the agent's start or after it.
+      assert.equal(buildSession([link(s.id, t0 - 1, "interactive"), ...own]).stats.launch, "interactive", `${s.id}: a link before the start`);
+      assert.equal(buildSession([...own, link(s.id, t0 + 1, "interactive")]).stats.launch, "interactive", `${s.id}: a link after the start`);
+      assert.equal(buildSession([link(s.id, t0 - 1, "interactive"), ...own].map(toMetadata)).stats.launch, "interactive", `${s.id}: metadata mode keeps it`);
+      assert.equal(buildSession([link(s.id, t0 - 1), ...own]).stats.launch, "headless", `${s.id}: a link that names no launch leaves the start's`);
     }
   });
 
