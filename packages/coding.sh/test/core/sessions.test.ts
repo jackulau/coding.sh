@@ -639,6 +639,27 @@ describe("session usage rollup", () => {
     assert.equal(r.usage.costUsd, 0.01);
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.03 });
   });
+
+  it("a nested call a gateway billed counts at the bill when its wrapper's cost is an estimate, whatever cost the call carried", () => {
+    // Reported $0, estimated $3, no cost at all: the companion holds the bill minus the call's own cost.
+    for (const [own, estimated] of [[0, false], [3, true], [undefined, false]] as const) {
+      const wrapper = llm("w", undefined, { inputTokens: 1_000_000, costUsd: 4 }, { costEstimated: true });
+      const inner = llm("n", "w", own === undefined ? { inputTokens: 1_000_000 } : { inputTokens: 1_000_000, costUsd: own }, estimated ? { costEstimated: true } : {});
+      const gw = ev("span", { gateway: "vercel", billedCostUsd: 5 }, { source: "gateway", parentId: inner.id, usage: { costUsd: 5 - (own ?? 0) } });
+      const s = buildSession([wrapper, inner, gw]);
+      assert.deepEqual(s.stats.usage, { inputTokens: 1_000_000, costUsd: 5 }, `a nested call at ${own}`);
+      assert.deepEqual(s.stats.duplicateUsage, { calls: 1, tokens: 1_000_000, costUsd: 4 }, `a nested call at ${own}`);
+    }
+  });
+
+  it("a call a gateway billed counts at the bill, without its nested calls' cost on top", () => {
+    const outer = llm("a", undefined, { inputTokens: 100 });
+    const inner = llm("b", "a", { inputTokens: 100, costUsd: 0.5 });
+    const gw = ev("span", { gateway: "vercel", billedCostUsd: 2 }, { source: "gateway", parentId: outer.id, usage: { costUsd: 2 } });
+    const r = rollupUsage([outer, inner, gw]);
+    assert.deepEqual(r.usage, { inputTokens: 100, costUsd: 2 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.5 });
+  });
 });
 
 describe("the estimate by token type (stats.usage.estimatedCostByTokenType)", () => {

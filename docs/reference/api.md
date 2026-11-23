@@ -631,7 +631,10 @@ gateway-billed cost has no split.
 
 A model call nested in another of the same trace (a framework's span around the provider's call)
 counts once. The outer call keeps its own figures and takes the rest from the calls nested in it. A
-cost a nested call reported, even $0, beats an estimate on the outer call.
+cost a nested call reported, even $0, beats an estimate on the outer call, and so does a cost a
+gateway billed for it.
+
+A call a gateway billed counts at the billed cost, without its nested calls' cost on top.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
 token count below 0 or not a finite number, as the estimate does.
