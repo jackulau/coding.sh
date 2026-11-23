@@ -88,6 +88,8 @@ type Store = "transaction" | "no transaction";
  * second read of the cursor (the rule before sinks got what a crash or stall left). "resend what an
  * earlier pass stored": only a copy of what this pass stored is a repeat (that fix's first rule).
  * "one in-flight key": key A alone. "in-flight keys after the put": the keys are set after the put.
+ * "in-flight keys with no fence": the keys are set with no fence before them, so a process that lost
+ * the lock still sets both.
  * "no hand-off": the last pass ends with the marker back and starts no ingest.
  */
 type Mutant =
@@ -99,6 +101,7 @@ type Mutant =
   | "resend what an earlier pass stored"
   | "one in-flight key"
   | "in-flight keys after the put"
+  | "in-flight keys with no fence"
   | "no hand-off";
 
 interface Config {
@@ -515,6 +518,11 @@ function captureModel(cfg: Config): Model<Cap> {
       actions.push({ name: `p${p} fails ${what}'s fence`, guard: (s) => is(s, pc, f) && s.lock !== p, effect: (s) => next(s, lost) });
       actions.push({ name: `p${p} sets ${what} late`, guard: (s) => is(s, late, f), effect });
     };
+    /** Mutant "in-flight keys with no fence": the write is made whoever holds the lock. */
+    const unfenced = (what: string, f: number, pc: Pc, _late: Pc, write: (d: Cap, me: Proc) => void): void => {
+      actions.push({ name: `p${p} sets ${what} with no fence`, guard: (s) => is(s, pc, f), effect: (s) => next(s, (d) => write(d, proc(d, p))) });
+    };
+    const keyWrite = cfg.mutant === "in-flight keys with no fence" ? unfenced : fenced;
 
     actions.push({
       name: `p${p} takes the lock`,
@@ -640,12 +648,12 @@ function captureModel(cfg: Config): Model<Cap> {
     });
     for (let f = 0; f < nf; f++) {
       // The code sets the larger of the key it read and readPos; with one checkpoint per pass, that is readPos.
-      fenced(`the F${f} in-flight key A`, f, "flight a", "late flight a", (d, me) => {
+      keyWrite(`the F${f} in-flight key A`, f, "flight a", "late flight a", (d, me) => {
         d.flightA[f] = at(me.read, f);
         if (cfg.mutant === "one in-flight key") toFlights(me, f);
         else me.pc = "flight b";
       });
-      fenced(`the F${f} in-flight key B`, f, "flight b", "late flight b", (d, me) => {
+      keyWrite(`the F${f} in-flight key B`, f, "flight b", "late flight b", (d, me) => {
         d.flightB[f] = at(me.read, f);
         toFlights(me, f);
       });
@@ -992,6 +1000,11 @@ test("each step the code orders on purpose breaks an invariant when moved, and e
   const oneKey = broken("one in-flight key", { hooks: 2, files: 1, cap: 2, store: "no transaction", crashes: 1, stalls: 1 });
   assert.equal(oneKey.invariant, "a final ingest sends every event");
   assert.ok(before(oneKey.actions, "p1 sets the F0 in-flight key A", "p0 sets the F0 in-flight key A late") && before(oneKey.actions, "p1 puts the events", "p1 crashes"), oneKey.actions.join(", "));
+
+  // No fence before the keys: a stalled process's late writes lower both, below lines that the process which took over stored before it crashed.
+  const noFence = broken("in-flight keys with no fence", { hooks: 2, files: 1, cap: 2, store: "no transaction", crashes: 1, stalls: 1 });
+  assert.equal(noFence.invariant, "a final ingest sends every event");
+  assert.ok(before(noFence.actions, "p1 sets the F0 in-flight key B with no fence", "p0 sets the F0 in-flight key B with no fence") && before(noFence.actions, "p1 puts the events", "p1 crashes"), noFence.actions.join(", "));
 
   // Only a copy of what this pass stored is a repeat: a later pass that reads the other line of a hand-off sends its event again, with no fault.
   for (const store of ["transaction", "no transaction"] as const) {
