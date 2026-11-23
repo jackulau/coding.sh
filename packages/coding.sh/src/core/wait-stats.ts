@@ -335,10 +335,12 @@ function permissionPrompt(s: WaitStatsState, waiting: WaitingState, e: AgentEven
   if (s.waits.some(same)) return;
   // A prompt on another call of the thread: the one before was answered.
   close(s, (w) => w.kind === "permission" && w.thread === on && !hostOnly(w), e.ts, "person");
-  const wait: OpenWait = { kind: "permission", at: e.ts, thread: on };
+  // The host's request for this approval sorted first (T3 Code): the prompt joins its wait.
+  const host = s.waits.findLast((w) => w.kind === "permission" && w.thread === on && hostOnly(w));
+  const wait: OpenWait = host ?? { kind: "permission", at: e.ts, thread: on };
   if (call?.id !== undefined) wait.id = call.id;
   else if (call) wait.tool = call.tool;
-  open(s, wait);
+  if (!host) open(s, wait);
 }
 
 /** What a host request asks for: an approval, a question, or something else (a secret, a link). */

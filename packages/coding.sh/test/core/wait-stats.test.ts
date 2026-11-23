@@ -338,6 +338,16 @@ describe("host app requests (T3 Code)", () => {
     const callFirst = [call(10, "AskUserQuestion", "q1"), asked(11, "r1", "user_input", HOST_QUESTION), resolved(40, "r1"), done(41, "AskUserQuestion", "q1")];
     for (const events of [hostFirst, callFirst]) assert.deepEqual(stats(events, null), { count: 1, ms: 30_000, byKind: { question: { count: 1, ms: 30_000 } } });
   });
+
+  test("a host's approval request and the hook's prompt for the same call are one wait, in either order", () => {
+    // The person approves at 40 (the request resolves); the call ends at 45.
+    const hostFirst = [call(5, "Bash", "c1"), asked(10, "r1", "command"), permission(10.2), resolved(40, "r1"), done(45, "Bash", "c1")];
+    const hookFirst = [call(5, "Bash", "c1"), permission(10), asked(10.2, "r1", "command"), resolved(40, "r1"), done(45, "Bash", "c1")];
+    for (const events of [hostFirst, hookFirst]) assert.deepEqual(stats(events, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
+    // The call ends first: the joined wait ends with it, and the resolution after it ends nothing.
+    const endFirst = [call(5, "Bash", "c1"), asked(10, "r1", "command"), permission(10.2), done(40, "Bash", "c1"), resolved(45, "r1")];
+    assert.deepEqual(stats(endFirst, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
+  });
 });
 
 describe("incremental folds", () => {
