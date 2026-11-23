@@ -67,14 +67,17 @@ export async function auditReport(ctx: Context, a: AuditArgs, c: { cwd: string; 
   const r = await memoryAudit(ctx.index, { since, env: c.env, ...(a.agent ? { agent: a.agent as AgentId } : {}) });
   const t = r.totals;
   const limit = a.limit ?? 20;
-  // Flagged files first, then the costliest to load (the CLI table's order).
-  const rows = [...r.files].sort((x, y) => Number(y.flags.length > 0) - Number(x.flags.length > 0) || (y.loadTokens ?? 0) - (x.loadTokens ?? 0));
+  // Flagged files first, then the costliest to load, and files gone from disk last (the CLI table's order).
+  const gone = (f: (typeof r.files)[number]) => Number(f.flags.includes("deleted"));
+  const rows = [...r.files].sort((x, y) => gone(x) - gone(y) || Number(y.flags.length > 0) - Number(x.flags.length > 0) || (y.loadTokens ?? 0) - (x.loadTokens ?? 0));
+  const unused: { neverRead: number; writeOnly: number; loadedNotRead: number; deleted?: number } = { neverRead: t.neverRead, writeOnly: t.writeOnly, loadedNotRead: t.loadedNotRead };
+  if (t.deleted) unused.deleted = t.deleted;
   const refine = await refineNext(r.files, await gitRootOf(c.cwd), { home, cwd: c.cwd });
   return {
     since: iso(since),
     sessions: r.sessions,
     ...(r.sessions && t.loadTokens ? { loadTokensPerSession: Math.round(t.loadTokens / r.sessions) } : {}),
-    unused: { neverRead: t.neverRead, writeOnly: t.writeOnly, loadedNotRead: t.loadedNotRead },
+    unused,
     files: rows.slice(0, limit).map((f) => ({
       path: localPath(f.path, home),
       kind: f.kind,
