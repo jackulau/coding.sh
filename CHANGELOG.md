@@ -380,6 +380,7 @@ grouped by area, with links to the docs for the details.
 - **Sessions.** `coding.sh sessions` and `coding.sh show` name the host app that drove a session: the AGENT cell reads `claude-code via t3code`, so a row that `--agent t3code` lists says why it matched. `--json` keeps `agent` and `host` apart, as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#list-your-sessions))
 - **CLI.** A command an agent runs in a terminal (Codex runs some in one) no longer prompts: with AI_AGENT, CLAUDECODE, CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID set, a step that needs consent stops and tells the agent to ask the user, as it does without a terminal, and progress prints as plain lines. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#output-and-updates))
 - **CLI.** In PowerShell or cmd, an unknown option or extra argument after a value with a space says how to write a double quote inside a value. Windows PowerShell 5.1 passes such quotes on unescaped, so a `--notify` command with inner quotes reached coding.sh in pieces and failed with only `Unknown option -Path`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
+- **Capture.** Redaction replaces a private key whose `BEGIN` line overlaps another `BEGIN` line, as in a header repeated without a line break. Before, the key data after it could be kept. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 
 ## [0.1.7] - 2026-11-16
 

@@ -334,6 +334,8 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
   for (; open; open = PRIVATE_KEY_BEGIN.exec(s)) {
     PRIVATE_KEY_DATA.lastIndex = PRIVATE_KEY_BEGIN.lastIndex;
     if (PRIVATE_KEY_DATA.test(s)) break;
+    // The next BEGIN line can start inside this one: its dashes may be this line's last five.
+    PRIVATE_KEY_BEGIN.lastIndex = open.index + 1;
   }
   if (open) {
     onMatch?.("private-key", s.slice(open.index));

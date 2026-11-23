@@ -44,6 +44,14 @@ const SLACK_USER = ["xox", "p-1234567890-abcdef"].join("");
 const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const STRIPE_LIVE = ["sk_li", "ve_", "51H8abcdefghijklmnop"].join("");
 
+const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const B64 = `${B62}+/`;
+const valueRand = prng(99);
+/** `n` random characters from `chars`, the same on every run; `lead` keeps a digit and a letter in front. */
+const fill = (chars: string, n: number, lead = ""): string => [lead, randomFrom(valueRand, chars, n)].join("");
+/** Two BEGIN lines that share five dashes, with key data and no END line after the second. */
+const OVERLAPPING_BEGIN = [["-----BEGIN", "PRIVATE", "KEY-----BEGIN", "PRIVATE", "KEY-----"].join(" "), fill(B64, 64)].join("");
+
 const positives: [string, string, string][] = [
   ["anthropic", "key: sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc", "anthropic-key"],
   ["openai", "OPENAI sk-proj-Ab12Cd34Ef56Gh78Ij90Kl12Mn34", "openai-key"],
@@ -114,6 +122,11 @@ describe("redact: secrets", () => {
     assert.equal(r.string("Authorization: Bearer abc123def456ghi789jkl"), "Authorization: Bearer [redacted:bearer]");
     assert.equal(r.string("export GITHUB_TOKEN=abcdef123456"), "export GITHUB_TOKEN=[redacted:secret-assignment]");
     assert.equal(r.string("?token=abc&x=1"), "?token=[redacted:url-secret]&x=1");
+  });
+
+  it("redacts key data after a BEGIN line that starts in the dashes of the BEGIN line before it", () => {
+    // The second BEGIN line starts at 22, on the first one's closing dashes.
+    assert.equal(r.string(OVERLAPPING_BEGIN), `${OVERLAPPING_BEGIN.slice(0, 22)}[redacted:private-key]`);
   });
 
   for (const s of negatives) {
@@ -377,6 +390,7 @@ describe("redact: same output as the original secret rules", () => {
     "secret is-abc12345 secret IS abc12345, token = 'abcdefg1'",
     "-----BEGIN PRIVATE KEY-----\na\n-----BEGIN PRIVATE KEY-----\nb\n-----END PRIVATE KEY-----END PRIVATE KEY-----",
     "-----END PRIVATE KEY----- -----BEGIN EC PRIVATE KEY-----\nxyz\n-----END EC PRIVATE KEY BLOCK-----tail",
+    OVERLAPPING_BEGIN,
   ];
 
   it("on the hand-written redaction examples", () => {
