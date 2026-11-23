@@ -47,6 +47,9 @@ export function extraText(r: CacheHealth): string {
   return ` (${money(r.extraUsd)} extra${left ? `; ${left}` : ""})`;
 }
 
+/** Each cause's diff-calls example as the user's shell runs the CLI (Output.command): `codingsh` in PowerShell, npx under npx. */
+const runnable = (out: Output, r: CacheHealth): CacheHealth => ({ ...r, causes: r.causes.map((c) => (c.example ? { ...c, example: { ...c.example, command: out.command(c.example.command) } } : c)) });
+
 function render(out: Output, r: CacheHealth, sessions: number, sinceText: string): void {
   if (r.hitRate === undefined) {
     out.print(`Prompt cache: no cache tokens in ${plural(sessions, "session")} ${windowText(sinceText)}; these agents did not report cache use, or caching is off`);
@@ -120,7 +123,7 @@ export async function run(c: CommandContext): Promise<number> {
       if (found.some((b) => b.notRead)) skipped++;
       breaks.push(...found);
     }
-    const r = cacheHealth({ ...(hitRate !== undefined ? { hitRate } : {}), promptTokens, breaks, totals: breakTotals(broken.map((s) => s.stats.cacheBreaks!)) });
+    const r = runnable(out, cacheHealth({ ...(hitRate !== undefined ? { hitRate } : {}), promptTokens, breaks, totals: breakTotals(broken.map((s) => s.stats.cacheBreaks!)) }));
     if (out.json) {
       out.data({ since: new Date(since).toISOString(), sessions: count, ...r, ...(skipped ? { sessionsNotRead: skipped } : {}), ...(truncated ? { truncated: true } : {}), ...pendingField(backlog) });
       return 0;
