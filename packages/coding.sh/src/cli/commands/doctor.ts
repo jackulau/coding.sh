@@ -31,6 +31,7 @@ import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
 import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, runningStaleNotes, staleNotes } from "./init.ts";
 import { ingestStoppedText } from "./status.ts";
+import { staleStatusLine } from "./statusline.ts";
 import { median } from "../../stats/summary.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
@@ -419,7 +420,7 @@ interface DoctorAgent {
 
 /** A row doctor marks with "!": what is wrong, and the command that fixes it when one does. */
 export interface DoctorWarning {
-  check: "agent" | "agents" | "hook" | "mcp" | "spool" | "stats" | "sessions" | "ingest" | "proxy";
+  check: "agent" | "agents" | "hook" | "mcp" | "spool" | "stats" | "sessions" | "ingest" | "proxy" | "statusline";
   agent?: string;
   message: string;
   /** For an agent: why its hooks will not fire, with the file and line to change when there is one. */
@@ -649,6 +650,13 @@ export async function run(c: CommandContext): Promise<number> {
     warn("Hook", `${hookBin.path} is stale (${why}); run ${bin} update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: `${bin} update --refresh-bin` });
   } else row("Hook", hookBin.path, "ok");
   for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run ${bin} init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: `${bin} init` });
+  // Windows: a status line installed by 0.1.7 or earlier runs `coding.sh statusline`, which PowerShell can't run.
+  const line = staleStatusLine(env);
+  if (line) {
+    const message = `runs ${line.command}, which PowerShell and cmd can't run (${line.file})`;
+    const reinstall = cliCommand(env, ["statusline", "install"]);
+    warn("Status line", `${message}; run ${reinstall}`, { check: "statusline", message: `Claude Code's status line ${message}`, next: reinstall });
+  }
   if (spool.ok && spoolProblems.length) for (const m of spoolProblems) warn("Spool", m, { check: "spool", message: m });
   else row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");

@@ -1,19 +1,26 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageError } from "../../src/cli/args.ts";
 import * as alertCmd from "../../src/cli/commands/alert.ts";
-import { classify, recordDelivery } from "../../src/alerts/check.ts";
+import { commandHelp } from "../../src/cli/main.ts";
+import { findCommand } from "../../src/cli/registry.ts";
+import { classify, recordDelivery, runAlertChecks } from "../../src/alerts/check.ts";
 import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
 import { deliver, signatureHeaders, signBody, stderrLine } from "../../src/alerts/notify.ts";
-import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES } from "../../src/alerts/store.ts";
+import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES, saveAlerts } from "../../src/alerts/store.ts";
+import { resolveWindowsCommand } from "../../src/core/spawn.ts";
 import type { Score } from "../../src/core/types.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { CLI } from "../_cli.ts";
+import { removeTestDir } from "../_rm.ts";
 import { mkSession, runCmd, type Sandbox, sandbox } from "../cli/_cmd.ts";
 
 interface Post {
@@ -64,6 +71,7 @@ describe("coding.sh alert", () => {
     assert.equal(add.code, 0);
     const secret = (add.json as { secret: string }).secret;
     assert.match(secret, /^csh_whsec_[0-9a-f]{48}$/);
+    assert.deepEqual((add.json as { alert: { states: unknown } }).alert.states, [], "a new alert has no states yet, as a list");
 
     const first = await runCmd(alertCmd, sb, { action: "check", json: true });
     assert.equal(first.code, 0, first.stderr);
@@ -127,6 +135,30 @@ describe("coding.sh alert", () => {
     assert.deepEqual(res.groups.map((g) => [g.agent, g.state, g.value]), [["claude-code", "ALERT", 2], ["codex", "OK", 1]]);
     const sent = hook.posts.slice(before).map((p) => JSON.parse(p.body));
     assert.deepEqual(sent.map((b) => [b.alert, b.state, b.by]), [["per-agent", "ALERT", { agent: "claude-code" }]]);
+  });
+
+  it("list --json gives each alert's states as a list, with the agent under --by agent; alerts.json keeps its keys", async () => {
+    const r = await runCmd(alertCmd, sb, { action: "list", json: true });
+    assert.equal(r.code, 0, String(r.error));
+    // No empty key: Windows PowerShell 5.1's ConvertFrom-Json refuses one.
+    assert.doesNotMatch(r.stdout, /"":/);
+    type Listed = { name: string; states: { agent?: string; state: string; value: number | null; since: number; checkedAt: number }[] };
+    const listed = new Map((r.json as { alerts: Listed[] }).alerts.map((a) => [a.name, a.states]));
+    assert.deepEqual(listed.get("failures")!.map((g) => [Object.hasOwn(g, "agent"), g.state, g.value]), [[false, "ALERT", 1]]);
+    assert.deepEqual(listed.get("per-agent")!.map((g) => [g.agent, g.state, g.value]), [["claude-code", "ALERT", 2], ["codex", "OK", 1]]);
+    for (const g of [...listed.values()].flat()) assert.ok(g.since > 0 && g.checkedAt >= g.since, JSON.stringify(g));
+    const file = loadAlerts(join(sb.env.CODING_SH_HOME!, "alerts.json")).alerts;
+    assert.deepEqual(file.map((a) => [a.name, Object.keys(a.states)]), [["failures", [""]], ["per-agent", ["claude-code", "codex"]]]);
+  });
+
+  it("list --json reads in Windows PowerShell 5.1: ConvertFrom-Json takes it", { skip: !(process.platform === "win32" && resolveWindowsCommand("powershell")) && "PowerShell: Windows" }, () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...sb.env };
+    for (const k of ["MSYSTEM", "SHELL", "CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE"]) delete env[k];
+    // The pipe a PowerShell user writes: codingsh alert list --json | ConvertFrom-Json
+    const script = `$doc = & '${process.execPath}' --no-warnings '${CLI}' alert list --json | ConvertFrom-Json; foreach ($a in $doc.alerts) { foreach ($g in $a.states) { "$($a.name)|$($g.agent)|$($g.state)|$($g.value)" } }`;
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.error, undefined, String(r.error));
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/), ["failures||ALERT|1", "per-agent|claude-code|ALERT|2", "per-agent|codex|OK|1"], r.stderr);
   });
 
   it("refuses bad usage and a name that exists", async () => {
@@ -312,6 +344,129 @@ describe("alert check with a broken target", () => {
     }
   });
 
+  // One failed session in the last hour: the first check moves the alert from OK to ALERT.
+  async function brokenTarget(url: string): Promise<{ dir: string; file: string; index: MemoryIndexStore }> {
+    const dir = mkdtempSync(join(tmpdir(), "alerts-resend-"));
+    const file = join(dir, "alerts.json");
+    const index = new MemoryIndexStore();
+    await index.upsertSession(mkSession("s1", Date.now() - 60_000, { flags: ["error-exit"] }));
+    const def: AlertDef = { name: "f", measure: "failure-rate", over: 0.5, window: "1h", notify: { kind: "webhook", url }, createdAt: 0, states: {}, delivery: { failures: 0 } };
+    await saveAlerts(file, { v: 1, alerts: [def] });
+    return { dir, file, index };
+  }
+
+  it("sends a change that was not delivered again on the next check, and keeps the new state", async () => {
+    let status = 500;
+    const hook = await listener(() => status);
+    const t = await brokenTarget(hook.url);
+    try {
+      const first = (await runAlertChecks({ file: t.file, index: t.index, backoffMs: 1 }))[0]!;
+      assert.deepEqual([first.state, first.failed, first.notified, hook.posts.length], ["ALERT", 1, 0, 3]);
+      // alert list shows the state the alert is in, and when it entered it.
+      const saved = loadAlerts(t.file).alerts[0]!.states[""]!;
+      assert.deepEqual([saved.state, saved.lastDelivered], ["ALERT", "OK"]);
+      const since = saved.since;
+
+      status = 200;
+      const second = (await runAlertChecks({ file: t.file, index: t.index, backoffMs: 1 }))[0]!;
+      assert.deepEqual([second.notified, second.failed, hook.posts.length], [1, 0, 4]);
+      assert.deepEqual(second.groups.map((g) => [g.state, g.previous, g.changed, g.lastDelivered]), [["ALERT", "ALERT", false, "OK"]]);
+      const body = JSON.parse(hook.posts[3]!.body);
+      assert.deepEqual([body.state, body.previous, body.test], ["ALERT", "OK", undefined]);
+      const later = loadAlerts(t.file).alerts[0]!.states[""]!;
+      assert.deepEqual([later.state, later.since, later.lastDelivered], ["ALERT", since, undefined]);
+
+      const third = (await runAlertChecks({ file: t.file, index: t.index, backoffMs: 1 }))[0]!;
+      assert.deepEqual([third.notified, hook.posts.length], [0, 4], "delivered once: not sent a third time");
+    } finally {
+      await close(hook.server);
+      removeTestDir(t.dir);
+    }
+  });
+
+  it("tells the target the change from the state it last got, and nothing once the state is back there", async () => {
+    let status = 500;
+    const hook = await listener(() => status);
+    const dir = mkdtempSync(join(tmpdir(), "alerts-resend-"));
+    const file = join(dir, "alerts.json");
+    const index = new MemoryIndexStore();
+    const now = Date.now();
+    const later = now + 2 * 3_600_000;
+    try {
+      for (const id of ["s1", "s2"]) await index.upsertSession(mkSession(id, now - 60_000));
+      await saveAlerts(file, { v: 1, alerts: [{ name: "n", measure: "sessions", warn: 1, over: 2, window: "1h", noData: "ok", notify: { kind: "webhook", url: hook.url }, createdAt: 0, states: {}, delivery: { failures: 0 } }] });
+      const check = async (at: number) => (await runAlertChecks({ file, index, now: at, backoffMs: 1 }))[0]!;
+      // OK to WARNING, not delivered; then WARNING to ALERT: the target still has OK.
+      assert.deepEqual([(await check(now)).failed, hook.posts.length], [1, 3]);
+      await index.upsertSession(mkSession("s3", now - 60_000));
+      status = 200;
+      const moved = await check(now);
+      assert.deepEqual(moved.groups.map((g) => [g.state, g.previous, g.lastDelivered]), [["ALERT", "WARNING", "OK"]]);
+      assert.deepEqual([moved.notified, JSON.parse(hook.posts.at(-1)!.body).previous, hook.posts.length], [1, "OK", 4]);
+
+      // Two hours on the window is empty: ALERT to OK, not delivered. Back at ALERT, the
+      // state the target has, there is nothing to send.
+      status = 500;
+      assert.deepEqual([(await check(later)).state, hook.posts.length], ["OK", 7]);
+      for (const id of ["s4", "s5", "s6"]) await index.upsertSession(mkSession(id, later - 60_000));
+      const back = await check(later);
+      assert.deepEqual([back.state, back.notified, back.failed, hook.posts.length], ["ALERT", 0, 0, 7]);
+      assert.equal(back.groups[0]!.lastDelivered, undefined);
+      assert.equal(loadAlerts(file).alerts[0]!.states[""]!.lastDelivered, undefined);
+    } finally {
+      await close(hook.server);
+      removeTestDir(dir);
+    }
+  });
+
+  it("alert check says which change it sends again", async () => {
+    const sb = sandbox();
+    const hook = await listener();
+    try {
+      await sb.seed([mkSession("s1", Date.now() - 60_000, { flags: ["error-exit"] })]);
+      const add = await runCmd(alertCmd, sb, { action: "add", positionals: ["f"], flags: { measure: "failure-rate", over: 0.5, window: "1h", notify: `webhook:${hook.url}` }, json: true });
+      assert.equal(add.code, 0);
+      // An earlier check moved the alert to ALERT and could not deliver it.
+      const file = join(sb.env.CODING_SH_HOME!, "alerts.json");
+      const doc = JSON.parse(readFileSync(file, "utf8"));
+      doc.alerts[0].states = { "": { state: "ALERT", value: 1, since: Date.now() - 60_000, checkedAt: Date.now() - 60_000, lastDelivered: "OK" } };
+      doc.alerts[0].delivery = { failures: 1, lastError: "POST → 500" };
+      writeFileSync(file, JSON.stringify(doc));
+      const r = await runCmd(alertCmd, sb, { action: "check" });
+      assert.equal(r.code, 0, String(r.error));
+      assert.match(r.stdout, /^f\s+ALERT\s.*\swas OK \(not delivered before\)$/m);
+      assert.match(r.stderr + r.stdout, /Sent 1 notification\./);
+      assert.deepEqual(hook.posts.map((p) => [JSON.parse(p.body).state, JSON.parse(p.body).previous]), [["ALERT", "OK"]]);
+    } finally {
+      await close(hook.server);
+      sb.cleanup();
+    }
+  });
+
+  it("stops sending a change again at the cut-off when the receiver never answers", async () => {
+    let requests = 0;
+    // Takes each POST and never answers it: each try times out.
+    const server = createServer(() => void requests++);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const t = await brokenTarget(`http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`);
+    try {
+      const results = [];
+      for (let i = 0; i < MAX_FAILED_DELIVERIES + 2; i++) results.push((await runAlertChecks({ file: t.file, index: t.index, backoffMs: 1, timeoutMs: 100 }))[0]!);
+      assert.deepEqual(
+        results.map((r) => [r.failed, r.skipped, r.disabled]),
+        [...Array.from({ length: MAX_FAILED_DELIVERIES - 1 }, () => [1, 0, false]), [1, 0, true], [0, 1, true], [0, 1, true]],
+      );
+      assert.equal(requests, MAX_FAILED_DELIVERIES * 3, "3 tries a check until the target is turned off, then none");
+      assert.match(results[0]!.deliveryError ?? "", /timed out/);
+      const def = loadAlerts(t.file).alerts[0]!;
+      assert.deepEqual([def.states[""]!.state, def.states[""]!.lastDelivered, def.delivery.failures], ["ALERT", "OK", MAX_FAILED_DELIVERIES]);
+    } finally {
+      server.closeAllConnections();
+      await close(server);
+      removeTestDir(t.dir);
+    }
+  });
+
   it("alert check exits 0 when there are no alerts or alerts.json is unreadable", async () => {
     const sb = sandbox();
     try {
@@ -356,6 +511,31 @@ describe("alert parts", () => {
     assert.equal(parseMeasure("tokens"), undefined);
     assert.deepEqual(parseMeasure("score:helpful"), { kind: "score", name: "helpful" });
     assert.equal(parseMeasure("score: "), undefined);
+  });
+
+  // On Windows cmd.exe runs a command target, and notify-send is not there.
+  it("an empty --notify command: gives an example that runs where the CLI runs", () => {
+    const usage = (platform: NodeJS.Platform) => {
+      try {
+        alertCmd.parseTarget("command: ", platform);
+      } catch (e) {
+        assert.ok(e instanceof UsageError);
+        return e.message;
+      }
+      assert.fail("no usage error");
+    };
+    assert.equal(usage("win32"), '--notify command: needs a command, e.g. command:"node C:\\alerts\\notify.mjs"');
+    assert.equal(usage("linux"), '--notify command: needs a command, e.g. command:"notify-send coding.sh"');
+    assert.equal(usage("darwin"), usage("linux"));
+  });
+
+  it("alert add --help shows a command target for Windows beside the notify-send one", () => {
+    const alert = findCommand("alert")!;
+    const help = commandHelp(alert, alert.actions!.find((a) => a.name === "add"), { heading: (s) => s, bold: (s) => s, faint: (s) => s });
+    const examples = help.slice(help.indexOf("\nExamples\n")).split("\n");
+    const at = (re: RegExp) => examples.findIndex((l) => re.test(l));
+    assert.ok(at(/--notify command:"notify-send coding\.sh"$/) > 0, help);
+    assert.equal(at(/--notify "command:node C:\\alerts\\notify\.mjs"$/), at(/notify-send/) + 1, help);
   });
 
   it("disables a target on the 5th failure in a row and resets on a success", () => {

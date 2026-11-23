@@ -44,7 +44,7 @@ sessions, call `status` to check that sessions are being captured.
 | `costlier` | Sessions after it do more work and the failures did not fall. Give the command in `next`. |
 | `no-clear-change` | The difference could be chance. More sessions will narrow it. |
 | `too-early` | Fewer than 5 sessions ran with the change. Ask again after more sessions. |
-| `no-sessions-after` | No session ran with the change yet. |
+| `no-sessions-after` | No session ran with the change yet. With `headlessLeftOut`, only that many headless runs did: call again with `headless: true` to count them. |
 | `no-baseline` | No session ran before the change, so there is nothing to compare with. |
 
 ## Rules

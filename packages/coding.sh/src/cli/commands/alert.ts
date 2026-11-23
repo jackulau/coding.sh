@@ -10,7 +10,7 @@ import { LockBusyError } from "../../core/lock.ts";
 import { type AlertResult, payloadOf, recordDelivery, runAlertChecks } from "../../alerts/check.ts";
 import { parseMeasure } from "../../alerts/measure.ts";
 import { deliver, type DeliverOptions, SIGNING_NOTES, targetText } from "../../alerts/notify.ts";
-import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
+import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, type PublicAlert, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
 import { UsageError } from "../args.ts";
 import { autoIngest, num, readIngest, str, whereFlag, withContext } from "../common.ts";
 import { cliCommand } from "../next-steps.ts";
@@ -50,7 +50,10 @@ export function thresholdText(a: { measure: string; direction?: "under" }, v: nu
 
 const MEASURES_TEXT = "failure-rate, cost, sessions, flag:<FLAG> or score:<NAME>";
 
-function parseTarget(raw: string): AlertTarget {
+/** A command target that runs where the CLI runs: on Windows cmd.exe runs it, so no notify-send. */
+const commandExample = (platform: NodeJS.Platform): string => (platform === "win32" ? 'command:"node C:\\alerts\\notify.mjs"' : 'command:"notify-send coding.sh"');
+
+export function parseTarget(raw: string, platform: NodeJS.Platform = process.platform): AlertTarget {
   if (raw.startsWith("webhook:")) {
     const url = raw.slice("webhook:".length).trim();
     let u: URL;
@@ -64,7 +67,7 @@ function parseTarget(raw: string): AlertTarget {
   }
   if (raw.startsWith("command:")) {
     const command = raw.slice("command:".length).trim();
-    if (!command) throw new UsageError("--notify command: needs a command, e.g. command:\"notify-send coding.sh\"", { reason: "invalid_value" });
+    if (!command) throw new UsageError(`--notify command: needs a command, e.g. ${commandExample(platform)}`, { reason: "invalid_value" });
     return { kind: "command", command };
   }
   throw new UsageError(`--notify must be webhook:<URL> or command:"<CMD>", got ${JSON.stringify(raw)}`, { reason: "invalid_value" });
@@ -125,7 +128,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
   });
 
   if (out.json) {
-    const doc: { alert: AlertDef; secret?: string } = { alert: publicAlert(def) };
+    const doc: { alert: PublicAlert; secret?: string } = { alert: publicAlert(def) };
     if (def.secret) doc.secret = def.secret;
     out.data(doc);
     return 0;
@@ -193,7 +196,9 @@ function resultRows(r: AlertResult): string[][] {
   const threshold = (state: string) => thresholdText(r, state === "WARNING" && r.warn !== undefined ? r.warn : r.over);
   if (r.error) return [[r.name, "ERROR", "-", thresholdText(r, r.over), r.window, r.error]];
   if (!r.groups.length) return [[r.name, r.state, "-", threshold(r.state), r.window, ""]];
-  return r.groups.map((g) => [g.agent !== undefined ? `${r.name} (${g.agent})` : r.name, g.state, valueText(r.measure, g.value), threshold(g.state), r.window, g.changed ? `was ${g.previous}` : ""]);
+  // The change the target is told about: from the state it last got.
+  const change = (g: AlertResult["groups"][number]) => (g.lastDelivered !== undefined ? `was ${g.lastDelivered} (not delivered before)` : g.changed ? `was ${g.previous}` : "");
+  return r.groups.map((g) => [g.agent !== undefined ? `${r.name} (${g.agent})` : r.name, g.state, valueText(r.measure, g.value), threshold(g.state), r.window, change(g)]);
 }
 
 /** Exit 0 whatever the alerts say: a scheduler reads states from --json, not from the exit code. */

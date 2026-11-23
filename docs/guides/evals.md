@@ -233,7 +233,9 @@ checklist.
 tasks, best first, with the score's reasons, the guessed verifier and, with `--all`, the sessions
 left out and why. `--since`, `--limit`, `--repo DIR|all` and `--flagged` (only failed or flagged
 sessions) change the pool, and `--json` prints `{candidates, considered, eligible, rejected}`. The
-MCP tool `eval_candidates` returns the same list.
+MCP tool `eval_candidates` returns the same list and counts, plus `rejectedBy`: how many sessions
+each reason left out, such as `{"no-git-start": 3, "no-edits": 1}`. Its counts cover every session
+in the pool, including the rejected ones it does not list.
 
 `coding.sh eval validate <task>` checks that the verifier is fair: a do-nothing attempt fails, the
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history
@@ -1801,6 +1803,18 @@ values. `harness list` shows the server names in its `MCP` column, and `--json` 
 `mcpServers`. The record is not part of the bundle id. A trial writes a project `.mcp.json` like
 any other file. User and local servers live in `.claude.json`, which a snapshot does not store,
 and a trial runs Claude Code with its own config directory, so it does not load them.
+
+When `$CLAUDE_CONFIG_DIR` is inside `--dir`, a file the snapshot stores from it under a
+`~/.claude/...` key is not stored again as a project file, and an import from one file in that
+directory to another gets a `~/.claude/...` key too. A project inside `$CLAUDE_CONFIG_DIR`, such
+as a repo in its `skills` folder, keeps its project files: Claude Code run in that repo loads them
+as project files. When a bundle with the same id (the same name and content) is already stored, a
+snapshot prints `<name> already exists, unchanged` and stores it again with the snapshot's time.
+A name refers to the newest bundle with that name, so when you go back to an earlier setup and
+snapshot it, the name refers to that setup again. When only the MCP servers or a harness TOML's
+`note` changed, which are not part of the id, it stores the new ones and prints
+`MCP servers updated` or `note updated` in place of `unchanged`. `--json` gives
+`"outcome": "unchanged"` or `"updated"` where a new bundle gives `"created"`.
 
 Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
 removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list

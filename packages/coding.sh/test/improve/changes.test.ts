@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
-import { ALPHA, changeEffects, decide, harnessChanges, permutationP, sessionVersions, withoutMcp, workEffect, type GroupStats, type RuleEffect } from "../../src/improve/changes.ts";
+import { ALPHA, changeEffects, decide, harnessChanges, headlessReason, permutationP, sessionVersions, withoutMcp, workEffect, type ChangeEffect, type GroupStats, type RuleEffect } from "../../src/improve/changes.ts";
 import { claimSession, sessionEvents } from "../helpers-decision.ts";
 
 const T0 = 1_790_000_000_000;
@@ -167,6 +167,22 @@ describe("decide", () => {
     assert.equal(d.verdict, "no-sessions-after");
     assert.match(d.reason, /12 session\(s\) since it recorded no git HEAD/);
     assert.doesNotMatch(d.reason, /No captured session ran/);
+  });
+
+  it("a change only headless sessions ran with says so and names --headless; 'only' when no other session ran since it", () => {
+    const change = { commit: "c".repeat(40), short: "ccccccc", at: T0, subject: "CLAUDE.md: run the tests", files: [], added: [], removed: [] };
+    const effect = (o: { noHead?: number; idle?: number } = {}): ChangeEffect => {
+      const after = g(0, 0);
+      if (o.idle) after.idle = o.idle;
+      const e: ChangeEffect = { change, before: g(6, 2), after, rules: [], ...decide(g(6, 2), after, [], o) };
+      if (o.noHead) e.noHead = o.noHead;
+      return e;
+    };
+    assert.equal(headlessReason(effect(), 2), "Only headless sessions ran with this change: 2 (claude -p, an Agent SDK, codex exec). --headless counts them.");
+    // Other sessions ran since it too: one with no git HEAD (its version unknown), or ones with no tool call (counted on their own line).
+    assert.equal(headlessReason(effect({ noHead: 1 }), 1), "1 headless session ran with this change (claude -p, an Agent SDK, codex exec); --headless counts them. 1 other session since it recorded no git HEAD, so its version can't be told.");
+    assert.equal(headlessReason(effect({ noHead: 3 }), 2), "2 headless sessions ran with this change (claude -p, an Agent SDK, codex exec); --headless counts them. 3 other sessions since it recorded no git HEAD, so their version can't be told.");
+    assert.equal(headlessReason(effect({ idle: 2 }), 2), "2 headless sessions ran with this change (claude -p, an Agent SDK, codex exec); --headless counts them.");
   });
 
   it("a line the agent follows with the flagged share unchanged is followed-no-effect, not helped (5/10 → 5/10, acted 0/10 → 9/10)", () => {
