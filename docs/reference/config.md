@@ -323,7 +323,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | Variable | What |
 |---|---|
 | `CODING_SH_DISABLE=1` | The hook reads its input and writes no event. It records only the session id, in `spool/disabled-sessions`, so ingest and imports of past sessions leave that session out. Set it in an agent's environment to pause capture. |
-| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, and `init` and `workflows list` start no background import. |
+| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, and `init` and `workflows list` start no background import. After prices change, the first command that opens the index reprices stored cost estimates before it answers, since no background ingest will. |
 | `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT`, `CODING_SH_TAIL_CHILD` | Set by coding.sh on the import processes it starts. Not for you to set. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |

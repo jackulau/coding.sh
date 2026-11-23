@@ -762,7 +762,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "repo", short: "r", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo, as sessions --repo and a repo budget count them: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree)" },
       { ...SINCE, default: "30d" },
       LIMIT(20),
-      { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
+      { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first (waits up to 30 s while another process reprices or rebuilds stats)" },
       { name: "baseline", type: "boolean", desc: "With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list" },
       WHERE("sessions"),
       FRESH,
