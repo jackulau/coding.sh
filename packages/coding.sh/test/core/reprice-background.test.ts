@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { refolding } from "../../src/cli/common.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import type { Context } from "../../src/core/context.ts";
+import { openContext, type Context } from "../../src/core/context.ts";
 import { REFOLD_CURSOR } from "../../src/core/ingest.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
@@ -73,6 +73,25 @@ describe("repricing after the price table changed", () => {
       assert.equal(await refolding(reader(index, env), env), false);
     } finally {
       await index.close();
+    }
+  });
+
+  it("is decided by the environment a command was given, not the process's", async () => {
+    const { env, config, stamp } = await home();
+    const saved = process.env.CODING_SH_NO_AUTO_INGEST;
+    delete process.env.CODING_SH_NO_AUTO_INGEST;
+    try {
+      // No background ingest runs for this command, so its open reprices.
+      const ctx = await openContext({ env: { ...env, CODING_SH_NO_AUTO_INGEST: "1" }, config });
+      try {
+        assert.deepEqual(await costs(ctx.index), [5, 5, 5]);
+        assert.equal(await ctx.index.getCursor(REPRICE_CURSOR), stamp);
+      } finally {
+        await ctx.close();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.CODING_SH_NO_AUTO_INGEST;
+      else process.env.CODING_SH_NO_AUTO_INGEST = saved;
     }
   });
 
