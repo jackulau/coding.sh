@@ -944,6 +944,19 @@ Limits:
 | `stats.prs.repo`, `stats.prs.url` | `owner/name` and the PR's page, from the URL, `--repo`, or the repo the session pushed to. Absent when the session named the PR by number only |
 | `stats.prs.at` | When the session last changed or saw it (ms) |
 
+**Turns by model, file edits and shell commands.** What `coding.sh stats --scorecard` adds up
+([compare models](../how-to/compare-models.md)).
+
+| Field | Meaning |
+|---|---|
+| `stats.turnsByModel` | The session's turns by the model that ran each one: the model that made most of the turn's main-thread calls, the first one called on a tie. It counts the agent's own calls, else the copies its OTLP logs carry, else the proxy's. A turn with no model call counts under the session's model, or `""` when it has none. Only in top-level sessions launched interactively. Absent when the session has no prompt |
+| `stats.turnsByModel.<model>.turns` | Prompts, each with the work until the next one. A prompt sent while a turn runs starts a new turn |
+| `stats.turnsByModel.<model>.replied` | Turns the person answered with a prompt that has text. Absent when zero |
+| `stats.turnsByModel.<model>.pushback` | Of the replied turns, the ones that next prompt pushed back on, by kind: `intent`, `undo`, `redo` or `broken`. A prompt takes the first kind it matches in its first 400 characters. Absent when none |
+| `stats.turnsByModel.<model>.cancelled` | Turns the person stopped. coding.sh reads a stopped turn only from Claude Code, Codex, OpenCode, Cursor and Pi captures. Absent when zero |
+| `stats.turnsByModel.<model>.durationsMs` | Each turn's time (ms), from its prompt to the end of its last work on any thread, waits on the person included. Up to 500. Absent when no turn did work |
+| `stats.edits`, `stats.shells` (`calls`, `failed`) | File edit calls and shell calls that ended, and how many failed for real, by the rule `stats.toolErrors` uses. A call two capture paths recorded counts once. `failed` is absent when zero, and each field when no such call ended |
+
 **Tool errors and fold errors.**
 
 | Field | Meaning |

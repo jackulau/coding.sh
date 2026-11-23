@@ -26,6 +26,9 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
 - [`stats.retrieval`](https://coding.sh/docs/api/read#get-apisessionsid) counts reads and searches.
 - [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
+- [`stats.turnsByModel`](reference/api.md#get-apisessionsid) counts turns, pushback, stopped turns
+  and turn times by model. `stats.edits` and `stats.shells` count file edits and shell commands, and
+  the ones that failed.
 - `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
@@ -50,6 +53,8 @@ One prompt and everything the agent does until it hands control back to you.
 - The viewer formats markdown in prompts and replies, such as headings, lists and code. A link
   shows its text and address, HTML shows as written, and Copy text copies the original.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
+- `coding.sh stats --scorecard` compares models turn by turn: how often you pushed back or stopped
+  a turn, and how long a turn took ([compare models](how-to/compare-models.md)).
 
 ### Event
 

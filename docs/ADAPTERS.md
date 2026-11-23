@@ -123,6 +123,24 @@ Harness surfaces:
   `skill://<name>/…` resource. Nothing is run. Verified for Codex by
   `scripts/e2e/codex-skill-capture.mjs`.
 
+## Stopped turns
+
+How each agent marks a turn the person stopped, which `stats.turnsByModel.<model>.cancelled`
+counts (`STOPPED` in `src/core/turn-stats.ts`):
+
+| Agent | What marks a stopped turn |
+|---|---|
+| Claude Code | A prompt that starts `[Request interrupted by user` |
+| Codex | `turn_aborted`, read as a `turn.end` whose `status` is its reason, else `aborted`. `interrupted` and `aborted` count; `replaced` and `review_ended` do not |
+| OpenCode | `session.execution.interrupted` |
+| Cursor CLI | The stop hook's `status: "aborted"` |
+| Pi | `agent_settled` with `aborted`, or an assistant message whose stop reason is `aborted` |
+
+Other agents mark none, or coding.sh has no capture that shows how they mark one, so
+`coding.sh stats --scorecard` leaves their turns out of its cancelled row. With
+`capture.mode = "metadata"` a Claude Code stop has no text, so it counts as the person's next
+prompt, not as a stopped turn.
+
 ## Replay
 
 `coding.sh replay` rebuilds the files a session touched from its tool calls (see
