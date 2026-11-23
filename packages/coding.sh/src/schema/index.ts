@@ -490,7 +490,7 @@ export interface Session {
     waste?: WasteStats;
     /** Read-only calls that fetched again what a compaction dropped (core/waste.ts). Unset when none did. */
     compactionRefetches?: CompactionRefetchStats;
-    /** Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read and searched nothing. */
+    /** Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read, searched and fetched nothing. */
     retrieval?: RetrievalStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;

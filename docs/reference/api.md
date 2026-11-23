@@ -766,8 +766,8 @@ prints `-` under TOOLS and `show` says so on its Turns row.
 - A session that wrote a prompt cache of at least one block over at least three turns, but read back fewer tokens than it wrote, is tagged `cache:low`.
 - [`coding.sh usage --cache`](https://coding.sh/docs/cli/usage) reports the hit rate, breaks and their cost per group. `exp compare` adds the `cache breaks / run` and `cache waste / run` metrics.
 
-**Retrieval.** `stats.retrieval` counts a session's reads and searches, and the files it read and
-then edited. It is absent when the session read and searched nothing.
+**Retrieval.** `stats.retrieval` counts a session's reads, searches and web calls, and the files it
+read and then edited. It is absent when the session read, searched and fetched nothing.
 
 | Field | Meaning |
 |---|---|
@@ -782,10 +782,10 @@ then edited. It is absent when the session read and searched nothing.
 | Term | What counts |
 |---|---|
 | Read | A read tool (Read, `read_file`, `view`), or `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` or `Get-Content` |
-| Search | A search or list tool (Grep, Glob), or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `Select-String` or `Get-ChildItem` |
-| Shell line | One call, split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
-| Pipeline | Counts as its first command, but `cat f \| grep x` is a search. A search that deletes or rewrites what it found (`find . -delete`) is neither |
-| Empty search | A search that printed nothing, said "No matches found" or "No files found", or exited 1 with no output. `grep -q` and `grep x > out` are empty only on status 1. A line that also read is never empty |
+| Search | A search or list tool (Grep, Glob), or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `git show <rev>:<folder>/`, `Select-String` or `Get-ChildItem` |
+| Shell line | One shell tool call (Antigravity's `run_command` and Droid's `Execute` included), split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
+| Pipeline | Counts as its first command, but `cat f \| grep x` is a search. A search that deletes or rewrites what it found (`find . -delete`) is neither. A pipeline whose output goes to a file (`cat a > b`, `| Out-File`) reads nothing, and its search is quiet |
+| Empty search | A search that printed nothing, said "No matches found" or "No files found" (from a shell command, only when that is all it printed), or exited 1 with no output. `grep -q` and a search whose output goes to a file are empty only on status 1. A line that also read is never empty |
 | File | Keyed as in `filesChanged`: relative to the working directory when inside it. `C:\x`, `C:/x` and `/c/x` are one file |
 | Subagent | Its calls count in the session whose events hold them. A Claude Code subagent is its own session |
 
@@ -799,6 +799,10 @@ Limits:
 - A `cd` in a subshell moves the rest of the line too.
 - A `git show` path resolves from the call's directory, not the repository root.
 - Case counts past the drive letter: `A.ts` and `a.ts` are two files.
+- A path that starts with `~` stays as written, so it never matches an edit.
+- A shell line that writes a file and then reads it (`echo x > a.ts && cat a.ts`) counts the read first: the file counts as read and then edited.
+- Copilot CLI's `view` of a folder counts as a read.
+- When more than 256 calls are open at once, the oldest is no longer followed to its end: if it fails, its file still counts as read, and if it finds nothing, it is not an empty search.
 
 [`coding.sh show`](cli.md#codingsh-show) prints one line, such as
 `Retrieval  42 reads of 12 files (4 later edited), 18 searches (3 found nothing), first edit after 31 reads and searches`.
@@ -1465,8 +1469,8 @@ a bad `where` answers 400 with the reason: `{"error":"bucket must be day or week
 
 [`coding.sh stats --json`](cli.md#codingsh-stats) also prints `retrieval`, which this route does
 not: the [`stats.retrieval`](#get-apisessionsid) totals of the window's sessions that match
-`--where`, each subagent session on its own. It is absent when no session in the window read or
-searched. `--where files>=1` keeps the sessions that changed a file.
+`--where`, each subagent session on its own. It is absent when no session in the window read,
+searched or fetched. `--where files>=1` keeps the sessions that changed a file.
 
 | Field | Meaning |
 |---|---|

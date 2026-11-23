@@ -30,7 +30,7 @@ export async function hasSubagents(index: IndexStore, since: number, until: numb
 
 /**
  * --json's `retrieval`: the stats.retrieval totals of every session in the window that matches
- * --where, subagent sessions included (each on its own); undefined when none read or searched.
+ * --where, subagent sessions included (each on its own); undefined when none read, searched or fetched.
  */
 export async function retrievalInWindow(index: IndexStore, since: number, until: number, where: Query | undefined): Promise<(RetrievalTotals & { truncated?: true }) | undefined> {
   let found;

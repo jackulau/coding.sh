@@ -24,7 +24,7 @@ import type { AgentEvent, RetrievalStats, Session } from "../schema/index.ts";
 import { exitCodeOf, isPowerShellTool, shellParts, type ShellPart } from "./failing-command.ts";
 import type { ToolFailure } from "./failures.ts";
 import { changeKey } from "./sessions.ts";
-import { normalizeTracePath, operandsOf, stripHeredocs } from "./shell-diff.ts";
+import { normalizeTracePath, operandsOf } from "./shell-diff.ts";
 import { ABSOLUTE, PS_COMMON } from "./shell-files.ts";
 // waste.ts imports sessions.ts, which imports this file: its sets are read inside functions only.
 import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
@@ -61,7 +61,7 @@ export function classifyRetrieval(tool: unknown, input: unknown): RetrievalCall 
   if (typeof tool !== "string" || !tool) return undefined;
   const t = tool.toLowerCase();
   if (t.startsWith("mcp__")) return undefined;
-  const command = shellCommandOf(tool, input);
+  const command = shellCommandOf(tool, input) ?? otherShellCommand(t, input);
   if (command !== undefined) return shellRetrieval(command, isPowerShellTool(tool) || /powershell/i.test(tool), startDir(input));
   if (WEB.has(t)) return { read: false, search: false, web: true, paths: [] };
   if (SEARCH_TOOLS.has(t) || SEARCHES.has(t)) return { read: false, search: true, web: false, paths: [] };
@@ -84,11 +84,22 @@ function readPaths(i: Record<string, unknown>): string[] {
   return [...out];
 }
 
-/** The directory a shell call starts in, relative to the event's cwd: its `workdir` or `cwd` input, else "" (the cwd itself). */
+/** Shell tools beyond the shared list (lower case): Antigravity's `run_command` ({CommandLine, Cwd}) and Droid's `Execute` ({command}). */
+const OTHER_SHELLS = new Set(["run_command", "execute"]);
+
+/** The command line of an OTHER_SHELLS call, or undefined when it has none. */
+function otherShellCommand(t: string, input: unknown): string | undefined {
+  if (!OTHER_SHELLS.has(t) || !input || typeof input !== "object") return undefined;
+  const i = input as Record<string, unknown>;
+  const c = i.CommandLine ?? i.command ?? i.commandLine ?? i.cmd;
+  return typeof c === "string" ? c : undefined;
+}
+
+/** The directory a shell call starts in, relative to the event's cwd: its `workdir`, `cwd` or `Cwd` input, else "" (the cwd itself). */
 function startDir(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const i = input as Record<string, unknown>;
-  const d = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : "";
+  const d = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : typeof i.Cwd === "string" ? i.Cwd : "";
   return d.replace(/\\/g, "/");
 }
 
@@ -126,22 +137,28 @@ const LISTERS = new Set(["fd", "fdfind", "ls", "dir", "tree"]);
 const DESTRUCTIVE = new Set(["rm", "rmdir", "mv", "cp", "chmod", "chown", "touch", "unlink", "truncate", "shred", "ln"]);
 const PS_DESTRUCTIVE = new Set([
   "remove-item", "ri", "del", "erase", "rd", "move-item", "mi", "move", "copy-item", "cpi", "copy", "rename-item", "rni", "ren",
-  "set-content", "sc", "add-content", "ac", "clear-content", "clc", "out-file",
+  "set-content", "sc", "add-content", "ac", "clear-content", "clc",
 ]);
+/** Cmdlets that send what the pipeline printed to a file or nowhere (lower case): it does not reach the agent. */
+const PS_AWAY = new Set(["out-null", "out-file", "set-content", "sc", "add-content", "ac"]);
 /** PowerShell's pipeline cmdlets (as in core/failing-command.ts): they pass on what the command before them printed. */
 const PS_PIPE = new Set([
   "select-object", "select", "out-string", "oss", "out-null", "out-host", "out-default", "out-file", "where-object", "where", "?", "foreach-object", "foreach", "%",
   "sort-object", "sort", "format-table", "ft", "format-list", "fl", "format-wide", "fw", "format-custom", "fc", "measure-object", "measure", "tee-object", "tee",
   "group-object", "group", "select-string", "sls", "get-unique", "gu", "convertto-json", "convertfrom-json", "convertto-csv", "convertfrom-csv", "out-gridview",
 ]);
-/** A line that sends its output away from the agent: `> file`, `>> file`, `&> file`, `| Out-Null`. */
-const STDOUT_AWAY = /(?:^|[\s;&|(])1?>>?(?!&)|\|\s*Out-Null\b/i;
 
-/** What a shell line retrieves: each pipeline decided by its first command, `cd` followed. */
+/**
+ * What a shell line retrieves: each pipeline decided by its first command, `cd` followed. A
+ * pipeline whose output goes to a file (`> out.txt`, `| Out-File`) reads nothing the agent sees,
+ * and its search is quiet.
+ */
 function shellRetrieval(command: string, ps: boolean, start: string | undefined): RetrievalCall | undefined {
   const parts = shellParts(command, ps ? "powershell" : "sh");
   const starts = pipelineStarts(parts);
   const found: (Found | undefined)[] = [];
+  /** By pipeline start: its output goes to a file or nowhere. */
+  const gone: boolean[] = [];
   const stack: (string | undefined)[] = [];
   let dir = start;
   for (let i = 0; i < parts.length; i++) {
@@ -149,6 +166,7 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     const pps = !!p.ps;
     const words = joinSubst(p.argv, pps ? "`" : "\\");
     const prog = p.prog?.toLowerCase().replace(/\.exe$/, "") ?? (pps && words[0] === "?" ? "?" : undefined);
+    if (p.away || (pps && prog !== undefined && PS_AWAY.has(prog))) gone[starts[i]!] = true;
     if (!prog) continue;
     const raw = words.slice(1);
     const args = raw.map((w) => unq(w, pps));
@@ -167,7 +185,7 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     if (!h) continue;
     if (GREPS.has(prog) || (pps && (prog === "where-object" || prog === "where" || prog === "?" || prog === "select-string" || prog === "sls"))) {
       // A filter: what reaches the agent is what matched.
-      const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args);
+      const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args, prog);
       if (h.kind === "read") found[head] = { kind: "search", quiet };
       else h.quiet ||= quiet;
     } else if (h.kind === "search" && (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args))) found[head] = undefined;
@@ -176,19 +194,22 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
   let search = false;
   let quiet = true;
   const paths = new Set<string>();
-  for (const f of found) {
+  for (let i = 0; i < found.length; i++) {
+    const f = found[i];
     if (!f) continue;
     if (f.kind === "read") {
+      // `cat a.ts > b.ts` copies a file; the agent reads nothing.
+      if (gone[i]) continue;
       read = true;
       for (const x of f.paths) paths.add(x);
     } else {
       search = true;
-      if (!f.quiet) quiet = false;
+      if (!f.quiet && !gone[i]) quiet = false;
     }
   }
   if (!read && !search) return undefined;
   const out: RetrievalCall = { read, search, web: false, paths: [...paths], shell: true };
-  if (search && (quiet || STDOUT_AWAY.test(stripHeredocs(command).replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "")))) out.quiet = true;
+  if (search && quiet) out.quiet = true;
   return out;
 }
 
@@ -325,10 +346,13 @@ function unq(raw: string, ps: boolean): string {
   return literal ? text.replace(/\\/g, "/") : MARK + raw;
 }
 
+/** The longest path a `cd` or `git -C` chain builds before its directory counts as unknown. */
+const MAX_PATH = 4096;
+
 /** `p` under `dir`: an absolute path as it is, "" for the directory the call started in, undefined when `dir` is unknown. */
 function resolve(p: string, dir: string | undefined): string | undefined {
   if (ABSOLUTE.test(p)) return posix.normalize(p);
-  if (dir === undefined) return undefined;
+  if (dir === undefined || dir.length + p.length > MAX_PATH) return undefined;
   return dir ? posix.join(dir, p) : posix.normalize(p);
 }
 
@@ -390,7 +414,7 @@ function shFound(prog: string, args: readonly string[], dir: string | undefined)
     return ops ? readOf(ops, dir) : undefined;
   }
   if (prog === "git") return gitFound(args, dir);
-  if (GREPS.has(prog)) return { kind: "search", quiet: prog !== "findstr" && grepQuiet(args) };
+  if (GREPS.has(prog)) return { kind: "search", quiet: prog !== "findstr" && grepQuiet(args, prog) };
   if (prog === "find") return findDestroys(args) ? undefined : { kind: "search", quiet: false };
   if (SHELL_SEARCHERS.has(prog) || LISTERS.has(prog)) return { kind: "search", quiet: false };
   return undefined;
@@ -438,16 +462,26 @@ function sedRead(args: readonly string[]): string[] | undefined {
   return script ? ops : ops.slice(1);
 }
 
+/** grep's short flags that take a value (`-e`, `-m`, `-A`, …), and ripgrep's and the other searchers' (`-g`, `-t`, `-T`, …). */
+const GREP_VALUED = "efmABCdD";
+const SEARCHER_VALUED = "efmABCgtTMj";
+
 /** `grep -q`, `--quiet`, `--silent`: the exit status is the answer and nothing prints. */
-function grepQuiet(args: readonly string[]): boolean {
-  for (const a of args) {
+function grepQuiet(args: readonly string[], prog: string): boolean {
+  const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : SEARCHER_VALUED;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
     if (a === "--") break;
     if (a === "--quiet" || a === "--silent") return true;
     if (!/^-[^-]/.test(a)) continue;
-    for (const c of a.slice(1)) {
+    for (let j = 1; j < a.length; j++) {
+      const c = a[j]!;
       if (c === "q") return true;
-      // A flag that takes a value: the rest of the word is the value.
-      if ("efmABCgtTMj".includes(c)) break;
+      // A flag that takes a value: the rest of the word is the value, or the next word when it ends the word (`grep -e -q`).
+      if (valued.includes(c)) {
+        if (j === a.length - 1) i++;
+        break;
+      }
     }
   }
   return false;
@@ -490,6 +524,7 @@ function gitFound(args: readonly string[], dir: string | undefined): Found | und
   if (sub !== "show") return undefined;
   const paths: string[] = [];
   let any = false;
+  let tree = false;
   for (const a of operandsOf(rest)) {
     if (a.startsWith(MARK)) {
       if (a.includes(":")) any = true;
@@ -499,12 +534,18 @@ function gitFound(args: readonly string[], dir: string | undefined): Found | und
     if (!m) continue;
     // `:path` and `:0:path` name the index's copy.
     const p = m[1] ? m[2]! : m[2]!.replace(/^[0-3]:/, "");
-    if (!p || p.startsWith("/")) continue;
+    if (p.startsWith("/")) continue;
+    // `HEAD:` and `HEAD:src/` name a tree, which git lists.
+    if (m[1] && (!p || p.endsWith("/"))) {
+      tree = true;
+      continue;
+    }
+    if (!p) continue;
     any = true;
     const k = gitPath(p, at);
     if (k !== undefined) paths.push(k);
   }
-  return any ? { kind: "read", paths } : undefined;
+  return any ? { kind: "read", paths } : tree ? { kind: "search", quiet: false } : undefined;
 }
 
 /**
@@ -643,6 +684,8 @@ function psFound(prog: string, raw: readonly string[], dir: string | undefined):
 
 /** What a search tool or a harness prints for no match. */
 const NO_RESULTS = /^\s*(?:No (?:files|matches|results)(?: were)? found|Found 0 (?:files|matches|results))\b/i;
+/** A shell command's whole output that says no match: `grep "No files found" log` prints matches that start the same way. */
+const NO_RESULTS_ONLY = /^(?:No (?:files|matches|results)(?: were)? found|Found 0 (?:files|matches|results))[.!]?$/i;
 /** What a harness prints for a command that printed nothing. */
 const NO_OUTPUT = /^\((?:[\w -]+ completed with no output|no output|no content|empty|none)\)$/i;
 /** Header lines a harness puts before a command's own output (Claude Code, Codex), as in core/failures.ts. */
@@ -716,10 +759,11 @@ function exitStatus(p: Record<string, unknown>): number | undefined {
 
 /**
  * A search that found nothing: it printed nothing, its tool said "No matches found" or "No files
- * found", or it exited 1 (grep's and rg's "no match") with nothing printed. A search whose output
- * was cut, that was stopped, or whose matches went elsewhere (`quiet`) did not find nothing.
+ * found" (a shell command: that line and nothing else), or it exited 1 (grep's and rg's "no
+ * match") with nothing printed. A search whose output was cut, that was stopped, or whose matches
+ * went elsewhere (`quiet`) did not find nothing.
  */
-function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: boolean): boolean {
+function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: boolean, shell: boolean): boolean {
   const p = e.payload;
   if (failure?.cls === "interrupted" || p.interrupted === true) return false;
   if (p.cut && typeof p.cut === "object") return false;
@@ -728,9 +772,10 @@ function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: bo
   // A quiet search prints nothing by design: only its exit status says it found nothing.
   if (shape && !quiet) return true;
   const printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
-  if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || NO_RESULTS.test(printed);
+  const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
+  if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
   if (p.ok === false) return exitStatus(p) === 1 && !printed;
-  if (NO_RESULTS.test(printed)) return true;
+  if (none.test(printed)) return true;
   if (quiet || ((p.output === undefined || p.output === null) && (p.error === undefined || p.error === null))) return false;
   return !printed;
 }
@@ -793,10 +838,11 @@ function keyOf(path: string, eventCwd: string | undefined, cwd: string | undefin
   return k === "" || k === "." ? undefined : k;
 }
 
-/** An edit's filesChanged key in keyOf's form: `.` and `..` resolved, the drive letter in the cwd's case. */
+/** An edit's filesChanged key in keyOf's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
   const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (c && /^[A-Za-z]:/.test(c)) k = k.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
   if (c && /^[A-Za-z]:/.test(c) && /^[A-Za-z]:/.test(k) && k[0]!.toLowerCase() === c[0]!.toLowerCase()) k = c[0] + k.slice(1);
   k = normalizeTracePath(k, c);
   if (c && ABSOLUTE.test(c) && k.startsWith("../")) k = normalizeTracePath(posix.join(c, k), c);
@@ -839,7 +885,7 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
     for (const k of pending.keys) if (lines.some((l) => l.includes(posix.basename(k)))) drop(s, k);
   }
-  if (pending.search && foundNothing(e, failure, !!pending.quiet)) s.empty++;
+  if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
 }
 
 /**
@@ -900,9 +946,9 @@ export function markRetrievalEdit(s: RetrievalState, key: string, cwd: string | 
   if (s.files.has(k)) s.edited.add(k);
 }
 
-/** Session.stats.retrieval, or undefined when the session read and searched nothing. */
+/** Session.stats.retrieval, or undefined when the session read, searched and fetched nothing. */
 export function retrievalOf(s: RetrievalState): RetrievalStats | undefined {
-  if (!s.reads && !s.searches) return undefined;
+  if (!s.reads && !s.searches && !s.web) return undefined;
   const out: RetrievalStats = { reads: s.reads, filesRead: s.files.size, editedAfterRead: s.edited.size, searches: s.searches };
   if (s.empty) out.emptySearches = s.empty;
   if (s.web) out.web = s.web;
@@ -924,7 +970,7 @@ export interface RetrievalTotals {
   editedSessions: number;
 }
 
-/** The retrieval totals of `sessions`, or undefined when none read or searched. */
+/** The retrieval totals of `sessions`, or undefined when none read, searched or fetched. */
 export function retrievalTotals(sessions: readonly Session[]): RetrievalTotals | undefined {
   const t: RetrievalTotals = { sessions: 0, reads: 0, filesRead: 0, editedAfterRead: 0, searches: 0, emptySearches: 0, web: 0, beforeFirstEdit: 0, editedSessions: 0 };
   for (const x of sessions) {

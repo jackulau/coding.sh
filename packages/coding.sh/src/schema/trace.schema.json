@@ -1055,7 +1055,7 @@
               "$ref": "#/$defs/CompactionRefetchStats"
             },
             "retrieval": {
-              "description": "Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read and searched nothing.",
+              "description": "Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read, searched and fetched nothing.",
               "$ref": "#/$defs/RetrievalStats"
             },
             "cacheBreaks": {

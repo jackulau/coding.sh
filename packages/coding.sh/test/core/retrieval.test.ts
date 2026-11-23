@@ -64,6 +64,9 @@ describe("classifyRetrieval", () => {
       ["git grep -n foo", "search"],
       ["git ls-files src", "search"],
       ["git show HEAD:src/a.ts", "read src/a.ts"],
+      // A tree: git lists the folder.
+      ["git show HEAD:src/", "search"],
+      ["git show HEAD:", "search"],
       ["git show HEAD~1", "none"],
       ["npm test", "none"],
     ]);
@@ -73,9 +76,51 @@ describe("classifyRetrieval", () => {
     bashKinds([
       ["grep -q foo a.ts && echo yes", "search (quiet)"],
       ["rg foo > out.txt", "search (quiet)"],
+      ["grep foo a.ts > out.txt", "search (quiet)"],
       ["grep foo a.ts 2>/dev/null", "search"],
       ["grep foo a.ts || true", "search"],
+      // Another command's redirect is its own: grep's matches still print.
+      ["grep -rn zzz src; echo done > log.txt", "search"],
+      // A flag's value is not a flag: `-e -q` searches for "-q". grep's `-T` takes no value; ripgrep's does.
+      ["grep -e -q foo a.ts", "search"],
+      ["grep -T -q foo a.ts", "search (quiet)"],
+      ["rg -T -q foo", "search"],
     ]);
+    psKinds([
+      ["Select-String foo a.txt | Out-File o.txt", "search (quiet)"],
+      ["Get-ChildItem -Recurse | Out-File list.txt", "search (quiet)"],
+    ]);
+  });
+
+  it("a read whose output goes to a file reads nothing", () => {
+    bashKinds([
+      ["cat a.ts > b.ts", "none"],
+      ["cat a.ts >> b.ts", "none"],
+      ["cat a.ts >& b.ts", "none"],
+      ["cat a.ts &> /dev/null", "none"],
+      ["cat a.ts > b.ts && cat c.ts", "read c.ts"],
+      ["cat a.ts 2>/dev/null", "read a.ts"],
+      ["cat a.ts >&2", "read a.ts"],
+      ["cat a.ts > /dev/stderr", "read a.ts"],
+      ["cat a.ts | tee b.ts", "read a.ts"],
+    ]);
+    psKinds([
+      ["Get-Content a.ts > b.ts", "none"],
+      ["Get-Content a.ts | Set-Content b.ts", "none"],
+      ["Get-Content a.ts | Out-Null", "none"],
+      ["Get-Content a.ts 2> $null", "read a.ts"],
+    ]);
+  });
+
+  it("a long line of quotes, `cd`s or `git -C`s is read in linear time", () => {
+    const t0 = performance.now();
+    assert.equal(kind("Bash", { command: `grep "${'\\"'.repeat(20000)}` }), "search");
+    assert.equal(kind("Bash", { command: `grep "${'\\"'.repeat(20000)}\\` }), "search");
+    // Past 4,096 characters the folder is unknown, so the file has no path.
+    assert.equal(kind("Bash", { command: `${"cd a && ".repeat(20000)}cat x` }), "read");
+    assert.equal(kind("Bash", { command: `git ${"-C a ".repeat(50000)}show HEAD:x` }), "read");
+    const ms = performance.now() - t0;
+    assert.ok(ms < 5000, `${Math.round(ms)} ms`);
   });
 
   it("a pipeline that removes or edits what it found is not a search", () => {
@@ -144,6 +189,9 @@ describe("classifyRetrieval", () => {
       ["web_search", { query: "x" }, "web"],
       ["mcp__fs__read_file", { path: "a.ts" }, "none"],
       ["Edit", { file_path: "a.ts" }, "none"],
+      // Antigravity's and Droid's shell tools.
+      ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo/sub" }, "read /work/demo/sub/a.ts"],
+      ["Execute", { command: "grep -rn x src" }, "search"],
       ["shell", { command: ["bash", "-lc", "sed -n '1,80p' SKILL.md && cat README.md"] }, "read SKILL.md README.md"],
     ];
     for (const [tool, input, want] of rows) assert.equal(kind(tool, input), want, `${tool} ${JSON.stringify(input)}`);
@@ -156,10 +204,13 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 3, filesRead: 2, editedAfterRead: 0, searches: 1, web: 1 });
   });
 
-  it("is absent when the session read and searched nothing, web calls alone included", () => {
+  it("is absent when the session read, searched and fetched nothing", () => {
     assert.equal(retrieval(ev("user.message", { text: "hi" }), bash("npm test"), call("Edit", { file_path: "a.ts" }), edit("a.ts")), undefined);
-    assert.equal(retrieval(call("WebFetch", { url: "https://example.com" }, { output: "page" })), undefined);
     assert.equal(retrieval(call("mcp__fs__read_file", { path: "a.ts" }, { output: "x" })), undefined);
+  });
+
+  it("a session that only went to the web keeps its web calls", () => {
+    assert.deepEqual(retrieval(call("WebFetch", { url: "https://example.com" }, { output: "page" })), { reads: 0, filesRead: 0, editedAfterRead: 0, searches: 0, web: 1 });
   });
 
   it("precision: a file read and later edited, by an edit tool or a shell write", () => {
@@ -241,11 +292,20 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { cut: { bytes: 1_000_000 } } })), 0);
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { interrupted: true } })), 0);
     assert.equal(empty(bash("cat a.ts && grep foo b.ts", { output: "(Bash completed with no output)" })), 0);
+    // A shell search's matches that start like "No files found" are matches.
+    assert.equal(empty(bash('grep "No files found" msgs.txt', { output: "No files found in src\nNo files found in lib" })), 0);
+    assert.equal(empty(bash('grep -h "No matches found" a.log', { output: "No matches found for x" })), 0);
   });
 
   it("a read after `cd` into a Windows folder with spaces keys like the edit of the same file", () => {
     const at = { cwd: "C:/path with spaces" };
     const r = retrieval(bash('cd "C:/path with spaces" && cat a.ts', { at }), bash('cat "/c/path with spaces/b.ts"', { at }), edit("C:\\path with spaces\\a.ts", at), edit("b.ts", at));
+    assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
+  });
+
+  it("an edit named the Git Bash way (`/c/x`) keys like a read of `C:\\x`", () => {
+    const at = { cwd: "C:\\work\\demo" };
+    const r = retrieval(read("C:\\work\\demo\\a.ts", { at }), bash("cat /c/other/b.ts", { at }), edit("/c/work/demo/a.ts", at), edit("/c/other/b.ts", at));
     assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
   });
 
@@ -274,8 +334,9 @@ describe("retrievalTotals", () => {
       s("a", { reads: 2, filesRead: 2, editedAfterRead: 1, searches: 1, emptySearches: 1, beforeFirstEdit: 3 }),
       s("b", { reads: 1, filesRead: 1, editedAfterRead: 0, searches: 0, web: 2 }),
       s("c"),
+      s("d", { reads: 0, filesRead: 0, editedAfterRead: 0, searches: 0, web: 1 }),
     ]);
-    assert.deepEqual(t, { sessions: 2, reads: 3, filesRead: 3, editedAfterRead: 1, searches: 1, emptySearches: 1, web: 2, beforeFirstEdit: 3, editedSessions: 1 });
+    assert.deepEqual(t, { sessions: 3, reads: 3, filesRead: 3, editedAfterRead: 1, searches: 1, emptySearches: 1, web: 3, beforeFirstEdit: 3, editedSessions: 1 });
     assert.equal(retrievalTotals([s("c")]), undefined);
     assert.equal(retrievalTotals([]), undefined);
   });
@@ -344,8 +405,9 @@ describe("Session.stats.retrieval on the recorded adapter fixtures", () => {
           if (!r) continue;
           withRetrieval++;
           const at = `${agent}/${f} ${id}`;
-          assert.ok(r.reads + r.searches > 0, at);
-          assert.ok(r.reads + r.searches <= s.stats.toolCalls, at);
+          assert.ok(r.reads + r.searches + (r.web ?? 0) > 0, at);
+          // A call that reads and searches counts in both.
+          assert.ok(Math.max(r.reads, r.searches) <= s.stats.toolCalls, at);
           assert.ok(r.editedAfterRead <= Math.min(r.filesRead, s.stats.filesChanged), at);
           assert.ok((r.emptySearches ?? 0) <= r.searches, at);
           // An edit sets beforeFirstEdit; filesChanged counts the same edits.
