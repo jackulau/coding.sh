@@ -82,6 +82,11 @@ describe("classifyToolFailure", () => {
     assert.equal(classifyToolFailure("run_command", input, "", 1).cls, "benign", "a search that found nothing");
     assert.deepEqual(classifyToolFailure("run_command", input, "", 1), classifyToolFailure("Bash", { command: "rg -n needle src" }, "", 1));
   });
+
+  it("reads a bare command string from every shell tool, and Droid's Execute as Bash", () => {
+    for (const tool of ["Bash", "run_command", "Execute", "shell_command", "powershell", "local_shell_call", "command_execution", "sh", "exec", "command"]) assert.equal(shellCommandOf(tool, "rg foo"), "rg foo", tool);
+    for (const input of [{ command: "rg -n needle src" }, "rg -n needle src"]) assert.deepEqual(classifyToolFailure("Execute", input, "", 1), classifyToolFailure("Bash", input, "", 1));
+  });
 });
 
 let t = 0;

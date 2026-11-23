@@ -36,7 +36,7 @@ export interface SourceContext {
 }
 
 /** Bump when a stored source would be built differently. */
-const SOURCE_VERSION = 6;
+const SOURCE_VERSION = 7;
 const kvKey = (id: string) => `attribution:source:${id}`;
 
 function real(p: string): string {

@@ -2,11 +2,13 @@
 // and the derived file.change / test.result events they imply.
 import { isAbsolute, relative } from "node:path";
 import { commandOrigin, normalizeTracePath } from "../../core/shell-diff.ts";
+import { commandLineOf, isShellCall, isShellTool } from "../../core/shell-tools.ts";
 import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, runsElsewhere, runsTests, structuredPatchDiff, unifiedDiff, writesNothing, type FileChangeInfo } from "./heuristics.ts";
 import { arr, blobList, fieldLimit, isObj, obj, outputText, str, type Emitter } from "./normalize.ts";
 
-/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`; Droid's `Execute` takes `{command}`. */
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command", "execute"]);
+// The shell tools and their command keys are core/shell-tools.ts's, which every other reader of a command uses too.
+export { isShellCall, isShellTool };
+
 const WRITE_TOOLS = new Set(["write", "write_file", "create_file", "writefile", "write_to_file"]);
 const EDIT_TOOLS = new Set(["edit", "str_replace", "str_replace_editor", "str_replace_based_edit_tool", "search_replace", "replace", "edit_file", "strreplace", "replace_in_file"]);
 const MULTIEDIT_TOOLS = new Set(["multiedit", "multi_edit"]);
@@ -16,10 +18,6 @@ const NOTEBOOK_TOOLS = new Set(["notebookedit", "notebook_edit", "edit_notebook"
 const READ_TOOLS = new Set(["read", "view", "read_file", "readfile", "view_file", "read_many_files", "notebookread"]);
 
 const lc = (s: string) => s.toLowerCase();
-
-export function isShellTool(tool: string): boolean {
-  return SHELL_TOOLS.has(lc(tool));
-}
 
 /** A tool that writes, edits, patches or deletes files. */
 export function isFileEditTool(tool: string): boolean {
@@ -33,27 +31,12 @@ export function isFileReadTool(tool: string): boolean {
 }
 
 /**
- * A shell call: a shell tool, or an `exec` call with a command line (Devin's shell tool,
- * `{command, shell_id}`). The name `exec` alone is too generic to count.
+ * The command line of a shell tool call (string, argv array, or bash -lc wrapper). A tool whose
+ * name has "shell" in it counts too when its input has a `command`.
  */
-export function isShellCall(tool: string, input: unknown): boolean {
-  return isShellTool(tool) || (lc(tool) === "exec" && isObj(input) && typeof input.command === "string");
-}
-
-/** The command line of a shell tool call (string, argv array, or bash -lc wrapper). */
 export function shellCommandOf(tool: string, input: unknown): string | undefined {
   if (!isShellCall(tool, input) && !(isObj(input) && (typeof input.command === "string" || Array.isArray(input.command)) && lc(tool).includes("shell"))) return undefined;
-  if (typeof input === "string") return input;
-  const i = obj(input);
-  const c = i.command ?? i.cmd ?? i.commandLine ?? i.CommandLine ?? i.script;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    const parts = c.filter((x): x is string => typeof x === "string");
-    // ["bash","-lc","npm test"] → "npm test"
-    if (parts.length >= 3 && /(^|\/)(ba|z|)sh$/.test(parts[0]!) && /^-\w*c$/.test(parts[1]!)) return parts.slice(2).join(" ");
-    return parts.join(" ");
-  }
-  return undefined;
+  return commandLineOf(input);
 }
 
 function relPath(p: string, cwd?: string): string {
@@ -126,7 +109,7 @@ export function fileChangesOf(tool: string, input: unknown, output?: unknown, cw
     return [{ path: relPath(path, cwd), op: "modify" }];
   }
   if (DELETE_TOOLS.has(t) && path) return [{ path: relPath(path, cwd), op: "delete" }];
-  if (SHELL_TOOLS.has(t) && isObj(out.bashEditDiff)) return bashEditChanges(out.bashEditDiff, cwd, shellCommandOf(tool, input));
+  if (isShellTool(t) && isObj(out.bashEditDiff)) return bashEditChanges(out.bashEditDiff, cwd, shellCommandOf(tool, input));
   if (PATCH_TOOLS.has(t)) {
     const text = patchTextOf(input);
     if (!text) return [];

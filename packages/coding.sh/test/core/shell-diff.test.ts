@@ -3,7 +3,8 @@
 // line is read in linear time.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeTracePath, shellWrites, simpleCommands, traceRoot, underTraceRoot } from "../../src/core/shell-diff.ts";
+import { normalizeTracePath, shellCommand, shellDiffOrigin, shellWrites, simpleCommands, traceRoot, underTraceRoot } from "../../src/core/shell-diff.ts";
+import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import { assertCpuUnder } from "../helpers-timing.ts";
 
 /** The folder the last simple command of `cmd` runs in. */
@@ -67,6 +68,41 @@ describe("simpleCommands", () => {
     assertCpuUnder("assignments", () => simpleCommands(cmd));
     assert.deepEqual(argv(cmd), [["cat", "x"]]);
     assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
+  });
+});
+
+/** One command through each agent's shell tool, shaped as its adapter stores the call. */
+const SHELL_CALLS = (command: string): [string, unknown][] => [
+  ["Bash", { command }],
+  // Antigravity's run_command (test/fixtures/adapters/antigravity).
+  ["run_command", { CommandLine: command, Cwd: "/work/demo" }],
+  // Droid's Execute (test/fixtures/adapters/droid).
+  ["Execute", { command }],
+  // Devin's exec.
+  ["exec", { command, shell_id: "default" }],
+  ["shell_command", { command }],
+  ["powershell", { command }],
+];
+const ev = (kind: EventKind, payload: Record<string, unknown>): AgentEvent => ({ id: `e-${kind}`, v: 0, sessionId: "s", ts: 1000, agent: "claude-code", kind, payload });
+
+describe("shellCommand and shellDiffOrigin read every shell tool", () => {
+  it("reads the same command line through each agent's shell tool as through Bash", () => {
+    const cmd = "sed -i 's/a/b/' tests/a.py";
+    for (const [tool, input] of SHELL_CALLS(cmd)) assert.equal(shellCommand(tool, input), cmd, tool);
+    // Still no command: a patch passed as `command`, whatever key holds it.
+    assert.equal(shellCommand("run_command", { CommandLine: "*** Begin Patch\n*** End Patch", Cwd: "/work/demo" }), undefined);
+    assert.equal(shellCommand("apply_patch", { command: "sed -i 's/a/b/' tests/a.py" }), undefined);
+  });
+
+  it("finds the file a shell diff reports in the command, whichever shell tool ran it", () => {
+    const origin = (command: string, path: string) =>
+      SHELL_CALLS(command).map(([tool, input]) => [tool, shellDiffOrigin(ev("file.change", { path, tool, toolUseId: "x" }), ev("tool.start", { tool, toolUseId: "x", input }))]);
+    const all = (o: string) => SHELL_CALLS("").map(([tool]) => [tool, o]);
+    assert.deepEqual(origin("sed -i 's/a/b/' tests/a.py", "tests/a.py"), all("named"));
+    assert.deepEqual(origin("git -C /w reset --hard", "tests/a.py"), all("vcs"));
+    assert.deepEqual(origin("npm test", "tests/a.py"), all("unattributed"));
+    // A Codex code-mode cell is an `exec` call whose input is JavaScript: not a shell.
+    assert.equal(shellDiffOrigin(ev("file.change", { path: "tests/a.py", tool: "exec", toolUseId: "x" }), ev("tool.start", { tool: "exec", toolUseId: "x", input: "await tools.exec_command({cmd: 'ls'})" })), "edit");
   });
 });
 
