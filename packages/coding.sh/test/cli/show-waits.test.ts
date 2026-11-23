@@ -45,8 +45,8 @@ test("the row counts the waits, their time, the median wait and their kinds, the
   assert.deepEqual(await row("waited"), ["  Waited on you 4 times, 23m00s, median 4m00s (1 question, 3 turns); 1 unanswered; 1 capped at 12h; 2 steers"]);
 });
 
-test("a session the person only steered says so", async () => {
-  assert.deepEqual(await row("steered"), ["  Waited on you 0 times; 1 steer"]);
+test("a session the person only steered never waited on them, and counts the steer", async () => {
+  assert.deepEqual(await row("steered"), ["  Waited on you never; 1 steer"]);
 });
 
 test("a session that never waited on the person has no row", async () => {

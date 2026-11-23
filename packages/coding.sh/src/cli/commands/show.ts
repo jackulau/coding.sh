@@ -358,7 +358,8 @@ export function waitsRow(s: Session): [string, string] | undefined {
   if (!w) return undefined;
   const kinds = Object.entries(w.byKind).map(([k, t]) => plural(t.count, WAIT_WORDS[k as WaitKind] ?? k));
   const median = w.medianMs !== undefined ? `, median ${duration(w.medianMs)}` : "";
-  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)}${median} (${kinds.join(", ")})` : "0 times"];
+  // A session the person only steered never waited on them.
+  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)}${median} (${kinds.join(", ")})` : "never"];
   if (w.open) parts.push(`${w.open.count} unanswered`);
   if (w.capped) parts.push(`${w.capped} capped at 12h`);
   if (w.steers) parts.push(plural(w.steers, "steer"));
