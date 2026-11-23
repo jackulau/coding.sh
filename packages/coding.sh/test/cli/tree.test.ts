@@ -1,7 +1,8 @@
 // `coding.sh tree` end to end under a throwaway home: a backfilled Claude Code
 // session with one subagent (the parent transcript plus its subagents/ file).
-// The command shows the whole run as one tree with rolled-up totals and points
-// at the worst-flagged node to fix first.
+// From the top-level session the command shows the whole run as one tree with
+// rolled-up totals and points at the worst-flagged node to fix first; from the
+// subagent it shows the subagent's part, and --all the whole run.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -65,8 +66,27 @@ describe("coding.sh tree", () => {
     assert.match(r.stderr, new RegExp(`coding\\.sh show ${SID}\\b`));
   });
 
-  test("resolves the same tree from the subagent's own id", () => {
+  // `tree <subagent>` printed the whole run of its top-level agent: 688 lines for one subagent.
+  test("from a subagent, shows the subagent's part and names the sessions above it", () => {
+    const r = run("tree", SUB);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^in: 11111111 claude-code$/m, "one line names the top-level agent by short id");
+    assert.match(r.stdout, new RegExp(`^${SUB}  `, "m"), "the subagent is the tree's root line");
+    assert.doesNotMatch(r.stdout, new RegExp(`^${SID}  `, "m"), "the top-level agent is not a node");
+    assert.match(r.stdout, /0 subagents/);
+    assert.match(r.stderr, new RegExp(`coding\\.sh tree ${SUB} --all`));
+
     const doc = json("tree", SUB);
+    assert.deepEqual(doc.ancestors, [{ id: SID, agent: "claude-code", role: "root" }]);
+    assert.equal((doc.totals as Record<string, unknown>).sessions, 1);
+    const tree = doc.tree as Record<string, unknown>[];
+    assert.deepEqual(tree.map((n) => [n.id, n.depth, (n.children as unknown[]).length]), [[SUB, 1, 0]], "depth counts from the top-level agent");
+    assert.notEqual(tree[0]!.role, "root");
+  });
+
+  test("--all resolves the whole tree from the subagent's own id", () => {
+    const doc = json("tree", SUB, "--all");
+    assert.equal("ancestors" in doc, false);
     const totals = doc.totals as Record<string, unknown>;
     assert.equal(totals.sessions, 2);
     assert.equal((doc.tree as unknown[]).length, 1, "one root");
@@ -77,6 +97,16 @@ describe("coding.sh tree", () => {
     const worst = doc.worst as Record<string, unknown>;
     assert.equal(worst.id, SID);
     assert.ok((worst.flags as string[]).includes("premature-completion"));
+    assert.equal(run("tree", SUB, "--all").stdout, run("tree", SID).stdout);
+  });
+
+  test("a top-level session shows its whole tree, with or without --all", () => {
+    const r = run("tree", SID);
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /^in: /m);
+    assert.equal(r.stdout, run("tree", SID, "--all").stdout);
+    assert.doesNotMatch(r.stderr, /--all/);
+    assert.equal("ancestors" in json("tree", SID), false);
   });
 
   test("an unknown id is a clean error, not a crash", () => {

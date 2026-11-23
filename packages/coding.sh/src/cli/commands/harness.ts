@@ -206,10 +206,11 @@ async function audit(c: CommandContext): Promise<number> {
       return 0;
     }
     out.note(`sessions: ${t.sessionsLoading} loaded one, ${t.sessionsReading} read one with a tool, ${t.sessionsWriting} wrote one`);
-    out.note(`flags: ${t.neverRead} never read, ${t.writeOnly} write-only, ${t.loadedNotRead} ${t.loadedNotRead === 1 ? "skill" : "skills"} listed but never read`);
+    out.note(`flags: ${t.neverRead} never read, ${t.writeOnly} write-only${t.deleted ? `, ${t.deleted} deleted` : ""}, ${t.loadedNotRead} ${t.loadedNotRead === 1 ? "skill" : "skills"} listed but never read`);
     if (t.loadTokens) out.note(`load cost: ${tokens(t.loadTokens)} tokens over the window${a.sessions ? `, ${tokens(Math.round(t.loadTokens / a.sessions))} per session` : ""}`);
-    // Flagged files first, then the costliest to load.
-    const rows = [...a.files].sort((x, y) => Number(y.flags.length > 0) - Number(x.flags.length > 0) || (y.loadTokens ?? 0) - (x.loadTokens ?? 0));
+    // Flagged files first, then the costliest to load; files gone from disk last.
+    const gone = (r: (typeof a.files)[number]) => Number(r.flags.includes("deleted"));
+    const rows = [...a.files].sort((x, y) => gone(x) - gone(y) || Number(y.flags.length > 0) - Number(x.flags.length > 0) || (y.loadTokens ?? 0) - (x.loadTokens ?? 0));
     out.table(
       ["PATH", "KIND", "SIZE", "LOADED", "READ", "WROTE", "LAST READ", "LAST WRITE", "FLAGS"],
       rows.slice(0, limit).map((r) => [r.path, r.kind, r.bytes === undefined ? "gone" : bytes(r.bytes), String(r.loaded), String(r.read), String(r.wrote), ago(r.lastRead), ago(r.lastWrite), r.flags.join(", ")]),
