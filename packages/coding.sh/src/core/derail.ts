@@ -263,7 +263,7 @@ function commandOf(input: unknown): string | undefined {
   if (typeof input === "string") return input;
   if (!input || typeof input !== "object") return undefined;
   const o = input as Record<string, unknown>;
-  for (const k of ["command", "cmd", "script"]) {
+  for (const k of ["command", "cmd", "script", "commandLine", "CommandLine"]) {
     const v = o[k];
     if (typeof v === "string") return v;
     if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(" ");

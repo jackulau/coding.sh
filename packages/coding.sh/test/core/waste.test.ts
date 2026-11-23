@@ -57,6 +57,7 @@ describe("isReadOnlyToolStart", () => {
     ["shell", { command: ["cat", "a.txt"] }],
     ["exec_command", { cmd: "wc -l a.ts" }],
     ["exec", { command: "cat a.ts", shell_id: "default" }],
+    ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo" }],
   ];
   const no: [string, unknown][] = [
     ["Edit", { file_path: "a.ts" }],
@@ -77,6 +78,7 @@ describe("isReadOnlyToolStart", () => {
     ["Bash", { command: "" }],
     ["exec", { command: "echo x > a.ts", shell_id: "default" }],
     ["exec", { code: "cat a.ts" }],
+    ["run_command", { CommandLine: "rm a.ts", Cwd: "/work/demo" }],
   ];
   for (const [tool, input] of yes) it(`${tool} ${JSON.stringify(input)} only reads`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), true));
   for (const [tool, input] of no) it(`${tool} ${JSON.stringify(input)} can write`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), false));
@@ -108,6 +110,11 @@ describe("duplicate fetches", () => {
     const exec = (command: string, output?: string) => call("exec", { command, shell_id: "default" }, output === undefined ? {} : { output });
     assert.equal(dups([...exec("cat a.ts", "A"), ...exec("cat  a.ts", "A")]), 1);
     assert.equal(dups([...call("Grep", { pattern: "foo" }), ...exec("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
+    // Antigravity's shell tool, `run_command` {CommandLine, Cwd}: the same rules.
+    const agy = (command: string, output?: string) => call("run_command", { CommandLine: command, Cwd: "/w" }, output === undefined ? {} : { output });
+    assert.equal(dups([...agy("cat a.ts", "A"), ...agy("cat  a.ts", "A")]), 1);
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...agy("cat a.ts"), ...call("Grep", { pattern: "foo" })]), 1, "a read-only command keeps it");
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...agy("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
   });
 
   it("a subagent's read is not a repeat of its parent's; a compaction clears the context", () => {
