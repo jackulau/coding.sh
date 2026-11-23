@@ -80,12 +80,6 @@ describe("init's commands to run next keep every flag", () => {
     process.env.CLAUDE_CONFIG_DIR = join(env.home, ".claude");
     fakeBin(env, "agy", "1.3.0");
     fakeBin(env, "claude", "2.1.319 (Claude Code)");
-    // --proxy plans a route only to a port the proxy can hold: a free one, not whatever holds 4320 here.
-    const free = createServer();
-    await new Promise<void>((r) => free.listen(0, "127.0.0.1", r));
-    config = `[proxy]\nport = ${(free.address() as AddressInfo).port}\n`;
-    await new Promise<void>((r) => free.close(() => r()));
-    writeFile(join(env.dataHome, "config.toml"), config);
     // Stands in for `coding.sh serve`: /v1/ingest takes KEY.
     server = createServer((req, res) => {
       req.resume();
@@ -97,6 +91,13 @@ describe("init's commands to run next keep every flag", () => {
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    // --proxy plans a route only to a port the proxy can hold: a free one, not whatever holds 4320 here.
+    // Found while the server above holds its port, so the two can't be the same.
+    const free = createServer();
+    await new Promise<void>((r) => free.listen(0, "127.0.0.1", r));
+    config = `[proxy]\nport = ${(free.address() as AddressInfo).port}\n`;
+    await new Promise<void>((r) => free.close(() => r()));
+    writeFile(join(env.dataHome, "config.toml"), config);
   });
   after(async () => {
     await new Promise<void>((r) => server.close(() => r()));
@@ -110,13 +111,10 @@ describe("init's commands to run next keep every flag", () => {
       const equals = ["init", "--agent=antigravity", "--scope=user", "--no-mcp", "--no-import", `--remote=${url}`, `--key=${KEY}`, "--remote-mode=full", "--no-color"];
       // The commands as given: no argument here needs quoting in either shell.
       const cmd = (args: string[]) => [nextStepBin(e), ...args].join(" ");
-      // None of these runs has consent, so they write nothing and can run at once.
-      const [consent, json, dry, dryEquals] = await Promise.all([
-        run(flags, e),
-        run([...flags, "--json"], e),
-        run(["init", "--dry-run", ...flags.slice(1), "--diff"], e),
-        run([...equals, "--dry-run"], e),
-      ]);
+      // None of these runs has consent, so they write nothing. The --proxy runs take turns: each checks
+      // the proxy's port by listening on it for a moment, and a check at the same time finds it in use.
+      const proxyRuns = async () => [await run(flags, e), await run([...flags, "--json"], e), await run(["init", "--dry-run", ...flags.slice(1), "--diff"], e)] as const;
+      const [[consent, json, dry], dryEquals] = await Promise.all([proxyRuns(), run([...equals, "--dry-run"], e)]);
       assert.equal(consent.status, 2, consent.stderr);
       assert.ok(consent.stderr.includes(`\n    With their approval: ${cmd([...flags, "--yes"])}\n`), consent.stderr);
       assert.equal(json.status, 2, json.stderr);
