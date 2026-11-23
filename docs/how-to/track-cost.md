@@ -136,7 +136,8 @@ from the first of these that exists:
 2. **Provider-reported.** A cost the agent or app records: Claude Code runs that coding.sh starts
    in evals and experiments (`total_cost_usd`), OpenCode, Pi, or a span with `gen_ai.usage.cost`
    or `cost_usd`.
-3. **Estimate.** Each kind of token times the model's list price, marked `~`.
+3. **Estimate.** Each kind of token times the model's list price, marked `~`. A token count below 0
+   or not a finite number counts as none.
 
 A model with no price keeps no cost, never $0. `usage` names it under the table, with the fix: a
 `[prices."<model>"]` table in config.toml ([Configuration](https://coding.sh/docs/config#prices)).
@@ -250,8 +251,7 @@ coding.sh budget status
 
 Spend is the estimated cost of the sessions that started in the current period, subagents
 included: the same total as `coding.sh usage` over that window with the budget's `--agent` and
-`--repo`. A session counts in the period it started in. A repo budget counts the sessions
-`coding.sh sessions --repo` lists.
+`--repo`. A repo budget counts the sessions `coding.sh sessions --repo` lists.
 
 `budget status` shows spend, limit, percent and next reset, or `-` and a warning for a budget it
 can't read (exit code 1). Setting the same period and scope again changes the limit. `budget list`

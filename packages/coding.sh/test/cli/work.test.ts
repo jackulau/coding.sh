@@ -125,14 +125,14 @@ describe("work snooze in text", () => {
   });
   after(() => sb.cleanup());
 
-  test("a blocked item says nothing brings it back sooner; a review item names the buckets that do", async () => {
+  test("a blocked item says nothing brings it back sooner; a review item names the buckets that show it", async () => {
     const b = await runCmd(work, sb, { action: "snooze", positionals: ["asks", "2h"] });
     assert.equal(b.error, undefined, b.error?.stack);
     assert.match(b.stdout + b.stderr, /Nothing is more urgent than blocked on you, so it stays hidden until then, even if it waits on you again\./);
     assert.doesNotMatch(b.stdout + b.stderr, /more urgent bucket than/);
     const r = await runCmd(work, sb, { action: "snooze", positionals: ["changed", "2h"] });
     assert.equal(r.error, undefined, r.error?.stack);
-    assert.match(r.stdout + r.stderr, /It comes back sooner if it moves to a more urgent bucket than ready for review\./);
+    assert.match(r.stdout + r.stderr, /Until then it shows only while it is in a bucket more urgent than ready for review\./);
   });
 });
 

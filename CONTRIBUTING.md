@@ -35,6 +35,14 @@ The tests launch the CLI from source. After `npm run build`, set
 `CODING_SH_TEST_CLI="$PWD/dist/cli.mjs"` and they launch the built CLI, which starts faster. Build
 again after you change `src`. AGENTS.md "Commands" has the details.
 
+Property and model tests live in `test/verify`. `test/_prop.ts` makes seeded cases and shrinks a
+failure to a small one. `test/_model.ts` checks every state a model of the code can reach within its
+bounds, and prints a shortest trace to a broken invariant. Both run the same cases every time. A
+failing property prints the command that replays it (`CODING_SH_PROP_SEED=<seed>`, with the run's
+`CODING_SH_PROP_RUNS` when that raised the case count).
+`CODING_SH_PROP_SEED=random` tries new cases, `CODING_SH_PROP_RUNS=1000` runs more of them, and
+`CODING_SH_MODEL_BOUND=1` raises each model's bounds by one.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout
