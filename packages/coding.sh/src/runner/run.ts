@@ -143,17 +143,18 @@ function emptyAgent(note = ""): AgentRunOutput {
 }
 
 /**
- * Why the agent's program never started, or undefined when it did. A spawn
- * error is what runHeadless (adapters/_shared/run.ts) reports as exit 127 with
- * the error's message, `spawn claude ENOENT`, at the end of stderr. A 127 the
- * agent exited with itself (a command it ran was not found) is not one.
+ * Why the agent's program never started, or undefined when it did: the spawn
+ * error the adapter's spawn recorded (`spawnError`, set by runHeadless and
+ * spawnAgent). An agent that ran and exited 127 itself is not one, even when
+ * a command of its own printed `spawn rg ENOENT` last.
  */
-export function agentNotStarted(out: Pick<AgentRunOutput, "exitCode" | "timedOut" | "stderrTail">): string | undefined {
-  if (out.exitCode !== 127 || out.timedOut) return undefined;
-  const m = /^spawn (.+) (ENOENT|EACCES)$/.exec(out.stderrTail.trimEnd().split("\n").at(-1)?.trim() ?? "");
-  if (!m) return undefined;
+export function agentNotStarted(out: Pick<AgentRunOutput, "spawnError">): string | undefined {
+  const e = out.spawnError?.trim();
+  if (!e) return undefined;
+  const m = /^spawn (.+) (ENOENT|EACCES)$/.exec(e);
+  if (!m) return e;
   const [, bin, code] = m;
-  return code === "ENOENT" ? `${bin} was not found; install it or put it on PATH (spawn ${bin} ENOENT)` : `${bin} is not executable (spawn ${bin} EACCES)`;
+  return code === "ENOENT" ? `${bin} was not found; install it or put it on PATH (${e})` : `${bin} is not executable (${e})`;
 }
 
 /** Sum of the JSONL rows `judge grade` appended ({costUsd?, inputTokens?, outputTokens?} per model call). */

@@ -15,6 +15,7 @@ import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { splitLines } from "../_shared/jsonl.ts";
+import { spawnFailure } from "../_shared/run.ts";
 import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -745,6 +746,8 @@ export interface SpawnResult {
   durationMs: number;
   stdoutTail: string;
   stderrTail: string;
+  /** The program never started: the spawn's error message (AgentRunOutput.spawnError). */
+  spawnError?: string;
 }
 
 /**
@@ -769,7 +772,8 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
       windowsHide: true,
     });
   } catch (e) {
-    return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: (e as Error).message });
+    const message = (e as Error).message;
+    return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: message, spawnError: message });
   }
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
@@ -793,13 +797,16 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
     if (o.onLine && partial.trim()) safeCall(o.onLine, partial);
     await tee.close();
     const extraErr = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
-    return {
+    const res: SpawnResult = {
       exitCode: r.error ? (r.error.code === "ENOENT" ? 127 : 126) : r.code,
       timedOut: r.timedOut,
       durationMs: Date.now() - started,
       stdoutTail: out.text(),
       stderrTail: extraErr ? `${err.text()}\n${extraErr}` : err.text(),
     };
+    const spawnError = spawnFailure(r.error);
+    if (spawnError) res.spawnError = spawnError;
+    return res;
   });
 }
 
@@ -832,6 +839,7 @@ export function jsonLines(onJson: (o: Json) => void): (line: string) => void {
 
 export function toRunOutput(r: SpawnResult, sessionId: string | undefined, usage: Usage | undefined): AgentRunOutput {
   const o: AgentRunOutput = { exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, stdoutTail: r.stdoutTail, stderrTail: r.stderrTail };
+  if (r.spawnError) o.spawnError = r.spawnError;
   if (sessionId) o.sessionId = sessionId;
   if (usage) o.usage = usage;
   return o;
