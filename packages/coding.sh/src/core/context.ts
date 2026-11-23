@@ -110,9 +110,10 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
       // Lazy: adapters and ingest are only loaded by commands that need them.
       const [{ ingest }, { ADAPTERS }, { spawnBackgroundIngest }, { ingestCli }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts"), import("../spool/kick.ts"), import("../mcp/launch.ts")]);
       // The last pass ended with the wake-up marker back: what a hook appended during it goes to a
-      // background ingest, as the hook's own kick would have started (not with CODING_SH_NO_AUTO_INGEST=1).
+      // background ingest, as the hook's own kick would have started. Not with CODING_SH_NO_AUTO_INGEST=1,
+      // and not for a store from --store or CODING_SH_STORE_URL, which no automatic ingest writes to.
       const onPassesExhausted = (): void => {
-        if (env.CODING_SH_NO_AUTO_INGEST === "1") return;
+        if (env.CODING_SH_NO_AUTO_INGEST === "1" || ctx.storeOverridden) return;
         try {
           spawnBackgroundIngest(ingestCli(p.cliPointer), env);
         } catch {

@@ -79,4 +79,24 @@ describe("openContext ingest/gc", () => {
       await ctx.close();
     }
   });
+
+  it("starts no background ingest for a store from --store or CODING_SH_STORE_URL", async () => {
+    const home = join(root, "home5");
+    mkdirSync(join(home, "spool"), { recursive: true });
+    const ctx = await openContext({ env: { CODING_SH_HOME: home, HOME: root, CODING_SH_STORE_URL: `sqlite://${join(root, "other.db")}` } });
+    assert.equal(ctx.storeOverridden, true);
+    const started = join(root, "override-started.json");
+    const cli = join(root, "override-cli.mjs");
+    writeFileSync(cli, `import { renameSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(started + ".tmp")}, JSON.stringify({ argv: process.argv.slice(2), store: process.env.CODING_SH_STORE_URL }));\nrenameSync(${JSON.stringify(started + ".tmp")}, ${JSON.stringify(started)});\n`);
+    mkdirSync(dirname(ctx.paths.cliPointer), { recursive: true });
+    writeFileSync(ctx.paths.cliPointer, cli);
+    const marker = join(home, "spool", ".ingest.pending");
+    try {
+      await ctx.ingest({ onProgress: () => writeFileSync(marker, "") });
+      for (let waited = 0; !existsSync(started) && waited < 3000; waited += 50) await sleep(50);
+      assert.equal(existsSync(started), false, existsSync(started) ? `a background ingest started: ${readFileSync(started, "utf8")}` : "");
+    } finally {
+      await ctx.close();
+    }
+  });
 });
