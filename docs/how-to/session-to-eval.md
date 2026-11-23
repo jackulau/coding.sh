@@ -228,7 +228,7 @@ The instruction defaults to the session's first prompt. `--instruction 'text'` o
 A session recorded with `coding.sh run -- <agent command>` has no typed prompt, so its command's
 prompt argument is used instead: the value of `-p`, `--prompt`, `--print`, `--message`,
 `--instruction`, `--task` or `--query` when it has a space in it, or else the last argument with a
-space in it.
+space in it that is not code (`sh -c "npm run build"`), a `NAME=value` setting or a path.
 
 ## What marks a session as failed
 

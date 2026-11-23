@@ -197,6 +197,22 @@ describe("a session captured with coding.sh run --", () => {
     );
   });
 
+  it("does not take a script, a setting or a path for a prompt", () => {
+    const r = rankEvalCandidates(
+      [
+        wrapper("wscript", ["-c", "npm run build"]),
+        wrapper("wenv", ["GREETING=hello world", "agent.mjs"]),
+        wrapper("wpath", ["agent.mjs", "--config", "/srv/my configs/agent.toml"]),
+      ],
+      { now: NOW },
+    );
+    assert.deepEqual(Object.fromEntries(r.map((c) => [c.sessionId, c.reject])), {
+      wscript: "no-user-prompt",
+      wenv: "no-user-prompt",
+      wpath: "no-user-prompt",
+    });
+  });
+
   it("rankSessions leaves out a wrapped command that changed no files, though its two snapshots are different commits", async () => {
     // Each snapshot is a new commit, so a start and an end snapshot of the same files have different ids.
     const index = new MemIndex();
