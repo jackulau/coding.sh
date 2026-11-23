@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import type { Adapter, BlobBatch, BlobStore, Config, OpenSession, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, recomputeSessions, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, recomputeSessions, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, spoolInFlightKeys, storeEnrichment } from "../../src/core/ingest.ts";
 import { paths } from "../../src/core/paths.ts";
 import type { RepoResolver } from "../../src/core/repo-state.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
@@ -757,6 +757,24 @@ describe("ingest", () => {
     assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
   });
 
+  it("ignores in-flight keys past the end of a new file, as an older build's gc left them: a copy of a sent event is not sent again", async () => {
+    const t = setup();
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    const line = t.line({ session: "s", kind: "notification" });
+    t.write(line);
+    await ingest(opts);
+    assert.equal(sink.events.length, 1);
+    // A second hook process spools the same firing to a file of its own, at a path whose in-flight
+    // keys an older build's gc kept from a longer file. The memory store has no transactions, so the keys count.
+    const other = "fake/2026-11-06.2.jsonl";
+    writeFileSync(join(t.env.CODING_SH_HOME, "spool", other), line);
+    for (const key of spoolInFlightKeys(other)) await t.index.setCursor(key, 10_000);
+    const r = await ingest(opts);
+    assert.deepEqual([r.lines, r.events], [1, 0]);
+    assert.equal(sink.events.length, 1, "the copy sends nothing");
+  });
 
   it("sends a sink the events of a line that an earlier run stored and died before moving the line's cursor", async () => {
     const t = setup();
