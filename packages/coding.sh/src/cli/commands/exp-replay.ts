@@ -42,7 +42,7 @@ async function gather(c: CommandContext, ctx: Context): Promise<AgentEvent[]> {
     const calls = (await ctx.index.listEvents(first.sessionId, { kinds: ["llm.call"] })).filter((e) => e.source === "proxy" && e.payload.api !== "count_tokens");
     events.push(...calls.slice(-limit));
   }
-  if (!events.length) throw new UsageError("Name the calls to replay, e.g. coding.sh exp replay latest#-1, or --session <id>", { reason: "missing_argument" });
+  if (!events.length) throw new UsageError(`Name the calls to replay, e.g. ${cliCommand(c.env, ["exp", "replay", "latest#-1"])}, or --session <id>`, { reason: "missing_argument" });
   const seen = new Set<string>();
   return events.filter((e) => !seen.has(e.id) && seen.add(e.id));
 }

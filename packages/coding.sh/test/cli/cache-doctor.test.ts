@@ -257,6 +257,18 @@ describe("cache doctor (CLI)", () => {
     assert.match(r.stdout, /e\.g\. coding\.sh diff-calls c-volatile-call-\d c-volatile-call-\d/);
   });
 
+  test("the diff-calls example names the CLI as the user's shell runs it, in text and in --json", () => {
+    // Started with npx, `coding.sh` is not on PATH (nextStepBin); the same rule gives `codingsh` in PowerShell.
+    const npx = { npm_command: "exec" };
+    const bin = process.platform === "win32" ? "npx -p coding.sh codingsh" : "npx coding.sh";
+    const text = ok(["cache", "doctor", "--agent", "claude-code"], npx).stdout;
+    const examples = text.split("\n").filter((l) => l.includes("e.g. "));
+    assert.ok(examples.length >= 3, text);
+    for (const l of examples) assert.ok(l.startsWith(`   e.g. ${bin} diff-calls c-`), l);
+    const r = JSON.parse(ok(["cache", "doctor", "--agent", "claude-code", "--json"], npx).stdout);
+    for (const c of r.causes) assert.equal(c.example.command, `${bin} diff-calls ${c.example.a} ${c.example.b}`);
+  });
+
   test("a clean setup grades A with no avoidable causes; an unknown agent has no sessions", () => {
     const r = JSON.parse(ok(["cache", "doctor", "--agent", "codex", "--json"]).stdout);
     assert.equal(r.grade, "A");
