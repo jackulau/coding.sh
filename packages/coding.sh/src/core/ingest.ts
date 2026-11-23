@@ -8,10 +8,12 @@
 //
 // Sinks replay from their own cursors by re-normalizing spool lines, so an
 // offline remote never blocks local capture and catches up when it returns.
-// Delivery to a sink is at least once: a run that dies before its sink cursor
-// moves leaves the lines past it to the next run, which sends them even when
-// the dead run had sent them or stored their events, so a sink can get an
-// event twice.
+// A sink gets each event once while no run crashes or stalls and no send
+// fails: a line new to the index leaves out the events the index already had,
+// which the line or import that stored them sends. After a fault, the lines
+// the faulty run may have stored and not sent go out with every event, so a
+// sink can get one of their events again (the comment above insertedIds in
+// ingestLocked lists the cases).
 //
 // Transcript import (backfill) sends to the sinks too: the events it stores,
 // in batches of the sink's size, with the rows of their sessions as they are
@@ -129,6 +131,8 @@ const MAX_PASSES = 3;
 
 export const sinkCursorKey = (sink: string, source: string): string => `sink:${sink}:${source}`;
 export const sinkRetryKey = (sink: string): string => `sink:${sink}#retryAt`;
+/** A spool file's two in-flight keys, kept on a store without transactions: how far the last run to store its lines had read (see insertedIds in ingestLocked). */
+export const spoolInFlightKeys = (source: string): [string, string] => [`inflight:a:${source}`, `inflight:b:${source}`];
 
 export interface IngestOptions {
   config: Config;
@@ -486,30 +490,53 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   };
   const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
-  // An agent can hand the same event over in two lines (Claude Code: the parent's Agent-tool
-  // PostToolUse and the helper's own SubagentStop). The index keeps one copy by id. A sink is
-  // sent an id at most once per pass (one ingestLocked call): an id already sent in this pass
-  // is not sent again, and a line new to the index leaves out an event that an earlier
-  // checkpoint of this pass stored from another line (that line was sent, lies below the
-  // sink cursor, or is sent when the sink catches up). An event stored before this pass is
-  // sent again: the process that stored it may have died before its cursor writes (a store
-  // without transactions) or lost the lock between its commit and its send, so the sink may
-  // never have had it. The cost: the sink gets an event twice when a later pass reads it
-  // again, from the other line of a hand-off, the second copy of one hook firing, or a line
-  // whose events a transcript import stored first. Delivery to a sink is at least once.
+  // One event can come in two or three lines: Claude Code hands a helper's events over twice (the
+  // parent's Agent-tool PostToolUse and the helper's own SubagentStop), and hooks in two settings
+  // files spool one firing twice (firingKey gives both copies the same ids). A transcript import
+  // can store and send an event before its line is read. The index keeps one copy by id, and so
+  // does a sink: an id goes out at most once per pass (one ingestLocked call), and a line new to
+  // the index leaves out the events its put found stored (repeats). The line or import that stored
+  // them sent them, lies below the sink cursor, or is sent when the sink catches up.
+  //
+  // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
+  // every event:
+  // - A store without transactions makes its writes one at a time, so a run can crash between its
+  //   puts and its cursor writes. Before the puts, each file's two in-flight keys are set, after a
+  //   fence each, to how far this run read, and never below the larger one a run before it left.
+  //   A later run takes the lines from the local cursor up to the larger key as suspect. Two keys,
+  //   because a process that stalled past the stale limit can still make one write after another
+  //   process took the lock over, and that write can lower a key: if it is key A, the fence before
+  //   key B fails and the stalled process puts nothing; if it is key B, its key A was written before
+  //   the takeover.
+  // - A store with transactions commits the puts and the cursors together, but a holder that
+  //   stalled can commit after the takeover and then not send. So the checkpoint reads each file's
+  //   cursor again in its transaction: the lines below a cursor that moved past where this run
+  //   started are suspect, and the cursor is set to the larger of the two, so that a later
+  //   checkpoint or run still finds them.
+  //
+  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, or an
+  // older build's gc ran:
+  // - a suspect line carries an event another line or an import sent;
+  // - a run crashes between a send and its sink-cursor write, and the next run sends those lines;
+  // - a holder that stalled past the stale limit sends lines that the process which took the lock
+  //   over sends too, or its late sink-cursor write moves the cursor back over lines that process
+  //   sent;
+  // - a sink catches up after a failed send from lines that carry an event another line sent;
+  // - an older build's gc left a deleted file's in-flight keys, and a new file at the same path
+  //   grows as long as the larger key: its lines below that key are suspect.
+  // On a store without transactions, a run of an older build that crashes between its puts and
+  // its cursor writes leaves no in-flight keys, and a sink misses the events of those lines.
   const insertedIds = new InsertedEvents();
   const sentIds = new Map<Sink, Set<string>>();
-  /** Ids this pass's checkpoints inserted (kept only with sinks): a later checkpoint's copy of one is a repeat. */
-  const storedThisPass = new Set<string>();
   let repeats = new Set<string>();
-  const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
+  const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number, suspect: number) => {
     const state = sinkStates.get(sink)!;
     if (state.failed) return;
     const key = sinkCursorKey(sink.name, file.source);
     const from = await index.getCursor(key);
     let seen = sentIds.get(sink);
     if (!seen) sentIds.set(sink, (seen = new Set()));
-    const once = (l: LineEvents): AgentEvent[] => l.events.filter((e) => !(l.stored && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
+    const once = (l: LineEvents): AgentEvent[] => l.events.filter((e) => !(l.stored && l.offset >= suspect && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
     const lines = window.filter((l) => l.offset >= from).map((l) => ({ ...l, events: once(l) }));
     const size = sinkBatchSize(config, sink);
     let i = 0;
@@ -546,6 +573,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   interface FileRun {
     file: SpoolFile;
     local: number;
+    /** The lines from the local cursor read at the file's turn up to here are suspect: they send even the events the put finds stored (see insertedIds). */
+    suspect: number;
     readPos: number;
     active: Sink[];
     window: LineEvents[];
@@ -586,6 +615,17 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     // as one transaction (when the store has them), so a crash leaves the index exactly
     // at the previous checkpoint and the next run re-reads from there.
     const inserted = await atomically(async () => {
+      if (!index.transaction) {
+        // Before the puts: a run that finds a key past the local cursor sends those lines' events even when the put finds them stored.
+        for (const f of open) {
+          if (f.readPos <= f.local) continue;
+          const to = Math.max(f.suspect, f.readPos);
+          for (const key of spoolInFlightKeys(f.file.source)) {
+            fence();
+            await index.setCursor(key, to);
+          }
+        }
+      }
       let n = 0;
       const fresh = new Set<string>();
       for (let i = 0; i < pending.length; i += PUT_BATCH) {
@@ -597,11 +637,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           for (const id of r.ids) fresh.add(id);
         }
       }
-      if (sinkStates.size) {
-        // Only a copy of what this pass stored is a repeat; what an earlier pass or process stored goes to the sinks again.
-        repeats = new Set(pending.flatMap((e) => (!fresh.has(e.id) && storedThisPass.has(e.id) ? [e.id] : [])));
-        for (const id of fresh) storedThisPass.add(id);
-      }
+      if (sinkStates.size) repeats = new Set(pending.flatMap((e) => (fresh.has(e.id) ? [] : [e.id])));
       // Hook events in an agent's OTel trace (a traceparent): that trace's spans join their session.
       await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();
@@ -612,7 +648,14 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       for (const f of open) {
         if (f.readPos <= f.local) continue;
         fence();
-        await index.setCursor(f.file.source, f.readPos);
+        if (!index.transaction) {
+          await index.setCursor(f.file.source, f.readPos);
+          continue;
+        }
+        // Moved since this run read it: a holder that lost the lock committed the lines below it and may not have sent them.
+        const c = await index.getCursor(f.file.source);
+        f.suspect = Math.max(f.suspect, c);
+        await index.setCursor(f.file.source, Math.max(c, f.readPos));
       }
       return n;
     });
@@ -631,7 +674,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     }
     await snapshotEnded();
     for (const f of open) {
-      for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos);
+      for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos, f.suspect);
       f.window = [];
     }
     open = [];
@@ -680,7 +723,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       break;
     }
     let local = await index.getCursor(file.source);
-    if (local > file.size) {
+    const recreated = local > file.size;
+    if (recreated) {
       // Recreated at the same path (pid reuse after gc, say): start over for every consumer.
       error({ source: file.source, message: `cursor ${local} is past the end of the file (${file.size} bytes); re-reading from the start` });
       local = 0;
@@ -704,7 +748,15 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (start >= file.size) continue;
 
     readAny = true;
-    const fr: FileRun = { file, local, readPos: start, active, window: [], raws: [], scrub: false };
+    let suspect = local;
+    if (!index.transaction && !recreated && local < file.size) {
+      // A run that crashed between its puts and its cursor writes left the in-flight keys past the local cursor (see insertedIds).
+      const keys = spoolInFlightKeys(file.source);
+      const mark = Math.max(await index.getCursor(keys[0]), await index.getCursor(keys[1]));
+      // Past the end, they were a deleted file's (an older build's gc keeps them): this file's lines are all new.
+      if (mark <= file.size) suspect = Math.max(local, mark);
+    }
+    const fr: FileRun = { file, local, suspect, readPos: start, active, window: [], raws: [], scrub: false };
     open.push(fr);
     const keepWindow = active.length > 0;
     const reader = readSpoolFile(spoolDir, file.path, start, {

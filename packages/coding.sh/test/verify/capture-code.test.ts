@@ -22,13 +22,15 @@
 // - The final ingest leaves the store as one clean ingest of the same lines leaves it: the same session
 //   rows and the same events, none lost or stored twice. An ingest after it finds nothing new.
 // - With no crash, each line is consumed once (IngestResult.lines) and each event is inserted once
-//   (IngestResult.events), and a sink gets each event exactly once.
-// - With crashes, a sink gets every event at least once, on either store.
+//   (IngestResult.events), and a sink gets each event exactly once, also an event two lines carry.
+// - With crashes, a sink gets every event at least once, on either store (capture-model.test.ts checks
+//   which lines can send one again).
 //
 // A line's events come from the real normalizer (core/ingest.ts spoolNormalizer) reading the reference
-// spool: event ids depend on the line and its offset, and every case writes the same lines in the same
-// order. No event of these fixtures is carried by two lines. One that is (Claude Code hands a helper's
-// events over twice) can reach a sink twice when its two lines are read in different runs.
+// spool: event ids can depend on a line's offset, and every case writes the same lines in the same
+// order. One Claude Code line is spooled twice, as hooks in two settings files spool one firing: the
+// copy comes 5 ms later from another pid and carries the same events (firingKey in
+// adapters/_shared/normalize.ts). Runs can read the two lines in different passes.
 //
 // Left out: two ingests at once and a stalled lock holder. SQLite's BEGIN IMMEDIATE waits synchronously,
 // so two ingests in one process cannot interleave; capture-model.test.ts checks them. A crash here is a
@@ -74,8 +76,10 @@ interface Run {
   crash: number;
 }
 
-/** The fixture lines, merged by time. */
+/** The fixture lines, merged by time, with one copy of a hook line. */
 let lines: SpoolLine[] = [];
+/** The index of the copy in `lines`. */
+let copied = -1;
 let te: TmpEnv;
 /** What one clean ingest of every line stores, per store kind. */
 const reference = new Map<Kind, Contents>();
@@ -230,10 +234,10 @@ const casesGen = (stop: Gen<Stop>, crash: Gen<number>): Gen<Run[]> => gen.array(
 const STOPS = gen.pick<Stop>(["none", "signal", "deadline"]);
 const CRASHES = gen.frequency<number>([1, gen.constant(0)], [3, gen.int(1, 200)]);
 /**
- * Store calls a case's first run always makes when it reads at least one line with no stop. The fewest is 19,
- * on the memory store reading one line (22 on SQLite, 28 with a sink). A later run can make as few as 2.
+ * Store calls a case's first run always makes when it reads at least one line with no stop. The fewest is 23,
+ * on either store reading one line (29 with a sink). A later run can make as few as 2.
  */
-const FIRST_RUN_CALLS = 19;
+const FIRST_RUN_CALLS = 23;
 /**
  * Crash cases: the first run reads 1-16 lines with no stop and crashes at one of its first FIRST_RUN_CALLS store
  * calls, so every case crashes. Up to 4 runs follow, as casesGen makes them.
@@ -254,6 +258,11 @@ function assertCrashed(o: Outcome, runs: readonly Run[]): void {
 before(async () => {
   te = tmpEnv();
   lines = FIXTURE_SPOOLS.flatMap((f) => loadSpool(f)).sort((a, b) => a.ts - b.ts);
+  // The first PostToolUse is 1590 ms into its FIRING_WINDOW_MS slot: a copy 5 ms later gets the same ids.
+  const orig = must(lines.find((l) => l.agent === "claude-code" && l.event === "PostToolUse"));
+  const copy: SpoolLine = { ...orig, ts: orig.ts + 5, pid: orig.pid + 1 };
+  lines = [...lines, copy].sort((a, b) => a.ts - b.ts);
+  copied = lines.indexOf(copy);
   for (const kind of ["sqlite", "memory"] as const) {
     const { env, append } = spoolHome(`reference-${kind}`);
     append(0, lines.length);
@@ -280,6 +289,9 @@ before(async () => {
   }
   // The per-line ids are exactly the stored ones: the cursor checks see every event.
   assert.deepEqual([...new Set([...lineEvents.values()].flat().flatMap((l) => l.ids))].sort(), allIds);
+  // The copy carries the events of the line before it, and it is the only line that does.
+  const repeating = [...lineEvents.values()].flatMap((ls) => ls.filter((l, i) => i > 0 && l.ids.length > 0 && l.ids.join() === ls[i - 1]!.ids.join()));
+  assert.equal(repeating.length, 1, "lines that carry the events of the line before them");
 });
 
 after(() => te.restore());
@@ -337,10 +349,19 @@ test("runs that crash at any store call lose nothing on a store without transact
 
 test("a run that dies between storing a line's events and moving its cursor, on a store without transactions: the next run sends them", async () => {
   // The test above found this case: the second run stores the first line's events, then crashes at
-  // its 13th store call, before the line's cursor is written. The final ingest reads the line again.
-  const o = await runCase("memory", [{ append: 0, every: 3, stop: "none", at: 2, crash: 0 }, { append: 1, every: 2, stop: "none", at: 1, crash: 13 }], true);
+  // its 17th store call, before the line's cursor is written. The final ingest reads the line again.
+  const o = await runCase("memory", [{ append: 0, every: 3, stop: "none", at: 2, crash: 0 }, { append: 1, every: 2, stop: "none", at: 1, crash: 17 }], true);
   assert.equal(o.crashes, 1);
   assert.deepEqual(allIds.filter((id) => !must(o.got).has(id)), [], "events the sink never got");
+});
+
+test("a hook line spooled twice and read by two runs: the sink gets its events once", async () => {
+  // The first run reads up to the original line, the final ingest reads the copy.
+  for (const kind of ["sqlite", "memory"] as const) {
+    const o = await runCase(kind, [{ append: copied, every: 3, stop: "none", at: 0, crash: 0 }], true);
+    assert.deepEqual([...must(o.got).entries()].filter(([, n]) => n !== 1), [], `${kind}: events the sink got more than once`);
+    assert.deepEqual([...must(o.got).keys()].sort(), allIds, `${kind}: events the sink got`);
+  }
 });
 
 function must<T>(v: T | undefined): T {

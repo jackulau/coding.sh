@@ -113,11 +113,10 @@ hooks).
   where it stopped in the spool.
 - For transcripts it starts again at the top of each file it missed part of, so it can get a
   transcript event twice. A sink added later gets the transcripts still on disk the same way.
-- From the spool, a sink gets each event at least once; a sink that keeps events by id keeps one
-  copy. A run that stops between storing events and sending them leaves them for the next run to
-  send.
-- A spool line's events go to a sink even when an earlier ingest stored them. So an event that two
-  spool lines carry, or that a transcript import stored first, can reach a sink twice.
+- From the spool, a sink gets each event once, also one that two spool lines carry or that a
+  transcript import sent first. After a crash, a stall or a failed send, it can get an event again.
+- A run that crashes or stalls between storing events and sending them leaves them for the next run
+  to send. A sink that keeps events by id keeps one copy.
 - A sink with `since` sends no session that started before that time, not even the events the
   session adds after it. `coding.sh init --remote` sets it to the time it first connects.
 - What a sink leaves out counts as handled, so removing `since` later does not send it. To send
