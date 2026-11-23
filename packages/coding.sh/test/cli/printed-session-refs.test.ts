@@ -3,21 +3,25 @@
 // their first 8 characters (a printed prefix opens neither), and ids that a pasted full id can't
 // open (one holding a space, one spelled `latest`, which opens the newest session).
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { which } from "../../src/adapters/_shared/detect.ts";
 import * as evalCmd from "../../src/cli/commands/eval.ts";
 import * as improve from "../../src/cli/commands/improve.ts";
 import * as show from "../../src/cli/commands/show.ts";
+import { posixShell } from "../../src/core/spawn.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
 import { createCodingShMcp } from "../../src/mcp/server.ts";
 import { MemoryBlobStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 import { improveWorld } from "../helpers-improve.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
@@ -246,6 +250,102 @@ describe("improve names each session by a reference that opens it", () => {
     assert.equal(issues[0]!.example.sessionId, SPACED);
     const refs = issues.map((i) => refIn(i.next.find((n) => / show /.test(n))!, "show"));
     assert.deepEqual(await Promise.all(refs.map((ref) => opens(cost, ref))), issues.map((i) => i.example.sessionId));
+  });
+});
+
+/** A fake `claude -p` that names as its session the one `ids` gives for a word in its instruction. */
+const FAKE_CLAUDE = (ids: Record<string, string>) => `if (process.argv.includes("--version")) {
+  console.log("2.1.0 (Claude Code)");
+  process.exit(0);
+}
+const ids = ${JSON.stringify(ids)};
+let input = "";
+process.stdin.on("data", (d) => (input += d)).on("end", () => {
+  const session_id = ids[Object.keys(ids).find((k) => input.includes(k))] || "a-session-of-its-own";
+  for (const o of [{ type: "system", subtype: "init", session_id }, { type: "result", subtype: "success", is_error: false, result: "Done.", session_id }]) console.log(JSON.stringify(o));
+});
+`;
+
+describe("eval run names each failed trial's session, and each captured failure's, by a reference that opens it", () => {
+  // The twin task's session shares its first 14 characters with a newer one, so a 12-character
+  // prefix opens neither; the named task's session is spelled `latest`, which opens the newest.
+  const TWIN = "abcd1234-aaaa-4000-8000-00000000000a";
+  const NEWER = "abcd1234-aaaa-5000-8000-00000000000b";
+  const failed = [["twin", TWIN], ["named", "latest"]] as const;
+  let sb: Sandbox;
+  /** The report eval run printed; then, run with --json --summary, its JSON and the Markdown it wrote. */
+  let text = "";
+  let json: any;
+  let markdown = "";
+  before(async () => {
+    sb = sandbox();
+    const repo = gitRepo(sb);
+    const now = Date.now();
+    await sb.seed([mkSession(TWIN, now - 4000), mkSession("latest", now - 3000), mkSession(SPACED, now - 2000), mkSession(NEWER, now - 1000)]);
+    const suite = join(repo.root, "evals", "refs");
+    mkdirSync(suite, { recursive: true });
+    writeFileSync(join(suite, "suite.json"), JSON.stringify({ name: "refs", purpose: "regression", trials: 1, tasks: "tasks" }));
+    const task = (name: string, instruction: string, exit: number, extra: Record<string, unknown> = {}) => {
+      const dir = join(suite, "tasks", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "task.json"), JSON.stringify({ name, verifier: { command: `"${process.execPath}" -e "process.exit(${exit})"`, timeoutMs: 60_000 }, ...extra }));
+      writeFileSync(join(dir, "instruction.md"), `${instruction}\n`);
+    };
+    task("twin", "Fix TASK-TWIN.", 1);
+    task("named", "Fix TASK-LATEST.", 1);
+    // Drafted from a session that went wrong, and passing now: the line under the report names that session.
+    task("fixed", "Keep it working.", 0, { tags: ["captured-failure"], sourceSessionId: SPACED });
+    // The agent is the fake on PATH, driven through the claude-code adapter, which reads its session from the result.
+    const bin = join(sb.root, "bin");
+    nodeBin(bin, "claude", FAKE_CLAUDE({ "TASK-TWIN": TWIN, "TASK-LATEST": "latest" }));
+    const git = which("git");
+    const shell = process.platform === "win32" ? posixShell() : undefined;
+    mkdirSync(join(sb.root, "tmp"));
+    writeFileSync(join(sb.root, "hook-source.mjs"), "// test hook\n");
+    const env = {
+      ...sb.env,
+      PATH: pathOf(bin, dirname(process.execPath), git ? dirname(git) : undefined, shell ? dirname(shell) : undefined, "/usr/bin", "/bin"),
+      TMPDIR: join(sb.root, "tmp"),
+      GIT_CONFIG_NOSYSTEM: "1",
+      CODING_SH_HOOK_SOURCE: join(sb.root, "hook-source.mjs"),
+    };
+    const run = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "eval", "run", "refs", "--yes", ...args], { env, cwd: repo.root, encoding: "utf8", timeout: 120_000 });
+    const t = run();
+    assert.equal(t.status, 1, `two tasks fail the regression suite\n${t.stdout}${t.stderr}`);
+    text = t.stdout;
+    const file = join(sb.root, "summary.md");
+    const j = run("--json", "--summary", file);
+    assert.equal(j.status, 1, j.stdout + j.stderr);
+    json = JSON.parse(j.stdout);
+    markdown = readFileSync(file, "utf8");
+  });
+  after(() => sb.cleanup());
+
+  test("each failed task's show command opens the session its trial ran", async () => {
+    for (const [name, id] of failed) {
+      const line = new RegExp(`^${name}\\s.*?(coding\\.?sh show .*)$`, "m").exec(text)?.[1];
+      assert.ok(line, text);
+      assert.equal(await opens(sb, refIn(line, "show")), id, line);
+    }
+  });
+
+  test("the captured-failures line names the task's source session by a reference that opens it", async () => {
+    const ref = /^captured failures: 1 of 1 now pass: fixed \(session (.+)\)$/m.exec(text)?.[1];
+    assert.ok(ref, text);
+    assert.equal(await opens(sb, refIn(`coding.sh show ${ref}`, "show")), SPACED);
+  });
+
+  test("with --json, the --summary Markdown names each session the same way, and the JSON keeps whole ids", async () => {
+    const rows = json.report.rows as { name: string; failedSession?: string }[];
+    assert.deepEqual(rows.filter((r) => r.failedSession).map((r) => [r.name, r.failedSession]).sort(), [...failed].map(([n, id]) => [n, id]).sort());
+    for (const [name, id] of failed) {
+      const line = new RegExp(`^\\| ${name} \\|.*\`(coding\\.?sh show [^\`]*)\``, "m").exec(markdown)?.[1];
+      assert.ok(line, markdown);
+      assert.equal(await opens(sb, refIn(line, "show")), id, line);
+    }
+    const ref = /^- captured failures: 1 of 1 now pass: fixed \(session (.+)\)$/m.exec(markdown)?.[1];
+    assert.ok(ref, markdown);
+    assert.equal(await opens(sb, refIn(`coding.sh show ${ref}`, "show")), SPACED);
   });
 });
 
