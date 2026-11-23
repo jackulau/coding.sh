@@ -47,13 +47,16 @@ function aliasDigits(id: string): string {
   return out.slice(0, ALIAS_MAX);
 }
 
+/** Words findSessionRef reads as the newest session (latestSession): a session with one as its id prints an alias. */
+const RESERVED = new Set(["latest", "last"]);
+
 /**
  * True when `id` may print as an alias, so an alias may name it: an id longer than MAX_REF, one with
- * a character outside PLAIN_REF, or a subagent whose own id starts with `.`, `:`, `/` or `-`. Only
- * these ids are hashed.
+ * a character outside PLAIN_REF, a subagent whose own id starts with `.`, `:`, `/` or `-`, or one of
+ * the RESERVED words. Only these ids are hashed.
  */
 function aliasable(id: string): boolean {
-  return id.length > MAX_REF || !PLAIN_REF.test(id) || /:sub:[.:/-]/.test(id);
+  return id.length > MAX_REF || !PLAIN_REF.test(id) || /:sub:[.:/-]/.test(id) || RESERVED.has(id);
 }
 
 /** What a reference names: one id, or several it cannot choose between. */
@@ -214,20 +217,25 @@ function names(set: IdSet, ref: string, id: string): boolean {
 /**
  * The shortest reference to `id` that matchRef takes back to it today, at least SHORT_ID_MIN
  * characters: a prefix of a top-level id; for a subagent, a prefix of its own id or the short
- * subagent form. When that is longer than MAX_REF characters or needs quoting in a shell
- * (PLAIN_REF), an alias instead: x_ and the first 8 alias digits, or more when 8 also name another
- * id or start a stored one. An id with no shorter form (or one of SHORT_ID_MIN characters or fewer)
- * comes back whole, and so does one not stored.
+ * subagent form. When that is longer than MAX_REF characters, needs quoting in a shell (PLAIN_REF)
+ * or is a RESERVED word, an alias instead: x_ and the first 8 alias digits, or more when 8 also name
+ * another id or start a stored one. An id with no shorter form (or one of SHORT_ID_MIN characters or
+ * fewer) comes back whole, and so does one not stored.
  */
 export function shortestRef(set: IdSet, id: string): string {
   if (!set.has(id)) return id;
   const best = shortestPrefix(set, id);
-  if (best.length <= MAX_REF && PLAIN_REF.test(best)) return best;
+  const word = RESERVED.has(best);
+  if (best.length <= MAX_REF && PLAIN_REF.test(best) && !word) return best;
   const digits = aliasDigits(id);
-  for (let k = ALIAS_MIN; k <= ALIAS_MAX; k++) {
-    const ref = `${ALIAS}${digits.slice(0, k)}`;
-    // An SDK may name a session x_…: an alias that starts a stored id would read as a prefix of it.
-    if (set.withPrefix(ref).length === 0 && names(set, ref, id)) return ref;
+  // An SDK may name a session x_…: an alias that starts a stored id would read as a prefix of it. A
+  // RESERVED word takes one anyway when every length does, since matchRef reads an alias first and the
+  // word itself opens another session.
+  for (const free of word ? [true, false] : [true]) {
+    for (let k = ALIAS_MIN; k <= ALIAS_MAX; k++) {
+      const ref = `${ALIAS}${digits.slice(0, k)}`;
+      if ((!free || set.withPrefix(ref).length === 0) && names(set, ref, id)) return ref;
+    }
   }
   return best;
 }
@@ -300,7 +308,7 @@ export class AmbiguousRef extends Error {
  * takes. Undefined when nothing matches; an ambiguous reference throws AmbiguousRef.
  */
 export async function findSessionRef(index: IndexStore, ref: string): Promise<Session | undefined> {
-  if (ref === "latest" || ref === "last") return latestSession(index);
+  if (RESERVED.has(ref)) return latestSession(index);
   const exact = await index.getSession(ref);
   if (exact) return exact;
   const set = await loadIdSet(index);

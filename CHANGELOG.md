@@ -454,6 +454,7 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** Work headings count the whole bucket ("119 of 671") instead of only the cards the page loaded, and Show all lists up to 1,000 items in place, beside the CLI command that lists them all. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
 - **Work.** When the index is old, `work show` counts a review item's age from the last ingest, as `work` and the Work page do, so all three give the same reason. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
 - **Capture.** T3 Code's store is read where it is while T3 Code has it open, each thread in one short read transaction, instead of copied to the temp directory on every read. A SQLite store is copied only when the temp directory keeps room to spare, and a refused T3 copy names the space needed and free. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
+- **Sessions.** A session whose id is `latest` or `last` prints its `x_` alias, which opens it. It printed the word, which opens your newest session. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
 
 ## [0.1.7] - 2026-11-16
 

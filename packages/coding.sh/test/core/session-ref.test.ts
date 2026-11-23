@@ -5,7 +5,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, test } from "node:test";
-import { IdSet, matchRef, MAX_CANDIDATES, SHORT_ID_MIN, shortestRef } from "../../src/core/session-ref.ts";
+import { findSessionRef, IdSet, loadIdSet, matchRef, MAX_CANDIDATES, SHORT_ID_MIN, shortestRef } from "../../src/core/session-ref.ts";
+import { buildSession } from "../../src/core/sessions.ts";
+import { resolveCall } from "../../src/proxy/calls.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 
 const PARENT = "36d2966a-1c53-47f1-891d-aae1827d0e95";
 /** A subagent id as Claude Code writes one: "a" and 16 hex digits. */
@@ -114,6 +118,36 @@ describe("an id whose shortest prefix is long or needs quoting prints an alias",
     assert.equal(shortestRef(s, LONG_B), "x_8n2twz83h", "an alias a stored id starts with grows too, so it never reads as a prefix of that id");
     const sdk = shortestRef(s, "x_8n2twz83-sdk");
     assert.equal(resolves(s, sdk), "x_8n2twz83-sdk", sdk);
+  });
+});
+
+describe("a session whose id is latest or last prints an alias: the word opens the newest session", () => {
+  const NEWER = "0f3c9d10-aaaa-4000-8000-000000000001";
+  const call = (sessionId: string, id: string, ts: number): AgentEvent => ({ id, v: 0, sessionId, ts, agent: "claude-code", kind: "llm.call", model: "claude-opus-5-5", usage: { inputTokens: 1, outputTokens: 1 }, payload: {} });
+
+  for (const [word, alias] of [
+    ["latest", "x_brf2qjp3"],
+    ["last", "x_6n3wp49a"],
+  ] as const) {
+    test(`${word} prints ${alias}, which opens it, and ${alias}#1 is its first call`, async () => {
+      const index = new MemoryIndexStore();
+      const mine = [call(word, `${word}-1`, 1000), call(word, `${word}-2`, 1500)];
+      const newer = [call(NEWER, "newer-1", 2000)];
+      await index.putEvents([...mine, ...newer]);
+      await index.upsertSession(buildSession(mine));
+      await index.upsertSession(buildSession(newer));
+      const ref = shortestRef(await loadIdSet(index), word);
+      assert.equal(ref, alias);
+      assert.equal((await findSessionRef(index, ref))?.id, word);
+      assert.equal((await resolveCall(index, `${ref}#1`)).id, `${word}-1`);
+      assert.equal((await findSessionRef(index, word))?.id, NEWER, "the word itself still opens the newest session");
+    });
+  }
+
+  test("when a stored id starts with every length of its alias, the word prints the shortest anyway: an alias is read before a prefix", () => {
+    const s = new IdSet(["latest", NEWER, "x_brf2qjp30parp9-sdk"]);
+    assert.equal(shortestRef(s, "latest"), "x_brf2qjp3");
+    assert.equal(resolves(s, "x_brf2qjp3"), "latest");
   });
 });
 
