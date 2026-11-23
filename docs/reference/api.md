@@ -831,10 +831,10 @@ steer; stopping the turn (Esc) is not.
 
 | Field | Meaning |
 |---|---|
-| `stats.waits` (`count`, `ms`, `medianMs`, `byKind`, `open`, `agent`, `steers`, `capped`) | Absent when the session never waited on the person and nobody steered. `coding.sh show` prints it on one line, and `coding.sh stats --json` sums it over the window. A store without a session-stats query reads only the first 100,000 sessions there, and the sum then has `truncated: true` |
+| `stats.waits` (`count`, `ms`, `medianMs`, `byKind`, `open`, `agent`, `steers`, `capped`) | Absent when the session never waited on the person and nobody steered. `coding.sh show` prints it on one line, and `coding.sh stats --json` sums it over the window. On a store without a session-stats query it stops at 100,000 sessions and says `truncated: true` |
 | `stats.waits.count`, `stats.waits.ms` | The waits and their time, answered or not. Each wait counts 12 hours at most |
-| `stats.waits.medianMs` | The median wait across all kinds, when `count` is over 1 (over each kind's first 500 waits). A few long waits raise `ms` far more than the median |
-| `stats.waits.byKind` | The same by kind, each with `count`, `ms`, `medianMs` (when `count` is over 1; over the first 500 waits) and `open`. Kinds: `permission` (a permission prompt, until its call ends; a T3 Code approval, until it is resolved), `question`, `plan`, `request` (another request from a host app, such as T3 Code's secret and link requests) and `turn` (the main thread's turn ended, until the person's next prompt; only in a session launched interactively that is not a subagent) |
+| `stats.waits.medianMs` | The median wait across all kinds, when `count` is over 1 (over each kind's first 500 waits) |
+| `stats.waits.byKind` | The same by kind, each with `count`, `ms`, `medianMs` (when `count` is over 1; over the first 500 waits) and `open`. Kinds: `permission` (a permission prompt, until its call ends; a T3 Code approval, until it is resolved), `question`, `plan`, `request` (another request from a host app, such as T3 Code's secret and link requests) and `turn` (the main thread's turn ended, until the person's next prompt; not in a subagent) |
 | `stats.waits.open` (`count`, `ms`) | Waits nobody answered: still open at the last event (counted up to it), or ended by the session's end or a resume. They are in `count` and `ms` |
 | `stats.waits.agent` (`count`, `ms`) | Turn waits an agent ended, not the person: a prompt an agent made, or the agent going on by itself. They are not in `count` and `ms` |
 | `stats.waits.steers` | Prompts the person sent while the main thread's turn ran |
@@ -845,20 +845,17 @@ What ends a wait:
 - A permission, question or plan wait ends when its call ends, whatever the answer, so a permission
   wait includes the time the call ran.
 - A wait on a call that never ends lasts until the next call or turn end on its thread.
-- The person's prompt on the session's own thread (its main thread) ends every wait still open on
-  that thread, the turn wait among them.
-- A T3 Code approval or question waits until T3 Code marks it resolved, or until the person's next
-  prompt.
+- The person's prompt on the main thread ends every wait still open there, the turn wait among them.
+- A T3 Code approval, question or other request also ends when T3 Code marks it resolved.
 - An agent's prompt ends a turn wait, which then counts in `agent`: a task notification, a delegated
   result, a message from another thread, or a prompt marked `from: "agent"`.
 - So does the agent going on by itself, with a call or reply more than 5 seconds after its turn
   ended. That wait counts up to the call or reply.
-- A prompt in a subagent's thread comes from its parent and ends no wait, not even one on that
-  thread. A subagent's own waits count in its own session.
+- A prompt in a subagent's thread comes from its parent and ends no wait. A subagent's own waits
+  count in its own session.
 
 Limits:
 
-- A wait counts 12 hours at most, and `capped` counts the longer ones.
 - A resume, as Claude Code's live hook reports it, ends the open waits at the last event before it,
   as unanswered.
 - Where nothing marks a resume, as in a transcript or T3 Code's store, a wait in a session picked up
@@ -868,15 +865,15 @@ Limits:
   transcript has none; its questions, plans and turns still count. A transcript's quiet markers end
   no wait.
 - Turn waits, steers and `agent` need a session launched interactively; one with no launch mode has
-  none. A T3 Code thread is interactive when its store says the person sent its first prompt, unless
-  another agent's import reads its session (OpenCode, Cursor, Pi). Those prompts are not read from
-  T3 Code's store, so an agent's prompt would count as the person's.
-- Who sent a prompt: T3 Code's v2 store says when an agent made a message; a v1 store does not.
-- In a T3 Code thread read from its agent's own transcript (Codex, Claude Code), a prompt is an
-  agent's when the store has a message an agent made with the same text, sent before the prompt or
-  up to 5 seconds after it. A hook's live copy of that prompt is the agent's when it is the prompt
-  closest to that time, within 5 seconds, so a prompt the person sends that close may count as the
-  agent's. Text T3 Code changed before sending it does not match.
+  none.
+- In a T3 Code thread whose session another agent's import reads (OpenCode, Cursor, Pi), an agent's
+  prompt counts as the person's.
+- T3 Code's v1 store does not say which messages an agent made.
+- In a T3 Code thread read from a Codex or Claude Code transcript, a prompt is an agent's when the
+  store message with its text, sent at most 5 seconds after it, is an agent's.
+- A hook's live copy of such a prompt is matched by time instead, so the person's prompt within 5
+  seconds of it may count as the agent's.
+- A prompt whose text T3 Code changed before sending matches nothing and counts as the person's.
 - For other agents, only task notifications and T3 Code's delegated-task notices are told apart, by
   their text.
 - A session read from a Claude Code transcript shows no steers: there, each prompt ends the turn
