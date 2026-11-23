@@ -137,6 +137,29 @@ export interface CompactionRefetchStats {
 }
 
 /**
+ * Session.stats.retrieval: how a session found what it worked on. A read shows a file's content
+ * (Read, `cat`, `sed`, `head`, Get-Content, `git show <rev>:<path>`); a search looks for or lists
+ * files (Grep, Glob, `grep`, `rg`, `find`, `ls`, Select-String, Get-ChildItem). A shell line that
+ * reads and searches counts as both.
+ */
+export interface RetrievalStats {
+  /** Tool calls that read a file, failed ones included. */
+  reads: number;
+  /** Distinct files those reads named. A read that failed, or whose path is a variable or a glob, names none. */
+  filesRead: number;
+  /** Of the files read, those the session edited after reading them (an edit tool or a shell write). */
+  editedAfterRead: number;
+  /** Tool calls that searched for or listed files. */
+  searches: number;
+  /** Searches that found nothing: no output, "No matches found" or "No files found", or exit status 1 with nothing printed. Unset when none. */
+  emptySearches?: number;
+  /** Web searches and page fetches (WebSearch, WebFetch). Unset when none. */
+  web?: number;
+  /** Tool calls that read or searched before the session's first edit (a call that does both counts once). Unset when the session edited nothing. */
+  beforeFirstEdit?: number;
+}
+
+/**
  * Session.stats.memoryUse: one memory or instruction file a session used, or a
  * skill its events name without a path.
  */
@@ -524,6 +547,8 @@ export interface Session {
     waste?: WasteStats;
     /** Read-only calls that fetched again what a compaction dropped (core/waste.ts). Unset when none did. */
     compactionRefetches?: CompactionRefetchStats;
+    /** Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read, searched and fetched nothing. */
+    retrieval?: RetrievalStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;
     /**

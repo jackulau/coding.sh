@@ -8,7 +8,8 @@ import { posix } from "node:path";
 import { isShellCall, shellCommandOf } from "../adapters/_shared/tools.ts";
 import { normalizeTracePath, shellWrites, simpleCommands } from "./shell-diff.ts";
 
-const ABSOLUTE = /^(?:\/|[A-Za-z]:\/|~)/;
+/** An absolute path (POSIX, a Windows drive) or one under the home directory. */
+export const ABSOLUTE = /^(?:\/|[A-Za-z]:\/|~)/;
 
 /** PowerShell cmdlets that write a file: the parameters that name it, and the ones that take a value (so it is not read as the path). */
 const PS_WRITERS: Record<string, { path: readonly string[]; values: readonly string[] }> = {
@@ -17,7 +18,7 @@ const PS_WRITERS: Record<string, { path: readonly string[]; values: readonly str
   "out-file": { path: ["-filepath", "-path", "-literalpath", "-lp", "-pspath"], values: ["-inputobject", "-encoding", "-width"] },
 };
 /** Common parameters that take a value. */
-const PS_COMMON = ["-erroraction", "-ea", "-warningaction", "-wa", "-informationaction", "-infa", "-errorvariable", "-ev", "-warningvariable", "-wv", "-outvariable", "-ov", "-outbuffer", "-ob", "-pipelinevariable", "-pv"];
+export const PS_COMMON = ["-erroraction", "-ea", "-warningaction", "-wa", "-informationaction", "-infa", "-errorvariable", "-ev", "-warningvariable", "-wv", "-outvariable", "-ov", "-outbuffer", "-ob", "-pipelinevariable", "-pv"];
 
 /** A literal file path: no variable, glob, brace list or subshell, not a device, not a directory. */
 function literalPath(p: string): boolean {
