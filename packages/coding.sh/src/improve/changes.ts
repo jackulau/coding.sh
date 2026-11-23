@@ -119,6 +119,8 @@ export interface ChangeEffect {
   reason: string;
   /** Work per session before vs after; absent with too little data or no difference. */
   work?: WorkEffect;
+  /** Sessions since the change that recorded no git HEAD, so no version can be told for them; absent when none. */
+  noHead?: number;
 }
 
 const diagnosed = (s: Session): string[] => [...new Set(s.flags ?? [])].filter((f) => !f.includes(":") && FLAG_DIAGNOSIS[f] !== undefined && FLAG_DIAGNOSIS[f] !== "context-only");
@@ -392,6 +394,22 @@ export function decide(before: GroupStats, after: GroupStats, rules: readonly Ru
   return { verdict: "no-clear-change", reason: `${direction}, but the difference could be chance: ${flagText} (p ${fmtP(p)}).${moved}${ruleText}`, p, ...w };
 }
 
+/** How a headless session starts, as improve names it. */
+export const HEADLESS_KINDS = "claude -p, an Agent SDK, codex exec";
+
+/**
+ * The reason for a change no counted session ran with (no-sessions-after) while `headless`
+ * headless sessions did, left out without --headless: it says so and how to count them, where
+ * decide's "No captured session ran" would be false. "Only" when no other session ran since it:
+ * none with no git HEAD (noHead) and none with no tool call (after.idle).
+ */
+export function headlessReason(e: ChangeEffect, headless: number): string {
+  if (!e.noHead && !e.after.idle) return `Only headless sessions ran with this change: ${headless} (${HEADLESS_KINDS}). --headless counts them.`;
+  const many = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  const unknown = e.noHead ? ` ${many(e.noHead, "other session")} since it recorded no git HEAD, so ${e.noHead === 1 ? "its" : "their"} version can't be told.` : "";
+  return `${many(headless, "headless session")} ran with this change (${HEADLESS_KINDS}); --headless counts them.${unknown}`;
+}
+
 export interface EffectsOptions {
   limit?: number;
   since?: number;
@@ -450,7 +468,9 @@ export async function changeEffects(root: string, sessions: readonly Session[], 
     const b = withIdle(group(before), beforeAll.length - before.length);
     const a = withIdle(group(after), afterAll.length - after.length);
     const noHead = sessions.filter((s) => !s.repo?.head && s.startedAt >= c.at).length;
-    out.push({ change: c, before: b, after: a, rules, ...decide(b, a, rules, { noHead }) });
+    const effect: ChangeEffect = { change: c, before: b, after: a, rules, ...decide(b, a, rules, { noHead }) };
+    if (noHead) effect.noHead = noHead;
+    out.push(effect);
   }
   return out;
 }
