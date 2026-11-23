@@ -103,6 +103,17 @@ describe("session outline", () => {
     assert.deepEqual(o.days, []);
   });
 
+  it("a phase's tokens skip a count below 0 or not a finite number", () => {
+    n = 0;
+    clock = T0 - 10 * 3600_000;
+    const o = sessionOutline([
+      ev("session.start", { source: "startup" }),
+      ev("llm.call", {}, { usage: { inputTokens: -50_000, outputTokens: Number.NaN, cacheReadTokens: Number.POSITIVE_INFINITY } }),
+      ev("llm.call", {}, { usage: { inputTokens: 2000, outputTokens: 100 } }),
+    ]);
+    assert.deepEqual(o.phases.map((p) => p.tokens), [2100]);
+  });
+
   it("events within REOPEN_SLACK_MS of a session.end belong to it; later ones resume", () => {
     n = 0;
     clock = T0 - 10 * 3600_000;

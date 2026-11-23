@@ -527,6 +527,25 @@ describe("session usage rollup", () => {
     assert.equal(est.usage.estimatedCostUsd, undefined);
   });
 
+  it("token totals skip a count below 0 or not a finite number, as pricing bills it as 0", () => {
+    const bad = { inputTokens: -50_000, outputTokens: Number.NaN, cacheReadTokens: Number.POSITIVE_INFINITY, cacheWriteTokens: -1 };
+    // No spans: the session folds each call as it comes (the simple fold).
+    const plain = buildSession([ev("llm.call", {}, { usage: { ...bad, costUsd: 0.5 } }), ev("llm.call", {}, { usage: { inputTokens: 2000, outputTokens: 100 } })]);
+    assert.deepEqual(plain.stats.usage, { inputTokens: 2000, outputTokens: 100, costUsd: 0.5 });
+    // Spans: rollupUsage. A wrapper whose own count is bad takes its nested calls' count.
+    const wrapper = ev("llm.call", {}, { traceId: "t", spanId: "w", usage: { ...bad, outputTokens: 100 } });
+    const kid = ev("llm.call", {}, { traceId: "t", spanId: "k", parentSpanId: "w", usage: { inputTokens: 2000, cacheWriteTokens: 30 } });
+    const other = ev("llm.call", {}, { traceId: "t", spanId: "o", usage: { inputTokens: -7, outputTokens: 5 } });
+    const s = buildSession([wrapper, kid, other]);
+    assert.deepEqual(s.stats.usage, { inputTokens: 2000, outputTokens: 105, cacheWriteTokens: 30 });
+    // The nested call is left out as a call; its tokens count, through the wrapper.
+    assert.deepEqual(s.stats.duplicateUsage, { calls: 1, tokens: 0 });
+    // A usage snapshot: its bad counts are skipped as well.
+    const snap = ev("notification", { type: "usage-summary" }, { usage: { inputTokens: -1, outputTokens: 40 } });
+    assert.deepEqual(rollupUsage([snap]).usage, { outputTokens: 40 });
+    assert.deepEqual(buildSession([snap]).stats.usage, { outputTokens: 40 });
+  });
+
   it("a nested call that reports a cost of 0 beats the wrapper's estimate, as does a reported part too small to change the sum", () => {
     // A free model, or a gateway that bills nothing, under a wrapper priced at $4.
     const wrapper = ev("llm.call", { costEstimated: true }, { model: "claude-opus-5-5", traceId: "t", spanId: "w", usage: { inputTokens: 1_000_000, costUsd: 4 } });

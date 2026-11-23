@@ -629,6 +629,9 @@ A model call nested in another of the same trace (a framework's span around the 
 counts once. The outer call keeps its own figures and takes the rest from the calls nested in it. A
 cost a nested call reported, even $0, beats an estimate on the outer call.
 
+Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
+token count below 0 or not a finite number, as the estimate does.
+
 **Agent and host.**
 
 | Field | Meaning |
