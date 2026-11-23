@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, parseJsonc, spawnAgent, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv, testCtx } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
+import { startWriter, type Writer } from "../_sqlite-writer.ts";
 import { reapSqliteCopies, SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX, UNOWNED_COPY_AGE_MS } from "../../../src/adapters/_shared/sqlite-copies.ts";
 
 const TMP_KEYS = ["TMPDIR", "TEMP", "TMP"] as const;
@@ -30,6 +31,16 @@ function ownTmpdir(): { dir: string; restore: () => void } {
 }
 const copies = (dir: string) => readdirSync(dir).filter((n) => n.startsWith(SQLITE_COPY_PREFIX));
 const UTIL = new URL("../../../src/adapters/more/_util.ts", import.meta.url).href;
+/** A database in rollback-journal mode (the default) with one row, closed. */
+const makeDb = async (root: string) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = join(root, "agent.sqlite");
+  const db = new DatabaseSync(path);
+  db.exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
+  db.close();
+  return path;
+};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("openSqliteCopy", () => {
   it("reads rows still in the agent's WAL from a read-only copy, and leaves the agent's files as they were", async () => {
@@ -61,15 +72,6 @@ describe("openSqliteCopy", () => {
 });
 
 describe("openSqliteCopy temp copies", () => {
-  const makeDb = async (root: string) => {
-    const { DatabaseSync } = await import("node:sqlite");
-    const path = join(root, "agent.sqlite");
-    const db = new DatabaseSync(path);
-    db.exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
-    db.close();
-    return path;
-  };
-
   it("removes a copy whose owner was killed before it could, and keeps live owners' copies", async () => {
     const t = ownTmpdir();
     const src = mkdtempSync(join(t.dir, "src-"));
@@ -219,6 +221,262 @@ describe("openSqliteCopy temp copies", () => {
     } finally {
       t.restore();
     }
+  });
+});
+
+describe("openSqliteInPlace", () => {
+  const count = (db: import("node:sqlite").DatabaseSync) => Number(db.prepare("SELECT count(*) AS n FROM t").get()?.n);
+
+  it("reads a database its writer has open in WAL mode where it is: no copy, and the writer never gets SQLITE_BUSY", { timeout: 60_000 }, async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    let w: Writer | undefined;
+    try {
+      const path = join(src, "agent.sqlite");
+      // Another process commits every 2 ms with busy_timeout 0, and checkpoints every 10 pages.
+      w = await startWriter(path, { setup: "PRAGMA wal_autocheckpoint = 10; CREATE TABLE t (x INTEGER)", step: "INSERT INTO t VALUES ($n)", everyMs: 2 });
+      const h = await openSqliteInPlace(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.inPlace, true);
+        assert.deepEqual(copies(t.dir), []);
+        const first = readSnapshot(h.db, () => count(h.db));
+        let last = first;
+        for (const end = Date.now() + 20_000; last < first + 20 && Date.now() < end; await sleep(5)) last = readSnapshot(h.db, () => count(h.db));
+        assert.ok(last >= first + 20, `the reads see the writer's commits (${first}, then ${last})`);
+        // One read transaction is one snapshot: commits made during it show in the next one.
+        h.db.exec("BEGIN");
+        const a = count(h.db);
+        await sleep(200);
+        assert.equal(count(h.db), a);
+        h.db.exec("COMMIT");
+        assert.ok(readSnapshot(h.db, () => count(h.db)) > a);
+        assert.throws(() => h.db.exec("INSERT INTO t VALUES (0)"), /readonly/i);
+      } finally {
+        h.close();
+      }
+      const r = await w.stop();
+      assert.deepEqual([r.busy, r.errors], [0, []]);
+      assert.ok(r.commits > 20, `${r.commits} commits`);
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      await w?.kill();
+      t.restore();
+    }
+  });
+
+  it("opens a database in rollback-journal mode as a copy, and removes the copy on close", async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = await makeDb(src);
+      const h = await openSqliteInPlace(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.inPlace, false);
+        assert.equal(copies(t.dir).length, 1);
+        assert.equal(count(h.db), 1);
+      } finally {
+        h.close();
+      }
+      assert.deepEqual(copies(t.dir), []);
+      assert.deepEqual(readdirSync(src), ["agent.sqlite"]);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("opens a WAL database without -wal and -shm (no writer has it open) as a copy, and creates no file next to it", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = join(src, "agent.sqlite");
+      const w = new DatabaseSync(path);
+      w.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
+      w.close(); // the last connection's close checkpoints and removes -wal and -shm
+      assert.deepEqual(readdirSync(src), ["agent.sqlite"]);
+      const before = readFileSync(path);
+      assert.deepEqual([before[18], before[19]], [2, 2], "still in WAL mode");
+      // Opened in place, a read-only connection would create -wal and -shm next to it, and leave them.
+      const h = await openSqliteInPlace(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.inPlace, false);
+        assert.equal(copies(t.dir).length, 1);
+        assert.equal(count(h.db), 1);
+        assert.deepEqual(readdirSync(src), ["agent.sqlite"]);
+      } finally {
+        h.close();
+      }
+      assert.deepEqual(readdirSync(src), ["agent.sqlite"]);
+      assert.deepEqual(readFileSync(path), before);
+      assert.deepEqual(copies(t.dir), []);
+      // A -wal with no -shm, as a crash between the two can leave: a copy too, and no -shm appears.
+      writeFileSync(`${path}-wal`, "");
+      const h2 = await openSqliteInPlace(path);
+      assert.ok(h2);
+      try {
+        assert.equal(h2.inPlace, false);
+        assert.equal(count(h2.db), 1);
+      } finally {
+        h2.close();
+      }
+      assert.deepEqual(readdirSync(src).sort(), ["agent.sqlite", "agent.sqlite-wal"]);
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("opens a database its writer holds in exclusive locking mode as a copy", { timeout: 60_000 }, async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    let w: Writer | undefined;
+    try {
+      const path = join(src, "agent.sqlite");
+      // CREATE TABLE opens -wal and -shm before the switch, so the database looks open in WAL mode.
+      w = await startWriter(path, { setup: "CREATE TABLE t (x INTEGER)", step: "INSERT INTO t VALUES ($n)", everyMs: 0, exclusive: true });
+      assert.ok(existsSync(`${path}-wal`) && existsSync(`${path}-shm`));
+      // In place, the first read fails: the writer holds the database's exclusive lock.
+      const { DatabaseSync } = await import("node:sqlite");
+      const raw = new DatabaseSync(path, { readOnly: true });
+      try {
+        assert.throws(() => count(raw), (e: unknown) => sqliteBusy(e));
+      } finally {
+        raw.close();
+      }
+      const h = await openSqliteInPlace(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.inPlace, false);
+        assert.equal(copies(t.dir).length, 1);
+        assert.equal(count(h.db), 1);
+      } finally {
+        h.close();
+      }
+      assert.deepEqual(copies(t.dir), []);
+      assert.deepEqual(await w.stop(), { commits: 1, busy: 0, errors: [] });
+    } finally {
+      await w?.kill();
+      t.restore();
+    }
+  });
+
+  it("reads a WAL database whose writer was killed in place, and leaves the database and its -wal as they were", { timeout: 60_000 }, async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    let w: Writer | undefined;
+    try {
+      const path = join(src, "agent.sqlite");
+      w = await startWriter(path, { setup: "PRAGMA wal_autocheckpoint = 0; CREATE TABLE t (x INTEGER)", step: "INSERT INTO t VALUES ($n)", everyMs: 0 });
+      await w.kill(); // no close: -wal and -shm stay, the row only in the WAL
+      const orig = [path, `${path}-wal`].map((f) => readFileSync(f));
+      assert.ok(orig[1]!.length > 0, "the row is in the WAL");
+      const h = await openSqliteInPlace(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.inPlace, true);
+        assert.equal(count(h.db), 1);
+      } finally {
+        h.close();
+      }
+      // The first reader rebuilds -shm from the WAL, as any reader does after a crash; the database and WAL are not written.
+      assert.deepEqual([path, `${path}-wal`].map((f) => readFileSync(f)), orig);
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      await w?.kill();
+      t.restore();
+    }
+  });
+});
+
+describe("room for a copy", () => {
+  it("makes no copy that would leave less free in the temp directory than it takes, and names the sizes", async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = await makeDb(src);
+      const need = statSync(path).size;
+      assert.ok(need >= 1000 && need < 1e6, `a database of a few kB (${need} B)`);
+      const kB = (n: number) => `${(n / 1e3).toFixed(1)} kB`;
+      const asked: string[] = [];
+      const room = (free: number | undefined) => (dir: string) => {
+        asked.push(dir);
+        return free;
+      };
+      assert.equal(await openSqliteCopy(path, { room: room(2 * need - 1) }), undefined);
+      assert.deepEqual(asked, [t.dir], "it measures the temp directory");
+      await assert.rejects(openSqliteCopy(path, { throwOnError: true, room: room(need) }), {
+        message: `could not copy ${path} to ${t.dir}: that needs ${kB(2 * need)} free (${kB(need)} for the copy and ${kB(need)} left over), and ${kB(need)} is free`,
+      });
+      // In rollback-journal mode, in place falls back to the copy, and so to the same check.
+      await assert.rejects(openSqliteInPlace(path, { throwOnError: true, room: room(0) }), /could not copy .* and 0 B is free$/);
+      assert.deepEqual(readdirSync(t.dir), [basename(src)], "no copy and no partial file");
+      // Enough room, or a platform that can't tell: the copy is made.
+      for (const free of [2 * need, undefined]) {
+        const h = await openSqliteCopy(path, { room: room(free) });
+        assert.ok(h, `a copy with ${free} B free`);
+        h.close();
+      }
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("leaves as much free as the copy takes, up to 2 GB", () => {
+    assert.equal(copyMargin(8192), 8192);
+    assert.equal(copyMargin(2e9), 2e9);
+    assert.equal(copyMargin(5e9), 2e9);
+  });
+});
+
+describe("readSnapshot", () => {
+  it("reads in one transaction, and ends it when the read throws", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const root = mkdtempSync(join(tmpdir(), "csh-snapshot-"));
+    const path = join(root, "agent.sqlite");
+    const w = new DatabaseSync(path);
+    let r: import("node:sqlite").DatabaseSync | undefined;
+    try {
+      w.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
+      const db = (r = new DatabaseSync(path, { readOnly: true }));
+      const n = () => Number(db.prepare("SELECT count(*) AS n FROM t").get()?.n);
+      const both = readSnapshot(db, () => {
+        const a = n();
+        w.exec("INSERT INTO t VALUES (2)");
+        return [a, n()];
+      });
+      assert.deepEqual(both, [1, 1], "a commit made during the read is not in it");
+      assert.equal(db.isTransaction, false);
+      assert.equal(readSnapshot(db, n), 2);
+      assert.throws(
+        () =>
+          readSnapshot(db, () => {
+            n();
+            throw new Error("schema drift");
+          }),
+        /schema drift/,
+      );
+      assert.equal(db.isTransaction, false);
+      assert.equal(readSnapshot(db, n), 2);
+    } finally {
+      r?.close();
+      w.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sqliteBusy", () => {
+  it("is SQLITE_BUSY or SQLITE_LOCKED, extended codes too, or their message", () => {
+    const err = (errcode: number) => Object.assign(new Error("x"), { errcode });
+    for (const code of [5, 6, 261, 517, 262]) assert.equal(sqliteBusy(err(code)), true, String(code));
+    for (const code of [1, 8, 11, 13]) assert.equal(sqliteBusy(err(code)), false, String(code));
+    assert.equal(sqliteBusy(new Error("database is locked")), true);
+    assert.equal(sqliteBusy(new Error("database table is locked")), true);
+    for (const e of [new Error("no such table: t"), null, undefined, "database is locked"]) assert.equal(sqliteBusy(e), false, String(e));
   });
 });
 
