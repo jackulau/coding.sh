@@ -2,7 +2,8 @@
 // answers only loopback Host names and local page origins, refuses a body over its limit
 // before and after decompression and a body that does not decode, and bounds how long a
 // client may take to send its headers and its body. The eve evals route it serves for
-// the collector refuses a browser page and a foreign Host before it reads anything.
+// the collector refuses a browser page and a foreign Host before it reads anything. The
+// receiver a run starts for its agent redacts with the rules the run was given.
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { request } from "node:http";
@@ -10,9 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { gzipSync } from "node:zlib";
+import { createRedactor } from "../../src/core/redact.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { createEveEvalsHandler, EVE_EVALS_PATH } from "../../src/integrations/eve/evals.ts";
 import { type Receiver, startReceiver } from "../../src/otel/receiver.ts";
+import { startRunReceiver } from "../../src/runner/otel.ts";
+import { otlpSpan, otlpTraces, sAttr } from "../otel/_encode.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 
 const dirs: string[] = [];
@@ -29,9 +33,9 @@ async function receiver(extra: Partial<Parameters<typeof startReceiver>[0]> = {}
   return { rx, store };
 }
 
-function post(rx: Receiver, path: string, body: string | Uint8Array, headers: Record<string, string>): Promise<number> {
+function post(rx: Receiver | string, path: string, body: string | Uint8Array, headers: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
-    const req = request(new URL(path, rx.url), { method: "POST", headers: { "Content-Length": String(Buffer.byteLength(body)), ...headers }, agent: false }, (res) => {
+    const req = request(new URL(path, typeof rx === "string" ? rx : rx.url), { method: "POST", headers: { "Content-Length": String(Buffer.byteLength(body)), ...headers }, agent: false }, (res) => {
       res.resume();
       res.on("end", () => resolve(res.statusCode ?? 0));
       res.on("error", reject);
@@ -89,5 +93,31 @@ describe("the OTLP receiver", () => {
     assert.equal(await post(rx, EVE_EVALS_PATH, "{}", { ...JSON_TYPE, Origin: "null" }), 403);
     assert.equal(await post(rx, EVE_EVALS_PATH, "{}", { "Content-Type": "text/plain" }), 415, "a body a page could send without asking first");
     assert.deepEqual(readdirSync(root), []);
+  });
+});
+
+describe("the OTLP receiver a run starts for its agent", () => {
+  it("redacts with the rules the run was given, not only the built-in ones", async () => {
+    const store = new MemIndex();
+    const blobs = new MemBlobs();
+    const rx = await startRunReceiver(store, blobs, createRedactor({ redact: ["secrets", "email"], patterns: ["ticket-[0-9]{5}"] }));
+    try {
+      const trace = "4bf92f3577b34da6a3ce929d0e0e4736";
+      const tool = otlpSpan(trace, "a000000000000002", "a000000000000001", "execute_tool Bash", [
+        sAttr("gen_ai.operation.name", "execute_tool"),
+        sAttr("gen_ai.tool.name", "Bash"),
+        sAttr("gen_ai.tool.call.id", "c1"),
+        sAttr("gen_ai.tool.call.arguments", JSON.stringify({ command: "gh issue close" })),
+        sAttr("gen_ai.tool.call.result", "closed ticket-48151 for dana@example.org"),
+      ], 10, 20);
+      const root = otlpSpan(trace, "a000000000000001", undefined, "invoke_agent ops", [sAttr("gen_ai.operation.name", "invoke_agent")], 0, 100);
+      assert.equal(await post(rx.endpoint, "/v1/traces", JSON.stringify(otlpTraces("agent", [root, tool])), JSON_TYPE), 200);
+      const stored = [JSON.stringify(store.all()), ...[...blobs.data.values()].map((b) => Buffer.from(b).toString())].join("\n");
+      assert.match(stored, /\[redacted:pattern\]/, "the tool result was stored, redacted");
+      assert.doesNotMatch(stored, /ticket-48151/);
+      assert.doesNotMatch(stored, /dana@example\.org/);
+    } finally {
+      await rx.close();
+    }
   });
 });

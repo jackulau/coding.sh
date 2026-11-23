@@ -49,7 +49,7 @@ export interface RunTaskOpts {
   cellKey?: string;
   /** The agent release this run starts on (runner/release.ts), stamped on the result. */
   agentVersion?: string;
-  /** Redacts the verifier output kept on the result (default: the built-in secret rules). Pass one built from capture.redact. */
+  /** Redacts the verifier output kept on the result, and what the agent exports with `otel: true` (default: the built-in secret rules). Pass one built from capture.redact. */
   redactor?: Redactor;
   /** Extra test globs for the tamper check (on top of the defaults and task.meta.testGlobs). */
   testGlobs?: string[];
@@ -267,7 +267,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       env.HOME = layout.home;
     }
     if (opts.otel) {
-      const o = opts.otel === true ? (ownReceiver = await startRunReceiver(index, blobs)) : opts.otel;
+      const o = opts.otel === true ? (ownReceiver = await startRunReceiver(index, blobs, redactor)) : opts.otel;
       Object.assign(env, otelEnv(runId, adapter.id, o.endpoint, { OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES, ...env }));
       result.traceId = runTraceContext(runId).traceId;
     }

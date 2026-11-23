@@ -2279,8 +2279,9 @@ row's `withinTaskArm.tasks` is the number of tasks behind its CI.
 - a `TRACEPARENT` whose trace id is derived from the run id,
 - for Claude Code, `CLAUDE_CODE_ENABLE_TELEMETRY=1` and the OTLP exporter settings.
 
-Spans and logs the agent exports are stored with the run's id, and a span that carries
-`session.id` joins that session, which then belongs to the run. Each run records its `traceId`.
+Spans and logs the agent exports are stored with the run's id, redacted with your
+`capture.redact` and `capture.redactPatterns` rules, and a span that carries `session.id` joins
+that session, which then belongs to the run. Each run records its `traceId`.
 Setup and the verifier never see these variables. Without `--otel`, the agent's environment is
 unchanged.
 
