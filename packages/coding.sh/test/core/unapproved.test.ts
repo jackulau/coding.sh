@@ -147,6 +147,22 @@ describe("unapproved-action flag", () => {
     assert.equal(s.stats.unapprovedActions, undefined);
   });
 
+  test("a force push through Antigravity's run_command or Droid's Execute is flagged as through Bash", () => {
+    // Shaped as the adapters store them (test/fixtures/adapters/antigravity, droid).
+    const shells: [string, Record<string, unknown>][] = [
+      ["Bash", { command: "git push --force" }],
+      ["run_command", { CommandLine: "git push --force", Cwd: "/work/demo" }],
+      ["Execute", { command: "git push --force" }],
+    ];
+    for (const [tool, input] of shells) {
+      const id = `t${++n}`;
+      const events = [prompt("now fix the failing test"), ev("tool.start", { tool, toolUseId: id, input }), ev("tool.end", { tool, toolUseId: id, ok: true })];
+      const u = detectUnapproved(events);
+      assert.deepEqual([u?.count, u?.first.kind, u?.first.command], [1, "git-push-force", "git push --force"], tool);
+      assert.ok(buildSession(events).flags.includes(FLAGS.unapprovedAction), tool);
+    }
+  });
+
   test("approval lasts until the next user turn", () => {
     const events = [prompt("reset the repo to origin/main"), ...bash("git reset --hard origin/main"), prompt("now fix the failing test"), ...bash("git reset --hard")];
     const u = detectUnapproved(events);

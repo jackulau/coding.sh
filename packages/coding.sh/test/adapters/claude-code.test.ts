@@ -12,7 +12,7 @@ import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { toMetadata } from "../../src/core/redact.ts";
 import { reparse } from "../../src/core/reparse.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import type { SpoolLine } from "../../src/core/types.ts";
+import type { Adapter, SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent, Usage } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
@@ -505,6 +505,31 @@ describe("claude-code backfill", () => {
     assert.ok(some.some((e) => e.ts < cut));
     // A window that opens after the file was last written leaves the file out.
     assert.equal((await collect(claudeCode.backfill!(ctx, { since: Date.now() + 86_400_000 }))).length, 0);
+  });
+
+  // Dogfood: after `ingest --backfill --since`, each read's tail import (no window) read every transcript the
+  // window had imported whole again.
+  it("a transcript imported whole under a window is not read again without one", async () => {
+    const reads: string[] = [];
+    const spy: Adapter = {
+      ...claudeCode,
+      backfill: (ctx, o = {}) =>
+        claudeCode.backfill!(ctx, {
+          ...o,
+          changed: async (f) => {
+            const r = await o.changed!(f);
+            if (r) reads.push(f.path);
+            return r;
+          },
+        }),
+    };
+    const base = { config: defaultConfig(), index: new MemoryIndexStore(), blobs: new MemoryBlobStore(), adapters: [spy], env: process.env };
+    const first = await backfill({ ...base, since: Date.parse("2026-11-01T10:00:25.000Z") });
+    assert.deepEqual(first.errors, []);
+    assert.ok(first.events > 0 && reads.length > 0);
+    reads.splice(0);
+    const again = await backfill(base);
+    assert.deepEqual([again.events, reads], [0, []]);
   });
 });
 

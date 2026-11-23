@@ -6,6 +6,7 @@
 // Pure: rules over the event list, no model, no I/O.
 import type { AgentEvent } from "../schema/index.ts";
 import { globRe, normalizeTracePath, shellCommand, shellDiffOrigin, shellWrites, type ShellDiffOrigin } from "./shell-diff.ts";
+import { isShellCall } from "./shell-tools.ts";
 
 export { normalizeTracePath, shellWrites, stripHeredocs, type ShellWrite } from "./shell-diff.ts";
 
@@ -496,7 +497,8 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     const id = str(p.toolUseId);
     const cmd = shellCommand(str(p.tool), p.input);
     if (cmd === undefined) return;
-    if (id !== undefined && (s.shells ??= []).push([id, cmd]) > RECENT_SHELLS) s.shells.shift();
+    // shellDiffOrigin reads only a shell call's command: a file change by a Codex code-mode cell (exec with JavaScript) is an edit.
+    if (id !== undefined && isShellCall(str(p.tool) ?? "", p.input) && (s.shells ??= []).push([id, cmd]) > RECENT_SHELLS) s.shells.shift();
     const skips = shellSkips(cmd);
     for (const w of shellWrites(cmd)) {
       const path = normalizeTracePath(w.path, cwd);

@@ -598,9 +598,11 @@ function agentPromptMarks(ctx: NormalizeContext, p: SessionPlan, events: AgentEv
   return em.events;
 }
 
-async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number): AsyncIterable<AgentEvent> {
+/** `whole` is called once every session of the thread was yielded, none left out by the window. */
+async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number, whole?: () => void): AsyncIterable<AgentEvent> {
   const plans = plansFor(t, primary, starts);
   const person = personStarted(t, rows);
+  let cut = false;
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
@@ -620,12 +622,35 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
     // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
     // cutoff lost its T3 attribution and thread title.
     if (since === undefined || events.some((e) => e.ts >= since)) yield* events;
+    else if (events.length) cut = true;
   }
+  if (!cut) whole?.();
 }
 
 // ---------------------------------------------------------------- v2 store
 
 const hasTable = (db: DatabaseSync, name: string): boolean => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+
+/**
+ * What a v2 thread's change check reads besides its row: each query gives a thread a number `n` (a row count, or its
+ * newest event's sequence) and, for rows that change in place, their newest time `t`. The check adds up the numbers.
+ * T3 Code deletes no messages or turn items, and a thread's newest event sequence grows with each write to the
+ * thread, so each write changes the sum.
+ */
+export const V2_ACTIVITY = {
+  // Counts only, which an index on thread_id answers. T3 Code sets a thread's updated_at with each message or turn
+  // item it writes, so an edit in place changes the thread row, unless a command then writes back an updated_at it
+  // read before the edit: `events` catches that. A row's own updated_at sits beside its payload: reading it read the
+  // whole turn items table on every pass.
+  messages: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_messages GROUP BY thread_id",
+  turnItems: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_turn_items GROUP BY thread_id",
+  providerTurns: "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id",
+  // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
+  runtimeRequests: "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id",
+  // A thread's newest event, one index seek a thread. T3 Code appends an event in the same transaction as each write
+  // to a thread's rows, and its pruning keeps each thread's newest event, so the sequence only grows.
+  events: "SELECT t.thread_id, (SELECT MAX(e.sequence) FROM orchestration_events e WHERE e.aggregate_kind = 'thread' AND e.stream_id = t.thread_id) n FROM orchestration_v2_projection_threads t",
+};
 
 /** Per-thread activity summary (row counts and latest timestamp) for change detection. */
 function activity(db: DatabaseSync, sql: string): Map<string, { n: number; t: number }> {
@@ -1040,13 +1065,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
           runPt.db = db;
         }
       });
-      acts.push(
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_messages GROUP BY thread_id"),
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_turn_items GROUP BY thread_id"),
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id"),
-        // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
-        activity(v2.db, "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id"),
-      );
+      acts.push(...Object.values(V2_ACTIVITY).map((sql) => activity(v2.db, sql)));
     }
     if (v1) {
       const db = v1.db;
@@ -1066,9 +1085,13 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         opts.copied?.(primaryOf(thread), cover.owner);
         continue;
       }
+      let whole: (() => void) | undefined;
       if (opts.changed) {
         const act = acts.map((m) => m.get(thread.id)).filter((a): a is { n: number; t: number } => a !== undefined);
-        if (!(await opts.changed(await threadFile(native, path, thread, act)))) continue;
+        const file = await threadFile(native, path, thread, act);
+        if (!(await opts.changed(file))) continue;
+        // Read whole although a window was given: a wider window later finds nothing more in it.
+        whole = () => opts.whole?.(file);
       }
       let rows: StoreRows;
       try {
@@ -1081,7 +1104,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         if (!sqliteShapeError(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
         continue; // schema drift in one thread's rows: skip it, keep the rest
       }
-      yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since);
+      yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since, whole);
     }
   } finally {
     v2?.close();
