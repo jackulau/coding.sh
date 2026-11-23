@@ -1,4 +1,4 @@
-// coding.sh usage [--by agent|model|agent-model|day|repo|mcp|skill|subagent] [--since 30d] [--agent ...] [--reprice]
+// coding.sh usage [--by agent|model|agent-model|day|repo|mcp|skill|subagent] [--since 30d] [--agent ...] [--repo ...] [--reprice]
 //
 // Tokens per group with turns, tokens per turn and cache-read share: the CLI
 // face of the MCP usage tool (same numbers). `--by agent-model` compares
@@ -23,7 +23,8 @@ import type { IndexStore } from "../../core/types.ts";
 import type { Session } from "../../schema/index.ts";
 import { mcpCallsOf, type McpCall } from "../../core/mcp-usage.ts";
 import { apportion, lookupPrice, pricesFor, TOKEN_TYPES, type Prices } from "../../core/pricing.ts";
-import { SPLIT_LABEL, type ScanQuery } from "../../mcp/data.ts";
+import { parsePlace, SPLIT_LABEL, type ScanQuery } from "../../mcp/data.ts";
+import { userHome } from "../../core/paths.ts";
 
 const fmt = (n: number | undefined): string => (n === undefined ? "-" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 const pct = (n: number | undefined): string => (n === undefined ? "-" : `${Math.round(n * 100)}%`);
@@ -135,6 +136,10 @@ export async function run(c: CommandContext): Promise<number> {
   const agents = agentsFlag(c);
   const userWhere = whereFlag(c);
   const { agent, where } = agentScope(agents, userWhere);
+  // --repo reads a path or a repo name as sessions --repo and a repo budget do.
+  const repo = str(c.flags.repo);
+  if (repo !== undefined && !repo.trim()) throw new UsageError("--repo needs a path or a repo name", { reason: "invalid_argument" });
+  const place = repo !== undefined ? parsePlace(repo, c.cwd, userHome(c.env)) : undefined;
   // Nothing matched: an --agent or flag: value typed wrong is named, as `sessions` does.
   const rejectTypos = async (index: Parameters<typeof rejectAgentTypos>[0]) => {
     await rejectAgentTypos(index, agents);
@@ -151,6 +156,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (attributed) {
       const scan: ScanQuery = { since, topLevel: false };
       if (agent) scan.agent = agent;
+      if (place) scan.place = place;
       if (where) scan.query = where;
       const r = await attributedUsage(ctx.index, scan, by as AttributedGroup, limit, cap, pricesFor(ctx.config.pricing)).catch((e) => Promise.reject(queryCliError(e)));
       if (!r.groups.length) await rejectTypos(ctx.index);
@@ -171,7 +177,9 @@ export async function run(c: CommandContext): Promise<number> {
       if (r.window.truncated) out.warn(stoppedAfter(cap));
       return 0;
     }
-    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit, { cap, baseline }).catch((e) => Promise.reject(queryCliError(e)))) as {
+    const q: ScanQuery = { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) };
+    if (place) q.place = place;
+    const r = (await usage(ctx.index, q, by as (typeof USAGE_GROUPS)[number], limit, { cap, baseline }).catch((e) => Promise.reject(queryCliError(e)))) as {
       window: { truncated?: boolean; [k: string]: unknown };
       groups: Row[];
       total: Row;

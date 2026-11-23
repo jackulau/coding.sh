@@ -44,7 +44,10 @@ are derived from those sessions on read. Nothing is filed.
   ran shows on every item that lists the PR. Absent when no session touched a PR.
   `coding.sh work` prints them on the item's line ("PR #12 merged", "PRs #12, #14 open"),
   `work show` lists each with its URL, `work --json` and the MCP `work` tool carry them, and the
-  Work page shows each as a link to its URL.
+  Work page shows each as a link to its URL. `work` and `work show` write a PR of the item's repo
+  as `#12` and one of another repo as `owner/name#12`. In a linked worktree the main checkout's
+  folder names the item's repo, and `work --json` and the MCP `work` tool give that checkout's
+  root as `repoMain`, absent in a main checkout.
 
 ## Workflow runs
 
@@ -131,7 +134,10 @@ through T3's store, whichever agent it runs.
    first.
 2. **Failed**: no session in the item is running or waiting, and its main session ended on API
    errors (the `api-stall` flag, shown as "api 529") or with failing tests. Items that failed on
-   one API cause are also counted as a group ("api 529 x4"). Newest first.
+   one API cause are also counted as a group ("api 529 x4"). Newest first. The reason gives the
+   failed session's end ("ended 6h ago on api 529"). When the item has more than one session, it
+   says whose end that is: "main session ended 6h ago", or in a workflow run "failed agent" (the
+   newest failed agent when several failed: "last failed agent").
 3. **Stalled**: a session in the item has no end, waits on nothing, and has been quiet for the
    derail stall threshold (15 minutes) or longer. For agents that report no prompts, the row says
    it may be waiting on approval. Oldest first.
@@ -223,9 +229,11 @@ has no kind yet.
 
 `stageWhy` gives the evidence in one line. A failure or a quoted question is cut to keep the line
 within 80 characters; counts and ages are never cut. Examples: "waits 2m for permission: …",
-"running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, stopped 4m ago",
-"changed 3 files, stopped 12m ago", or "acknowledged: changed 3 files, stopped 12m ago". The
+"running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, last active 4m ago",
+"changed 3 files, last active 12m ago", or "acknowledged: changed 3 files, last active 12m ago". The
 running time counts from the item's first session; a stalled item says how long it has been quiet.
+"Last active" is the item's last activity over all its sessions, as `work show` gives it on its
+Started row, so it can be later than the failed session's end in the reason.
 
 ## Acknowledging and snoozing
 
@@ -280,7 +288,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
   that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with
-  `updatedAt` (and `stale: true` while stale). Both are absent until an ingest records its time.
+  `updatedAt`, `ageMs` (and `stale: true` while stale). Both are absent until an ingest records its time.
+  It says the rest of what the MCP `status` tool says, from the same code (`src/cli/status-info.ts`):
+  a Last capture row names the agents that captured a session in the window, most recent first,
+  three and then "+N more", and an Update row appears when the update check's cache names a newer
+  release. Its JSON has `version`, `update` (read from that cache, with no network) and
+  `lastCapture`: per agent, its session active last, with `agent`, `at`, `sessionId` and `shortId`.
 - The statusline adds "N need you" when items are blocked on you or failed and are neither
   probably closed nor superseded, and its JSON a `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
@@ -304,6 +317,11 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   window, with acks and snoozes applied. `more` counts the items left out, and `rest` names
   `coding.sh work --json`, which lists them. The tool stays
   read-only: ack and snooze stay with the user.
+- The MCP `work` tool pages the queue as `work --json` gives it, with `limit` and `cursor`, and
+  the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
+  `work show` finds it (an item id, a prefix of one, or the id of a session in the item, hidden or
+  not), shaped as an item of a page. An unknown id is a tool error, and so is a prefix several
+  items share, which lists them newest first.
 
 The new stats and fields are optional. One existing field changed: a session whose events stop on a
 tool call with no result, with no session end, has no `endedAt`.
@@ -335,12 +353,18 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   `work show` agree on the files changed.
 - `test/cli/index-age.test.ts`: with a record 3 hours old, `work` prints the stale-index header,
   a session active 5 minutes before the record is running, not stalled, and `status --json` has
-  `index.updatedAt`. A record a minute old, or none, changes nothing.
+  `index.updatedAt` and `index.ageMs`. A record a minute old, or none, changes nothing.
+- `test/cli/status-parity.test.ts`: on a store with five agents, `status --json` and the MCP
+  `status` tool give the same `version`, `update`, `lastCapture` and `index.ageMs`; the update
+  comes from the cache file with no network call; the text has the Last capture and Update rows.
 - `test/core/ingest-last.test.ts`: an ingest writes the record, one that finds nothing new too, with
   no temp file left beside it; a failed ingest leaves the record before it.
 - `test/cli/work.test.ts`: the recorded workflow fixture `test/fixtures/workflows/claude-code-running`
   gives one item, keyed by its missing root. It also runs `--json`, `show`, `ack` and `snooze` on a
   seeded store, and checks that an unknown id exits 1 and a bad duration is a usage error.
+- `test/cli/work-worktree-prs.test.ts`: items whose sessions ran in linked worktrees of `/work/demo`
+  print the PRs of `owner/demo`, opened or linked, as `#N` and one of `owner/other` in full, in
+  `work` and `work show`; `work --json` gives them `repoMain`, and an item in the main checkout none.
 - `test/core/waiting.test.ts`: the Claude Code subagents fixture with a permission prompt spliced
   in mid-run stays blocked across the subagent's `subagent.end`, and clears on the open call's
   `tool.end`. The Gemini CLI hook fixture's `ToolPermission` notification blocks. `idle_prompt`
@@ -359,7 +383,9 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   bucket order, API groups, harness and host children, snoozes, and a corrupt overlay. For stages
   it has one test per rule, and checks that an acked blocked item stays approval, an acked review
   item becomes done, a snoozed review item stays review, a failed item with no change is review
-  with kind research, and the stage counts include hidden items.
+  with kind research, and the stage counts include hidden items. A failed item with a child active
+  after the failure says "main session ended 6h ago" in its reason and "last active 4h ago" in its
+  stage; `test/core/work-workflow.test.ts` checks the same for a run's failed agents.
 - `test/cli/work.test.ts` also checks that `work --stage executing --json` lists only the running
   item that changed a file, that `--stage done` lists hidden items, and that `--stage reveiw` exits
   2 and suggests `review`.

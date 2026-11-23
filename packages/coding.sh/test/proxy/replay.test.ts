@@ -15,6 +15,7 @@ import { startProxy } from "../../src/proxy/server.ts";
 import { openStores } from "../../src/store/factory.ts";
 import { anthropicStream, call, startUpstream, type Upstream } from "./_helpers.ts";
 import { CLI } from "../_cli.ts";
+import { NO_USER_SHELL, runEnvLines } from "../cli/_env-lines.ts";
 
 const AGENT_KEY = "sk-ant-oat01-AGENTLOGINAGENTLOGINAGENTLOGIN-abcdefAA";
 const USER_KEY = "sk-ant-api03-REPLAYKEYREPLAYKEYREPLAYKEY-abcdefAA";
@@ -152,6 +153,27 @@ describe("CLI: exp replay", () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
     assert.equal(replays.length, 0);
+  });
+
+  it("names the key as the user's shell sets it, in a line that runs as printed, and the same replay with --dry-run", async () => {
+    const before = replays.length;
+    const next = async (extra: NodeJS.ProcessEnv) => {
+      const r = await cli([`${SESSION}#1`, "--vary", "model=claude-haiku-4-5", "--json"], extra);
+      assert.equal(r.status, 1, r.stderr);
+      const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
+      assert.ok(line, r.stderr);
+      return (JSON.parse(line) as { next: string[] }).next;
+    };
+    // The note after the line is a comment in sh and in PowerShell, so the whole line runs.
+    const why = "   # the agent's own login is never stored, so it can't be reused; a subscription token in $CLAUDE_CODE_OAUTH_TOKEN works too";
+    const sh = [`export ANTHROPIC_API_KEY=...${why}`, `See the cost first: coding.sh exp replay '${SESSION}#1' --vary model=claude-haiku-4-5 --json --dry-run`];
+    assert.deepEqual(await next({ SHELL: "/bin/bash" }), sh);
+    // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows.
+    const plain = await next({});
+    const ps = [`$env:ANTHROPIC_API_KEY = '...'${why}`, `See the cost first: codingsh exp replay "${SESSION}#1" --vary model=claude-haiku-4-5 --json --dry-run`];
+    assert.deepEqual(plain, process.platform === "win32" ? ps : sh);
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain[0]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    assert.equal(replays.length, before);
   });
 
   it("refuses an estimate over --max-cost", async () => {

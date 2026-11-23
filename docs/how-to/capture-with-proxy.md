@@ -36,6 +36,9 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4320
 export OPENAI_BASE_URL=http://127.0.0.1:4320/v1
 ```
 
+In PowerShell, `codingsh proxy env` prints them as `$env:` lines, and
+`codingsh proxy env | Invoke-Expression` sets them.
+
 Run your app as usual. This script labels a GitHub issue. The `x-coding-sh-session` header puts
 every call it makes in one session:
 
@@ -179,14 +182,19 @@ coding.sh proxy --enforce-budget
 With `--enforce-budget`, a model call that a [budget](https://coding.sh/docs/cost#set-a-budget)
 over its limit applies to gets a 429 and never goes upstream. The body uses the vendor's error
 shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
-its limit, its estimated spend and when it resets. `Retry-After` gives the seconds until the
-reset.
+its limit, its estimated spend and when it resets.
+
+The body also names the command that shows the budgets, as the shell the proxy started in runs it
+(`codingsh budget status` in PowerShell or cmd). `Retry-After` gives the seconds until the reset,
+and `x-should-retry: false` makes the Anthropic and OpenAI SDKs raise the 429 at once instead of
+retrying.
 
 Which budgets the proxy can match:
 
 - A budget with no `--agent`, `--repo` or `--where` applies to every call.
 - A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
-  their headers. Every other client's calls count as agent `proxy`.
+  their headers. Every other call, including a Codex call that sends no session id, is stored and
+  counted as agent `proxy`.
 - A budget with `--repo` or `--where` never blocks a call, and the proxy does not read its spend:
   the proxy does not know a call's repo or session.
 
@@ -256,6 +264,7 @@ latest call first. Only hashes are printed, never the descriptions. Every flag:
 | Each call is its own `proxy-<hash>` session | Send `x-coding-sh-session: <id>`. Claude Code and Codex send their session id themselves. |
 | `diff-calls` says "is the first model call of its session; name two calls" | The call has no earlier call in its session. Pass two call ids. |
 | Nothing is logged | `coding.sh proxy status`, then check that the client reads the base URL from step 2. |
+| `proxy env` says `No proxy answers on http://127.0.0.1:4320` | No proxy runs on that port. `coding.sh proxy --background` starts one. The note goes to stderr; the lines `proxy env` prints stay the same. |
 | Port 4320 is in use | `coding.sh proxy --port 0` picks a free port; `proxy env` prints it. |
 
 :::more What the proxy forwards and stores
@@ -299,6 +308,10 @@ key's project. See [Self-host for a team](https://coding.sh/docs/how-to/self-hos
 coding.sh uninstall --proxy        # stop routing agents through the proxy, keep the hooks
 coding.sh proxy stop
 ```
+
+`proxy stop` asks the proxy to stop over its own port, with a secret from `~/.coding.sh/proxy.json` (mode 600 where the OS has file modes). The proxy stops listening, lets the calls in flight finish, and exits. A request without the secret gets an error and changes nothing.
+
+If the proxy is still running after 10 seconds, `proxy stop` ends it and says so. A proxy that an older version started is stopped with a signal, as before.
 
 ## Next steps
 

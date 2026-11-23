@@ -108,8 +108,9 @@ Subagents
 ```
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
-session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
-with work in it; eval, compare and experiment trials count only when there is nothing else.
+session id, a unique prefix (4+ characters), [an `x_` alias](../concepts.md#session) or `latest`.
+`latest` is your newest session with work in it; eval, compare and experiment trials count only
+when there is nothing else.
 
 A failed model call shows its status and error on its `llm` line; the Model errors row counts
 them. When a source records only model calls (the proxy, or an SDK call outside `trace()`), the
