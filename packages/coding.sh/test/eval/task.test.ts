@@ -329,6 +329,25 @@ describe("instruction for sessions without a user prompt (coding.sh run)", () =>
     assert.equal(instructionFromArgs(["-p", "--verbose"]), undefined);
     assert.equal(instructionFromArgs([]), undefined);
   });
+  it("instructionFromArgs passes over code, settings and paths with a space in them", () => {
+    // `coding.sh run -- sh -c "npm run build"` ran a script, not an agent given a prompt.
+    assert.equal(instructionFromArgs(["-c", "npm run build"]), undefined);
+    assert.equal(instructionFromArgs(["-e", "console.log(1 + 1)"]), undefined);
+    assert.equal(instructionFromArgs(["/c", "npm run build"]), undefined);
+    assert.equal(instructionFromArgs(["-NoProfile", "-Command", "npm run build"]), undefined);
+    // `env "GREETING=hello world" my-agent`: a setting, then the program.
+    assert.equal(instructionFromArgs(["GREETING=hello world", "my-agent"]), undefined);
+    assert.equal(instructionFromArgs(["GREETING=hello world", "my-agent", "fix the failing test"]), "fix the failing test");
+    // A path with a space in it, after a flag or on its own, and the prompt before it.
+    assert.equal(instructionFromArgs(["fix the failing test", "--config", "/srv/my configs/agent.toml"]), "fix the failing test");
+    assert.equal(instructionFromArgs(["--config", "my configs/agent.toml"]), undefined);
+    assert.equal(instructionFromArgs(["C:\\My Files\\notes.md"]), undefined);
+    assert.equal(instructionFromArgs(["./my notes.md"]), undefined);
+    assert.equal(instructionFromArgs(["~/my notes.md"]), undefined);
+    // A slash command is a prompt, and a prompt flag's value is taken as given.
+    assert.equal(instructionFromArgs(["/review the diff"]), "/review the diff");
+    assert.equal(instructionFromArgs(["-p", "/review src/parser.ts"]), "/review src/parser.ts");
+  });
   it("readInstructionArg reads text or @FILE", async () => {
     const dir = await tempDir();
     dirs.push(dir);
