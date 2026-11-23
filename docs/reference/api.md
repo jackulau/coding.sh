@@ -774,7 +774,7 @@ prints `-` under TOOLS and `show` says so on its Turns row.
 
 | Field | Meaning |
 |---|---|
-| `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). A T3 Code thread whose first prompt a person sent is `interactive`, whatever its agent's start says (T3 Code's `host-link` notification carries `launch`). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
+| `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). A T3 Code thread whose first prompt a person sent is `interactive`, whatever its agent's start says (T3 Code's `host-link` notification carries `launch`), unless another agent's import reads its session (OpenCode, Cursor, Pi). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
 | `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. Absent for other sessions |
 
 - A fork subagent's session holds only its own model calls, so the parent's calls count once, in the parent. The fork's reads of the inherited context from the prompt cache count in its `usage`.
@@ -865,10 +865,17 @@ Limits:
   transcript has none; its questions, plans and turns still count. A transcript's quiet markers end
   no wait.
 - Turn waits, steers and `agent` need a session launched interactively; one with no launch mode has
-  none. A T3 Code thread is interactive when its store says the person sent its first prompt.
+  none. A T3 Code thread is interactive when its store says the person sent its first prompt, unless
+  another agent's import reads its session (OpenCode, Cursor, Pi). Those prompts are not read from
+  T3 Code's store, so an agent's prompt would count as the person's.
 - Who sent a prompt: T3 Code's v2 store says when an agent made a message; a v1 store does not.
-- For other agents, and for a T3 Code thread read from its agent's own transcript or captured live,
-  only task notifications and T3 Code's delegated-task notices are told apart, by their text.
+- In a T3 Code thread read from its agent's own transcript (Codex, Claude Code), a prompt is an
+  agent's when the store has a message an agent made with the same text, sent before the prompt or
+  up to 5 seconds after it. A hook's live copy of that prompt is the agent's when it is the prompt
+  closest to that time, within 5 seconds, so a prompt the person sends that close may count as the
+  agent's. Text T3 Code changed before sending it does not match.
+- For other agents, only task notifications and T3 Code's delegated-task notices are told apart, by
+  their text.
 - A session read from a Claude Code transcript shows no steers: there, each prompt ends the turn
   before it.
 - A permission prompt in a subagent counts in its parent's session when the hook does not name the

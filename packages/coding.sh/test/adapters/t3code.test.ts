@@ -1098,3 +1098,150 @@ describe("T3 prompts an agent made, and threads a person started", () => {
     assert.equal((await index.getSession("grok-unknown"))?.stats.waits, undefined);
   });
 });
+
+describe("T3 prompts an agent made, in a thread read from its Codex or Claude transcript", () => {
+  // The transcript does not say who made a prompt; T3's store does. Each thread: the person's
+  // prompt and a turn, another thread's message after the turn ended, a notification while the
+  // next turn ran, then the person's prompt again.
+  const CX = "0193cccc-1111-7222-8333-444455556666";
+  const CL = "22222222-3333-4444-8555-666666666666";
+  const OC = "ses_0a1b2c3d4e5f60718293a4b5c6";
+  const base = Date.parse(T(0));
+  const at = (ms: number) => new Date(base + ms).toISOString();
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+
+  /** A Codex rollout as T3 Code's app-server writes it: item_completed prompts and replies. */
+  function rollout(): string {
+    const lines: [number, string, Record<string, unknown>][] = [];
+    const item = (ms: number, turn: string, id: string, type: "UserMessage" | "AgentMessage", text: string) =>
+      lines.push([ms, "event_msg", { type: "item_completed", thread_id: CX, turn_id: turn, item: type === "UserMessage" ? { type, id, content: [{ type: "text", text, text_elements: [] }] } : { type, id, content: [{ type: "Text", text }], phase: "final_answer" }, started_at_ms: base + ms, completed_at_ms: base + ms }]);
+    const turn = (id: string, start: number, end: number, body: () => void) => {
+      lines.push([start - 1, "turn_context", { turn_id: id, cwd: "/work/demo", model: "gpt-5.5" }]);
+      lines.push([start, "event_msg", { type: "task_started", turn_id: id }]);
+      body();
+      lines.push([end, "event_msg", { type: "task_complete", turn_id: id, last_agent_message: "Done", duration_ms: end - start }]);
+    };
+    lines.push([0, "session_meta", { id: CX, session_id: CX, timestamp: at(0), cwd: "/work/demo", originator: "T3 Code", cli_version: "0.166.0", model_provider: "openai" }]);
+    turn("t1", 100, 60_000, () => {
+      item(500, "t1", "um-1", "UserMessage", "Fix the tests");
+      item(30_000, "t1", "am-1", "AgentMessage", "Fixed: the test waited on a timer.");
+    });
+    turn("t2", 180_100, 300_000, () => {
+      item(180_200, "t2", "um-2", "UserMessage", "Review the diff on the other branch");
+      item(200_000, "t2", "am-2", "AgentMessage", "The diff looks right.");
+      item(240_100, "t2", "um-3", "UserMessage", "Background task finished");
+      item(250_000, "t2", "am-3", "AgentMessage", "Noted.");
+    });
+    turn("t3", 480_200, 540_000, () => {
+      item(480_300, "t3", "um-4", "UserMessage", "Now run the whole suite");
+      item(500_000, "t3", "am-4", "AgentMessage", "All 6 tests pass.");
+    });
+    return lines.map(([ms, type, payload], ordinal) => J({ timestamp: at(ms), type, payload, ordinal })).join("\n") + "\n";
+  }
+
+  /** A Claude transcript as T3 Code's Agent SDK run writes it (entrypoint sdk-ts). */
+  function transcript(): string {
+    const head = { sessionId: CL, cwd: "/work/demo", version: "2.1.300", gitBranch: "main", userType: "external", entrypoint: "sdk-ts" };
+    const lines: Record<string, unknown>[] = [];
+    let n = 0;
+    const user = (ms: number, text: string) => {
+      n++;
+      lines.push({ ...head, type: "user", uuid: `u${n}`, parentUuid: null, timestamp: at(ms), message: { role: "user", content: text }, promptId: `p${n}` });
+    };
+    const reply = (ms: number, text: string) => {
+      n++;
+      lines.push({ ...head, type: "assistant", uuid: `a${n}`, parentUuid: null, timestamp: at(ms), requestId: `req_${n}`, message: { id: `msg_${n}`, type: "message", role: "assistant", model: "claude-opus-4-5", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } });
+    };
+    const ended = (ms: number, durationMs: number) => {
+      n++;
+      lines.push({ ...head, type: "system", subtype: "turn_duration", uuid: `s${n}`, timestamp: at(ms), durationMs, isMeta: true });
+    };
+    user(500, "Fix the tests");
+    reply(30_000, "Fixed: the test waited on a timer.");
+    ended(60_000, 59_500);
+    user(180_200, "Review the diff on the other branch");
+    reply(200_000, "The diff looks right.");
+    user(240_100, "Background task finished");
+    reply(250_000, "Noted.");
+    ended(300_000, 59_900);
+    user(480_300, "Now run the whole suite");
+    reply(500_000, "All 6 tests pass.");
+    ended(540_000, 59_700);
+    return lines.map((l) => J(l)).join("\n") + "\n";
+  }
+
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', 'user', 0, ?, ?, ?)");
+    for (const [th, driver, nativeId] of [["thr-cx", "codex", CX], ["thr-cl", "claudeAgent", CL]] as const) {
+      thread(db, th, { provider: driver, title: "Fix the tests", created: T(0) });
+      providerThread(db, `pt-${th}`, th, driver, nativeId, 1);
+      const said = (id: string, when: string, payload: Record<string, unknown>) => msg.run(`${th}-${id}`, th, when, when, J(payload));
+      said("m1", T(0), { text: "Fix the tests", createdBy: "user" });
+      said("m2", T(3), { text: "Review the diff on the other branch", senderThreadId: "thr-other" });
+      said("m3", T(4), { text: "Background task finished", notification: { kind: "task" } });
+      said("m4", T(8), { text: "Now run the whole suite", createdBy: "user" });
+    }
+    // A thread a person started whose session OpenCode's own adapter imports: its prompts are not read here.
+    thread(db, "thr-oc", { provider: "opencode", title: "create hello.txt", created: T(0) });
+    providerThread(db, "pt-oc", "thr-oc", "opencode", OC, 1);
+    msg.run("thr-oc-m1", "thr-oc", T(0), T(0), J({ text: "create hello.txt", createdBy: "user" }));
+    db.close();
+    writeFile(join(env.home, ".codex", `sessions/2026/11/01/rollout-2026-11-01T10-00-00-${CX}.jsonl`), rollout());
+    writeFile(join(env.home, ".claude", "projects", "-work-demo", `${CL}.jsonl`), transcript());
+    const ocDir = join(env.home, ".local", "share", "opencode");
+    mkdirSync(ocDir, { recursive: true });
+    const oc = new DatabaseSync(join(ocDir, "opencode.db"));
+    oc.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, time_created INTEGER, time_updated INTEGER)");
+    oc.prepare("INSERT INTO session VALUES (?, '/work/demo', 0, 0)").run(OC);
+    oc.close();
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  async function run(adapters: Adapter[]) {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters, env: cenv });
+    assert.deepEqual(r.errors, []);
+    return index;
+  }
+
+  for (const adapters of [[t3code], [codex, claudeCode, t3code]]) {
+    const names = adapters.map((a) => a.id).join(", ");
+    it(`${names}: an agent's prompt after a turn ended or while one ran ends no wait of the person's and is no steer; the person's next prompt ends one`, async () => {
+      const index = await run(adapters);
+      // Codex: a turn wait from 10:01:00 to the other thread's message at 10:03:00.2 (an agent's), the
+      // notification inside the next turn (no steer), then 10:05:00 to the person's prompt at 10:08:00.3.
+      assert.deepEqual((await index.getSession(CX))?.stats.waits, { count: 1, ms: 180_300, byKind: { turn: { count: 1, ms: 180_300 } }, agent: { count: 1, ms: 120_200 } });
+      // Claude: the transcript writes no end for the turn the notification came in; the end it gets is
+      // stamped at the notification's prompt, so no wait comes between them, and the numbers are Codex's.
+      assert.deepEqual((await index.getSession(CL))?.stats.waits, { count: 1, ms: 180_300, byKind: { turn: { count: 1, ms: 180_300 } }, agent: { count: 1, ms: 120_200 } });
+      for (const id of [CX, CL]) {
+        const events = await index.listEvents(id);
+        const prompts = events.filter((e) => e.kind === "user.message");
+        const marks = events.filter((e) => e.kind === "notification" && e.payload.type === "agent_prompt");
+        assert.deepEqual(marks.map((m) => prompts.find((p) => p.id === m.payload.promptId)?.payload.text), ["Review the diff on the other branch", "Background task finished"], id);
+        assert.equal((await index.getSession(id))?.stats.launch, "interactive", id);
+      }
+    });
+  }
+
+  it("a thread a person started whose session another adapter imports (OpenCode) has no launch: its agents' prompts are not told apart", async () => {
+    const index = await run([t3code]);
+    const link = (await index.listEvents(OC, { kinds: ["notification"] })).find((e) => e.payload.type === "host-link");
+    assert.ok(link);
+    assert.equal(link.payload.launch, undefined);
+    assert.equal((await index.getSession(OC))?.stats.launch, undefined);
+  });
+});

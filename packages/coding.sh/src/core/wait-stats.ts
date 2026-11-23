@@ -10,6 +10,11 @@
 //   interactively, not a subagent: waitStatsOf).
 // A turn wait that an agent's prompt ended (a task notification, a delegated result, another
 // thread's message), or that ended when the agent went on by itself, counts apart (`agent`).
+// A prompt is an agent's when its payload says so (from: "agent"), its text is a harness notice,
+// or a host's marker names it (HOST_AGENT_PROMPT: T3 Code's store says who made a prompt that a
+// Codex or Claude transcript holds). A marker names the transcript prompt's event; a live copy
+// of that prompt (a hook's, with its own id) is the prompt that reads as the person's closest
+// to it, within HOST_MARK_SLACK_MS.
 // A prompt the person sent while the main thread's turn ran is a steer.
 // A wait still open counts up to the session's end, a resume, or the last event, as unanswered.
 // A wait counts 12 hours at most: a session with no resume marker (a transcript) picked up days
@@ -20,7 +25,7 @@
 import type { AgentEvent, WaitKind, WaitStats, WaitTotal } from "../schema/index.ts";
 import { DELEGATED_NOTICE, isSyntheticPrompt, percentile } from "./sessions.ts";
 import { QUESTION_TOOL, SPAWN_TOOL } from "./unapproved.ts";
-import { HOST_QUESTION, HOST_RESOLVED, isPermissionNotification, PLAN_TOOL, type WaitingState } from "./waiting.ts";
+import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS, HOST_QUESTION, HOST_RESOLVED, isPermissionNotification, PLAN_TOOL, type WaitingState } from "./waiting.ts";
 
 /** A wait counts this long at most: a longer one is the person away (a session picked up days later). */
 const WAIT_CAP_MS = 12 * 3600_000;
@@ -31,6 +36,8 @@ const WAIT_CAP_MS = 12 * 3600_000;
 const SLACK_MS = 5_000;
 /** Durations kept per kind for the median. */
 const SAMPLES_MAX = 500;
+/** Host markers kept for prompts not yet seen; the oldest go first. */
+const MARKS_MAX = 64;
 /** Claude Code's marker for a turn the person stopped (Esc). */
 const INTERRUPTED = /^\s*\[Request interrupted by user/;
 /** A background task's result, posted to the agent as a prompt (Claude Code). */
@@ -82,6 +89,8 @@ export interface WaitStatsState extends Tally {
   last?: number;
   /** The person's last prompt. */
   lastPrompt?: number;
+  /** Prompts a host marked as an agent's (HOST_AGENT_PROMPT) that have not come yet: the prompt's event id and time. */
+  marks?: { id: string; at: number }[];
 }
 
 export function waitStatsState(): WaitStatsState {
@@ -96,6 +105,36 @@ function promptBy(e: AgentEvent): "person" | "agent" | "interrupt" | undefined {
   if (e.payload.from === "agent" || TASK_NOTICE.test(text) || DELEGATED_NOTICE.test(text)) return "agent";
   if (INTERRUPTED.test(text)) return "interrupt";
   return isSyntheticPrompt(text) ? undefined : "person";
+}
+
+/** A host's marker: the prompt it names is an agent's. */
+function mark(s: WaitStatsState, e: AgentEvent): void {
+  const id = str(e.payload.promptId);
+  const at = e.payload.at;
+  if (!id || typeof at !== "number") return;
+  const marks = (s.marks ??= []);
+  marks.push({ id, at });
+  if (marks.length > MARKS_MAX) marks.splice(0, marks.length - MARKS_MAX);
+}
+
+/**
+ * True when a host marked this main-thread prompt as an agent's: its own event, or with `near`
+ * (a live copy, which has its own id) the marked prompt closest in time, within HOST_MARK_SLACK_MS.
+ * Uses the marker up, and drops markers whose prompt did not come by now.
+ */
+function marked(s: WaitStatsState, e: AgentEvent, near: boolean): boolean {
+  if (!s.marks?.length) return false;
+  const marks = s.marks.filter((m) => m.at >= e.ts - HOST_MARK_SLACK_MS);
+  let at = marks.findIndex((m) => m.id === e.id);
+  if (at < 0 && near) {
+    for (let i = 0; i < marks.length; i++) {
+      const gap = Math.abs(marks[i]!.at - e.ts);
+      if (gap <= HOST_MARK_SLACK_MS && (at < 0 || gap < Math.abs(marks[at]!.at - e.ts))) at = i;
+    }
+  }
+  if (at >= 0) marks.splice(at, 1);
+  s.marks = marks.length ? marks : undefined;
+  return at >= 0;
 }
 
 /** A host request that is not a tool call's: only its resolution ends it. */
@@ -192,12 +231,18 @@ export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: Agent
       // A subagent's prompt is its parent's, not the person's.
       if (thread) break;
       const by = promptBy(e);
-      if (by === "agent") agentPrompt(s, e.ts);
+      // A live copy of a marked prompt reads as the person's: only such a prompt is matched by time.
+      const agent = by === "agent" || by === "person" ? marked(s, e, by === "person" && !backfill) : false;
+      if (by === "agent" || agent) agentPrompt(s, e.ts);
       else if (by === "interrupt") turnEnded(s, e.ts, false);
       else if (by === "person") personPrompt(s, e.ts);
       break;
     }
     case "notification": {
+      if (e.payload.type === HOST_AGENT_PROMPT) {
+        if (!thread) mark(s, e);
+        break;
+      }
       if (e.payload.kind === "task-notification") {
         if (!thread) agentPrompt(s, e.ts);
         break;

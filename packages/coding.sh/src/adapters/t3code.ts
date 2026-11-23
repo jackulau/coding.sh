@@ -24,11 +24,15 @@
 // every session, open until T3 resolves them (core/waiting.ts host requests).
 // Every session also gets a "host-link" notification with payload.via =
 // "t3code"; buildSession then sets agent "t3code" and provider = the agent T3 ran.
-// The host link of a thread a person started (its first prompt is the person's) says
-// launch "interactive". In a session built from the store, a user-role message an agent
-// made (a provider's prompt, an MCP tool, a notification, another thread) is a
+// A user-role message an agent made (a provider's prompt, an MCP tool, a notification,
+// another thread) is not the person's prompt. In a session built from the store it is a
 // user.message with from: "agent". A Codex or Claude transcript does not say who made a
-// prompt, and the codex and claude-code adapters store those events first.
+// prompt, and the codex and claude-code adapters may store its events first: a transcript
+// prompt that is such a message gets a marker notification before it (agentPromptMarks,
+// core/waiting.ts HOST_AGENT_PROMPT). The host link of a thread a person started (its first
+// prompt is the person's) says launch "interactive", except in a session another adapter
+// imports (OpenCode, Cursor, Pi): its prompts are not read here, so an agent's would count as
+// the person's.
 // A thread's first provider thread is top level; later ones (provider switch)
 // and T3 subagent threads are child sessions. Threads that never reached a
 // provider are `t3code-<threadId>`.
@@ -42,7 +46,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { userHome } from "../core/paths.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
-import { HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
+import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS, HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
 import { T3_AGENT } from "../spool/host.ts";
 import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
@@ -512,8 +516,9 @@ function requestEvents(ctx: NormalizeContext, p: SessionPlan, requests: StoreReq
 
 /**
  * The notification that attributes a session to T3 Code, plus the edge to its parent. `launch` is
- * "interactive" for a thread a person started (personStarted); the session's launch is then the
- * host's, not the one its agent's start names (T3 drives Claude Code through the Agent SDK).
+ * "interactive" for a thread a person started (personStarted) whose prompts are read here, from the
+ * store or a Codex or Claude transcript; the session's launch is then the host's, not the one its
+ * agent's start names (T3 drives Claude Code through the Agent SDK).
  */
 function linkEvents(ctx: NormalizeContext, p: SessionPlan, launch?: "interactive"): AgentEvent[] {
   const t = p.thread;
@@ -552,19 +557,64 @@ function personStarted(t: Thread, rows: StoreRows): boolean {
   return t.relation !== "subagent" && rows.messages.find((m) => m.role === "user")?.by === "user";
 }
 
+/** Whitespace-folded text: a store message and the transcript prompt it became compare in this form. */
+const foldText = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Markers (HOST_AGENT_PROMPT) for the prompts of a Codex or Claude transcript that T3's store says an agent made:
+ * the transcript does not say who made a prompt. Each main-thread prompt, in time order, is the store message with
+ * its text (a clipped prompt: a text that starts with the kept part) that was sent at or before it, the latest such
+ * (T3 sends a queued message when the turn before ends), else the first sent up to HOST_MARK_SLACK_MS after it. A
+ * message is matched once. A marker is stamped more than HOST_MARK_SLACK_MS before its prompt, so it comes before a
+ * live copy of the prompt too, and only after the session's start (its host link): a first prompt ends no wait.
+ */
+function agentPromptMarks(ctx: NormalizeContext, p: SessionPlan, events: AgentEvent[], messages: StoreMessage[]): AgentEvent[] {
+  if (!messages.some((m) => m.role === "user" && m.by === "agent")) return [];
+  const pool = messages.filter((m) => m.role === "user").map((m) => ({ m, text: foldText(m.text) }));
+  const prompts = events.filter((e) => e.kind === "user.message" && e.sessionId === p.sessionId && !e.subagentId && typeof e.payload.text === "string").sort((a, b) => a.ts - b.ts);
+  const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: p.thread.cwd }, ["t3", p.sessionId, "by"]);
+  for (const e of prompts) {
+    const raw = e.payload.text as string;
+    const clipped = e.payload.truncated === true;
+    const text = foldText(clipped && raw.endsWith("…") ? raw.slice(0, -1) : raw);
+    if (!text) continue;
+    const same = (c: { text: string }) => (clipped ? c.text.startsWith(text) : c.text === text);
+    let pick: number | undefined;
+    for (let i = 0; i < pool.length; i++) {
+      const c = pool[i]!;
+      if (c.m.ts <= e.ts && same(c) && (pick === undefined || c.m.ts >= pool[pick]!.m.ts)) pick = i;
+    }
+    for (let i = 0; pick === undefined && i < pool.length; i++) {
+      const c = pool[i]!;
+      if (c.m.ts > e.ts && c.m.ts <= e.ts + HOST_MARK_SLACK_MS && same(c)) pick = i;
+    }
+    if (pick === undefined) continue;
+    const { m } = pool.splice(pick, 1)[0]!;
+    const ts = e.ts - HOST_MARK_SLACK_MS - 1;
+    if (m.by !== "agent" || ts <= p.start) continue;
+    em.emit("notification", { type: HOST_AGENT_PROMPT, via: T3_AGENT, promptId: e.id, at: e.ts, message: "T3 Code: an agent sent the next prompt" }, { key: ["by", m.id], ts });
+  }
+  return em.events;
+}
+
 async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number): AsyncIterable<AgentEvent> {
   const plans = plansFor(t, primary, starts);
-  const launch = personStarted(t, rows) ? "interactive" : undefined;
+  const person = personStarted(t, rows);
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
     const path = agent && p.pt?.nativeId ? await native.find(agent, unscope(p.pt.nativeId), t.cwd) : undefined;
     const mine = (x: { pt?: string }) => (p.pt ? x.pt === p.pt.id || (x.pt === undefined && p === plans[0]) : true);
-    if (path && (agent === "codex" || agent === CLAUDE_AGENT)) events = await convertNative(ctx, agent, path, p.sessionId);
-    else if (!path) {
+    // Whether an agent's prompts are told from the person's here: in a session another adapter imports they are not.
+    let told = true;
+    if (path && (agent === "codex" || agent === CLAUDE_AGENT)) {
+      events = await convertNative(ctx, agent, path, p.sessionId);
+      // Every message of the thread: a transcript can hold prompts sent under an earlier provider thread (a fork).
+      events.push(...agentPromptMarks(ctx, p, events, rows.messages));
+    } else if (!path) {
       events = await storeEvents(ctx, p, { messages: rows.messages.filter(mine), turns: rows.turns.filter(mine), items: rows.items.filter(mine), totals: p === plans[0] ? rows.totals : undefined }, primary);
-    }
-    events.push(...linkEvents(ctx, p, launch), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
+    } else told = false;
+    events.push(...linkEvents(ctx, p, person && told ? "interactive" : undefined), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
     // A session with activity inside the window is imported whole, as the codex and claude-code backfills do:
     // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
     // cutoff lost its T3 attribution and thread title.
@@ -1032,7 +1082,7 @@ export const t3code: Adapter = {
   //    request with "no active turn" ends interrupted, not failed.
   // 15 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A provider instance id (claudeHub, codex-work) maps to the agent its driver kind names.
   // 16 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a thread a person started has an interactive launch (host-link launch).
+  // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a notification (HOST_AGENT_PROMPT) names it before its prompt in a Codex or Claude transcript. A thread a person started has an interactive launch (host-link launch), except one another adapter imports (OpenCode, Cursor, Pi).
   parseVersion: 17,
 
   async detect() {

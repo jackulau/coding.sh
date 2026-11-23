@@ -12,7 +12,7 @@ import { codex } from "../../src/adapters/codex.ts";
 import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
 import { buildSession, byTime, foldSession, isBackfillEvent, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import { foldWaitStats, waitStatsOf, waitStatsState } from "../../src/core/wait-stats.ts";
-import { foldWaiting, HOST_QUESTION, HOST_RESOLVED, waitingState } from "../../src/core/waiting.ts";
+import { foldWaiting, HOST_AGENT_PROMPT, HOST_QUESTION, HOST_RESOLVED, waitingState } from "../../src/core/waiting.ts";
 import type { AgentEvent, EventKind, WaitStats } from "../../src/schema/index.ts";
 import { collect, FIXTURES, testCtx, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { normalizeFixture } from "../adapters/more/_helpers.ts";
@@ -123,6 +123,22 @@ describe("prompts an agent made", () => {
   test("an agent's prompt leaves an open question waiting", () => {
     const events = [prompt(0), call(10, "AskUserQuestion", "q1"), ev(20, "user.message", { text: "Status from the other thread", from: "agent" }), done(40, "AskUserQuestion", "q1")];
     assert.deepEqual(stats(events, "headless"), { count: 1, ms: 30_000, byKind: { question: { count: 1, ms: 30_000 } } });
+  });
+
+  test("a prompt a host's marker names is an agent's, and so is a live copy of it, which has its own id", () => {
+    // T3 Code's store says an agent made a prompt a transcript holds: a marker, stamped before it, names the prompt's event and time.
+    const mark = (sec: number, of: AgentEvent) => ev(sec, "notification", { type: HOST_AGENT_PROMPT, via: "t3code", promptId: of.id, at: of.ts }, { agent: "t3code", source: "store" });
+    const told = prompt(70, "Review the diff in the other thread");
+    const byId = [...transcript([prompt(0), turnEnd(10)]), mark(64, told), ...transcript([told, turnEnd(80), prompt(100)])];
+    assert.deepEqual(stats(byId), { count: 1, ms: 20_000, byKind: { turn: { count: 1, ms: 20_000 } }, agent: { count: 1, ms: MIN } });
+    // A hook's copy of the prompt (its own id, a second later): the prompt closest to the marker's time.
+    const live = [prompt(0), turnEnd(10), mark(64, told), prompt(71, "Review the diff in the other thread"), turnEnd(80), prompt(100)];
+    assert.deepEqual(stats(live), { count: 1, ms: 20_000, byKind: { turn: { count: 1, ms: 20_000 } }, agent: { count: 1, ms: 61_000 } });
+    // A transcript's prompt with another id is not the one marked, even at its time; nor a live prompt well after it.
+    const other = [...transcript([prompt(0), turnEnd(10)]), mark(64, told), ...transcript([prompt(70, "Run the suite"), turnEnd(80), prompt(100)])];
+    assert.deepEqual(stats(other), { count: 2, ms: 80_000, medianMs: 20_000, byKind: { turn: { count: 2, ms: 80_000, medianMs: 20_000 } } });
+    const late = [prompt(0), turnEnd(10), mark(64, told), prompt(100, "Run the suite")];
+    assert.deepEqual(stats(late), { count: 1, ms: 90_000, byKind: { turn: { count: 1, ms: 90_000 } } });
   });
 });
 
