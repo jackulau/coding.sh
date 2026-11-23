@@ -152,8 +152,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * 5: each estimate split by token type (`payload.costByTokenType`).
  * 6: `-orchestrator` names, and aliases for names that share no id with their row (`ALIASES`).
  * 7: a token count below 0 or not a finite number bills nothing, and no estimate is made that is not a finite number.
+ * 8: an estimate that no price makes any more is removed (reprice.ts), not kept.
  */
-export const PRICING_RULES_VERSION = 7;
+export const PRICING_RULES_VERSION = 8;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({

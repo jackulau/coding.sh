@@ -183,7 +183,8 @@ cache_write = 3.75
 
 `input` and `output` are required. `cache_read` and `cache_write` are optional and default to the
 input price. `[pricing."<model>"]`, the older spelling, still works; `[prices]` wins a model set in
-both. Stored estimates are recomputed the next time the index opens after a change.
+both. Stored estimates are recomputed the next time the index opens after a change, and an
+estimate that no price makes any more, such as one from a deleted row, is removed.
 
 Long-context and service-tier rates are optional sub-tables:
 

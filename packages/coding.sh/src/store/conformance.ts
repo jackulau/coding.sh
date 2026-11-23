@@ -566,6 +566,16 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.equal(await s.setEventCosts([{ id: call.id, costUsd: 0.004 }]), 1);
       got = await stored();
       assert.deepEqual(got.get(call.id), { ...call, usage: { ...call.usage, costUsd: 0.004 }, payload: { ...rest, costEstimated: true } }, "a cost without price tags removes the old ones");
+
+      // An estimate that no price makes any more is removed: the event is left with no cost and no price tags.
+      assert.equal(await s.setEventCosts([{ id: call.id, costUsd: 0.004, priceTier: "batch", costByTokenType: parts }]), 1);
+      assert.equal(await s.setEventCosts([{ id: call.id, clear: true }, { id: msg.id, clear: true }, { id: "not-stored", clear: true }]), 2, "a clear counts the events found");
+      got = await stored();
+      assert.deepEqual(got.get(call.id), { ...call, payload: rest }, "a clear removes the cost, costEstimated and every price tag");
+      assert.equal(got.get(msg.id)!.usage?.costUsd, undefined, "an event whose usage was only the estimate has no cost");
+      assert.deepEqual(got.get(msg.id)!.payload, { text: "reprice the pangolin ledger" });
+      assert.deepEqual(got.get(reported.id), reported, "a reported cost not named stays");
+      assert.deepEqual((await s.search("pangolin")).map((h) => h.event.id).sort(), [call.id, msg.id].sort(), "search text stays after a clear");
       assert.equal(await s.setEventCosts([]), 0);
       assert.equal(await s.setEventCosts([{ id: "not-stored", costUsd: 1 }]), 0);
     }));

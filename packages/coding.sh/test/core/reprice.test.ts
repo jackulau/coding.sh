@@ -183,6 +183,26 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       assert.equal((await store.getSession("s1"))!.stats.usage?.estimatedCostUsd, 5);
       await store.close();
     });
+
+    it("removes an estimate no price backs any more: once an override that priced a call is removed, the call and the session have no cost", async () => {
+      const store = await open();
+      const evs = [ev("start", { kind: "session.start", ts: 900 }), ev("call", { model: "no-such-model", usage: { inputTokens: M } })];
+      await store.putEvents(evs);
+      await store.upsertSession(buildSession(evs));
+      assert.deepEqual(await repriceStored(store, { "no-such-model": { input: 3, output: 3 } }), { ran: true, events: 1, sessions: 1 });
+      let call = (await store.listEvents("s1")).find((e) => e.id === "call")!;
+      assert.deepEqual([call.usage?.costUsd, call.payload.costEstimated], [3, true]);
+      assert.equal((await store.getSession("s1"))!.stats.usage?.estimatedCostUsd, 3);
+      // The override is gone: no price makes the estimate now.
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 1, sessions: 1 });
+      call = (await store.listEvents("s1")).find((e) => e.id === "call")!;
+      assert.deepEqual(call.usage, { inputTokens: M }, "the call keeps its tokens and has no cost");
+      assert.deepEqual(call.payload, {}, "nor costEstimated or a split");
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.inputTokens, u.costUsd, u.estimatedCostUsd, u.estimatedCostByTokenType], [M, undefined, undefined, undefined]);
+      assert.deepEqual(await repriceStored(store, undefined, { force: true }), { ran: true, events: 0, sessions: 0 }, "a later pass finds nothing to do");
+      await store.close();
+    });
   });
 }
 

@@ -9,6 +9,7 @@ export type {
   Config,
   DatasetListing,
   EvalTask,
+  EventCost,
   FacetCount,
   HarnessBundle,
   IndexStore,

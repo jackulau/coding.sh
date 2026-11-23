@@ -3,7 +3,8 @@
 // price table, are filled in here, in place (same ids):
 // - only calls (and usage snapshots) with tokens and no cost, or with a cost we
 //   estimated earlier (rewritten when the estimate, or its split by token type,
-//   `payload.costByTokenType`, differs); a cost the agent reported is never touched;
+//   `payload.costByTokenType`, differs, and removed when no price backs one now);
+//   a cost the agent reported is never touched;
 // - a call a gateway companion billed (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice. A companion with no billed cost bills nothing, and
@@ -132,6 +133,11 @@ async function repriceSession(index: IndexStore, prev: Session, prices: Prices, 
     const ours = e.payload?.costEstimated === true;
     const priced = priceEvent(ours ? withoutCost(e) : e, prices);
     const cost = priced.usage?.costUsd;
+    // Our estimate, and no price makes one now (the model left the table, an override was removed): it goes.
+    if (ours && typeof cost !== "number") {
+      costs.push({ id: e.id, clear: true });
+      continue;
+    }
     if (priced === e || typeof cost !== "number") continue;
     estimates = true;
     const pricedAs = typeof priced.payload.pricedAs === "string" ? priced.payload.pricedAs : undefined;

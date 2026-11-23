@@ -23,6 +23,7 @@ import {
   type DatasetListing,
   type DatasetVersionInfo,
   type EvalTask,
+  type EventCost,
   type ExperimentResult,
   type FacetCount,
   type HarnessBundle,
@@ -370,10 +371,9 @@ export class ChIndexStore implements IndexStore {
    * Sets an estimated cost on stored events: each changed event gets a new row
    * version (same id, seq and search text), which FINAL reads in place of the old.
    * `pricedAs`, `priceTier` and `costByTokenType` are replaced: set when given, else removed.
+   * An entry with `clear` removes usage.costUsd, costEstimated and those three instead.
    */
-  async setEventCosts(
-    costs: { id: string; costUsd: number; pricedAs?: string; priceTier?: string; costByTokenType?: { input: number; output: number; cacheRead: number; cacheWrite: number } }[],
-  ): Promise<number> {
+  async setEventCosts(costs: EventCost[]): Promise<number> {
     if (!costs.length) return 0;
     const byId = new Map(costs.map((c) => [c.id, c]));
     return this.serial(async () => {
@@ -384,6 +384,12 @@ export class ChIndexStore implements IndexStore {
         const out = rows.map((r) => {
           const c = byId.get(r.id as string)!;
           const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...rest } = parse<Record<string, unknown>>(r.payload) ?? {};
+          if (c.clear) {
+            // No price backs the estimate any more: the event goes back to having no cost.
+            const { costEstimated: _est, ...payload } = rest;
+            const { costUsd: _cost, ...usage } = parse<Record<string, unknown>>(r.usage) ?? {};
+            return { ...r, ver: nextVer(), usage: r.usage == null ? null : JSON.stringify(usage), payload: JSON.stringify(payload) };
+          }
           const usage = { ...parse<Record<string, unknown>>(r.usage), costUsd: c.costUsd };
           const payload: Record<string, unknown> = { ...rest, costEstimated: true, ...(c.pricedAs ? { pricedAs: c.pricedAs } : {}), ...(c.priceTier ? { priceTier: c.priceTier } : {}) };
           if (c.costByTokenType) payload.costByTokenType = c.costByTokenType;
