@@ -44,9 +44,15 @@ validate <task>` checks the verifier both ways. The verifier must pass with this
 a whole test suite that also covers other bugs never passes. Until there is a reference, `eval run`
 lists the task as having no reference solution.
 
-Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). A
-subagent, a `coding.sh run` session, one with no git state at its start, no typed prompt or no
-edits can't become a task and is left out, with a note saying how many. The rest go best first: a
+Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). These
+can't become a task and are left out, with a note saying how many of each: a subagent, a session
+that ran with a run id (`CODING_SH_RUN_ID`, as eval, compare, exp and bench trials do), one with no
+git state at its start, no prompt or no edits, one whose commands mostly publish or deploy, one
+whose repository is no longer on this machine (put it back at the same path to use the session),
+and a `coding.sh run --` session around an agent whose own session was captured inside it (that
+session is the one to use). A `coding.sh run --` session's prompt is its command's prompt argument:
+the value of `-p`, `--prompt`, `--print`, `--message`, `--instruction`, `--task` or `--query` when
+it has a space in it, or else the last argument with a space in it. The rest go best first: a
 failure flag, the user pushing back, a verifier guessable from the commands the session ran, a
 test edited after a failing run, more than one turn and a recent start each add to the score.
 
@@ -99,9 +105,10 @@ coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'
 coding.sh eval run triage
 ```
 
-`cases.jsonl` holds one `{"input": …, "expected": …}` per line. The command gets each input as JSON
-on stdin and prints its answer; `--url` posts it to an HTTP endpoint instead. No cases yet? Describe
-the app and have a model draft some:
+`cases.jsonl` holds one `{"input": …, "expected": …}` per line. A line with the same input and
+expected answer as an earlier one is left out, and `eval run` names it (`duplicates` in `--json`).
+The command gets each input as JSON on stdin and prints its answer; `--url` posts it to an HTTP
+endpoint instead. No cases yet? Describe the app and have a model draft some:
 
 ```sh
 coding.sh eval init triage --describe 'Labels a support ticket billing, bug or other' \
@@ -157,7 +164,9 @@ share of all trials that passed.
   gives the grader's reason, or the agent's exit code and error when it exited non-zero. A task
   with no failed trial shows the error of a trial with no outcome, such as a setup step that
   failed or a refused login. Read failed transcripts before you change a prompt or a grader: a
-  task no trial ever passes is more often a broken task than a hard one.
+  task no trial ever passes is more often a broken task than a hard one. In PowerShell and cmd,
+  this command and the others the report prints name `codingsh`, the bin that runs there
+  ([Windows](install.md#windows)).
 - **experiment** names the stored runs. For a tasks suite there is no experiment record, so
   `coding.sh exp show <id>` lists those runs per task, with the agent's cost at API prices
   (`--json`: `taskRuns`).
@@ -1012,11 +1021,13 @@ rounds as a run that was never interrupted.
   rate up. Each run records its attempts. A trial still failing on infrastructure after its
   retries counts as unknown, not as a failure: it is left out of the pass rate, the run ends
   `incomplete`, and `--resume` runs those trials again.
-- Two more failures are infrastructure, not the task. An agent that is not logged in (`Not logged
-  in`, `Invalid API key · Please run /login`, an HTTP 401) is never retried: a backoff does not
-  bring a login back. A setup step that failed before the agent started (the work folder could
-  not be made, a setup command exited non-zero) is retried once. Either way the trial is unknown,
-  not a fail.
+- Three more failures are infrastructure, not the task. An agent that is not logged in (`Not
+  logged in`, `Invalid API key · Please run /login`, an HTTP 401) is never retried: a backoff does
+  not bring a login back. A setup step that failed before the agent started (the work folder could
+  not be made, a setup command exited non-zero) is retried once, and so is an agent program that
+  could not be started, counted as `setup`. Its trial's reason names the program: `the agent could
+  not start: claude was not found; install it or put it on PATH (spawn claude ENOENT)`, and the
+  verifier does not run. In each case the trial is unknown, not a fail.
 - `--stop-after-infra N` (default 5) stops the run once N trials in a row ended on infrastructure
   after their retries: no new trial starts. The output says `Stopped: 5 trials in a row failed on
   infrastructure (login 5), so the rest did not run and this is no quality verdict`, with what to
@@ -1998,7 +2009,7 @@ output.
 
 When the agent itself exited non-zero or timed out, the failed run says so before the verifier's
 lines, with the last 8 lines of the agent's stderr (cleaned and redacted the same way), and
-`--json` adds `agent: {exitCode, timedOut, stderr}`. An agent that can't start fails every run in
+`--json` adds `agent: {exitCode, timedOut, stderr}`. An agent that exits at once fails every run in
 seconds, and this is where its error shows:
 
 ```
@@ -2007,6 +2018,9 @@ Failed runs:
     the agent exited 1, its stderr ends:
     ! --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons
 ```
+
+A program that could not be started at all (not installed, not on PATH) is an infrastructure
+failure instead, so it is left out here ([retries](#long-runs-resume-retries-status)).
 
 ### Claude Code plugins
 
@@ -3040,7 +3054,8 @@ or a sibling, and a model fills the rest. It reads this git repo's sessions only
 `--repo all` widens that. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
 
 The report gives precision, recall, F1 and accuracy (weighted), Wilson intervals on recall and on
-the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes.
+the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes: for
+each sibling named in `expect_skill`, how many runs of its prompts it took (`docx 2/2`).
 `--description TEXT|@FILE` or `--candidate DIR` adds a second arm. Both arms run the same prompts,
 interleaved in a seeded order. The delta is a paired bootstrap CI on per-prompt accuracy, plus
 McNemar at k=1, an exact sign-flip test over prompts and the prompts whose majority answer flipped.

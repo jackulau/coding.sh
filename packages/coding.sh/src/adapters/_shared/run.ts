@@ -42,9 +42,14 @@ export interface HeadlessOpts {
   stdoutFile?: string;
 }
 
-export type HeadlessResult = Pick<AgentRunOutput, "exitCode" | "timedOut" | "durationMs" | "stdoutTail" | "stderrTail">;
+export type HeadlessResult = Pick<AgentRunOutput, "exitCode" | "timedOut" | "durationMs" | "stdoutTail" | "stderrTail" | "spawnError">;
 
-/** Spawns the agent; never rejects (spawn errors become exit 127 + stderr note). */
+/** Node's message when `e` is the spawn itself failing (`spawn claude ENOENT`): the program never ran. */
+export function spawnFailure(e: NodeJS.ErrnoException | undefined): string | undefined {
+  return e?.syscall?.startsWith("spawn") ? e.message : undefined;
+}
+
+/** Spawns the agent; never rejects (a spawn error becomes exit 127, a stderr note and spawnError). */
 export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
   const started = Date.now();
   const max = o.tailBytes ?? DEFAULT_TAIL;
@@ -90,13 +95,16 @@ export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
     if (buf) feed(buf);
     await tee.close();
     const note = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
-    return {
+    const res: HeadlessResult = {
       exitCode: r.error ? 127 : r.code,
       timedOut: r.timedOut,
       durationMs: Date.now() - started,
       stdoutTail: out.text(),
       stderrTail: note ? `${err.text()}\n${note}` : err.text(),
     };
+    const spawnError = spawnFailure(r.error);
+    if (spawnError) res.spawnError = spawnError;
+    return res;
   });
 }
 

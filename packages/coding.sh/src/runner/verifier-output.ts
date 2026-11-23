@@ -127,9 +127,11 @@ function agentFailure(a: RunResult["agent"] | undefined, redactor: Redactor): Fa
 
 /**
  * Runs whose verifier failed or never passed, oldest first; cancelled, superseded
- * and infrastructure-failed runs are left out. A run whose agent exited non-zero
- * or timed out says so, with the end of its stderr: an agent that can't start
- * fails every run in seconds, and the verifier's output alone doesn't say why.
+ * and infrastructure-failed runs are left out (an agent program that could not be
+ * started is one: runner/run.ts agentNotStarted). A run whose agent exited non-zero
+ * or timed out says so, with the end of its stderr: an agent that exits at once (a
+ * flag it does not take) fails every run in seconds, and the verifier's output
+ * alone doesn't say why.
  */
 export function failedRuns(runs: readonly RunResult[], redactor: Redactor = createRedactor()): FailedRun[] {
   return runs

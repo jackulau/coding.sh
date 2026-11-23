@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { RunSpec } from "../../src/core/types.ts";
 import { createRedactor } from "../../src/core/redact.ts";
-import { readGraderUsage, runTask } from "../../src/runner/run.ts";
+import { runEnv, runHeadless } from "../../src/adapters/_shared/run.ts";
+import { spawnAgent, toRunOutput } from "../../src/adapters/more/_util.ts";
+import { runInfra } from "../../src/runner/experiment.ts";
+import { agentNotStarted, readGraderUsage, runTask } from "../../src/runner/run.ts";
 import { BUGGY, FIXED, cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
 after(cleanupWorlds);
@@ -136,6 +139,43 @@ describe("runTask", () => {
     assert.match(r.error ?? "", /agent failed: agent exploded/);
     assert.equal(r.verifierExit, 1);
     assert.equal(w.index.runs.length, 1);
+  });
+
+  it("an agent program that is not installed is an infrastructure error with the program's name, not a fail; the verifier never runs", async () => {
+    const w = await toyWorld();
+    const bin = "coding-sh-test-no-such-agent";
+    // The spawn error as the real adapters get it (runHeadless: exit 127, the error at stderr's end), with a session id set beforehand.
+    const adapter = { ...fakeAdapter(), run: async (spec: RunSpec) => ({ ...(await runHeadless({ bin, args: [], cwd: spec.cwd, env: runEnv(spec), timeoutMs: 30_000 })), sessionId: "sess-never" }) };
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.agent.exitCode, 127, r.agent.stderrTail);
+    assert.equal(r.pass, false);
+    assert.equal(r.infra, "setup");
+    assert.equal(runInfra(r), "setup", "unknown outcome: left out of every rate, and --resume runs it again");
+    assert.equal(r.error, `the agent could not start: ${bin} was not found; install it or put it on PATH (spawn ${bin} ENOENT)`);
+    assert.equal(r.verifierExit, null, "the verifier would only grade the untouched start");
+    assert.equal(r.sessionId, undefined, "the agent never ran, so there is no session to show");
+    assert.deepEqual(w.index.runs, [r]);
+    // The other agents' spawn (adapters/more) records the same error.
+    const more = toRunOutput(await spawnAgent({ bin, args: [], cwd: w.runsDir, env: process.env, timeoutMs: 30_000 }), undefined, undefined);
+    assert.equal(more.spawnError, `spawn ${bin} ENOENT`, more.stderrTail);
+    assert.equal(agentNotStarted(more), `${bin} was not found; install it or put it on PATH (spawn ${bin} ENOENT)`);
+    assert.equal(agentNotStarted({ spawnError: "spawn ./agent.sh EACCES" }), "./agent.sh is not executable (spawn ./agent.sh EACCES)");
+    assert.equal(agentNotStarted({}), undefined);
+  });
+
+  it("an agent that ran and exited 127 itself is graded, even when `spawn rg ENOENT` is the last line it printed", async () => {
+    const w = await toyWorld();
+    // A real process: it starts, a command of its own is not found, and it exits 127 with that command's error last.
+    const script = "process.stderr.write('spawn rg ENOENT\\n'); process.exit(127)";
+    const adapter = { ...fakeAdapter(), run: async (spec: RunSpec) => runHeadless({ bin: process.execPath, args: ["-e", script], cwd: spec.cwd, env: runEnv(spec), timeoutMs: 30_000 }) };
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.agent.exitCode, 127, r.agent.stderrTail);
+    assert.match(r.agent.stderrTail, /spawn rg ENOENT\s*$/);
+    assert.equal(r.agent.spawnError, undefined);
+    assert.equal(r.infra, undefined, "not an infrastructure error");
+    assert.equal(runInfra(r), undefined, "so it is not retried or counted toward --stop-after-infra");
+    assert.equal(r.verifierExit, 1, "the verifier graded the untouched start");
+    assert.equal(r.pass, false);
   });
 
   it("setup failure is recorded and the agent never runs", async () => {

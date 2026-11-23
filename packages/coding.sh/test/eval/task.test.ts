@@ -320,6 +320,9 @@ describe("instruction for sessions without a user prompt (coding.sh run)", () =>
   it("instructionFromArgs", () => {
     assert.equal(instructionFromArgs(["-p", "fix the failing test"]), "fix the failing test");
     assert.equal(instructionFromArgs(["--prompt=fix it now"]), "fix it now");
+    // One word is a name, not a prompt, in either form: `--task=lint`, `--task lint`.
+    assert.equal(instructionFromArgs(["--task=lint"]), undefined);
+    assert.equal(instructionFromArgs(["--task", "lint"]), undefined);
     assert.equal(instructionFromArgs(["exec", "--model", "o3", "fix the failing test"]), "fix the failing test");
     assert.equal(instructionFromArgs(["--message", "add a README section", "--yes"]), "add a README section");
     assert.equal(instructionFromArgs(["./agent.sh"]), undefined);
