@@ -33,7 +33,9 @@ describe("server-drawn first paint", { skip: chrome ? false : "no Chrome/Chromiu
   before(async () => {
     const t0 = Math.floor(Date.now() / DAY) * DAY - 11 * DAY;
     for (const s of metricFixtures(t0)) await index.upsertSession(s);
-    const base = { index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any };
+    // A claude-code session that T3 Code drove (Session.host): the oldest, so the other tests' first row stays.
+    await index.upsertSession({ ...metricFixtures(t0)[0]!, id: "hosted", title: "Driven from T3 Code", host: "t3code", startedAt: t0 - DAY, endedAt: t0 - DAY + 600_000 });
+    const base ={ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any };
     v = await startViewer(base);
     plain = await startViewer({ ...base, serverRender: false });
     browser = await launchBrowser(chrome!);
@@ -75,6 +77,38 @@ describe("server-drawn first paint", { skip: chrome ? false : "no Chrome/Chromiu
     const opened = (await apiCalls(page)).slice(boot.length);
     for (const p of sessionBootPaths(sid)) assert.ok(!opened.includes(p), `${p} was fetched again`);
     assert.deepEqual(page.errors, []);
+  });
+
+  test("a session a host app drove names the host after its agent, with JavaScript off and on", async () => {
+    // The row's agent cell: its first line, the host part, the cell's title, and whether the agent's
+    // own name is cut (a narrow column cuts the muted host first, and the title has the whole line).
+    const read = (row: string) => `(() => {
+      const c = document.querySelector('${row} .agent-cell');
+      const line = c.firstElementChild, host = line.querySelector('.host');
+      const name = document.createRange();
+      name.selectNodeContents(line.firstChild);
+      return {
+        line: line.textContent, host: host && host.textContent, title: c.title,
+        muted: !!host && getComputedStyle(host).color !== getComputedStyle(line).color,
+        nameCut: name.getBoundingClientRect().right > c.getBoundingClientRect().right + 0.5,
+      };
+    })()`;
+    const want = { line: "claude-code via T3 Code", host: " via T3 Code", title: "claude-code via T3 Code · claude-opus-5-5", muted: true, nameCut: false };
+    page = await browser.newPage();
+    await page.send("Emulation.setScriptExecutionDisabled", { value: true });
+    await page.viewport(1280, 900);
+    await page.goto(v.url + "#/");
+    assert.deepEqual(await page.eval(read("a.row[role=listitem][data-sid=hosted]")), want, "the server-drawn row");
+    await page.close();
+    page = await browser.newPage();
+    await page.viewport(1280, 900);
+    await page.goto(v.url + "#/");
+    const row = ".session-table [role=option][data-sid=hosted]";
+    await page.waitFor(`!!document.querySelector('${row}')`, "the script's row");
+    assert.deepEqual(await page.eval(read(row)), want, "the script-drawn row");
+    assert.deepEqual(page.errors, []);
+    await page.close();
+    page = undefined;
   });
 
   test("serverRender: false serves the bare page", async () => {
