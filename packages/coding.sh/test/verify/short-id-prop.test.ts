@@ -6,25 +6,27 @@
 //   a store that holds the sessions; and in a call reference, where `<ref>#1` is the session's first
 //   model call, `<ref>#-1` its last, and the number after the last is not found.
 // - A printed alias is `x_` and the first 8 to 14 digits of the first 70 bits of the id's SHA-256 in
-//   Crockford's base32, worked out here apart from session-ref.ts, and no stored id starts with it.
+//   Crockford's base32, worked out here apart from session-ref.ts, and no stored id starts with it,
+//   unless the id is `latest` or `last` and a stored id starts with every alias length.
 // - A printed reference is the one the rules pick, found here by trying every length rather than by
 //   bisecting: the whole id when it has 8 characters or fewer; for a top-level id, the shortest prefix
 //   of 8 or more characters that names it; for a subagent, the shortest prefix of 8 or more characters
 //   of its own id, or its short form (8 characters of each part) when that is shorter and names it.
-//   When that is over 40 characters or needs quoting in a shell, the shortest alias that names the id
-//   alone and starts no stored id takes its place, unless every alias length is taken.
+//   When that is over 40 characters, needs quoting in a shell, or is `latest` or `last` (findSessionRef
+//   reads those words as the newest session), the shortest alias that names the id alone and starts
+//   no stored id takes its place, unless every alias length is taken. `latest` and `last` then print
+//   the shortest alias that names them alone anyway: matchRef reads an alias before a prefix.
 //
 // Ids are drawn from stems that share long prefixes: UUIDs, T3 Code-like thread ids with
 // percent-encoding, plain ids over 40 characters, SDK ids under `default/` and other projects, `x_`
-// ids, and ids with a space, `&`, `$`, `#` or non-ASCII characters. Some are subagents (nested too),
-// some under other parents share or extend another subagent's own id, some are another id cut short
-// or grown, so one id is a prefix of another, and some come in pairs whose UTF-8 is the same (a lone
-// surrogate and U+FFFD), so they share every alias. The first two properties also run on `x_` ids,
-// top-level or a subagent's own id, made from another id's alias, and on subagents with no stored
-// parent whose own id starts with the parent's id. The third does not: there the lengths that name
-// the id are not one run, so bisecting can miss the shortest, and those cases are with the code's
-// owners. The ids `latest` and `last` are left out: findSessionRef reads those words as the newest
-// session.
+// ids, `latest` and `last`, and ids with a space, `&`, `$`, `#` or non-ASCII characters. Some are
+// subagents (nested too), some under other parents share or extend another subagent's own id, some
+// are another id cut short or grown, so one id is a prefix of another, and some come in pairs whose
+// UTF-8 is the same (a lone surrogate and U+FFFD), so they share every alias. Where a prefix names
+// an id and a longer one does not, bisecting alone can miss the shortest: `x_` ids, top-level or a
+// subagent's own id, made from another id's alias; subagents whose own id is another id without
+// `default/`; and subagents whose parent is not stored, under `default/` or not, whose own id starts
+// with the first characters of the parent's id after `default/`.
 //
 // The last test shows each check fails on a mutant of the shortener or of the call resolver.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 with a store);
@@ -47,6 +49,8 @@ const MUTANT_RUNS = 1000;
 const SUB = ":sub:";
 /** A reference every shell passes on as typed (session-ref.ts PLAIN_REF, from its comment). */
 const PLAIN = /^[A-Za-z0-9_][A-Za-z0-9_.:/-]*$/;
+/** Words findSessionRef reads as the newest session: a session with one as its id prints an alias. */
+const WORDS = new Set(["latest", "last"]);
 /** Crockford's base32, lowercase: the digits and letters but i, l, o and u. */
 const CROCKFORD = [..."0123456789abcdefghijklmnopqrstuvwxyz"].filter((c) => !"ilou".includes(c)).join("");
 const ALIAS_FORM = new RegExp(`^x_[${CROCKFORD}]{8,14}$`);
@@ -116,15 +120,38 @@ function shortestForm(set: IdSet, id: string): string {
   return best;
 }
 
+/** True when `form`, a prefix of the id or of a subagent's own id, names the id and a longer prefix of the same does not: bisecting alone can miss it. */
+function longerMisses(set: IdSet, id: string, form: string): boolean {
+  const own = ownId(id);
+  const from = own || id;
+  if (form === id || form.length < 8 || !from.startsWith(form)) return false;
+  for (let k = form.length + 1; k <= (own ? own.length : id.length - 1); k++) if (!names(set, from.slice(0, k), id)) return true;
+  return false;
+}
+
+/** Why `form` prints as an alias, or undefined when it prints as it is. */
+function aliasReason(form: string): string | undefined {
+  if (form.length > 40) return "it is over 40 characters";
+  if (!PLAIN.test(form)) return "it needs quoting";
+  if (WORDS.has(form)) return "the word opens the newest session";
+  return undefined;
+}
+
+/** The shortest alias of `id` that names it alone and starts no stored id; with `taken`, one that starts a stored id too. */
+function aliasFor(set: IdSet, id: string, taken = false): string | undefined {
+  for (let k = 8; k <= 14; k++) {
+    const alias = aliasOf(id, k);
+    if ((taken || set.withPrefix(alias).length === 0) && names(set, alias, id)) return alias;
+  }
+  return undefined;
+}
+
 /** What shortestRef should print for `id`: the form, or the alias that takes its place. */
 function expected(set: IdSet, id: string): { ref: string; form: string } {
   const form = shortestForm(set, id);
-  if (form.length <= 40 && PLAIN.test(form)) return { ref: form, form };
-  for (let k = 8; k <= 14; k++) {
-    const alias = aliasOf(id, k);
-    if (set.withPrefix(alias).length === 0 && names(set, alias, id)) return { ref: alias, form };
-  }
-  return { ref: form, form };
+  if (!aliasReason(form)) return { ref: form, form };
+  const alias = aliasFor(set, id) ?? (WORDS.has(form) ? aliasFor(set, id, true) : undefined);
+  return { ref: alias ?? form, form };
 }
 
 // ---------------------------------------------------------------- ids
@@ -141,7 +168,8 @@ type Step =
   | { kind: "pair"; of: number }
   | { kind: "twin"; of: number; under: number; tail: string }
   | { kind: "aliased"; of: number; digits: number; under: number; tail: string }
-  | { kind: "self"; parent: string; keep: number; tail: string };
+  | { kind: "self"; parent: string; scoped: boolean; keep: number; tail: string }
+  | { kind: "own"; of: number; under: number; tail: string };
 
 const STEMS = [
   "",
@@ -153,6 +181,8 @@ const STEMS = [
   "default/tenant-7/conv-",
   "tenant-7/",
   "x_0a9z",
+  "latest",
+  "last",
   "my run ",
   "a&b$c#",
   "café-",
@@ -179,9 +209,12 @@ const pair: Gen<Step> = gen.map(OF, (of): Step => ({ kind: "pair", of }));
 const twin: Gen<Step> = gen.map(gen.tuple(OF, OF, gen.string({ alphabet: DIGITS, maxLength: 4 })), ([of, under, tail]): Step => ({ kind: "twin", of, under, tail }));
 /** A negative `under` makes a top-level id; any other names the parent, so about half are a subagent's own id. */
 const aliased: Gen<Step> = gen.map(gen.tuple(OF, gen.int(8, 14), gen.int(-20, 20), TAIL), ([of, digits, under, tail]): Step => ({ kind: "aliased", of, digits, under, tail }));
-/** A parent no other id starts with, and not stored itself. */
-const ORPHAN = gen.map(gen.string({ alphabet: DIGITS, minLength: 7, maxLength: 12 }), (s) => `q${s}`);
-const self: Gen<Step> = gen.map(gen.tuple(ORPHAN, gen.int(8, 12), gen.string({ alphabet: DIGITS, maxLength: 4 })), ([parent, keep, tail]): Step => ({ kind: "self", parent, keep, tail }));
+/** A parent no other id starts with, and not stored itself; some hold a `/`. */
+const ORPHAN = gen.map(gen.string({ alphabet: gen.frequency([12, gen.char(DIGITS)], [1, gen.char("/")]), minLength: 7, maxLength: 12 }), (s) => `q${s}`);
+/** A subagent of an ORPHAN, under `default/` or not, whose own id starts with the ORPHAN's first 8 to 12 characters. */
+const self: Gen<Step> = gen.map(gen.tuple(ORPHAN, gen.bool, gen.int(8, 12), gen.string({ alphabet: DIGITS, maxLength: 4 })), ([parent, scoped, keep, tail]): Step => ({ kind: "self", parent, scoped, keep, tail }));
+/** A subagent whose own id is another id (one under `default/` when there is one) without `default/`, grown by a tail. */
+const own: Gen<Step> = gen.map(gen.tuple(OF, OF, gen.string({ alphabet: DIGITS, maxLength: 4 })), ([of, under, tail]): Step => ({ kind: "own", of, under, tail }));
 
 function idsOf(steps: readonly Step[]): string[] {
   const ids: string[] = [];
@@ -194,9 +227,13 @@ function idsOf(steps: readonly Step[]): string[] {
     }
     return "a2c3d2c3d";
   };
+  /** The first id at or after `of` under `default/`, or the one at `of` when there is none. */
+  const scopedAt = (of: number): string => {
+    for (let i = 0; i < ids.length; i++) if (at(of + i).startsWith("default/")) return at(of + i);
+    return at(of);
+  };
   const add = (id: string): void => {
-    // findSessionRef reads these words as the newest session before it looks for an id.
-    if (id && id !== "latest" && id !== "last") ids.push(id);
+    if (id) ids.push(id);
   };
   for (const st of steps) {
     if (st.kind === "top") add(st.stem + st.tail);
@@ -211,20 +248,17 @@ function idsOf(steps: readonly Step[]): string[] {
     else if (st.kind === "aliased") {
       const own = aliasOf(at(st.of), st.digits) + st.tail;
       add(st.under < 0 ? own : `${at(st.under)}${SUB}${own}`);
-    } else add(`${st.parent}${SUB}${st.parent.slice(0, st.keep)}${st.tail}`);
+    } else if (st.kind === "self") add(`${st.scoped ? "default/" : ""}${st.parent}${SUB}${st.parent.slice(0, st.keep)}${st.tail}`);
+    else add(`${at(st.under)}${SUB}${scopedAt(st.of).replace(/^default\//, "")}${st.tail}`);
   }
   return ids;
 }
 
-/**
- * A case: the ids of one store. `odd` adds `x_` ids and subagent ids made from another id's alias,
- * and subagents with no stored parent whose own id starts with their parent's id.
- */
-function caseGen(odd: boolean): Gen<string[]> {
-  const steps: [number, Gen<Step>][] = [[4, top], [3, sub], [1, cut], [1, grow], [1, pair], [1, twin]];
-  if (odd) steps.push([2, aliased], [1, self]);
-  return gen.map(gen.tuple(top, gen.array(gen.frequency(...steps), { maxLength: 10, avgLength: 6 })), ([first, rest]) => idsOf([first, ...rest]));
-}
+/** A case: the ids of one store. */
+const CASE: Gen<string[]> = gen.map(
+  gen.tuple(top, gen.array(gen.frequency<Step>([4, top], [3, sub], [1, cut], [1, grow], [1, pair], [2, twin], [2, aliased], [2, self], [2, own]), { maxLength: 10, avgLength: 6 })),
+  ([first, rest]) => idsOf([first, ...rest]),
+);
 
 // ---------------------------------------------------------------- checks
 
@@ -289,14 +323,19 @@ function checkAliases(s: Subject, ids: readonly string[], seen?: Map<string, num
     count(seen, ref.length > 10 ? "a longer alias" : "an alias");
     assert.equal(ref, aliasOf(id, ref.length - 2), `${q(ref)}, printed for ${q(id)}, is not the first ${ref.length - 2} digits of its SHA-256 in base32`);
     const starts = set.withPrefix(ref);
+    if (starts.length > 0 && WORDS.has(id) && aliasFor(set, id) === undefined) {
+      count(seen, "a word whose every alias starts a stored id");
+      continue;
+    }
     assert.equal(starts.length, 0, `${q(ref)}, printed for ${q(id)}, starts the stored id ${q(starts[0] ?? "")}`);
   }
 }
 
 /** What a case's expected reference is, for the counts the shortest check reports. */
 function kindOf(id: string, want: { ref: string; form: string }): string {
+  if (WORDS.has(id)) return "latest or last";
   if (want.ref !== want.form) return want.ref.length > 10 ? "a longer alias" : "an alias";
-  if (want.form.length > 40 || !PLAIN.test(want.form)) return "no free alias";
+  if (aliasReason(want.form)) return "no free alias";
   if (want.form === id) return "the whole id";
   if (want.form.includes(SUB)) return "a short subagent form";
   if (id.startsWith(want.form)) return want.form.length > 8 ? "a prefix over 8 characters" : "an 8-character prefix";
@@ -310,9 +349,10 @@ function checkShortest(s: Subject, ids: readonly string[], seen?: Map<string, nu
     const ref = s.shorten(set, id);
     const want = expected(set, id);
     count(seen, kindOf(id, want));
+    if (longerMisses(set, id, want.form)) count(seen, "a prefix that names the id where a longer one does not");
     if (ref === want.ref) continue;
     const alias = want.ref !== want.form;
-    if (alias && !isAlias(ref, id)) assert.fail(`${q(ref)}, printed for ${q(id)}, needs an alias (${want.form.length > 40 ? "it is over 40 characters" : "it needs quoting"}), and ${q(want.ref)} names the id alone`);
+    if (alias && !isAlias(ref, id)) assert.fail(`${q(ref)}, printed for ${q(id)}, needs an alias (${aliasReason(want.form)}), and ${q(want.ref)} names the id alone`);
     if (!alias && isAlias(ref, id)) assert.fail(`the alias ${q(ref)}, printed for ${q(id)}, is not needed: ${q(want.form)} names the id`);
     assert.fail(`${q(ref)}, printed for ${q(id)}, is not the reference the rules pick: ${q(want.ref)}`);
   }
@@ -328,24 +368,24 @@ function covered(t: { diagnostic: (m: string) => void }, seen: Map<string, numbe
 
 test("a printed reference names its session and no other", async (t) => {
   const seen = new Map<string, number>();
-  await forAll(caseGen(true), (ids) => checkNames(REAL, ids, seen), { runs: RUNS, label: "names" });
+  await forAll(CASE, (ids) => checkNames(REAL, ids, seen), { runs: RUNS, label: "names" });
   covered(t, seen, ["an id whose first 8 characters do not name it"]);
 });
 
 test("a printed reference opens its session through findSessionRef, and `<ref>#1` and `<ref>#-1` are its first and last model calls", async () => {
-  await forAll(caseGen(true), (ids) => checkStore(REAL, ids), { runs: STORE_RUNS, label: "store" });
+  await forAll(CASE, (ids) => checkStore(REAL, ids), { runs: STORE_RUNS, label: "store" });
 });
 
 test("a printed alias is x_ and the first digits of the id's SHA-256 in base32, and starts no stored id", async (t) => {
   const seen = new Map<string, number>();
-  await forAll(caseGen(true), (ids) => checkAliases(REAL, ids, seen), { runs: RUNS, label: "aliases" });
+  await forAll(CASE, (ids) => checkAliases(REAL, ids, seen), { runs: RUNS, label: "aliases" });
   covered(t, seen, ["an alias", "a longer alias"]);
 });
 
-test("a printed reference is the shortest the rules allow, and an alias only where the prefix is over 40 characters or needs quoting", async (t) => {
+test("a printed reference is the shortest the rules allow, and an alias only where the prefix is over 40 characters, needs quoting, or is latest or last", async (t) => {
   const seen = new Map<string, number>();
-  await forAll(caseGen(false), (ids) => checkShortest(REAL, ids, seen), { runs: RUNS, label: "shortest" });
-  covered(t, seen, ["the whole id", "an 8-character prefix", "a prefix over 8 characters", "a prefix of a subagent's own id", "a short subagent form", "an alias", "no free alias"]);
+  await forAll(CASE, (ids) => checkShortest(REAL, ids, seen), { runs: RUNS, label: "shortest" });
+  covered(t, seen, ["the whole id", "an 8-character prefix", "a prefix over 8 characters", "a prefix of a subagent's own id", "a short subagent form", "an alias", "no free alias", "latest or last", "a prefix that names the id where a longer one does not"]);
 });
 
 test("each check fails on a mutant of the shortener or the call resolver", async (t) => {
@@ -388,14 +428,14 @@ test("each check fails on a mutant of the shortener or the call resolver", async
   };
   const allAlias: Subject = { ...REAL, shorten: (_set, id) => aliasOf(id, 8) };
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
-    ["names, a shortener that prints 8 characters", () => failure(caseGen(true), (ids) => checkNames(eight, ids), "eight"), /printed for .*, names (nothing|\d+ ids|")/],
-    ["names, a shortener one character short", () => failure(caseGen(true), (ids) => checkNames(oneShort, ids), "one short"), /printed for .*, names (nothing|\d+ ids|")/],
-    ["store, a call resolver that counts from 0", () => failure(caseGen(true), (ids) => checkStore(fromZero, ids), "from zero"), /names call|model call/],
-    ["aliases, the digits of another hash", () => failure(caseGen(true), (ids) => checkAliases(sha1, ids), "sha1"), /is not the first \d+ digits/],
-    ["aliases, the first alias even where a stored id starts with it", () => failure(caseGen(true), (ids) => checkAliases(firstAlias, ids), "first alias"), /starts the stored id/],
-    ["shortest, a shortener one character long", () => failure(caseGen(false), (ids) => checkShortest(oneLong, ids), "one long"), /is not the reference the rules pick/],
-    ["shortest, a shortener that never prints an alias", () => failure(caseGen(false), (ids) => checkShortest(noAlias, ids), "no alias"), /needs an alias/],
-    ["shortest, a shortener that always prints an alias", () => failure(caseGen(false), (ids) => checkShortest(allAlias, ids), "all alias"), /is not needed/],
+    ["names, a shortener that prints 8 characters", () => failure(CASE, (ids) => checkNames(eight, ids), "eight"), /printed for .*, names (nothing|\d+ ids|")/],
+    ["names, a shortener one character short", () => failure(CASE, (ids) => checkNames(oneShort, ids), "one short"), /printed for .*, names (nothing|\d+ ids|")/],
+    ["store, a call resolver that counts from 0", () => failure(CASE, (ids) => checkStore(fromZero, ids), "from zero"), /names call|model call/],
+    ["aliases, the digits of another hash", () => failure(CASE, (ids) => checkAliases(sha1, ids), "sha1"), /is not the first \d+ digits/],
+    ["aliases, the first alias even where a stored id starts with it", () => failure(CASE, (ids) => checkAliases(firstAlias, ids), "first alias"), /starts the stored id/],
+    ["shortest, a shortener one character long", () => failure(CASE, (ids) => checkShortest(oneLong, ids), "one long"), /is not the reference the rules pick/],
+    ["shortest, a shortener that never prints an alias", () => failure(CASE, (ids) => checkShortest(noAlias, ids), "no alias"), /needs an alias/],
+    ["shortest, a shortener that always prints an alias", () => failure(CASE, (ids) => checkShortest(allAlias, ids), "all alias"), /is not needed/],
   ];
   for (const [label, run, why] of mutants) {
     const f = await run();
