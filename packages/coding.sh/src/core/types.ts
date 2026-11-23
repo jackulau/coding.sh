@@ -784,6 +784,14 @@ export interface BackfillOpts {
    */
   changed?(file: BackfillFile): Promise<boolean>;
   /**
+   * Called for a file `changed` let through once all of its events were
+   * yielded although `since` was given (a session with activity inside the
+   * window is imported whole). Its cursors then record no window, so a later
+   * backfill with a wider window, or none, skips the file while it is
+   * unchanged. Without the call the wider window reads it again.
+   */
+  whole?(file: BackfillFile): void;
+  /**
    * Called for a source file skipped because it copies another session's
    * (Claude Code: a subagent transcript copied into another session's dir).
    * `sessionId` is the session the copy would have been stored as, `ownerId`
