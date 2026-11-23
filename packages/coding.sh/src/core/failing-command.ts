@@ -101,51 +101,58 @@ const PROG = /^[\w.+@:,-]+$/;
 function splitParts(cmd: string): { text: string; last: boolean }[] {
   const out: { text: string; last: boolean }[] = [];
   let cur = "";
+  /** The last character of `cur`: read from `cur`, a string built by `+=`, it would copy all of `cur` each time. */
+  let lastChar = "";
   let quote = "";
   let subst = 0;
   const heredocs: string[] = [];
   const push = (pipe: boolean) => {
     if (cur.trim()) out.push({ text: cur.trim(), last: !pipe });
     cur = "";
+    lastChar = "";
+  };
+  const add = (t: string) => {
+    cur += t;
+    if (t) lastChar = t[t.length - 1]!;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i]!;
     const next = cmd[i + 1];
     if (quote) {
       if (c === "\\" && quote === '"') {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
       } else {
-        cur += c;
+        add(c);
         if (c === quote) quote = "";
       }
       continue;
     }
     if (c === "\\") {
       // A line continuation joins the next line; any other escape keeps its character.
-      if (next === "\n") cur += " ";
-      else cur += c + (next ?? "");
+      if (next === "\n") add(" ");
+      else add(c + (next ?? ""));
       i++;
       continue;
     }
     if (c === "'" || c === '"' || c === "`") {
       quote = c;
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "$" && next === "(") {
       subst++;
-      cur += "$(";
+      add("$(");
       i++;
       continue;
     }
     if (subst > 0) {
       if (c === "(") subst++;
       else if (c === ")") subst--;
-      cur += c;
+      add(c);
       continue;
     }
-    if (c === "#" && (cur === "" || /\s$/.test(cur))) {
+    if (c === "#" && (lastChar === "" || /\s/.test(lastChar))) {
       while (i + 1 < cmd.length && cmd[i + 1] !== "\n") i++;
       continue;
     }
@@ -153,7 +160,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       const m = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(cmd.slice(i));
       if (m) {
         heredocs.push(m[2]!);
-        cur += m[0];
+        add(m[0]);
         i += m[0].length - 1;
         continue;
       }
@@ -182,7 +189,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       if (next === "&") {
         i++;
         push(false);
-      } else if (/[<>]$/.test(cur) || next === ">") cur += c;
+      } else if (lastChar === "<" || lastChar === ">" || next === ">") add(c);
       else push(false);
       continue;
     }
@@ -197,7 +204,7 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
       continue;
     }
     // Subshell parentheses group parts; the parts inside still run.
-    cur += c === "(" || c === ")" ? " " : c;
+    add(c === "(" || c === ")" ? " " : c);
   }
   push(false);
   return out;
@@ -205,7 +212,8 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
 
 /** Words of one part, quotes kept with the word they belong to. */
 const words = (text: string): string[] => text.match(/(?:[^\s"'`]+|"(?:\\.|[^"\\])*"?|'[^']*'?|`[^`]*`?)+/g) ?? [];
-const unquote = (w: string): string => w.replace(/^(["'])(.*)\1$/s, "$2");
+// Most words start with no quote: the regex runs only on those that do.
+const unquote = (w: string): string => (w[0] === '"' || w[0] === "'" ? w.replace(/^(["'])(.*)\1$/s, "$2") : w);
 
 /**
  * A redirect word's operator and target, and whether the target is the next word: `> f`, `>f`,
@@ -236,31 +244,33 @@ function sendsAway(op: string, target: string): boolean {
 
 /** One part's program and arguments, or undefined for a header or a part with no program. */
 function partOf(text: string, last: boolean): ShellPart | undefined {
-  let w = words(text);
+  const w = words(text);
   if (HEADERS.has(w[0] ?? "")) return undefined;
   let timed = false;
   let away = false;
+  /** The first word not yet skipped: keywords, assignments, redirects and wrappers come before the program. */
+  let k = 0;
   for (;;) {
-    const x = w[0];
+    const x = w[k];
     if (x === undefined) return undefined;
-    if (KEYWORDS.has(x) || ASSIGNMENT.test(x)) w = w.slice(1);
+    if (KEYWORDS.has(x) || ASSIGNMENT.test(x)) k++;
     else if (REDIRECT.test(x)) {
-      const r = redirectOf(x, w[1])!;
+      const r = redirectOf(x, w[k + 1])!;
       if (sendsAway(r.op, r.target)) away = true;
-      w = w.slice(r.skip ? 2 : 1);
+      k += r.skip ? 2 : 1;
     } else if (WRAPPERS.has(unquote(x))) {
       const name = unquote(x);
       if (name === "timeout" || name === "gtimeout") timed = true;
-      w = w.slice(1);
+      k++;
       const valued = FLAG_VALUE[name];
-      while (w[0] !== undefined && (w[0].startsWith("-") || (name === "env" && ASSIGNMENT.test(w[0])))) w = w.slice(valued?.has(w[0]) ? 2 : 1);
+      for (let y = w[k]; y !== undefined && (y.startsWith("-") || (name === "env" && ASSIGNMENT.test(y))); y = w[k]) k += valued?.has(y) ? 2 : 1;
       // timeout's duration (60, 5m, 1.5s) comes before the command.
-      if ((name === "timeout" || name === "gtimeout") && /^\d/.test(w[0] ?? "")) w = w.slice(1);
+      if ((name === "timeout" || name === "gtimeout") && /^\d/.test(w[k] ?? "")) k++;
     } else break;
   }
   const argv: string[] = [];
   let quiet = false;
-  for (let i = 0; i < w.length; i++) {
+  for (let i = k; i < w.length; i++) {
     const x = w[i]!;
     const r = redirectOf(x, w[i + 1]);
     if (r) {
@@ -291,6 +301,8 @@ const PS_LAUNCH = /^\s*("[^"]+"|'[^']+'|\S+)\s+((?:\S+\s+)*?)-c(?:ommand)?\s+([\
  * Any other line comes back as it is.
  */
 export function launchedCommand(cmd: string): string {
+  // The launcher's name is in the line: most lines name neither.
+  if (!/pwsh|powershell/i.test(cmd)) return cmd;
   const m = PS_LAUNCH.exec(cmd);
   if (!m) return cmd;
   const prog = unquote(m[1]!);
@@ -321,6 +333,8 @@ const PS_PIPE = new Set([
 const PS_HEADERS = new Set(["if", "elseif", "while", "for", "foreach", "switch", "until", "catch", "function", "filter", "workflow", "param", "trap", "throw", "break", "continue", "class", "enum", "data"]);
 /** PowerShell words that start a statement without being its command: `try`, `else`, the call operator `&`, dot-sourcing. */
 const PS_SKIP = new Set(["try", "else", "finally", "do", "begin", "process", "end", "&", "."]);
+/** The longest word of PS_HEADERS and PS_SKIP. Lowercasing never shortens a word, so a longer word is in neither. */
+const PS_LONGEST = Math.max(...[...PS_HEADERS, ...PS_SKIP].map((x) => x.length));
 const PS_REDIRECT = /^(?:[\d*]?>>?(?:&[1-6])?|<)/;
 
 const psLower = (p: ShellPart): string => (p.ps && p.prog ? p.prog.toLowerCase() : "");
@@ -333,20 +347,27 @@ const isPipe = (p: ShellPart): boolean => PS_PIPE.has(psLower(p));
 function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
   const out: { text: string; pipe: boolean }[] = [];
   let cur = "";
+  /** The last character of `cur`: read from `cur`, a string built by `+=`, it would copy all of `cur` each time. */
+  let lastChar = "";
   let quote = "";
   let here = "";
   const nest: string[] = [];
   const push = (pipe: boolean) => {
     if (cur.trim()) out.push({ text: cur.trim(), pipe });
     cur = "";
+    lastChar = "";
+  };
+  const add = (t: string) => {
+    cur += t;
+    if (t) lastChar = t[t.length - 1]!;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i]!;
     const next = cmd[i + 1];
     if (here) {
-      cur += c;
+      add(c);
       if (c === "\n" && cmd.startsWith(here, i + 1)) {
-        cur += here;
+        add(here);
         i += here.length;
         here = "";
       }
@@ -354,15 +375,15 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
     }
     if (quote) {
       if (c === "`" && quote === '"') {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
         continue;
       }
-      cur += c;
+      add(c);
       // A doubled quote is one quote inside the string ('it''s', "say ""hi""").
       if (c === quote) {
         if (next === quote) {
-          cur += next;
+          add(next);
           i++;
         } else quote = "";
       }
@@ -370,7 +391,7 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
     }
     if (c === "@" && (next === "'" || next === '"') && /^\r?\n/.test(cmd.slice(i + 2))) {
       here = `${next}@`;
-      cur += c + next;
+      add(c + next);
       i++;
       continue;
     }
@@ -378,45 +399,45 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
       // A backtick escapes the next character; at a line end it continues the line.
       const nl = /^\r?\n/.exec(cmd.slice(i + 1));
       if (nl) {
-        cur += " ";
+        add(" ");
         i += nl[0].length;
       } else {
-        cur += c + (next ?? "");
+        add(c + (next ?? ""));
         i++;
       }
       continue;
     }
     if (c === "'" || c === '"') {
       quote = c;
-      cur += c;
+      add(c);
       continue;
     }
     if (c === "<" && next === "#") {
       const end = cmd.indexOf("#>", i + 2);
       i = end < 0 ? cmd.length : end + 1;
-      cur += " ";
+      add(" ");
       continue;
     }
-    if (c === "#" && (cur === "" || /\s$/.test(cur))) {
+    if (c === "#" && (lastChar === "" || /\s/.test(lastChar))) {
       while (i + 1 < cmd.length && cmd[i + 1] !== "\n") i++;
       continue;
     }
     if (c === "$" && next === "{") {
       const end = cmd.indexOf("}", i + 2);
-      cur += cmd.slice(i, end < 0 ? cmd.length : end + 1);
+      add(cmd.slice(i, end < 0 ? cmd.length : end + 1));
       i = end < 0 ? cmd.length : end;
       continue;
     }
     // Parentheses, $( ), @( ) and a hashtable's @{ } hold an expression, not statements of the line.
     if (c === "(" || (c === "@" && next === "{") || (c === "{" && nest.length)) {
       nest.push(c === "(" ? ")" : "}");
-      cur += c === "@" ? "@{" : c;
+      add(c === "@" ? "@{" : c);
       if (c === "@") i++;
       continue;
     }
     if (nest.length) {
       if (c === nest[nest.length - 1]) nest.pop();
-      cur += c;
+      add(c);
       continue;
     }
     // A script block's statements run too (`ForEach-Object { npm test }`, `if (…) { … }`).
@@ -433,7 +454,7 @@ function splitPowerShell(cmd: string): { text: string; pipe: boolean }[] {
       push(true);
       continue;
     }
-    cur += c;
+    add(c);
   }
   push(false);
   return out;
@@ -444,28 +465,33 @@ const psWords = (text: string): string[] => text.match(/(?:[^\s"'`]+|`[\s\S]?|"(
 
 /** One PowerShell statement's program and arguments, or undefined for a header, an expression or an empty statement. */
 function psPartOf(text: string): ShellPart | undefined {
-  let w = psWords(text);
+  const w = psWords(text);
   // `& $exe`, `& "C:\x\tool.exe"`: the call operator runs what follows, a value included.
   let called = false;
+  /** The first word not yet skipped. */
+  let k = 0;
   for (;;) {
-    const x = w[0];
+    const x = w[k];
     if (x === undefined) return undefined;
-    const lower = x.toLowerCase();
+    // `$a=$a=…` strips one assignment at a time: lowercasing the rest at each step would copy it each time.
+    const lower = x.length > PS_LONGEST ? "" : x.toLowerCase();
     if (PS_HEADERS.has(lower)) return undefined;
     if (PS_SKIP.has(lower)) {
       if (lower === "&" || lower === ".") called = true;
-      w = w.slice(1);
+      k++;
     }
     // `$out = npm test`, `$env:CI = 1`: the command is what comes after the assignment.
-    else if (/^\$[\w:?]+$/.test(x) && /^(?:[-+*/%]|\?\?)?=$/.test(w[1] ?? "")) w = w.slice(2);
+    else if (/^\$[\w:?]+$/.test(x) && /^(?:[-+*/%]|\?\?)?=$/.test(w[k + 1] ?? "")) k += 2;
     else if (/^\$[\w:]+[-+*/%]?=(?!=)/.test(x)) {
+      // `$x=npm`: the word goes on as what follows the `=`.
       const rest = x.replace(/^\$[\w:]+[-+*/%]?=/, "");
-      w = rest ? [rest, ...w.slice(1)] : w.slice(1);
+      if (rest) w[k] = rest;
+      else k++;
     } else break;
   }
   const argv: string[] = [];
   let away = false;
-  for (let i = 0; i < w.length; i++) {
+  for (let i = k; i < w.length; i++) {
     const x = w[i]!;
     const r = PS_REDIRECT.exec(x);
     if (r) {
@@ -515,13 +541,19 @@ function powerShellParts(script: string): ShellPart[] {
 export function shellParts(cmd: string, shell: Shell = "sh"): ShellPart[] {
   const script = launchedCommand(cmd);
   if (shell === "powershell" || script !== cmd) return powerShellParts(script);
-  return splitParts(cmd).flatMap((p) => {
+  // A loop, not flatMap: the session fold parses every shell call, and flatMap costs more than the parts.
+  const out: ShellPart[] = [];
+  for (const p of splitParts(cmd)) {
     // `cd x && powershell -Command "npm test"`: the launcher's script, as PowerShell.
     const inner = launchedCommand(p.text);
-    if (inner !== p.text) return powerShellParts(inner);
+    if (inner !== p.text) {
+      for (const q of powerShellParts(inner)) out.push(q);
+      continue;
+    }
     const part = partOf(p.text, p.last);
-    return part ? [part] : [];
-  });
+    if (part) out.push(part);
+  }
+  return out;
 }
 
 /** Shell plumbing: a builtin, a setup step, a file tool or a PowerShell pipeline cmdlet. It never runs a test suite, whatever its output holds. */

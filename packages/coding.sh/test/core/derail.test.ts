@@ -66,6 +66,16 @@ describe("derail detection", () => {
       const acrossEdit = [...read("a.ts"), ...read("a.ts"), ...read("a.ts"), ...edit("a.ts", "x", "y"), ...read("a.ts"), ...read("a.ts"), ...read("a.ts")];
       assert.deepEqual(flags(acrossEdit), []);
     });
+
+    it("reads Antigravity's run_command line: a sleep between checks is waiting, and the detail names the command", () => {
+      const agy = (command: string, output: string) => call("run_command", { CommandLine: command, Cwd: "/work/demo" }, { output });
+      reset();
+      assert.deepEqual(flags(Array.from({ length: 10 }, () => agy("sleep 30", "")).flat()), []);
+      reset();
+      const d = detectDerails(Array.from({ length: 6 }, () => agy("git status", "clean")).flat());
+      assert.deepEqual(d.map((x) => x.flag), ["looping"]);
+      assert.match(d[0]!.detail, /run_command git status ×6/);
+    });
   });
 
   describe("failure-streak", () => {
@@ -96,6 +106,15 @@ describe("derail detection", () => {
       reset();
       const interrupted = Array.from({ length: 6 }, (_, i) => call("Bash", { command: `c${i}` }, { ok: false, interrupted: true })).flat();
       assert.deepEqual(flags(interrupted), []);
+    });
+
+    it("reads Antigravity's run_command line: searches that found nothing are no streak", () => {
+      reset();
+      const noMatch = Array.from({ length: 6 }, (_, i) => call("run_command", { CommandLine: `rg -n symbol${i} src`, Cwd: "/work/demo" }, { ok: false, output: "Exit code 1" })).flat();
+      assert.deepEqual(flags(noMatch), []);
+      reset();
+      const real = Array.from({ length: 5 }, (_, i) => call("run_command", { CommandLine: `npm run build${i}`, Cwd: "/work/demo" }, { ok: false, output: "Exit code 1" })).flat();
+      assert.deepEqual(flags(real), ["failure-streak"]);
     });
   });
 
@@ -153,6 +172,14 @@ describe("derail detection", () => {
       reset();
       assert.deepEqual(flags(circle(120, 12)), [], "no edits anywhere: a question, not a task");
     });
+
+    it("reads Antigravity's run_command line: a shell write is progress, a read is not", () => {
+      const around = (command: string) => [...edit("a.ts", "1", "2"), ...circle(50, 10), ...call("run_command", { CommandLine: command, Cwd: "/work/demo" }), ...circle(50, 10, 120_000)];
+      reset();
+      assert.deepEqual(flags(around("sed -i s/a/b/ src/x.ts")), []);
+      reset();
+      assert.deepEqual(flags(around("ls src")), ["no-progress"]);
+    });
   });
 
   describe("stalled", () => {
@@ -194,6 +221,15 @@ describe("derail detection", () => {
       assert.deepEqual(flags([run, told, end]), []);
       assert.deepEqual(flags([run, mark, told, end]), []);
       assert.equal(buildSession([run, mark, told, end]).flags.includes("stalled"), false);
+    });
+
+    it("reads Antigravity's run_command line: a sleep is no hang, and a hang names its command", () => {
+      reset();
+      assert.deepEqual(flags(call("run_command", { CommandLine: "sleep 1200", Cwd: "/work/demo" }, { ok: false, ms: 20 * MIN })), []);
+      reset();
+      const d = detectDerails([ev("user.message", { text: "run e2e" }), ...call("run_command", { CommandLine: "npm run e2e", Cwd: "/work/demo" }, { ok: false, ms: 22 * MIN })]);
+      assert.deepEqual(d.map((x) => x.flag), ["stalled"]);
+      assert.match(d[0]!.detail, /run_command npm run e2e hung 22 min, then failed/);
     });
   });
 

@@ -34,7 +34,7 @@ const INTERRUPTED: ToolFailure = { cls: "interrupted" };
 
 /** Tools that take a bare command string as input. */
 const SHELL_TOOL = /^(?:bash|sh|zsh|shell|local_shell|exec|exec_command|run_shell_command|run_terminal_cmd|run_command|execute_command|terminal|command)$/i;
-const COMMAND_KEYS = ["command", "cmd", "script", "commandLine"] as const;
+const COMMAND_KEYS = ["command", "cmd", "script", "commandLine", "CommandLine"] as const;
 
 /** Search tools whose ok:false "No files found" is an empty result. */
 const SEARCH_TOOL = /grep|search|glob|find/i;

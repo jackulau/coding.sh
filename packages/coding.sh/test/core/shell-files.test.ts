@@ -36,6 +36,17 @@ describe("writtenFileKey", () => {
     assert.equal(writtenFileKey("../other/a.ts", "/work/demo"), undefined);
     assert.equal(writtenFileKey("~/.bashrc", "/work/demo"), undefined);
   });
+
+  it("reads Git Bash's /c/x as C:/x on a Windows drive, whatever the drive letter's case", () => {
+    assert.equal(writtenFileKey("/c/proj/b.ts", "C:\\proj"), "b.ts");
+    assert.equal(writtenFileKey("/C/proj/src/b.ts", "c:\\proj"), "src/b.ts");
+    assert.equal(writtenFileKey("c:\\proj\\b.ts", "C:\\proj"), "b.ts");
+    assert.equal(writtenFileKey("b.ts", "C:\\proj", "/c/proj/src"), "src/b.ts", "a Git Bash workdir");
+    assert.equal(writtenFileKey("/c/other/b.ts", "C:\\proj"), undefined, "outside the working directory");
+    assert.equal(writtenFileKey("/c", "C:\\proj"), undefined, "a drive, not a file");
+    assert.equal(writtenFileKey("/c/proj/b.ts", "/c/proj"), "b.ts");
+    assert.equal(writtenFileKey("/c/proj/b.ts", "/work/demo"), undefined, "in a POSIX folder, /c is a folder");
+  });
 });
 
 describe("shellCallFiles", () => {
@@ -44,7 +55,23 @@ describe("shellCallFiles", () => {
     assert.deepEqual(shellCallFiles("exec_command", { cmd: ["bash", "-lc", "echo x > a.txt"] }, "/w"), ["a.txt"]);
     assert.deepEqual(shellCallFiles("Read", { command: "echo x > a.txt" }, "/w"), []);
     assert.deepEqual(shellCallFiles("exec", { command: "echo x > a.txt", shell_id: "default" }, "/w"), ["a.txt"], "Devin CLI's shell");
+    assert.deepEqual(shellCallFiles("Execute", { command: "sed -i s/x/y/ a.ts" }, "/w"), ["a.ts"], "Droid's shell");
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "echo x > a.txt" }, "/w"), ["a.txt"], "Antigravity's shell");
     assert.deepEqual(shellCallFiles("exec", { code: "echo x > a.txt" }, "/w"), [], "an exec with no command line");
     assert.deepEqual(shellCallFiles(undefined, { command: "echo x > a.txt" }, "/w"), []);
+  });
+
+  it("resolves paths against the folder the call ran in: workdir, cwd or Antigravity's Cwd", () => {
+    assert.deepEqual(shellCallFiles("exec_command", { cmd: "echo x > a.txt", workdir: "/w/pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("Bash", { command: "echo x > a.txt", cwd: "/w/pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "/w/src" }, "/w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "C:\\w\\src" }, "C:\\w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("Bash", { command: "sed -i s/x/y/ /c/w/src/a.ts" }, "C:\\w"), ["src/a.ts"], "Git Bash's /c/w is C:\\w");
+  });
+
+  it("resolves paths against Gemini's dir_path or directory, relative to the project folder or absolute", () => {
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "sed -i s/x/y/ a.ts", dir_path: "src" }, "/w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "echo x > a.txt", directory: "pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "sed -i s/x/y/ a.ts", dir_path: "/w/src" }, "/w"), ["src/a.ts"]);
   });
 });
