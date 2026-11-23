@@ -67,6 +67,10 @@ It prints each alert's state, value and threshold, with `was OK` (or the state b
 change, then `Sent 1 notification.` It exits 0 whatever the alerts say; a script reads the states
 from `alert check --json`.
 
+`alert list --json` prints the saved states without a check. Each alert's `states` is a list with
+one entry per group, and the entry has `agent` under `--by agent`. PowerShell reads it with
+`codingsh alert list --json | ConvertFrom-Json`.
+
 Run it every few minutes from cron or Task Scheduler. On Windows, `where.exe codingsh.cmd` prints
 the path to give Task Scheduler as the program, with `alert check` as its arguments.
 
@@ -179,9 +183,14 @@ codingsh alert add failures --measure failure-rate --over 0.5 --window 1d --noti
 ## When a delivery fails
 
 Each notification is tried 3 times, 1 s and then 2 s apart. `alert check` warns about each one that
-failed, with the reason: the HTTP status, or the command's exit code and stderr. The new state is
-saved either way, so a change that was not delivered is not sent again.
+failed, with the reason: the HTTP status, or the command's exit code and stderr.
+
+The new state is saved either way, and `alert list` shows it. Each check sends the change again
+until a delivery gets through, with `previous` set to the state the target last got. Its line in
+`alert check` ends `was OK (not delivered before)`. If the state goes back to the one the target
+has, the check sends nothing.
 
 After 5 failed deliveries in a row, coding.sh turns the target off and skips it. `alert list` marks
 it `(disabled)` and says why. Fix the target, then run `coding.sh alert test <NAME>`: a test that
-gets through turns it back on (`Notifications are on again.`).
+gets through turns it back on (`Notifications are on again.`), and the next check sends the changes
+the target missed.
