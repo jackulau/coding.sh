@@ -188,7 +188,8 @@ order.
   waiting on one is blocked on you in `coding.sh work` until T3 resolves it. T3's secret and link requests
   are not read. The v1 store has no requests.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
-  haven't changed are skipped.
+  haven't changed are skipped. The store isn't opened when nothing in it changed since an import that read
+  every changed thread, so threads an import left when it ran out of time are read by the next import.
 - **Links lost by an older import:** a session another agent's adapter stored without its T3 link (an older
   `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
   The re-parse reads T3's store and adds the T3 rows such a session lacks. It runs once after the T3

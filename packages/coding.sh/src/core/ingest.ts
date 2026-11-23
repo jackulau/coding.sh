@@ -2052,6 +2052,10 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     let files: BackfillFile[] = [];
     /** The changed file being read: its cursors wait until it is read through. */
     let reading: BackfillFile | undefined;
+    /** A changed fingerprint of the whole store (`BackfillFile.covers`): its cursors wait for the walk to end with no file left. */
+    let cover: BackfillFile | undefined;
+    /** The walk left a file it was asked about for lateness. */
+    let left = false;
     /** Commits the files read through so far, with the sessions they touched. */
     const commitFiles = async () => {
       reading = undefined;
@@ -2085,7 +2089,8 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       const behind = at !== undefined && [...at.values()].some((c) => c !== mtime);
       const late = opts.deadline !== undefined && Date.now() >= opts.deadline;
       if (unchanged && !behind) {
-        if (!late) return false;
+        // A store nothing changed in since a walk read all of it: the walk is skipped, so nothing waits for it.
+        if (!late || f.covers) return false;
         // Out of time on a file nothing changed in: the adapter's walk over the files left is not worth waiting
         // for (a projects dir can hold tens of thousands). Stop it; one file stands for the ones not looked at.
         result.pendingFiles++;
@@ -2094,10 +2099,16 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       // Out of time (after reading one, so every run makes progress): left for the next backfill, which finds it still changed.
       if (late && accepted > 0) {
         if (!unchanged) result.pendingFiles++;
+        left = true;
         return false;
       }
-      accepted++;
       if (at) src = await openSource(adapter.id, f.path, { current, had: mtime, at, reading: !unchanged });
+      if (f.covers) {
+        // Not a file read (the first file after it is, out of time or not): its cursors wait for the walk.
+        if (!unchanged) cover = f;
+        return true;
+      }
+      accepted++;
       firstRead = unchanged ? false : !seen;
       // Read only for a sink: the index's own cursors stay as they are.
       if (!unchanged) {
@@ -2147,6 +2158,9 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       } else {
         await flush();
         await endSource();
+        // The walk read every changed file it asked about: the store's fingerprint now stands for them. Its
+        // cursors follow theirs, so a run killed before they are all in finds the store changed again.
+        if (cover && !left) files.push(cover);
       }
       for (const file of files) fileCursors.push({ agent: adapter.id, file });
     } catch (err) {
