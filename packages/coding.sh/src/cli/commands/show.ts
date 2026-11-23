@@ -14,7 +14,7 @@ import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { CheckpointRun } from "../../experiments/checkpoints.ts";
-import type { DurableStats, Usage } from "../../schema/index.ts";
+import type { DurableStats, Usage, WaitKind } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
 import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
@@ -346,6 +346,23 @@ export function wasteRows(s: Session): [string, string][] {
   return rows;
 }
 
+const WAIT_WORDS: Record<WaitKind, string> = { permission: "permission prompt", question: "question", plan: "plan", request: "request", turn: "turn" };
+
+/**
+ * How often and how long the session waited on the person, and on what:
+ * "4 times, 23m00s (1 question, 3 turns); 1 unanswered; 2 steers".
+ */
+export function waitsRow(s: Session): [string, string] | undefined {
+  const w = s.stats.waits;
+  if (!w) return undefined;
+  const kinds = Object.entries(w.byKind).map(([k, t]) => plural(t.count, WAIT_WORDS[k as WaitKind] ?? k));
+  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)} (${kinds.join(", ")})` : "0 times"];
+  if (w.open) parts.push(`${w.open.count} unanswered`);
+  if (w.capped) parts.push(`${w.capped} capped at 12h`);
+  if (w.steers) parts.push(plural(w.steers, "steer"));
+  return ["Waited on you", parts.join("; ")];
+}
+
 /** Skill use recomputed from the session's events (only the `skill:` tags are stored); undefined when it has none. */
 async function sessionSkills(index: IndexStore, s: Session): Promise<SkillUseReport | undefined> {
   if (!s.flags.some((f) => f.startsWith(SKILL_TAG_PREFIX))) return undefined;
@@ -572,6 +589,8 @@ export async function run(c: CommandContext): Promise<number> {
       if (lat.toolMs !== undefined) parts.push(`tools ${duration(lat.toolMs)} (p95 ${duration(lat.toolP95Ms)})`);
       if (parts.length) rows.push(["Latency", parts.join("; ")]);
     }
+    const waits = waitsRow(s);
+    if (waits) rows.push(waits);
     if (changes) {
       const add = changes.files.reduce((n, f) => n + f.additions, 0);
       const del = changes.files.reduce((n, f) => n + f.deletions, 0);
