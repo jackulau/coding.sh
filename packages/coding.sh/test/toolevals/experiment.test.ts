@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import type { Adapter, RunSpec, Session } from "../../src/core/types.ts";
+import type { Adapter, AgentRunOutput, RunSpec, Session } from "../../src/core/types.ts";
 import { sh } from "../../src/runner/exec.ts";
 import { compareToolArms, summarizeArms } from "../../src/toolevals/compare.ts";
 import { runToolExperiment, runTrial, type ToolJob } from "../../src/toolevals/experiment.ts";
@@ -98,12 +98,14 @@ describe("runToolExperiment: infrastructure errors", () => {
     assert.deepEqual([cmp.baseline.trials, cmp.baseline.infra], [0, 2]);
   });
 
-  it("an agent that could not start (exit 127) or exited non-zero before its first turn is an error, not a plain fail", async () => {
+  it("an agent that could not start or exited non-zero before its first turn is an error, not a plain fail; a 127 after its turns is its own failure", async () => {
     const index = new MemIndex();
-    // What the agent's process did, by task: its exit code, what it printed on stderr, and the turns its captured session shows.
-    const plan: Record<string, { exitCode: number; stderr: string; turns?: number }> = {
-      missing: { exitCode: 127, stderr: "spawn claude ENOENT" },
+    // What the agent's process did, by task: its exit code, what it printed on stderr, the spawn error its adapter
+    // recorded when the program never started, and the turns its captured session shows.
+    const plan: Record<string, { exitCode: number; stderr: string; spawnError?: string; turns?: number }> = {
+      missing: { exitCode: 127, stderr: "spawn claude ENOENT", spawnError: "spawn claude ENOENT" },
       crashed: { exitCode: 139, stderr: "Segmentation fault" },
+      notfound: { exitCode: 127, stderr: "sh: 1: rg: not found", turns: 3 },
       worked: { exitCode: 1, stderr: "Reached max turns", turns: 2 },
       wrong: { exitCode: 0, stderr: "" },
     };
@@ -112,7 +114,9 @@ describe("runToolExperiment: infrastructure errors", () => {
       run: async (spec: RunSpec) => {
         const p = plan[spec.instruction.split(" ")[0]!]!;
         if (p.turns) await index.upsertSession({ id: `s_${spec.runId}`, agent: "claude-code", runId: spec.runId, startedAt: 1, stats: { events: 0, turns: p.turns, toolCalls: 0, toolErrors: 0 } } as Session);
-        return { exitCode: p.exitCode, timedOut: false, durationMs: 1, stdoutTail: "nope", stderrTail: p.stderr };
+        const out: AgentRunOutput = { exitCode: p.exitCode, timedOut: false, durationMs: 1, stdoutTail: "nope", stderrTail: p.stderr };
+        if (p.spawnError) out.spawnError = p.spawnError;
+        return out;
       },
     };
     const tasks = Object.keys(plan).map((id) => task({ id, instruction: `${id} greets bob` }));
@@ -123,7 +127,9 @@ describe("runToolExperiment: infrastructure errors", () => {
       [
         ["missing", false, "agent never ran, exit 127: spawn claude ENOENT", undefined],
         ["crashed", false, "agent never ran, exit 139: Segmentation fault", undefined],
-        // The agent took turns and then exited 1, or exited 0 with the wrong answer: both are its own failure.
+        // The agent took turns and then exited 127 (a command of its own was not found), exited 1, or exited 0 with
+        // the wrong answer: each is its own failure, counted in the pass rate.
+        ["notfound", false, undefined, undefined],
         ["worked", false, undefined, undefined],
         ["wrong", false, undefined, undefined],
       ],

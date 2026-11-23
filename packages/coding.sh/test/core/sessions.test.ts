@@ -87,6 +87,8 @@ describe("buildSession", () => {
     assert.equal(s.endSnapshot, "end-snap");
     assert.deepEqual(s.stats, {
       events: events.length, turns: 1, toolCalls: 2, toolErrors: 1, filesChanged: 2, testsPassed: 4, testsFailed: 0,
+      // `ls` searched; `cat x` failed with no error line naming x, so x still counts as read.
+      retrieval: { reads: 1, filesRead: 1, editedAfterRead: 0, searches: 1, beforeFirstEdit: 2 },
       usage: { inputTokens: 11, outputTokens: 5, costUsd: 0.5, cacheReadTokens: 7 },
       latency: { wallMs: events.at(-1)!.ts - events[0]!.ts, toolMs: 20, toolP95Ms: 10 },
     });

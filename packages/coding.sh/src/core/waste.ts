@@ -50,13 +50,15 @@ const READ_TOOLS = new Set([
   "file_search",
   "search_file_content",
 ]);
-const SEARCH_TOOLS = new Set(["grep", "glob", "ls", "list_dir", "list_directory", "grep_search", "file_search", "search_file_content"]);
+/** Search and listing tools (lower case); core/retrieval.ts counts them as searches too. */
+export const SEARCH_TOOLS = new Set(["grep", "glob", "ls", "list_dir", "list_directory", "grep_search", "file_search", "search_file_content"]);
 const EDIT_TOOLS = /^(?:write|edit|multiedit|multi_edit|notebookedit|notebook_edit|edit_notebook|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|replace|edit_file|write_file|create_file|write_to_file|replace_in_file|delete_file|delete)$/;
 const MCP_READ = /^mcp__.+?__(?:read|get|list)/i;
 
 /** Read-only shell programs; `sed` only with -n, `find` only without actions, `git` only for reading subcommands. */
 const SHELL_READERS = new Set(["cat", "head", "tail", "nl", "wc", "ls", "rg", "grep", "fd", "tree", "stat", "file", "cd", "pwd"]);
-const SHELL_SEARCHERS = new Set(["ls", "rg", "grep", "fd", "tree", "find"]);
+/** Shell programs that search or list; core/retrieval.ts counts them as searches too. */
+export const SHELL_SEARCHERS = new Set(["ls", "rg", "grep", "fd", "tree", "find"]);
 const GIT_READERS = new Set(["show", "log", "diff", "status", "blame"]);
 const GIT_SEARCHERS = new Set(["status", "diff"]);
 

@@ -13,6 +13,7 @@ import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
 import { findSessions } from "../../query/run.ts";
 import { andQuery, parseWhere, type Query } from "../../query/where.ts";
+import { retrievalTotals, type RetrievalTotals } from "../../core/retrieval.ts";
 
 /** Printed under the table when subagents were rolled up: why stats and usage book their spend apart. */
 export const ROLLUP_NOTE = "Subagents' cost, tokens and tool calls count on their top-level session's day, agent, model and repo; usage books each subagent on its own. --all lists them as their own rows.";
@@ -25,6 +26,21 @@ export async function hasSubagents(index: IndexStore, since: number, until: numb
   } catch {
     return false; // only a note
   }
+}
+
+/**
+ * --json's `retrieval`: the stats.retrieval totals of every session in the window that matches
+ * --where, subagent sessions included (each on its own); undefined when none read, searched or fetched.
+ */
+export async function retrievalInWindow(index: IndexStore, since: number, until: number, where: Query | undefined): Promise<(RetrievalTotals & { truncated?: true }) | undefined> {
+  let found;
+  try {
+    found = await findSessions(index, where ?? {}, { filter: { since, until } });
+  } catch (e) {
+    throw queryCliError(e);
+  }
+  const totals = retrievalTotals(found.sessions);
+  return totals && found.truncated ? { ...totals, truncated: true } : totals;
 }
 
 const BARS = "▁▂▃▄▅▆▇█";
@@ -126,7 +142,10 @@ export async function run(c: CommandContext): Promise<number> {
       throw queryCliError(e);
     }
     if (out.json) {
-      out.data({ ...m, window: windowJson(window), measure, ...pendingField(backlog) });
+      const data: Record<string, unknown> = { ...m, window: windowJson(window), measure, ...pendingField(backlog) };
+      const retrieval = await retrievalInWindow(ctx.index, since, until, where);
+      if (retrieval) data.retrieval = retrieval;
+      out.data(data);
       return 0;
     }
     windowNote(out, window);
