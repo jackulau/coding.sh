@@ -291,6 +291,11 @@ export interface MetricRow {
   llmP95Ms?: number;
   ttftP50Ms?: number;
   /**
+   * Session.stats.waits as stored, for `coding.sh stats --json`, which sums them over every
+   * session. The session's own: rollUpSubagents does not add a subagent's.
+   */
+  waits?: Session["stats"]["waits"];
+  /**
    * Set by rollUpSubagents (src/viewer/metrics.ts): the p95 model-call latency and the
    * median TTFT of each subagent rolled into this row, so latency totals rank them as
    * the per-session view does. Absent when no rolled-in subagent has one.

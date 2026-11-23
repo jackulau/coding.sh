@@ -4,14 +4,14 @@
 // /api/metrics and the viewer's Metrics page). Without --by: one row per day
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document.
-import { bucketTimes, loadMetricRows, MAX_BUCKETS, METRICS_SCAN_CAP, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
+import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricsSpec, type MetricTotals } from "../../viewer/metrics.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
 import { duration, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
-import { findSessions, sessionMatcher } from "../../query/run.ts";
+import { findSessions } from "../../query/run.ts";
 import { andQuery, parseWhere, type Query } from "../../query/where.ts";
 import type { WaitKind } from "../../schema/index.ts";
 
@@ -26,14 +26,15 @@ const waitJson = (w: WaitSum) => ({ count: w.count, ms: w.ms, minutes: Math.roun
 /**
  * The window's waits on the person (Session.stats.waits) for --json: summed over every session
  * that started in [since, until) and matches --where, subagents included (a subagent's waits are
- * in its own session, so none counts twice). Undefined when no session has any.
+ * in its own session, so none counts twice). Read as metrics read the window (loadMetricRows:
+ * only the waits on SQLite, whole sessions elsewhere), with `truncated` when that read stopped at
+ * METRICS_SCAN_CAP sessions. Undefined when no session read has any.
  */
 export async function windowWaits(index: IndexStore, since: number, until: number, where: Query | undefined): Promise<Record<string, unknown> | undefined> {
-  const root = where?.root;
-  // The two paths metrics reads sessions by: the store's query, else a scan that matches each session.
-  const query = index.querySessions && root ? index.querySessions.bind(index) : undefined;
-  const match = query ? async () => true : sessionMatcher(index, root);
-  const page = 1000;
+  // No parentSessionId filter: each subagent is a row of its own, not rolled into its parent's.
+  const spec: Pick<MetricsSpec, "since" | "until" | "where"> = { since, until };
+  if (where) spec.where = where;
+  const { rows, truncated } = await loadMetricRows(index, spec);
   let sessions = 0;
   let steers = 0;
   let capped = 0;
@@ -45,21 +46,15 @@ export async function windowWaits(index: IndexStore, since: number, until: numbe
     to.count += w?.count ?? 0;
     to.ms += w?.ms ?? 0;
   };
-  for (let offset = 0; offset < METRICS_SCAN_CAP; offset += page) {
-    const filter = { since, until };
-    const batch = query ? await query({ root }, { filter, limit: page, offset }) : await index.listSessions({ ...filter, limit: page, offset });
-    for (const s of batch) {
-      const w = s.stats.waits;
-      if (!w || !(await match(s))) continue;
-      sessions++;
-      add(all, w);
-      add(open, w.open);
-      add(agent, w.agent);
-      steers += w.steers ?? 0;
-      capped += w.capped ?? 0;
-      for (const [k, t] of Object.entries(w.byKind)) add((byKind[k as WaitKind] ??= { count: 0, ms: 0 }), t);
-    }
-    if (batch.length < page) break;
+  for (const { waits: w } of rows) {
+    if (!w) continue;
+    sessions++;
+    add(all, w);
+    add(open, w.open);
+    add(agent, w.agent);
+    steers += w.steers ?? 0;
+    capped += w.capped ?? 0;
+    for (const [k, t] of Object.entries(w.byKind)) add((byKind[k as WaitKind] ??= { count: 0, ms: 0 }), t);
   }
   if (!sessions) return undefined;
   const kinds: Record<string, unknown> = {};
@@ -69,6 +64,7 @@ export async function windowWaits(index: IndexStore, since: number, until: numbe
   if (agent.count) out.agent = waitJson(agent);
   if (steers) out.steers = steers;
   if (capped) out.capped = capped;
+  if (truncated) out.truncated = true;
   return out;
 }
 
