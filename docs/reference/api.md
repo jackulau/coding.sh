@@ -888,6 +888,7 @@ skills). It is what `coding.sh harness audit` counts.
 - A shell call (any agent's shell tool, Antigravity's `run_command` and Droid's `Execute` included) writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
 - PowerShell's `Set-Content`, `Add-Content` and `Out-File` count too. A file written both by an edit tool and by a shell call counts once.
 - A relative path resolves from the folder the call names (`workdir`, `cwd`, Antigravity's `Cwd`, Gemini's `dir_path` or `directory`) and any `cd` before it.
+- In a working directory on a Windows drive, `C:\x`, `c:/x` and Git Bash's `/c/x` are one file, named by an edit tool or by a shell call.
 - Reads, deletes, `/dev/null`, paths with a variable or a glob, and paths outside the working directory (`/tmp`, `~`) do not count.
 - Neither does a call the user stopped or turned down, nor a script that writes files without naming them in the command (`python fix.py`).
 

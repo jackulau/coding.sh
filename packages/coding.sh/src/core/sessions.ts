@@ -24,7 +24,7 @@ import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, mode
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
 import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
-import { traceRoot, underTraceRoot } from "./shell-diff.ts";
+import { driveOf, onDrive, traceRoot, underTraceRoot } from "./shell-diff.ts";
 import { shellCallFiles } from "./shell-files.ts";
 import { foldRetrieval, markRetrievalEdit, retrievalOf, retrievalState, type RetrievalState } from "./retrieval.ts";
 
@@ -1248,7 +1248,7 @@ export function addLlmError(prev: LlmErrors | undefined, payload: Record<string,
  * The key a changed file counts under in stats.filesChanged (and `coding.sh work show`, `show`):
  * the path resolved against the folder the event ran in, then relative to the session's cwd, so
  * one file edited while the agent's folder changed counts once. A path outside the session's cwd
- * stays absolute.
+ * stays absolute. On a Windows drive, `C:\x`, `c:/x` and Git Bash's `/c/x` are one key (onDrive).
  */
 export function changeKey(path: string, eventCwd: string | undefined, sessionCwd: string | undefined): string {
   return changeKeyer(eventCwd, sessionCwd)(path);
@@ -1257,15 +1257,16 @@ export function changeKey(path: string, eventCwd: string | undefined, sessionCwd
 /** changeKey for the paths of one event: the two folders are read once, not once per path. */
 export function changeKeyer(eventCwd: string | undefined, sessionCwd: string | undefined): (path: string) => string {
   const root = traceRoot(eventCwd ?? sessionCwd);
-  if (!eventCwd || !sessionCwd) return (path) => underTraceRoot(path, root);
+  const drive = driveOf(root);
+  if (!eventCwd || !sessionCwd) return (path) => underTraceRoot(onDrive(path, drive), root);
   const sessionRoot = traceRoot(sessionCwd);
+  const sessionDrive = driveOf(sessionRoot);
   const base = eventCwd.replace(/\\/g, "/").replace(/\/+$/, "");
   return (path) => {
-    const k = underTraceRoot(path, root);
+    const k = underTraceRoot(onDrive(path, drive), root);
     // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
     // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
-    if (/^(?:[A-Za-z]:)?\//.test(k)) return underTraceRoot(k, sessionRoot);
-    return underTraceRoot(`${base}/${k}`, sessionRoot);
+    return underTraceRoot(onDrive(/^(?:[A-Za-z]:)?\//.test(k) ? k : `${base}/${k}`, sessionDrive), sessionRoot);
   };
 }
 

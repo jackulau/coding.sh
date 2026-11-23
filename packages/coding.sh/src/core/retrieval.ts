@@ -829,32 +829,25 @@ const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|ca
 
 /**
  * Read paths as filesChanged keys (sessions.ts changeKey): relative to the session's cwd when
- * inside it, else absolute. A relative path is joined to the event's cwd first; Git Bash's `/c/x`
- * is `C:/x`, with the drive letter in the cwd's case. The cwds are read once for all of a call's paths.
+ * inside it, else absolute. A relative path is joined to the event's cwd first; changeKey reads Git
+ * Bash's `/c/x` as `C:/x`. The cwds are read once for all of a call's paths.
  */
 function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
   const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
-  const drive = base && /^[A-Za-z]:/.test(base) ? base[0]! : undefined;
   const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
   const change = changeKeyer(eventCwd, cwd);
   return (path) => {
     let p = slashed(path);
-    if (drive) {
-      if (p[0] === "/") p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-      if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === drive.toLowerCase()) p = drive + p.slice(1);
-    }
     if (rooted && !ABSOLUTE.test(p)) p = posix.join(base!, p);
     const k = posix.normalize(change(p));
     return k === "" || k === "." ? undefined : k;
   };
 }
 
-/** An edit's filesChanged key in keyer's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
+/** An edit's filesChanged key (changeKey: Git Bash's `/c/x` already `C:/x`) in keyer's form: `.` and `..` resolved. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
   const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (c && /^[A-Za-z]:/.test(c)) k = k.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-  if (c && /^[A-Za-z]:/.test(c) && /^[A-Za-z]:/.test(k) && k[0]!.toLowerCase() === c[0]!.toLowerCase()) k = c[0] + k.slice(1);
   k = normalizeTracePath(k, c);
   if (c && ABSOLUTE.test(c) && k.startsWith("../")) k = normalizeTracePath(posix.join(c, k), c);
   return k;

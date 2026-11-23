@@ -36,6 +36,17 @@ describe("writtenFileKey", () => {
     assert.equal(writtenFileKey("../other/a.ts", "/work/demo"), undefined);
     assert.equal(writtenFileKey("~/.bashrc", "/work/demo"), undefined);
   });
+
+  it("reads Git Bash's /c/x as C:/x on a Windows drive, whatever the drive letter's case", () => {
+    assert.equal(writtenFileKey("/c/proj/b.ts", "C:\\proj"), "b.ts");
+    assert.equal(writtenFileKey("/C/proj/src/b.ts", "c:\\proj"), "src/b.ts");
+    assert.equal(writtenFileKey("c:\\proj\\b.ts", "C:\\proj"), "b.ts");
+    assert.equal(writtenFileKey("b.ts", "C:\\proj", "/c/proj/src"), "src/b.ts", "a Git Bash workdir");
+    assert.equal(writtenFileKey("/c/other/b.ts", "C:\\proj"), undefined, "outside the working directory");
+    assert.equal(writtenFileKey("/c", "C:\\proj"), undefined, "a drive, not a file");
+    assert.equal(writtenFileKey("/c/proj/b.ts", "/c/proj"), "b.ts");
+    assert.equal(writtenFileKey("/c/proj/b.ts", "/work/demo"), undefined, "in a POSIX folder, /c is a folder");
+  });
 });
 
 describe("shellCallFiles", () => {
@@ -55,6 +66,7 @@ describe("shellCallFiles", () => {
     assert.deepEqual(shellCallFiles("Bash", { command: "echo x > a.txt", cwd: "/w/pkg" }, "/w"), ["pkg/a.txt"]);
     assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "/w/src" }, "/w"), ["src/a.ts"]);
     assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "C:\\w\\src" }, "C:\\w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("Bash", { command: "sed -i s/x/y/ /c/w/src/a.ts" }, "C:\\w"), ["src/a.ts"], "Git Bash's /c/w is C:\\w");
   });
 
   it("resolves paths against Gemini's dir_path or directory, relative to the project folder or absolute", () => {

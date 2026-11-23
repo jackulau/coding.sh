@@ -6,7 +6,7 @@
 // count. Pure: rules over strings, no I/O.
 import { posix } from "node:path";
 import { isShellCall, shellCommandOf } from "../adapters/_shared/tools.ts";
-import { normalizeTracePath, shellWrites, simpleCommands } from "./shell-diff.ts";
+import { driveOf, normalizeTracePath, onDrive, shellWrites, simpleCommands } from "./shell-diff.ts";
 
 /** An absolute path (POSIX, a Windows drive) or one under the home directory. */
 export const ABSOLUTE = /^(?:\/|[A-Za-z]:\/|~)/;
@@ -85,12 +85,14 @@ export function shellWrittenPaths(command: string, powershell = false): string[]
  * A written path as a filesChanged key: relative to `cwd` (after `workdir`, the
  * directory the call ran in, when it names one), or undefined when it falls
  * outside the working directory (a scratch file under /tmp, a dotfile in ~).
+ * On a Windows cwd, Git Bash's `/c/x` is `C:/x` (onDrive).
  */
 export function writtenFileKey(path: string, cwd?: string, workdir?: string): string | undefined {
   let p = path.replace(/\\/g, "/");
   if (workdir && !ABSOLUTE.test(p)) p = posix.join(workdir.replace(/\\/g, "/"), p);
-  p = normalizeTracePath(p, cwd);
-  if (ABSOLUTE.test(p)) return undefined;
+  p = normalizeTracePath(onDrive(p, driveOf(cwd)), cwd);
+  // `C:` alone is Git Bash's `/c`, a drive, not a file.
+  if (ABSOLUTE.test(p) || /^[A-Za-z]:$/.test(p)) return undefined;
   p = posix.normalize(p);
   return p === "." || p === ".." || p.startsWith("../") ? undefined : p;
 }

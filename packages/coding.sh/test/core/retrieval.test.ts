@@ -357,6 +357,13 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
   });
 
+  it("a file a shell call reads and then writes the Git Bash way (`/c/x`) is a file changed after it was read", () => {
+    const at = { cwd: "C:\\proj" };
+    const s = buildSession([...bash("cat /c/proj/b.ts", { at }), ...bash("sed -i 's/x/y/' /c/proj/b.ts", { at })]);
+    assert.equal(s.stats.filesChanged, 1);
+    assert.deepEqual(s.stats.retrieval, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });
+  });
+
   it("the fold saved between events (as ingest does) ends where one pass does", () => {
     const events = [...read("a.ts"), ...bash("grep -rn foo src", { output: "(Bash completed with no output)" }), ...read("b.ts"), edit("a.ts"), ...call("WebSearch", { query: "x" })];
     for (let cut = 1; cut < events.length; cut++) {
