@@ -104,6 +104,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Sessions.** When a shell line that reads files fails, `stats.retrieval` drops a file only when an error line names it whole. Before, an error about `data.ts` or `a.tsx` also dropped `a.ts`, so a file the agent read counted as not read. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid))
 - **Evals.** For a `coding.sh run --` session, `eval new` and `eval candidates` no longer take code (`sh -c "npm run build"`), a `NAME=value` setting or a path with a space in it for the task prompt. A session whose command has no other prompt argument is left out as having no prompt. [docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/session-to-eval.md#one-session-at-a-time)
 - **Capture.** T3 Code threads an import left when it ran out of time are read by the next import. Before, they waited until T3 Code wrote to its store again, and an import out of time from the start read none of them. [Host apps](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Evals.** A tool eval trial whose agent took turns and then exited 127 counts as a failing trial in its arm's pass rate. Before, it was taken for an agent that never started and left out. Only a spawn error, or a non-zero exit before the first turn, means the agent never ran. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md#31-task-kinds-bad-guard-control)

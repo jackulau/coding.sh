@@ -354,6 +354,26 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });
   });
 
+  it("a failed shell line drops only the files an error line names whole", () => {
+    const failed = (command: string, error: string) => retrieval(bash(command, { ok: false, output: `Exit code 1\n${error}` }))?.filesRead;
+    // A longer name holds `a.ts` but names another file: `a.ts` was read.
+    assert.equal(failed("cat a.ts data.ts", "cat: data.ts: No such file or directory"), 1);
+    assert.equal(failed("cat a.ts a.tsx", "cat: a.tsx: No such file or directory"), 1);
+    assert.equal(failed("cat a.ts a.ts.orig", "cat: a.ts.orig: No such file or directory"), 1);
+    assert.equal(failed("cat a.ts .a.ts", "cat: .a.ts: No such file or directory"), 1);
+    assert.equal(failed("cat a.ts \u00f1a.ts", "cat: \u00f1a.ts: No such file or directory"), 1);
+    // A directory, quotes, a Windows path, the end of a sentence or of the line: these name `a.ts`.
+    for (const error of [
+      "cat: src/a.ts: No such file or directory",
+      "head: cannot open 'a.ts' for reading: No such file or directory",
+      "Get-Content : Cannot find path 'C:\\work\\a.ts' because it does not exist.",
+      "cannot read a.ts.",
+      "zsh: no such file or directory: a.ts",
+    ]) assert.equal(failed("cat a.ts b.ts", error), 1, error);
+    // Two paths with one base name: an error that names it drops both.
+    assert.equal(failed("cat src/a.ts lib/a.ts b.ts", "cat: lib/a.ts: No such file or directory"), 1);
+  });
+
   it("a failed `cat` of 5,000 files, its error naming each missing one, is folded in linear time", () => {
     const files = Array.from({ length: 5000 }, (_, i) => `f${i}.ts`);
     const missing = (gone: (i: number) => boolean) => {

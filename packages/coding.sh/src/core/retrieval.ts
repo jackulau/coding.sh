@@ -991,13 +991,27 @@ function drop(s: RetrievalState, key: string): void {
 }
 
 /**
- * The needles that some line holds, as `lines.some((l) => l.includes(n))` finds each, in one pass
- * over the lines (Aho–Corasick): a failed `cat` of many files is not a scan of the output per file.
+ * Text just before a match that ends in a file name character (POSIX's letters, digits, `.`, `_`
+ * and `-`, with any script's letters and digits): the match is part of a longer name, as `a.ts` is
+ * in `data.ts` and `.a.ts`.
  */
-function heldBy(needles: readonly string[], lines: readonly string[]): Set<string> {
+const NAME_BEFORE = /[\p{L}\p{M}\p{N}_.-]$/u;
+/**
+ * Text just after a match that starts with a file name character, or with a dot and one: the match
+ * is part of a longer name, as `a.ts` is in `a.tsx` and `a.ts.orig`. A dot alone ends a sentence.
+ */
+const NAME_AFTER = /^\.?[\p{L}\p{M}\p{N}_-]/u;
+
+/**
+ * The needles that some line names whole, with no file name character just before or after the
+ * match: `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
+ * pass over the lines (Aho–Corasick) finds every match: a failed `cat` of many files is not a scan
+ * of the output per file.
+ */
+function namedIn(needles: readonly string[], lines: readonly string[]): Set<string> {
   const held = new Set<string>();
   if (!lines.length) return held;
-  // A trie of the needles by UTF-16 code unit, the unit `includes` compares; ends[s]: the needles that end at state s.
+  // A trie of the needles by UTF-16 code unit; ends[s]: the needles that end at state s.
   const next: Map<number, number>[] = [new Map()];
   const ends: string[][] = [[]];
   for (const n of needles) {
@@ -1029,17 +1043,38 @@ function heldBy(needles: readonly string[], lines: readonly string[]): Set<strin
       order.push(t);
     }
   }
-  /** States whose needles, and their suffixes' needles, are in `held`. */
-  const done = new Uint8Array(next.length);
+  // out[s]: the nearest state on s's fail chain, s included, where a needle ends; 0 for none.
+  // below[o]: the next such state down o's chain; once o's needle is held, any state further down.
+  const out = new Int32Array(next.length);
+  const below = new Int32Array(next.length);
+  for (const s of order) {
+    out[s] = ends[s]!.length ? s : out[fail[s]!]!;
+    below[s] = out[fail[s]!]!;
+  }
+  /** The first state from o down its chain whose needle is not held yet; 0 for none. Walks skip held ones from then on. */
+  const open = (o: number): number => {
+    let r = o;
+    while (r && held.has(ends[r]![0]!)) r = below[r]!;
+    while (o !== r) {
+      const b = below[o]!;
+      below[o] = r;
+      o = b;
+    }
+    return r;
+  };
   for (const line of lines) {
     let s = 0;
     for (let i = 0; i < line.length; i++) {
       const c = line.charCodeAt(i);
       while (s && !next[s]!.has(c)) s = fail[s]!;
       s = next[s]!.get(c) ?? 0;
-      for (let o = s; o && !done[o]; o = fail[o]!) {
-        done[o] = 1;
-        for (const n of ends[o]!) held.add(n);
+      // The needles that end here share the text after them: one check for all of them.
+      if (!out[s] || NAME_AFTER.test(line.slice(i + 1, i + 4))) continue;
+      for (let o = open(out[s]!); o; o = open(below[o]!)) {
+        // A state's needles are one text, repeated when two paths share a base name.
+        const n = ends[o]![0]!;
+        const start = i + 1 - n.length;
+        if (!NAME_BEFORE.test(line.slice(Math.max(0, start - 2), start))) held.add(n);
       }
     }
   }
@@ -1051,10 +1086,10 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   const p = e.payload;
   if (failure?.cls === "interrupted" || p.interrupted === true || (p.ok === false && !pending.shell)) for (const k of pending.keys) drop(s, k);
   else if (p.ok === false && pending.keys.length) {
-    // A shell line fails as a whole: a file counts as not read when an error line names it.
+    // A shell line fails as a whole: a file counts as not read when an error line names its base name whole.
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
     const names = pending.keys.map((k) => posix.basename(k));
-    const named = heldBy(names, lines);
+    const named = namedIn(names, lines);
     for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
   if (pending.search && foundNothing(e, failure, pending)) s.empty++;
