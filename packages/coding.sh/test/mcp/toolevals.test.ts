@@ -87,6 +87,10 @@ describe("tool evals against the coding.sh MCP server", () => {
     // sessionId) and status's work and index fields as open objects paid for it.
     // status's update command (the bin the user's shell runs) and work's PRs fit in a shorter search
     // description and session_tree's run argument.
+    // work's id (one item, found as work show finds it) adds about 0.1 KB; shorter status and work
+    // descriptions and status's lastError as an open object paid for it.
+    // eval_candidates' rejected and rejectedBy (counts over every considered session, not just the
+    // page) fit in shorter eval_candidates text.
     // harness_changes' headless argument (as improve's: a change only headless runs used says so,
     // and the argument counts them) adds about 80 bytes, less the default its description repeated from since.
     assert.ok(s.surfaceBytes < 45_050, `surface is ${s.surfaceBytes} bytes`);

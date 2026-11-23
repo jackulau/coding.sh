@@ -7,9 +7,11 @@
 import { createRedactor } from "../../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay, type ReplayStep, type StepChange, type RangeFile } from "../../core/replay.ts";
 import { UsageError, positiveInt } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, shellQuote, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
 import { fork } from "./replay-fork.ts";
+import { cliCommand } from "../next-steps.ts";
 import { clean, duration, plural, type Output } from "../output.ts";
+import type { Session } from "../../schema/index.ts";
 import type { CommandContext } from "../types.ts";
 
 const OUTPUT_LINES = 40;
@@ -28,6 +30,7 @@ export async function run(c: CommandContext): Promise<number> {
     const replay = await loadReplay(ctx, s, { baseline: snapshotBaseline(s, ctx.env, redactor) });
     const total = replay.steps.length;
     const check = (n: number, flag: string) => {
+      if (!total) throw new UsageError(noSteps(s));
       if (n > total) throw new UsageError(`--${flag} ${n} is past the last step (${plural(total, "step")})`);
       return n;
     };
@@ -47,10 +50,10 @@ export async function run(c: CommandContext): Promise<number> {
     if (step === undefined && file === undefined) {
       const index = replay.index();
       if (out.json) return out.data(index), 0;
-      printIndex(out, replay, s.title ?? s.id);
+      printIndex(c, replay, s.title ?? s.id);
       return 0;
     }
-    if (!total) throw new UsageError("This session has no steps to replay");
+    if (!total) throw new UsageError(noSteps(s));
     const n = check(step ?? total, "step");
     const view = await replay.at(n, { file });
     if (out.json) return out.data(view), 0;
@@ -58,7 +61,7 @@ export async function run(c: CommandContext): Promise<number> {
       printFile(out, view.file!, n);
       return 0;
     }
-    printStep(out, replay, view);
+    printStep(out, replay, view, c.env);
     return 0;
   }, { create: false });
 }
@@ -74,14 +77,26 @@ function stepLine(out: Output, st: ReplayStep, width: number): string {
   return `${String(st.n).padStart(width)}  ${st.kind.padEnd(8)} ${ok(out, st)} ${dur.padStart(6)}  ${oneLine(clean(st.label), 100)}`;
 }
 
-function printIndex(out: Output, replay: Replay, title: string): void {
+/** Why a session has no steps: they come from the agent's own prompts and tool calls. */
+function noSteps(s: Session): string {
+  return s.flags.includes("tools:unseen")
+    ? "This session has no steps to replay: it came from a source that records model calls only (the proxy, or an SDK call outside trace()), and steps come from the agent's prompts and tool calls"
+    : "This session has no steps to replay: it recorded no prompts, replies or tool calls";
+}
+
+function printIndex(c: CommandContext, replay: Replay, title: string): void {
+  const { out } = c;
   const idx = replay.index();
   out.print(out.style(oneLine(clean(title), 100), "bold"));
   out.print(out.style(`${plural(idx.steps.length, "step")}, ${plural(idx.files.length, "file")} touched${idx.baseline === "snapshot" ? ", start snapshot" : ""}`, "faint"));
   out.print();
   const w = String(idx.steps.length).length;
   for (const st of idx.steps) out.print(stepLine(out, st, w));
-  if (!idx.steps.length) return;
+  if (!idx.steps.length) {
+    out.print(`${noSteps(replay.session)}.`);
+    out.next("See what it recorded", cliCommand(c.env, ["show", replay.session.id]));
+    return;
+  }
   const tree = replay.tree(idx.steps.length);
   if (tree.length) {
     out.print();
@@ -89,7 +104,7 @@ function printIndex(out: Output, replay: Replay, title: string): void {
     for (const f of tree) out.print(`  ${treeMark(out, f.status)} ${f.path}  ${out.style(f.edits ? `${plural(f.edits, "change")}, last touched at step ${f.lastStep}` : `read at step ${f.lastStep}`, "faint")}`);
   }
   const firstEdit = idx.steps.find((s) => s.files?.some((f) => f.op !== "read"));
-  out.next("See what a step did", `coding.sh replay ${shellQuote(replay.session.id)} --step ${firstEdit?.n ?? 1}`);
+  out.next("See what a step did", cliCommand(c.env, ["replay", replay.session.id, "--step", String(firstEdit?.n ?? 1)]));
 }
 
 function treeMark(out: Output, status: string): string {
@@ -124,7 +139,7 @@ function printChange(out: Output, ch: StepChange | RangeFile): void {
   if (ch.why) out.print(out.style(`  Content after this unknown: ${ch.why}`, "yellow"));
 }
 
-function printStep(out: Output, replay: Replay, view: Awaited<ReturnType<Replay["at"]>>): void {
+function printStep(out: Output, replay: Replay, view: Awaited<ReturnType<Replay["at"]>>, env: NodeJS.ProcessEnv): void {
   const st = view.step;
   const head = `Step ${st.n} of ${view.steps}  ${st.kind}${st.tool ? ` (${st.tool})` : ""}`;
   out.print(out.style(head, "bold") + (st.ok !== undefined ? `  ${ok(out, st)}` : "") + (st.durationMs !== undefined ? `  ${duration(st.durationMs)}` : ""));
@@ -158,7 +173,7 @@ function printStep(out: Output, replay: Replay, view: Awaited<ReturnType<Replay[
     for (const f of view.tree) out.print(`  ${treeMark(out, f.status)} ${f.path}${f.here ? out.style("  ← this step", "cyan") : ""}`);
   }
   const touched = view.tree.find((f) => f.here && f.status !== "read") ?? view.tree.find((f) => f.here);
-  if (touched) out.next("See the whole file at this step", `coding.sh replay ${shellQuote(replay.session.id)} --step ${st.n} --file ${touched.path}`);
+  if (touched) out.next("See the whole file at this step", cliCommand(env, ["replay", replay.session.id, "--step", String(st.n), "--file", touched.path]));
 }
 
 function printFile(out: Output, f: NonNullable<Awaited<ReturnType<Replay["at"]>>["file"]>, n: number): void {
