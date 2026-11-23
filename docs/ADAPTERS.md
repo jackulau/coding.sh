@@ -196,8 +196,9 @@ order.
   at or before the prompt, else the first one sent up to 5 s after it. Each message matches one prompt. When
   the store says an agent sent it, an `agent_prompt` notification is stamped just over 5 s before the prompt,
   and `stats.waits` counts the prompt as an agent's: the transcript's copy, or else the hook's live copy
-  closest in time, within 5 s. A prompt in the session's first 5 s gets no notification. The v1 store doesn't
-  say who sent a message.
+  closest in time, within 5 s. A prompt in the session's first 5 s gets no notification. The notification is
+  not a step: `show`, the viewer and the MCP tools' timelines leave it out, and it opens no phase, marks no
+  day and flags no `stalled` call. The v1 store doesn't say who sent a message.
 - **Launch:** the `host-link` notification of a thread a person started (its first user-role message has
   `createdBy: "user"`, and it isn't a subagent's thread) says `launch: "interactive"`, and that is the
   session's `stats.launch`, whatever its agent's start says (T3 drives Claude Code through the Agent SDK). A

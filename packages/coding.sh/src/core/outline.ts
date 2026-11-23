@@ -9,7 +9,7 @@
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
 import { failureState, foldFailure, type ToolFailure } from "./failures.ts";
 import { phasePromptTitle } from "./sessions.ts";
-import { HOST_AGENT_PROMPT } from "./waiting.ts";
+import { isAgentPromptMark } from "./waiting.ts";
 
 /** A gap this long between two events of the main agent opens a new phase. */
 export const IDLE_PHASE_MS = 30 * 60_000;
@@ -101,7 +101,11 @@ export function outlineOf(s: OutlineState, derails: readonly SessionDerail[] = [
  * failures count as the phase's toolErrors, and undefined counts as real.
  */
 export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?: ToolFailure): void {
-  if (s.days) {
+  // A host's marker that an agent sent the next prompt (T3 Code) is stamped just over HOST_MARK_SLACK_MS
+  // before that prompt: no activity of its own, so it marks no day, opens no phase, moves no gap and
+  // stretches no phase.
+  const mark = isAgentPromptMark(e);
+  if (s.days && !mark) {
     const d = localDate(e.ts);
     if (d !== s.day) {
       if (s.day) s.days.push({ date: d, ts: e.ts, index: i, eventId: e.id });
@@ -115,9 +119,6 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?:
     s.phases.push({ n: s.phases.length + 1, kind, startTs: e.ts, endTs: e.ts, from: i, to: i, eventId: e.id, events: 0, prompts: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0, ...extra });
   };
   const files = s.files;
-  // A host's marker that an agent sent the next prompt (T3 Code) is stamped just over HOST_MARK_SLACK_MS
-  // before that prompt: no activity of its own, so it opens no phase, moves no gap and stretches no phase.
-  const mark = e.kind === "notification" && e.payload.type === HOST_AGENT_PROMPT;
   // Boundaries come from the main agent's own events; a subagent's work sits inside its parent's phase.
   if (!e.subagentId && !mark) {
     const cur = s.phases.at(-1);

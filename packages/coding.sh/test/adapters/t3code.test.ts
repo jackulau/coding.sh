@@ -6,6 +6,8 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
@@ -17,8 +19,11 @@ import { repoResolver } from "../../src/core/repo-state.ts";
 import { reparse } from "../../src/core/reparse.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Adapter } from "../../src/core/types.ts";
-import { usage } from "../../src/mcp/data.ts";
-import type { AgentEvent } from "../../src/schema/index.ts";
+import { timeline, usage } from "../../src/mcp/data.ts";
+import type { AgentEvent, Session } from "../../src/schema/index.ts";
+import { buildModel, layoutRows, readRows, type Row } from "../../src/viewer/model.ts";
+import * as show from "../../src/cli/commands/show.ts";
+import { runCmd, sandbox } from "../cli/_cmd.ts";
 import { hostOf } from "../../src/spool/host.ts";
 import { CLI } from "../_cli.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -1277,6 +1282,58 @@ describe("T3 prompts an agent made, in a thread read from its Codex or Claude tr
       }
     });
   }
+
+  it("the host's markers show in no timeline: show, the MCP timeline, the viewer's rows and turns, and the session page's steps", async () => {
+    const index = await run([t3code]);
+    const html = readFileSync(fileURLToPath(new URL("../../src/viewer/ui/index.html", import.meta.url)), "utf8");
+    // The session page's step builder, with the call-copy fold it runs, as the page runs it.
+    const buildTimeline: (events: AgentEvent[]) => { id: string }[] = runInNewContext(`${html.slice(html.indexOf("function callCopies("), html.indexOf("function itemView("))}\nbuildTimeline`, {});
+    const said = "Review the diff on the other branch";
+    const sessions: Session[] = [];
+    const all: AgentEvent[] = [];
+    for (const id of [CX, CL]) {
+      const s = (await index.getSession(id))!;
+      const events = await index.listEvents(id);
+      sessions.push(s);
+      all.push(...events);
+      const marks = new Set(events.filter((e) => e.kind === "notification" && e.payload.type === "agent_prompt").map((e) => e.id));
+      assert.equal(marks.size, 2, id);
+      const bare = events.filter((e) => !marks.has(e.id));
+      const prompt = events.find((e) => e.kind === "user.message" && e.payload.text === said)!;
+      // MCP: the timeline is the one the events make without the markers.
+      const lines = timeline(events, s.startedAt);
+      assert.ok(lines.some((l) => l.text.includes(said)), id);
+      assert.deepEqual(lines, timeline(bare, s.startedAt), id);
+      // The viewer's rows (unfolded, every turn): no marker's row, the prompt's row kept.
+      const m = buildModel(events);
+      const rows: Row[] = [];
+      for (const t of m.turns) rows.push(...(await readRows(index, id, m, layoutRows(m, t, t.start, 1000, false).slots)));
+      const ids = rows.flatMap((r) => ("id" in r ? [r.id] : []));
+      assert.ok(ids.includes(prompt.id), id);
+      assert.deepEqual(ids.filter((x) => marks.has(x)), [], id);
+      assert.equal(ids.length, bare.length, id);
+      // A turn ends at its own last event, not at the marker stamped before the next turn's prompt.
+      assert.deepEqual(m.turns.map((t) => t.endTs), buildModel(bare).turns.map((t) => t.endTs), id);
+      // The session page's steps.
+      const steps = Array.from(buildTimeline(events), (it) => it.id);
+      assert.ok(steps.includes(prompt.id), id);
+      assert.deepEqual(steps.filter((x) => marks.has(x)), [], id);
+      assert.deepEqual(steps, Array.from(buildTimeline(bare), (it) => it.id), id);
+    }
+    // `coding.sh show`: the prompt's line, no marker's.
+    const sb = sandbox();
+    try {
+      await sb.seed(sessions, all);
+      for (const id of [CX, CL]) {
+        const r = await runCmd(show, sb, { positionals: [id] });
+        assert.equal(r.error, undefined, id);
+        assert.match(r.stdout, /Review the diff on the other branch/, id);
+        assert.doesNotMatch(r.stdout, /an agent sent the next prompt/, id);
+      }
+    } finally {
+      sb.cleanup();
+    }
+  });
 
   it("a thread a person started whose session another adapter imports (OpenCode) has no launch: its agents' prompts are not told apart", async () => {
     const index = await run([t3code]);

@@ -10,6 +10,7 @@ import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } f
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
 import { changeKey, failureFlags, FLAGS, llmCallFailed } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
+import { isAgentPromptMark } from "../../core/waiting.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
@@ -234,6 +235,8 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "turn.end":
     case "context.compact":
     case "notification": {
+      // A host's marker that an agent sent the next prompt: no line, at a time it made up.
+      if (isAgentPromptMark(e)) return undefined;
       if (p.kind === "harness.loaded") return `harness     ${oneLine(clean(harnessText(p)), 90)}`;
       // A weight edit or a checkpoint: one line from core/weights.ts.
       const weights = weightsEventText(p);

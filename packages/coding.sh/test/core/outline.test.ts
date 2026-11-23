@@ -79,6 +79,25 @@ describe("session outline", () => {
     assert.deepEqual(o.days, [{ date: "2026-11-04", ts: events[2]!.ts, index: 2, eventId: events[2]!.id }]);
   });
 
+  it("a host's marker of an agent's prompt marks no day: the day line is on the prompt", () => {
+    n = 0;
+    const midnight = new Date(2026, 10, 4).getTime();
+    clock = midnight - 30 * MIN;
+    const events = [ev("session.start", { source: "startup" }), ev("user.message", { text: "late" }, { gap: 20 * MIN })];
+    clock = midnight + 2_000;
+    const prompt = ev("user.message", { text: "after midnight" }, { gap: 0 });
+    // Stamped just over HOST_MARK_SLACK_MS before the prompt, so before midnight here: a made-up time.
+    const mark: AgentEvent = { id: "mark", v: 0, sessionId: "s", ts: prompt.ts - HOST_MARK_SLACK_MS - 1, agent: "t3code", kind: "notification", payload: { type: HOST_AGENT_PROMPT, via: "t3code", promptId: prompt.id, at: prompt.ts } };
+    assert.equal(localDate(mark.ts), "2026-11-03");
+    const o = sessionOutline([...events, mark, prompt]);
+    assert.deepEqual(o.days, [{ date: "2026-11-04", ts: prompt.ts, index: 3, eventId: prompt.id }]);
+    // One stamped after midnight, its prompt later still: the day line waits for the prompt.
+    const late = { ...prompt, id: "late", ts: midnight + 3 * MIN };
+    const after = { ...mark, ts: late.ts - HOST_MARK_SLACK_MS - 1, payload: { ...mark.payload, promptId: late.id, at: late.ts } };
+    assert.equal(localDate(after.ts), "2026-11-04");
+    assert.deepEqual(sessionOutline([...events, after, late]).days, [{ date: "2026-11-04", ts: late.ts, index: 3, eventId: late.id }]);
+  });
+
   it("keeps the phases on the session at ingest, so readers need no events", () => {
     n = 0;
     clock = T0;
