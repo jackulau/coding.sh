@@ -211,6 +211,8 @@ interface LineEvents {
   events: AgentEvent[];
   /** The line was read for the index too (not only to catch a sink up): its events were put in this run. */
   stored?: boolean;
+  /** Every event of a stored line whose copy check left some out of `events`: a suspect line sends those the index holds. */
+  all?: AgentEvent[];
 }
 
 export interface CaptureProfile {
@@ -494,14 +496,17 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   // parent's Agent-tool PostToolUse and the helper's own SubagentStop), and hooks in two settings
   // files spool one firing twice (firingKey gives both copies the same ids). A transcript import
   // can store and send an event before its line is read, under the same id or, for the kinds
-  // message-copies.ts matches, an id of its own. The index keeps one copy, and so does a sink: an
-  // id goes out at most once per pass (one ingestLocked call), a line new to the index leaves out
-  // the events its put found stored (repeats), and a live copy of what an import stored goes to
-  // neither. The line or import that stored them sent them, lies below the sink cursor, or is sent
-  // when the sink catches up.
+  // message-copies.ts matches, an id of its own. An id goes out to a sink at most once per pass
+  // (one ingestLocked call), a line new to the index leaves out the events its put found stored
+  // (repeats), and a live copy of what an import stored by the time the line is read goes to
+  // neither the index nor a sink. The line or import that stored them sent them, lies below the
+  // sink cursor, or is sent when the sink catches up. The copy check runs at the read and the put
+  // at the checkpoint, and an import does not take this lock: an import that stores its copy in
+  // between leaves both copies in the index and the sinks, on any store.
   //
   // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
-  // every event:
+  // each of their events the index holds, also a live copy that the copy check now leaves out
+  // because an import stored its own copy after the crashed or stalled run stored the line's:
   // - A store without transactions makes its writes one at a time, so a run can crash between its
   //   puts and its cursor writes. Before the puts, each file's two in-flight keys are set, after a
   //   fence each, to how far this run read, and never below the larger one a run before it left.
@@ -517,16 +522,18 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   //   started are suspect, and the cursor is set to the larger of the two, so that a later
   //   checkpoint or run still finds them.
   //
-  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, an
-  // older build's gc ran, or a transcript import runs beside this run on a store with no
-  // putEventsReturningIds (Postgres, ClickHouse):
+  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, a sink
+  // starts from lines below the local cursor, an older build's gc ran, or a transcript import runs
+  // beside this run:
   // - a suspect line carries an event another line or an import sent;
   // - a run crashes between a send and its sink-cursor write, and the next run sends those lines;
   // - a holder that stalled past the stale limit sends lines that the process which took the lock
   //   over sends too, or its late sink-cursor write moves the cursor back over lines that process
   //   sent;
-  // - a sink catches up after a failed send from lines that carry an event another line sent, or a
-  //   live copy of an event an import sent (lines below the local cursor send every event);
+  // - a sink catches up after a failed send, or a sink new to the file (added later, or renamed)
+  //   reads it from the start, from lines that carry an event another line sent, or a live copy of
+  //   an event an import sent (lines below the local cursor send every event);
+  // - an import stores its copy of a live event between the line's copy check and its put (above);
   // - an older build's gc left a deleted file's in-flight keys, and a new file at the same path
   //   grows as long as the larger key: its lines below that key are suspect;
   // - InsertedEvents reads the stored ids of a store with no putEventsReturningIds before the put,
@@ -544,8 +551,25 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     const from = await index.getCursor(key);
     let seen = sentIds.get(sink);
     if (!seen) sentIds.set(sink, (seen = new Set()));
-    const once = (l: LineEvents): AgentEvent[] => l.events.filter((e) => !(l.stored && l.offset >= suspect && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
-    const lines = window.filter((l) => l.offset >= from).map((l) => ({ ...l, events: once(l) }));
+    // A suspect line also sends the live copies its copy check left out that the index holds: an
+    // import stored its own copy after a run that crashed or stalled stored the line's.
+    const held = new Map<string, Promise<Set<string>>>();
+    const isHeld = async (e: AgentEvent) => {
+      const k = `${e.sessionId}\u0000${e.kind}`;
+      let ids = held.get(k);
+      if (!ids) held.set(k, (ids = index.listEvents(e.sessionId, { kinds: [e.kind] }).then((es) => new Set(es.map((s) => s.id)))));
+      return (await ids).has(e.id);
+    };
+    const pick = async (l: LineEvents): Promise<AgentEvent[]> => {
+      if (!l.all || !l.stored || l.offset >= suspect) return l.events;
+      const kept = new Set(l.events);
+      const out: AgentEvent[] = [];
+      for (const e of l.all) if (kept.has(e) || (await isHeld(e))) out.push(e);
+      return out;
+    };
+    const once = (l: LineEvents, events: AgentEvent[]): AgentEvent[] => events.filter((e) => !(l.stored && l.offset >= suspect && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
+    const lines: LineEvents[] = [];
+    for (const l of window) if (l.offset >= from) lines.push({ ...l, events: once(l, await pick(l)) });
     const size = sinkBatchSize(config, sink);
     let i = 0;
     while (i < lines.length) {
@@ -813,7 +837,11 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           }
         }
       }
-      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events: kept, stored: rec.offset >= fr.local });
+      if (keepWindow) {
+        const line: LineEvents = { offset: rec.offset, nextOffset: rec.nextOffset, events: kept, stored: rec.offset >= fr.local };
+        if (kept.length < events.length) line.all = events;
+        fr.window.push(line);
+      }
       // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
       if (windowEvents >= checkpointEvents) {

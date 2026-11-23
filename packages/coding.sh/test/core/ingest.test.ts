@@ -844,6 +844,47 @@ describe("ingest", () => {
     assert.equal(sink.events.length, 1, "the copy sends nothing");
   });
 
+  /**
+   * A run stores `hook` and dies at its cursor write; an import then stores and sends `transcript`,
+   * which the copy check does not take for a copy of what the spool stored, though the re-read
+   * takes the hook's event for a copy of it. The sink must still get the hook's event.
+   */
+  const crashThenImport = async (hook: Record<string, unknown>, transcript: (ts: number) => AgentEvent[]) => {
+    const t = setup();
+    t.write(t.line({ session: "s", ...hook }), t.line({ session: "s", kind: "notification" }));
+    const src = "fake/2026-11-06.1.jsonl";
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const sink = new RecordingSink("remote", "full");
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    dieAtCursorWrite(t.index, src, 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    const live = (await t.index.listEvents("s")).find((e) => e.kind === hook.kind)!;
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield* transcript(live.ts);
+      },
+    };
+    const bf = await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] });
+    assert.equal(bf.events, 1, "the import stores one transcript event");
+    assert.equal((await ingest(opts)).events, 0, "nothing new to the index");
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("s")).map((e) => e.id).sort(), "the sink holds what the store holds");
+    assert.ok(ids.includes(live.id), "the hook's event the dead run stored reaches the sink");
+  };
+
+  it("after a run died between storing a hook's session start and moving its cursor, sends it when an import stored a start that links a parent", async () => {
+    await crashThenImport({ kind: "session.start" }, (ts) => [{ id: "t-start", v: 0, sessionId: "s", ts: ts - 500, agent: "fake", kind: "session.start", payload: { parentSessionId: "p" } }]);
+  });
+
+  it("after a run died between storing a hook's compaction and moving its cursor, sends it when an import paired it with one compaction and stored the next", async () => {
+    const compact = (id: string, ts: number): AgentEvent => ({ id, v: 0, sessionId: "s", ts, agent: "fake", kind: "context.compact", payload: {} });
+    await crashThenImport({ kind: "context.compact" }, (ts) => [compact("t-c1", ts + 30_000), compact("t-c2", ts + 60_000)]);
+  });
+
   it("sends a sink the lines a holder that lost the lock committed after this run read their cursor, when this run dies before its next checkpoint", async () => {
     const t = setup();
     t.write(t.line({ session: "s", kind: "notification", hook: "stale" }));
