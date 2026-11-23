@@ -604,14 +604,25 @@ jobs:
       # About 11 minutes after a hosted Windows runner boots, its Storage Service reads the disk at
       # 25-47 MB/s for 30 s or more, and the Volume Shadow Copy service starts. A viewer page that
       # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
-      # do not use the service, so it is stopped before anything else, and disabled so that nothing
-      # starts it again. The step fails if the service cannot be stopped.
+      # do not use the service, so it is stopped before anything else. It is disabled first, so
+      # that nothing starts it while it stops or after. A stop failed in 2 of the first 1232 jobs
+      # (the service refused it once, and once it was not stopping 2 s later), so a failed stop is
+      # tried again 5 s later, up to 5 times. The step fails if the service is still not stopped.
       - name: Stop the Storage Service
         shell: pwsh
         run: |
-          Stop-Service -Name StorSvc -Force
           Set-Service -Name StorSvc -StartupType Disabled
-          Get-Service -Name StorSvc | ForEach-Object { "Storage Service: $($_.Status), start type $($_.StartType)" }
+          foreach ($try in 1..5) {
+            try { Stop-Service -Name StorSvc -Force -ErrorAction Stop; break }
+            catch { "::warning title=Storage Service::Try $try of 5 to stop it failed: $_" }
+            if ($try -lt 5) { Start-Sleep -Seconds 5 }
+          }
+          $service = Get-Service -Name StorSvc
+          "Storage Service: $($service.Status), start type $($service.StartType)"
+          if ($service.Status -ne 'Stopped') {
+            "::error title=Storage Service not stopped::StorSvc is $($service.Status) after 5 tries to stop it."
+            exit 1
+          }
 
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v5

@@ -195,9 +195,16 @@ test("ci.yml stops the Storage Service before anything else in the Windows job",
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   const windows = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
   // The service starts a disk read about 11 minutes after boot; a viewer page that first loads
-  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, and a
-  // service that cannot be stopped fails the job.
-  const step = "\n      - name: Stop the Storage Service\n        shell: pwsh\n        run: |\n          Stop-Service -Name StorSvc -Force\n          Set-Service -Name StorSvc -StartupType Disabled\n";
-  assert.equal(windows.split(step).length, 2, "the step, once");
-  assert.equal(windows.indexOf("\n      - "), windows.indexOf(step), "it is the first step");
+  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, the
+  // service disabled before the first stop, a failed stop tried again, and a service that is
+  // still not stopped fails the job.
+  const head = "\n      - name: Stop the Storage Service\n        shell: pwsh\n        run: |\n";
+  assert.equal(windows.split(head).length, 2, "the step, once");
+  assert.equal(windows.indexOf("\n      - "), windows.indexOf(head), "it is the first step");
+  const rest = windows.slice(windows.indexOf(head) + head.length);
+  const script = /^(?: {10}.*\n)+/.exec(rest)?.[0] ?? "";
+  assert.ok(rest.slice(script.length).startsWith("\n"), "the script is the step's last key: no continue-on-error");
+  assert.ok(script.startsWith("          Set-Service -Name StorSvc -StartupType Disabled\n"), "disabled before the first stop");
+  assert.match(script, /\n +foreach \(\$try in 1\.\.5\) \{\n +try \{ Stop-Service -Name StorSvc -Force -ErrorAction Stop; break \}\n/, "a failed stop is tried again");
+  assert.match(script, /\n +if \(\$service\.Status -ne 'Stopped'\) \{\n.*\n +exit 1\n +\}\n$/, "a service still not stopped fails the step");
 });
