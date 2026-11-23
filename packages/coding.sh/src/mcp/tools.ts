@@ -1184,7 +1184,8 @@ function toolDefs(): PagedTool[] {
               ...(strArg(a, "url") ? { url: strArg(a, "url")! } : {}),
               ...(strArg(a, "description") ? { description: strArg(a, "description")! } : {}),
             },
-            { index: ctx.index, blobs: ctx.blobs, now: c.now() },
+            // Notes name a session by a reference that opens it, as the other tools list them.
+            { index: ctx.index, blobs: ctx.blobs, now: c.now(), ref: strArg(a, "source") === "sessions" ? await shortIds(ctx) : undefined },
           );
         } catch (e) {
           // The message says when replacing needs the user's approval; a structured field would cost context on every turn.
