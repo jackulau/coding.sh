@@ -13,7 +13,7 @@ import { toPosix } from "../../runner/fsutil.ts";
 import type { SuitePurpose } from "../../eval/report.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, resolveSession, str, whereFlag, withContext } from "../common.ts";
-import { nextStepBin } from "../next-steps.ts";
+import { nextStepBin, quoteArg } from "../next-steps.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { commandsForShell } from "./eval.ts";
@@ -173,7 +173,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);
     const spin = workRoot ? out.spin("Drafting and validating tasks…") : undefined;
     try {
-      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env) });
+      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env), quoteArg: (s) => quoteArg(s, c.env) });
     } catch (e) {
       if (e instanceof InitError || e instanceof DraftError) {
         throw new CliError(commandsForShell(e.message, c.env), {

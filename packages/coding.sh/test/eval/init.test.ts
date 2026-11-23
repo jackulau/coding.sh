@@ -7,6 +7,8 @@ import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { parseTriggerSpec } from "../../src/eval/trigger.ts";
 import { draftCases, draftTriggers, DraftError } from "../../src/eval/draft.ts";
 import { chooseGraders, ciWorkflow, initSuite, InitError, suiteName } from "../../src/eval/init.ts";
+import { commandsForShell } from "../../src/cli/commands/eval.ts";
+import { quoteArg } from "../../src/cli/next-steps.ts";
 import { loadSuite } from "../../src/eval/suite-spec.ts";
 import { importTaskDir } from "../../src/eval/task.ts";
 import type { ChatProvider, ChatRequest } from "../../src/judge/providers.ts";
@@ -438,6 +440,16 @@ describe("initSuite: a session with no prompt (coding.sh run)", () => {
     assert.ok(err instanceof InitError, String(err));
     assert.match(err.message, /session w1 has no user prompt to use as the instruction; draft it with coding\.sh eval new w1 --instruction "<what the agent was asked to do>" --verifier 'grep -q b f\.txt'/);
     assert.doesNotMatch(err.message, /pass one with --instruction/, "eval init has no --instruction option");
+    // PowerShell and cmd: cmd keeps single quotes and would split `npm ci && npm test` at the &&.
+    const win = await initSuite(
+      { name: "hid2", root: await project(), source: "sessions", sessionIds: ["w1"], verifier: "npm ci && npm test" },
+      { ...d, git, now: 12_000, quoteArg: (s) => quoteArg(s, {}, "win32") },
+    ).then(
+      () => assert.fail("expected an InitError"),
+      (e: Error) => e,
+    );
+    assert.match(win.message, /coding\.sh eval new w1 --instruction "<what the agent was asked to do>" --verifier "npm ci && npm test"/);
+    assert.match(commandsForShell(win.message, {}, "win32"), /codingsh eval new w1 --instruction "<what the agent was asked to do>" --verifier "npm ci && npm test"/);
   });
 });
 

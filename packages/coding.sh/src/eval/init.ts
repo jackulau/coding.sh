@@ -113,6 +113,8 @@ export interface InitDeps {
   now?: number;
   /** Whether a session's start state can be read on this machine (tests with made-up roots; default eval/candidates.ts startReadable). */
   startReadable?: (root: string) => boolean | Promise<boolean>;
+  /** One argument of a command a note names, quoted for the user's shell (the CLI's quoteArg; default sh quoting). */
+  quoteArg?: (s: string) => string;
 }
 
 export interface InitResult {
@@ -336,7 +338,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     } catch (e) {
       // eval init takes no --instruction: name the command that does.
       const why = e instanceof NoInstructionError
-        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${shellWord(o.verifier)}` : ""}`
+        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${(deps.quoteArg ?? shellWord)(o.verifier)}` : ""}`
         : e instanceof Error ? e.message : String(e);
       notes.push(`skipped session ${s.id}: ${why}`);
       continue;
