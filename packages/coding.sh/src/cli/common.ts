@@ -161,7 +161,7 @@ export interface IngestBacklog {
   pendingFiles: number;
   /** A background ingest was started, or another ingest holds the lock. */
   indexing: boolean;
-  /** A re-parse or a repricing holds reparse.lock: the read did not ingest, and that run has the files ingested between its steps. */
+  /** A re-parse or a repricing holds reparse.lock: the read did not ingest; that run has the files ingested between its steps where it can, else the next ingest does. */
   reparsing?: true;
 }
 
@@ -222,7 +222,8 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
   // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
   if (ctx.storeOverridden) return { pendingFiles: 0, indexing: false };
   // A re-parse or a repricing holds the store: a budgeted read leaves the spool to it (it has what the
-  // wake marker says waits ingested between its steps) and answers from what is indexed.
+  // wake marker says waits ingested between its steps where it can, else the next ingest does) and
+  // answers from what is indexed.
   if (o.budgetMs !== undefined && isLocked(ctx.paths.reparseLock)) return reparseBacklog(ctx, o);
   const deadline = o.budgetMs !== undefined ? Date.now() + o.budgetMs : undefined;
   let pending = 0;
@@ -290,7 +291,7 @@ async function reparseBacklog(ctx: Context, o: AutoIngestOptions): Promise<Inges
     } catch {
       // the re-parse or repricing has them ingested at the next hook's marker instead
     }
-    o.out?.note(`${plural(pending, "file")} not yet ingested; a re-parse or repricing is running and has them ingested between its steps; showing what is indexed so far (--fresh waits for all)`);
+    o.out?.note(`${plural(pending, "file")} not yet ingested; a re-parse or repricing is running and has them ingested between its steps where it can; showing what is indexed so far (--fresh waits for all)`);
   }
   return { pendingFiles: pending, indexing: true, reparsing: true };
 }

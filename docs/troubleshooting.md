@@ -223,8 +223,10 @@ coding.sh: index upgraded in 24.7s: migrate 1.2s, reprice 23.5s. The index as it
   each session's costs and totals commit as one, and on other stores repricing holds the ingest
   lock around them, a second at a time.
 - **New captures during a repricing.** Reads show what is indexed; the repricing has the rest
-  ingested between its steps. A repricing run with `--store` or `--blobs`, or with
-  `CODING_SH_NO_AUTO_INGEST=1` outside `usage --reprice`, leaves them to the next ingest.
+  ingested between its steps where it can, else the next ingest does.
+- **Where it can't.** With `--store` or `--blobs`, a repricing leaves new captures to the next
+  ingest. So does one at an index open in an eval run or with `CODING_SH_NO_AUTO_INGEST=1`, and
+  one whose background ingest never runs.
 - **A read-only home.** Where coding.sh can't make its lock file in the home, estimates wait to be
   repriced by a command that can, and `coding.sh usage --reprice` fails with the reason.
 - **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished.
