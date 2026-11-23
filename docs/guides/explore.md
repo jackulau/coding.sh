@@ -131,8 +131,7 @@ a8f20c41                              tool.end  43m ago  …431: this.db.prepare
 
 Search covers prompts, replies, tool input and output, error events, failed model calls, tool
 errors and the error a session ended with. Every word must match within one event. Open a hit with
-`coding.sh show <session>`. A session id over 40 characters, like the subagent's here, prints as
-the shortest reference that opens it.
+`coding.sh show <session>`.
 
 ## Open the viewer
 
