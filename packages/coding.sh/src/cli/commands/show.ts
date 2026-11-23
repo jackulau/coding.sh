@@ -10,14 +10,15 @@ import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } f
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
 import { changeKey, failureFlags, FLAGS, llmCallFailed } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
+import { isAgentPromptMark } from "../../core/waiting.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { CheckpointRun } from "../../experiments/checkpoints.ts";
-import type { DurableStats, Usage } from "../../schema/index.ts";
+import type { DurableStats, Usage, WaitKind } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
-import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
+import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { ago, clean, CliError, duration, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
@@ -234,6 +235,8 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "turn.end":
     case "context.compact":
     case "notification": {
+      // A host's marker that an agent sent the next prompt: no line, at a time it made up.
+      if (isAgentPromptMark(e)) return undefined;
       if (p.kind === "harness.loaded") return `harness     ${oneLine(clean(harnessText(p)), 90)}`;
       // A weight edit or a checkpoint: one line from core/weights.ts.
       const weights = weightsEventText(p);
@@ -344,6 +347,26 @@ export function wasteRows(s: Session): [string, string][] {
     rows.push(["Cache breaks", `${b.count}: ${tokens(b.lostTokens)} prompt tokens billed again${cost} (${causes})`]);
   }
   return rows;
+}
+
+const WAIT_WORDS: Record<WaitKind, string> = { permission: "permission prompt", question: "question", plan: "plan", request: "request", turn: "turn" };
+
+/**
+ * How often and how long the session waited on the person, and on what:
+ * "4 times, 23m00s, median 4m00s (1 question, 3 turns); 1 unanswered; 2 steers".
+ * The median sits beside the total, which a few waits capped at 12 hours can fill.
+ */
+export function waitsRow(s: Session): [string, string] | undefined {
+  const w = s.stats.waits;
+  if (!w) return undefined;
+  const kinds = Object.entries(w.byKind).map(([k, t]) => plural(t.count, WAIT_WORDS[k as WaitKind] ?? k));
+  const median = w.medianMs !== undefined ? `, median ${duration(w.medianMs)}` : "";
+  // A session the person only steered never waited on them.
+  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)}${median} (${kinds.join(", ")})` : "never"];
+  if (w.open) parts.push(`${w.open.count} unanswered`);
+  if (w.capped) parts.push(`${w.capped} capped at 12h`);
+  if (w.steers) parts.push(plural(w.steers, "steer"));
+  return ["Waited on you", parts.join("; ")];
 }
 
 /** The Retrieval header row: reads, searches and web calls, the files read and then edited, and the calls before the first edit. */
@@ -556,7 +579,7 @@ export async function run(c: CommandContext): Promise<number> {
         subagents: treeJson(subagents.roots),
       };
       // The count alone does not say where the rest are.
-      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${s.id} --json` });
+      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${wholeRef(s.id)} --json` });
       doc.skills = skills?.used ?? [];
       doc.comments = comments;
       if (runs.length) doc.checkpointExperiments = runs;
@@ -590,6 +613,8 @@ export async function run(c: CommandContext): Promise<number> {
       if (lat.toolMs !== undefined) parts.push(`tools ${duration(lat.toolMs)} (p95 ${duration(lat.toolP95Ms)})`);
       if (parts.length) rows.push(["Latency", parts.join("; ")]);
     }
+    const waits = waitsRow(s);
+    if (waits) rows.push(waits);
     if (changes) {
       const add = changes.files.reduce((n, f) => n + f.additions, 0);
       const del = changes.files.reduce((n, f) => n + f.deletions, 0);
@@ -650,7 +675,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.print();
       out.print(out.style("Subagents", "bold"));
       printTree(out, pageTree(tree, 0, SUBAGENT_TEXT_LIMIT).roots);
-      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${s.id} lists them all`);
+      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${wholeRef(s.id)} lists them all`);
     }
     return 0;
   }, { create: false });

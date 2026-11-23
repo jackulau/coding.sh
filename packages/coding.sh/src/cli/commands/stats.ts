@@ -4,7 +4,7 @@
 // /api/metrics and the viewer's Metrics page). Without --by: one row per day
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document.
-import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
+import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricsSpec, type MetricTotals } from "../../viewer/metrics.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -14,6 +14,60 @@ import type { IndexStore } from "../../core/types.ts";
 import { findSessions } from "../../query/run.ts";
 import { andQuery, parseWhere, type Query } from "../../query/where.ts";
 import { retrievalTotals, type RetrievalTotals } from "../../core/retrieval.ts";
+import type { WaitKind } from "../../schema/index.ts";
+
+interface WaitSum {
+  count: number;
+  ms: number;
+}
+
+/** A sum of waits in the JSON: its milliseconds and the same in minutes, to a tenth. */
+const waitJson = (w: WaitSum) => ({ count: w.count, ms: w.ms, minutes: Math.round(w.ms / 6000) / 10 });
+
+/**
+ * The window's waits on the person (Session.stats.waits) for --json: summed over every session
+ * that started in [since, until) and matches --where, subagents included (a subagent's waits are
+ * in its own session, so none counts twice). Read as metrics read the window (loadMetricRows:
+ * only the waits on SQLite, whole sessions elsewhere), with `truncated` when that read stopped at
+ * METRICS_SCAN_CAP sessions. Undefined when no session read has any.
+ */
+export async function windowWaits(index: IndexStore, since: number, until: number, where: Query | undefined): Promise<Record<string, unknown> | undefined> {
+  // No parentSessionId filter: each subagent is a row of its own, not rolled into its parent's.
+  const spec: Pick<MetricsSpec, "since" | "until" | "where"> = { since, until };
+  if (where) spec.where = where;
+  const { rows, truncated } = await loadMetricRows(index, spec);
+  let sessions = 0;
+  let steers = 0;
+  let capped = 0;
+  const all: WaitSum = { count: 0, ms: 0 };
+  const open: WaitSum = { count: 0, ms: 0 };
+  const agent: WaitSum = { count: 0, ms: 0 };
+  const byKind: Partial<Record<WaitKind, WaitSum>> = {};
+  const add = (to: WaitSum, w: WaitSum | undefined) => {
+    to.count += w?.count ?? 0;
+    to.ms += w?.ms ?? 0;
+  };
+  for (const { waits: w } of rows) {
+    if (!w) continue;
+    sessions++;
+    add(all, w);
+    add(open, w.open);
+    add(agent, w.agent);
+    steers += w.steers ?? 0;
+    capped += w.capped ?? 0;
+    for (const [k, t] of Object.entries(w.byKind)) add((byKind[k as WaitKind] ??= { count: 0, ms: 0 }), t);
+  }
+  if (!sessions) return undefined;
+  const kinds: Record<string, unknown> = {};
+  for (const k of ["permission", "question", "plan", "request", "turn"] as const) if (byKind[k]?.count) kinds[k] = waitJson(byKind[k]);
+  const out: Record<string, unknown> = { sessions, ...waitJson(all), byKind: kinds };
+  if (open.count) out.open = waitJson(open);
+  if (agent.count) out.agent = waitJson(agent);
+  if (steers) out.steers = steers;
+  if (capped) out.capped = capped;
+  if (truncated) out.truncated = true;
+  return out;
+}
 
 /** Printed under the table when subagents were rolled up: why stats and usage book their spend apart. */
 export const ROLLUP_NOTE = "Subagents' cost, tokens and tool calls count on their top-level session's day, agent, model and repo; usage books each subagent on its own. --all lists them as their own rows.";
@@ -121,6 +175,7 @@ export async function run(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     let m;
+    let waits: Record<string, unknown> | undefined;
     try {
       const spec = {
         since,
@@ -137,12 +192,15 @@ export async function run(c: CommandContext): Promise<number> {
       const { rows, truncated } = await loadMetricRows(ctx.index, spec);
       m = metricsOf(rows, spec, buckets);
       if (truncated) m = { ...m, truncated };
+      if (out.json) waits = await windowWaits(ctx.index, since, until, where);
     } catch (e) {
       if (e instanceof MetricsError) throw new UsageError(metricsErrorText(e), { reason: e.reason });
       throw queryCliError(e);
     }
     if (out.json) {
-      const data: Record<string, unknown> = { ...m, window: windowJson(window), measure, ...pendingField(backlog) };
+      const data: Record<string, unknown> = { ...m };
+      if (waits) data.waits = waits;
+      Object.assign(data, { window: windowJson(window), measure }, pendingField(backlog));
       const retrieval = await retrievalInWindow(ctx.index, since, until, where);
       if (retrieval) data.retrieval = retrieval;
       out.data(data);

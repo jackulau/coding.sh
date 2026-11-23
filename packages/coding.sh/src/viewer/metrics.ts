@@ -172,6 +172,7 @@ export function metricRow(s: Session): MetricRow {
   put("llmErrors", s.stats.llmErrors?.count);
   put("llmP95Ms", s.stats.latency?.llmP95Ms);
   put("ttftP50Ms", s.stats.latency?.ttftP50Ms);
+  if (s.stats.waits) m.waits = s.stats.waits;
   return m;
 }
 
