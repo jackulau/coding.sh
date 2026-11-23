@@ -7,16 +7,19 @@
 // Why a false answer is safe. With the default rules (capture.redact = ["secrets"], no
 // redactPatterns), every rule, secret key (api_key, Authorization, ...) and secret flag
 // (--token) matches only text that holds a fixed part: a vendor prefix with the token
-// characters after it (sk- and 20 more, ghp_ and 36 more, ...), a secret word (token,
-// password, api_key, ...) followed by a character that ends a word, Bearer with a token, or
-// "://" with a user and a password. VENDOR and WORDS below look for those parts. The engine
-// works on the strings of the parsed payload, and in the payload's JSON text each character
-// of a string appears as it is or as an escape:
+// characters after it (sk- and 20 more, ghp_ and 36 more, ...), AccountKey=, a private key's
+// BEGIN line or its base64, a secret word (token, password, api_key, ...) followed by a
+// character that ends a word, a signature name with "=" (sig=, signature=), Bearer with a
+// token, or "://" with a password after an optional user. VENDOR and WORDS below look for
+// those parts. The engine works on the strings of the parsed payload, and in the payload's
+// JSON text each character of a string appears as it is or as an escape:
 //
 // - A \uXXXX escape of a character the tests look for (a letter, a digit, space, or one of
 //   + - . / : = @ \ _ ~) makes the answer true (escapesNeedle).
 // - A slash may be written \/. The two tests that look for one (Bearer's token and "://")
-//   accept a slash after any number of backslashes.
+//   accept a slash after any number of backslashes. A vendor format whose token characters
+//   include a slash (sntrys_, glc_, AccountKey=, the base64 BEGIN line) is found by its
+//   prefix alone.
 // - The other escapes (\n, \", \\, \t, ...) stand for characters the tests only need to be
 //   something other than a letter, a digit or "_". After a word, the test sees the escape's
 //   backslash. Before sk- and PAT, the only fixed parts that need a word break before them,
@@ -40,37 +43,42 @@ import { paths } from "../core/paths.ts";
 
 /**
  * The case-sensitive parts: each vendor prefix with as many token characters as its rule
- * needs at least, the start of a private key block, CREDENTIALS= (secret-assignment), Bearer
- * with 16 token characters, and "://" with a user and a password. Before sk- comes a character
- * that is not part of a word, as its rules need, or an escape (a backslash and one of b f n r t,
- * or a \u escape). After Bearer the whitespace may be an escape. A slash may follow any number
- * of backslashes.
+ * needs at least (the prefix alone where those characters include a slash), the start of a
+ * private key block and its base64, AccountKey= (azure-storage-key), CREDENTIALS=
+ * (secret-assignment), Bearer with 16 token characters, and "://" with a password after an
+ * optional user. Before sk- comes a character that is not part of a word, as its rules need,
+ * or an escape (a backslash and one of b f n r t, or a \u escape). After Bearer the whitespace
+ * may be an escape. A slash may follow any number of backslashes. An age key needs no part
+ * here: AGE-SECRET-KEY-1 holds SECRET-KEY, which WORDS finds.
  */
 const VENDOR =
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY|sk-(?<=(?:^|[^A-Za-z0-9_-]|\\[bfnrt]|\\u[0-9A-Fa-f]{4})sk-)[A-Za-z0-9_-]{20}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22}|glpat-[A-Za-z0-9_-]{20}|xox[abposr]-[A-Za-z0-9-]{10}|hooks\.slack\.com|A(?:KIA|SIA|ROA|IDA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_[A-Za-z0-9]{16}|npm_[A-Za-z0-9]{36}|csh_[ir]k_[A-Za-z0-9_-]{32}|vck_[A-Za-z0-9_-]{20}|eyJ[A-Za-z0-9_-]{8}|[Bb]earer(?:\s|\\+[nrtf]|\\+u[0-9A-Fa-f]{4})+(?:[A-Za-z0-9._~+-]|\\*\/){16}|CREDENTIALS?=|:\\*\/\\*\/[^\s:@/]+:[^\s@/]+@/;
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY|LS0tLS1CRUdJTi|sk-(?<=(?:^|[^A-Za-z0-9_-]|\\[bfnrt]|\\u[0-9A-Fa-f]{4})sk-)[A-Za-z0-9_-]{20}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22}|gl(?:pat|oas|dt|rtr?|cbt|ptt|ft|imt|agent|soat|ffct)-[A-Za-z0-9_-]{20}|xox[abposr]-[A-Za-z0-9-]{10}|xapp-\d-[A-Za-z0-9-]{10}|hooks\.slack\.com|A(?:KIA|SIA|ROA|IDA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_[A-Za-z0-9]{16}|npm_[A-Za-z0-9]{36}|csh_[ir]k_[A-Za-z0-9_-]{32}|vck_[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{30}|gsk_[A-Za-z0-9]{40}|r8_[A-Za-z0-9]{30}|xai-[A-Za-z0-9]{40}|pplx-[A-Za-z0-9]{32}|ya29\.[A-Za-z0-9_-]{30}|GOCSPX-[A-Za-z0-9_-]{24}|SG\.[A-Za-z0-9_-]{22}\.|do[opr]_v1_[a-f0-9]{64}|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}|pypi-AgE[A-Za-z0-9_-]{50}|dckr_(?:pat|oat)_[A-Za-z0-9_-]{24}|lin_(?:api|oauth)_[A-Za-z0-9]{32}|hv[sbr]\.[A-Za-z0-9_-]{24}|whsec_[A-Za-z0-9]{24}|ATATT3[A-Za-z0-9_=-]{50}|dapi[a-f0-9]{32}|PMAK-[a-f0-9]{24}-|sntry[su]_|pcsk_[A-Za-z0-9_]{40}|lsv2_(?:pt|sk)_[a-f0-9]{32}_|tvly-[A-Za-z0-9-]{24}|nvapi-[A-Za-z0-9_-]{40}|glsa_[A-Za-z0-9]{32}_|glc_|figd_[A-Za-z0-9_-]{30}|AccountKey=|eyJ[A-Za-z0-9_-]{8}|[Bb]earer(?:\s|\\+[nrtf]|\\+u[0-9A-Fa-f]{4})+(?:[A-Za-z0-9._~+-]|\\*\/){16}|CREDENTIALS?=|:\\*\/\\*\/[^\s:@/]*:[^\s@/]+@/;
 
 /**
  * The secret words of the case-insensitive rules and the secret keys (SECRET_NAME, the
  * prose-secret words, Authorization, Cookie), each followed by a character that ends a word
- * (`\b` after a letter). PAT also needs a word break before it, as the prose-secret rule
- * does. Without the `u` flag, \b and \W know only the ASCII letters, digits and "_" as word
- * characters, with or without `i`.
+ * (`\b` after a letter), and a signature name with its "=" (url-secret's sig= and signature=).
+ * PAT also needs a word break before it, as the prose-secret rule does. Without the `u` flag,
+ * \b and \W know only the ASCII letters, digits and "_" as word characters, with or without `i`.
  */
 const WORDS =
-  /(?:api[ ._-]?key|private[._-]?key|access[._-]?key(?:[._-]?id)?|secret(?:[._-]?key)?|token|pass(?:w(?:or)?d|code| ?phrase)|authorization|cookie)\b|pat(?<=(?:^|\W|\\[bfnrt]|\\u[0-9a-f]{4})pat)\b/i;
+  /(?:api[ ._-]?key|private[._-]?key|access[._-]?key(?:[._-]?id)?|secret(?:[._-]?key)?|token|pass(?:w(?:or)?d|code| ?phrase)|authorization|cookie)\b|pat(?<=(?:^|\W|\\[bfnrt]|\\u[0-9a-f]{4})pat)\b|sig(?:nature)?=/i;
 
 /**
- * The first pass for VENDOR: every text VENDOR matches holds one of these. sk-, npm_ and
- * "://" keep what VENDOR needs after them, because URLs, task-1 and npm_config_ are common
- * in payloads.
+ * The first pass for VENDOR: every text VENDOR matches holds one of these. A prefix that ends
+ * in _ - . or = is found from that character, with a lookbehind for the rest, so the scan
+ * stops at a few characters instead of at the first letter of every prefix. sk-, npm_, hf_,
+ * xai-, dapi, SG. and "://" keep what VENDOR needs after them, because URLs, task-1,
+ * npm_config_, hf_hub_download, xai-org, rapidapi and MSG.x are common in payloads.
  */
-const VENDOR_PARTS = /-----BEGIN |sk-[A-Za-z0-9_-]{20}|gh[pousr]_|github_pat_|glpat-|xox|hooks\.slack\.com|A(?:KIA|SIA|ROA|IDA|Iza)|[sr]k_(?:live|test)_|npm_[A-Za-z0-9]{36}|csh_|vck_|eyJ|[Bb]earer|CREDENTIALS?=|:\\*\/\\*\/[^\s:@/]+:[^\s@/]+@/;
+const VENDOR_PARTS =
+  /_(?:(?<=npm_)[A-Za-z0-9]{36}|(?<=hf_)[A-Za-z0-9]{30}|(?<=(?:gh[pousr]|github_pat|[sr]k_(?:live|test)|csh|vck|gsk|r8|do[opr]_v1|shp(?:at|ca|pa|ss)|dckr|lin_(?:api|oauth)|whsec|sntry[su]|pcsk|lsv2|gl(?:sa|c)|figd)_))|-(?:(?<=sk-)[A-Za-z0-9_-]{20}|(?<=xai-)[A-Za-z0-9]{40}|(?<=pypi-)AgE|(?<=-----)BEGIN |(?<=(?:gl(?:pat|oas|dt|rtr?|cbt|ptt|ft|imt|agent|soat|ffct)|xox[abposr]|xapp|pplx|GOCSPX|PMAK|tvly|nvapi)-))|\.(?:(?<=SG\.)[A-Za-z0-9_-]{22}\.|(?<=hooks\.)slack\.com|(?<=(?:ya29|hv[sbr])\.))|=(?<=(?:AccountKey|CREDENTIALS?)=)|:\\*\/\\*\/[^\s:@/]*:[^\s@/]+@|LS0tLS1CRUdJTi|A(?:KIA|SIA|ROA|IDA|Iza|TATT3)|dapi[a-f0-9]{32}|eyJ|[Bb]earer/;
 
 /**
  * The first pass for WORDS: every text WORDS matches holds one of these. Bare "key" and
  * "pass" would also find keyboard and bypassPermissions, which many payloads hold.
  */
-const WORD_PARTS = /(?:api|private|access)[ ._-]?key|secret|token\b|passw|passcode|pass ?phrase|authorization|cookie|pat\b/i;
+const WORD_PARTS = /(?:api|private|access)[ ._-]?key|secret|token\b|passw|passcode|pass ?phrase|authorization|cookie|pat\b|sig(?:nature)?=/i;
 
 /** A character the tests above look for: a letter, a digit, space or one of + - . / : = @ \ _ ~ */
 function isNeedleCode(c: number): boolean {

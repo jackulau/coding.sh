@@ -44,15 +44,71 @@ const SLACK_USER = ["xox", "p-1234567890-abcdef"].join("");
 const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const STRIPE_LIVE = ["sk_li", "ve_", "51H8abcdefghijklmnop"].join("");
 
+const HEX = "0123456789abcdef";
 const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const B64 = `${B62}+/`;
+const B64URL = `${B62}-_`;
 const valueRand = prng(99);
 /** `n` random characters from `chars`, the same on every run; `lead` keeps a digit and a letter in front. */
 const fill = (chars: string, n: number, lead = ""): string => [lead, randomFrom(valueRand, chars, n)].join("");
+/** One value of each vendor format, by kind: [kind, value]. */
+const VENDOR_VALUES: [string, string][] = [
+  ["huggingface-token", ["hf_", fill(B62, 34)].join("")],
+  ["groq-key", ["gsk_", fill(B62, 52)].join("")],
+  ["replicate-token", ["r8_", fill(B62, 37)].join("")],
+  ["xai-key", ["xai-", fill(B62, 80)].join("")],
+  ["perplexity-key", ["pplx-", fill(B62, 48)].join("")],
+  ["google-oauth-token", ["ya29.", fill(B64URL, 100)].join("")],
+  ["google-oauth-secret", ["GOCSPX-", fill(B64URL, 28)].join("")],
+  ["sendgrid-key", ["SG.", fill(B64URL, 22), ".", fill(B64URL, 43)].join("")],
+  ["digitalocean-token", ["dop_v1_", fill(HEX, 64)].join("")],
+  ["shopify-token", ["shpat_", fill(HEX, 32)].join("")],
+  ["pypi-token", ["pypi-AgEIcHlwaS5vcmc", fill(B64URL, 70)].join("")],
+  ["docker-token", ["dckr_pat_", fill(B64URL, 27)].join("")],
+  ["linear-key", ["lin_api_", fill(B62, 40)].join("")],
+  ["vault-token", ["hvs.", fill(B64URL, 90, "C4")].join("")],
+  ["stripe-webhook-secret", ["whsec_", fill(B62, 32)].join("")],
+  ["atlassian-token", ["ATATT3", fill(B64URL, 120)].join("")],
+  ["databricks-token", ["dapi", fill(HEX, 32)].join("")],
+  ["age-secret-key", ["AGE-SECRET-KEY-1", fill("QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L", 58)].join("")],
+  ["postman-key", ["PMAK-", fill(HEX, 24), "-", fill(HEX, 34)].join("")],
+  ["sentry-token", ["sntrys_", fill(B64, 60)].join("")],
+  ["pinecone-key", ["pcsk_", fill(B62, 6), "_", fill(B62, 60)].join("")],
+  ["langsmith-key", ["lsv2_pt_", fill(HEX, 32), "_", fill(HEX, 10)].join("")],
+  ["tavily-key", ["tvly-", fill(B62, 32)].join("")],
+  ["nvidia-key", ["nvapi-", fill(B64URL, 64)].join("")],
+  ["grafana-token", ["glsa_", fill(B62, 32), "_", fill(HEX, 8)].join("")],
+  ["grafana-token", ["glc_", fill(B64, 48)].join("")],
+  ["figma-token", ["figd_", fill(B64URL, 40)].join("")],
+  ["gitlab-token", ["gldt-", fill(B64URL, 20)].join("")],
+  ["gitlab-token", ["glrt-", fill(B64URL, 20)].join("")],
+  ["slack-token", ["xapp-1-A0", fill("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 9), "-", fill("0123456789", 13), "-", fill(HEX, 64)].join("")],
+];
+/** A private key block in base64, as kubeconfig's client-key-data holds one; the PEM is built so no BEGIN line sits in this file. */
+const pemBase64 = (label: string): string => Buffer.from([`-----BEGIN ${label}-----`, fill(B64, 64), `-----END ${label}-----`, ""].join("\n")).toString("base64");
+const ENCODED_KEY = pemBase64(["RSA PRIVATE", "KEY"].join(" "));
+const ENCODED_CERT = pemBase64("CERTIFICATE");
 /** Two BEGIN lines that share five dashes, with key data and no END line after the second. */
 const OVERLAPPING_BEGIN = [["-----BEGIN", "PRIVATE", "KEY-----BEGIN", "PRIVATE", "KEY-----"].join(" "), fill(B64, 64)].join("");
 
 const positives: [string, string, string][] = [
+  ...VENDOR_VALUES.map(([kind, value]): [string, string, string] => [`${kind} ${value.slice(0, 5)}`, `key ${value} end`, kind]),
+  ["azure storage key", `DefaultEndpointsProtocol=https;AccountName=demo;AccountKey=${fill(B64, 86)}==;EndpointSuffix=core.windows.net`, "azure-storage-key"],
+  ["encoded private key", `    client-key-data: ${ENCODED_KEY}`, "encoded-private-key"],
+  ["authorization token scheme", `Authorization: Token ${fill(HEX, 40, "a1")}`, "auth-header"],
+  ["authorization apikey scheme", `authorization: ApiKey ${fill(B62, 40, "k7")}`, "auth-header"],
+  ["proxy authorization, bare", `Proxy-Authorization: ${fill(B62, 40, "q4")}`, "auth-header"],
+  ["authorization as a quoted key", `{"Authorization": "Token ${fill(HEX, 40, "c3")}"}`, "auth-header"],
+  ["cookie header", `Cookie: sessionid=${fill(B62, 32)}; csrftoken=${fill(B62, 32)}`, "cookie"],
+  ["set-cookie header", `Set-Cookie: sid=${fill(B62, 32)}; Path=/; HttpOnly`, "cookie"],
+  ["url password with no user", `redis://:${fill(B62, 16, "Pw7")}@cache.internal:6379/0`, "password"],
+  ["signed url sig", `https://demo.blob.core.windows.net/c/f.txt?sv=2022-11-02&ss=b&sig=${fill(B62, 40)}%3D`, "url-secret"],
+  ["signed url signature", `https://b.s3.amazonaws.com/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=${fill(HEX, 64)}`, "url-secret"],
+  ["netrc", `machine api.example.invalid login demo password ${fill(B62, 13, "Pw7")}`, "netrc"],
+  ["netrc on several lines", `machine api.example.invalid\n  login demo\n  password ${fill(B62, 13, "Pw7")}`, "netrc"],
+  ["dotenv with spaces", `DB_PASSWORD = ${fill(B62, 13, "Pw9")}`, "secret-value"],
+  ["yaml client_secret", `client_secret: ${fill(B62, 30, "Cs4")}`, "secret-value"],
+  ["toml api_key", `api_key = "${fill(B62, 30, "Ak2")}"`, "secret-value"],
   ["anthropic", "key: sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc", "anthropic-key"],
   ["openai", "OPENAI sk-proj-Ab12Cd34Ef56Gh78Ij90Kl12Mn34", "openai-key"],
   ["openai classic", "use sk-1234567890abcdefghijklmnopqrstuv now", "openai-key"],
@@ -102,6 +158,22 @@ const negatives = [
   "pat the dog: good boy",
   "password: process.env.DB_PASSWORD",
   "max tokens: 4096",
+  'password = os.environ["DB_PASSWORD"]',
+  "token: 2048",
+  "input_token: 1200 output_token: 300",
+  "authorization: required",
+  "Set the Cookie: header to keep the session",
+  "redis://localhost:6379/0",
+  "from huggingface_hub import hf_hub_download",
+  "SG.Net version 2 is out",
+  "the dapi folder",
+  "machine api.test login demo password $NETRC_PASSWORD",
+  'headers["Authorization"] = `Bearer ${token}`',
+  "client_secret: config.secret2",
+  "access_token: getToken(user1)",
+  "DB_PASSWORD = ${DB_PASSWORD_V2}",
+  `client-certificate-data: ${ENCODED_CERT}`,
+  `integrity sha512-${fill(B64, 86)}==`,
 ];
 
 describe("redact: secrets", () => {
@@ -122,6 +194,17 @@ describe("redact: secrets", () => {
     assert.equal(r.string("Authorization: Bearer abc123def456ghi789jkl"), "Authorization: Bearer [redacted:bearer]");
     assert.equal(r.string("export GITHUB_TOKEN=abcdef123456"), "export GITHUB_TOKEN=[redacted:secret-assignment]");
     assert.equal(r.string("?token=abc&x=1"), "?token=[redacted:url-secret]&x=1");
+  });
+
+  it("keeps the name, scheme and separators around a value the wider rules replace", () => {
+    assert.equal(r.string("redis://:pw123456@cache:6379/0"), "redis://:[redacted:password]@cache:6379/0");
+    assert.equal(r.string("Authorization: Token 0f3a9c7e21b5d8f4"), "Authorization: Token [redacted:auth-header]");
+    assert.equal(r.string("Cookie: sid=a1b2c3d4; theme=dark"), "Cookie: [redacted:cookie]");
+    assert.equal(r.string("?sv=2022-11-02&sig=Ab12Cd34%3D&se=1"), "?sv=2022-11-02&sig=[redacted:url-secret]&se=1");
+    assert.equal(r.string('api_key = "Ak3jH5mN7pQ9"'), 'api_key = "[redacted:secret-value]"');
+    assert.equal(r.string("DB_PASSWORD = Pw7kQ2mX9vL4"), "DB_PASSWORD = [redacted:secret-value]");
+    assert.equal(r.string("machine h login u password Pw7kQ2mX9"), "machine h login u password [redacted:netrc]");
+    assert.equal(r.string(`AccountKey=${fill(B64, 86)}==;EndpointSuffix=core.windows.net`), "AccountKey=[redacted:azure-storage-key];EndpointSuffix=core.windows.net");
   });
 
   it("redacts key data after a BEGIN line that starts in the dashes of the BEGIN line before it", () => {
@@ -365,6 +448,12 @@ describe("redact: linear time on long input", () => {
     ["repeated 'token:'", (n) => "token:".repeat(Math.floor(n / 6))],
     ["repeated 'password='", (n) => "password=".repeat(Math.floor(n / 9))],
     ["unterminated BEGIN PRIVATE KEY lines", (n) => "-----BEGIN PRIVATE KEY-----".repeat(Math.floor(n / 27))],
+    ["repeated 'authorization: '", (n) => "authorization: ".repeat(Math.floor(n / 15))],
+    ["'Cookie: ' + a run of 'a-'", (n) => `Cookie: ${"a-".repeat(Math.floor(n / 2))}`],
+    ["repeated 'machine a login b password '", (n) => "machine a login b password ".repeat(Math.floor(n / 27))],
+    ["repeated 'secret = '", (n) => "secret = ".repeat(Math.floor(n / 9))],
+    ["'AccountKey=' + base64", (n) => `AccountKey=${randomFrom(rand, B64, n)}`],
+    ["repeated base64 BEGIN", (n) => "LS0tLS1CRUdJTi".repeat(Math.floor(n / 14))],
   ];
   for (const [name, make] of cases) {
     it(`redacts 1 MB of ${name} in linear time (under 500 ms, else linear growth)`, () => assertLinear(name, make));
@@ -445,15 +534,19 @@ describe("redact: same output as the original secret rules", () => {
   const values = ["abc", "abcdefgh", "abcdefghij", "12345678", "a1b2c3d4", "hunter22", "Ab12Cd34Ef56Gh78Ij90Kl12", "0123456789abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOP", "dXNlcjpwYXNz", "x".repeat(40)];
   const families: Record<string, string[]> = {
     vendor: ["sk-", "sk-ant-", "sk-proj-", "ghp_", "gho_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "AKIA", "ASIA", "AIza", "sk_live_", "rk_test_", "npm_", "csh_ik_", "csh_rk_", "vck_", "eyJ", "eyJhbGciOiJIUzI1NiJ9.", "https://hooks.slack.com/services/", ".", "-", "_"],
-    headers: ["Bearer ", "bearer\t", "Bearer\n", "Authorization: Basic ", "authorization:basic  ", "Authorization: Bearer ", "=", "==", "/", "+", "~"],
-    urls: ["https://", "postgres://", "a+b.c-d://", "-x://", "1a://", "x.", "a-", "://", "u:", ":", "@", "@h", "/", "?", "&", "#", "?password=", "&access_token=", "?client-secret=", "&my_api_key=", "?x_token=", "<", ">"],
+    // The other vendor formats, by prefix, and the start of an Azure connection string's key.
+    formats: ["hf_", "gsk_", "r8_", "xai-", "pplx-", "ya29.", "GOCSPX-", "SG.", "dop_v1_", "shpat_", "pypi-AgE", "dckr_pat_", "lin_api_", "hvs.", "whsec_", "ATATT3", "dapi", "AGE-SECRET-KEY-1", "PMAK-", "sntrys_", "pcsk_", "lsv2_pt_", "tvly-", "nvapi-", "glsa_", "glc_", "figd_", "gldt-", "glrt-", "xapp-1-", "AccountKey=", ";", ".", "-", "_"],
+    headers: ["Bearer ", "bearer\t", "Bearer\n", "Authorization: Basic ", "authorization:basic  ", "Authorization: Bearer ", "=", "==", "/", "+", "~", "Authorization: Token ", "authorization: ", '"Authorization": "', "Proxy-Authorization: ", "ApiKey ", "Cookie: ", "Set-Cookie: ", "cookie:", "sid=", "; "],
+    urls: ["https://", "postgres://", "a+b.c-d://", "-x://", "1a://", "x.", "a-", "://", "u:", ":", "@", "@h", "/", "?", "&", "#", "?password=", "&access_token=", "?client-secret=", "&my_api_key=", "?x_token=", "<", ">", "redis://:", "&sig=", "?X-Amz-Signature=", "&signature="],
     env: ["export ", "MY_API_KEY=", "DB_PASSWORD=\"", "GITHUB_TOKEN='", "AWS_ACCESS_KEY_ID=", "CREDENTIALS=", "SECRET_KEY=", "MAX_TOKENS=", "API_KEY=$", "TOKEN=", "_", "|", "&", ";"],
-    fields: ['"api_key": "', "'client_secret': '", 'x-api-key: "', "token:'", 'password : "', "secret_key", "access-token", "my_", "x-", "Xtoken", '"', "'", ": ", ":"],
+    fields: ['"api_key": "', "'client_secret': '", 'x-api-key: "', "token:'", 'password : "', "secret_key", "access-token", "my_", "x-", "Xtoken", '"', "'", ": ", ":", "DB_PASSWORD = ", "client_secret: ", 'api_key = "', "X-Api-Key: ", "secret=", "token = "],
+    netrc: ["machine ", "machine api.test", " login ", "login demo", " password ", "password ", "default login ", "default", "\n  ", " ", "$"],
     prose: ["token", "TOKEN", "PAT", "pat", "personal access token", "password", "passwd", "passcode", "pass phrase", "passphrase", "api key", "api_key", "API-KEY", "apikey", "secret", "is", " is ", "IS", "iS ", "is-", "here ya go", ": ", "="],
-    pem: ["-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----\n", "-----END PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----", "-----END ", "-----BEGIN ", "PRIVATE KEY", " BLOCK", "-----", "RSA ", "EC ", "MIIEow\n"],
+    // A BEGIN line in base64 is built here, so no BEGIN line sits in this file.
+    pem: ["-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----\n", "-----END PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----", "-----END ", "-----BEGIN ", "PRIVATE KEY", " BLOCK", "-----", "RSA ", "EC ", "MIIEow\n", Buffer.from(["-----BEGIN", "PRIVATE", "KEY-----"].join(" ")).toString("base64"), "LS0tLS1CRUdJTi"],
     // Upper- and mixed-case text for the rules that ignore case, "BEARER " for one that does not, and
     // words with \u017F (long s) and \u212A (Kelvin sign), which only a `u` regex matches with s and k.
-    case: ["AUTHORIZATION: BASIC ", "Authorization:basic ", "BEARER ", "?PASSWORD=", "&Api_Key=", "?ACCESS-TOKEN=", "&X_SECRET=", '"API_KEY": "', "'Client_Secret': '", '"PassWord" : "', "TOKEN: ", "Token is ", "PASSPHRASE: ", "Personal Access Token: ", "API KEY = ", "SECRET IS ", "Pat: ", "pa\u017F\u017Fword: ", "to\u212Aen: ", "\u212Aey="],
+    case: ["AUTHORIZATION: BASIC ", "Authorization:basic ", "BEARER ", "?PASSWORD=", "&Api_Key=", "?ACCESS-TOKEN=", "&X_SECRET=", '"API_KEY": "', "'Client_Secret': '", '"PassWord" : "', "TOKEN: ", "Token is ", "PASSPHRASE: ", "Personal Access Token: ", "API KEY = ", "SECRET IS ", "Pat: ", "pa\u017F\u017Fword: ", "to\u212Aen: ", "\u212Aey=", "AUTHORIZATION: TOKEN ", "COOKIE: ", "&SIG=", "Machine ", "PASSWORD = ", "accountkey="],
   };
   const all = Object.values(families).flat();
 

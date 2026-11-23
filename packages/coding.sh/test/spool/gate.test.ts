@@ -19,12 +19,17 @@ import { PKG_ROOT, bundleHook, tsNodeArgs } from "../capture/_helpers.ts";
 
 const KINDS = [
   "private-key", "anthropic-key", "openai-key", "github-token", "gitlab-token", "slack-token", "slack-webhook",
-  "aws-access-key", "google-api-key", "stripe-key", "npm-token", "coding-sh-key", "vercel-ai-gateway-key", "jwt",
-  "bearer", "basic-auth", "password", "url-secret", "secret-assignment", "secret-field", "prose-secret",
+  "aws-access-key", "google-api-key", "stripe-key", "npm-token", "coding-sh-key", "vercel-ai-gateway-key",
+  "huggingface-token", "groq-key", "replicate-token", "xai-key", "perplexity-key", "google-oauth-token",
+  "google-oauth-secret", "sendgrid-key", "digitalocean-token", "shopify-token", "pypi-token", "docker-token",
+  "linear-key", "vault-token", "stripe-webhook-secret", "atlassian-token", "databricks-token", "age-secret-key",
+  "postman-key", "sentry-token", "pinecone-key", "langsmith-key", "tavily-key", "nvidia-key", "grafana-token",
+  "figma-token", "azure-storage-key", "encoded-private-key", "jwt", "bearer", "basic-auth", "auth-header", "cookie",
+  "password", "url-secret", "secret-assignment", "secret-field", "prose-secret", "netrc", "secret-value",
 ];
 
 /** sha256 of the secret rules and of the lines in src/core/redact.ts that name secret keys and flags. */
-const RULES_HASH = "4fc18108729933923d1cfc37a3184003cde05572c2f57c7798a2b31a570fb7d9";
+const RULES_HASH = "1a1bdc027f48b709072fa08630b01054a150b194fce491945e6e3d4de1b12d76";
 
 function rulesHash(): string {
   const source = readFileSync(join(PKG_ROOT, "src", "core", "redact.ts"), "utf8").split(/\r?\n/);
@@ -74,6 +79,8 @@ const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const LOWER = "abcdefghijklmnopqrstuvwxyz";
 const DIGITS = "0123456789";
 const ALNUM = UPPER + LOWER + DIGITS;
+const HEX = "0123456789abcdef";
+const B64 = ALNUM + "+/";
 const pick = <T>(r: Rand, xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!;
 const draw = (r: Rand, chars: string, n: number): string => {
   let s = "";
@@ -207,11 +214,47 @@ describe("mayHoldSecret on payloads the default rules change", () => {
       ["npm-token", `${["np", "m_", draw(r, ALNUM, 36)].join("")} ok`],
       ["coding-sh-key", ["cs", "h_ik_", draw(r, ALNUM, 32)].join("")],
       ["vercel-ai-gateway-key", ["vc", "k_", draw(r, ALNUM, 24)].join("")],
+      ["huggingface-token", ["hf", "_", draw(r, ALNUM, 34)].join("")],
+      ["groq-key", ["gs", "k_", draw(r, ALNUM, 52)].join("")],
+      ["replicate-token", ["r8", "_", draw(r, ALNUM, 37)].join("")],
+      ["xai-key", ["xa", "i-", draw(r, ALNUM, 80)].join("")],
+      ["perplexity-key", ["pp", "lx-", draw(r, ALNUM, 48)].join("")],
+      ["google-oauth-token", ["ya", "29.", draw(r, ALNUM + "_-", 120)].join("")],
+      ["google-oauth-secret", ["GOC", "SPX-", draw(r, ALNUM + "_-", 28)].join("")],
+      ["sendgrid-key", ["S", "G.", draw(r, ALNUM + "_-", 22), ".", draw(r, ALNUM + "_-", 43)].join("")],
+      ["digitalocean-token", ["do", "p_v1_", draw(r, HEX, 64)].join("")],
+      ["shopify-token", ["sh", "pat_", draw(r, HEX, 32)].join("")],
+      ["pypi-token", ["py", "pi-AgE", draw(r, ALNUM + "_-", 70)].join("")],
+      ["docker-token", ["dc", "kr_pat_", draw(r, ALNUM + "_-", 27)].join("")],
+      ["linear-key", ["li", "n_api_", draw(r, ALNUM, 40)].join("")],
+      ["vault-token", ["hv", "s.", mixed(r, 90)].join("")],
+      ["stripe-webhook-secret", ["wh", "sec_", draw(r, ALNUM, 32)].join("")],
+      ["atlassian-token", ["ATA", "TT3", draw(r, ALNUM + "_=-", 180)].join("")],
+      ["databricks-token", ["da", "pi", draw(r, HEX, 32)].join("")],
+      ["age-secret-key", ["AGE-", "SECRET-KEY-1", draw(r, UPPER + DIGITS, 58)].join("")],
+      ["postman-key", ["PM", "AK-", draw(r, HEX, 24), "-", draw(r, HEX, 34)].join("")],
+      ["sentry-token", ["sn", "trys_", draw(r, B64 + "=_-", 60)].join("")],
+      ["pinecone-key", ["pc", "sk_", draw(r, ALNUM, 6), "_", draw(r, ALNUM, 60)].join("")],
+      ["langsmith-key", ["ls", "v2_pt_", draw(r, HEX, 32), "_", draw(r, HEX, 10)].join("")],
+      ["tavily-key", ["tv", "ly-", draw(r, ALNUM, 32)].join("")],
+      ["nvidia-key", ["nv", "api-", draw(r, ALNUM + "_-", 64)].join("")],
+      ["grafana-token", ["gl", "sa_", draw(r, ALNUM, 32), "_", draw(r, HEX, 8)].join("")],
+      ["grafana-token", ["gl", "c_", draw(r, B64 + "=", 48)].join("")],
+      ["figma-token", ["fi", "gd_", draw(r, ALNUM + "_-", 40)].join("")],
+      ["azure-storage-key", `DefaultEndpointsProtocol=https;AccountName=demo;AccountKey=${draw(r, B64, 86)}==;EndpointSuffix=core.windows.net`],
+      ["encoded-private-key", `client-key-data: ${Buffer.from([["-----BEGIN", "PRIVATE", "KEY-----"].join(" "), draw(r, B64, 64)].join("\n")).toString("base64")}`],
       ["jwt", ["ey", "J", draw(r, ALNUM, 20), ".ey", "J", draw(r, ALNUM, 30), ".", draw(r, ALNUM + "_-", 43)].join("")],
       ["bearer", `curl -H 'Bearer ${v(32)}'`],
       ["basic-auth", `Authorization: Basic ${draw(r, ALNUM + "+/", 20)}==`],
+      ["auth-header", `Authorization: Token ${v(40)}`],
+      ["auth-header", `curl -H "Proxy-Authorization: ApiKey ${v(32)}"`],
+      ["cookie", `Cookie: sessionid=${v(32)}; csrftoken=${v(12)}`],
+      ["cookie", `Set-Cookie: sid=${v(32)}; Path=/; HttpOnly`],
       ["password", `postgres://admin:${v(12)}@db.internal:5432/app`],
+      ["password", `redis://:${v(16)}@cache.internal:6379/0`],
       ["url-secret", `https://api.test/v1?access_token=${v(20)}&x=1`],
+      ["url-secret", `https://demo.blob.core.windows.net/c/f.txt?sv=2022-11-02&sig=${v(40)}%3D`],
+      ["url-secret", `https://b.s3.amazonaws.com/k?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=${draw(r, HEX, 63)}1`],
       ["secret-assignment", `export OPENAI_API_KEY=${v()}`],
       ["secret-assignment", `GOOGLE_CREDENTIALS=${v(20)}`],
       ["secret-field", `client_secret: '${v(20)}'`],
@@ -219,6 +262,11 @@ describe("mayHoldSecret on payloads the default rules change", () => {
       ["prose-secret", `the password is ${v(12)}`],
       ["prose-secret", `my api key: ${v()}`],
       ["prose-secret", `pass phrase = ${v(12)}`],
+      ["netrc", `machine api.test login demo password ${v(12)}`],
+      ["netrc", `machine api.test\n  login demo\n  password ${v(12)}`],
+      ["secret-value", `DB_PASSWORD = ${v(12)}`],
+      ["secret-value", `client_secret: ${v(30)}`],
+      ["secret-value", `api_key = "${v(30)}"`],
     ];
     assert.deepEqual(KINDS.filter((k) => !examples.some(([kind]) => kind === k)), [], "every rule has an example");
     for (const [kind, s] of examples) {
@@ -256,13 +304,16 @@ describe("mayHoldSecret on payloads the default rules change", () => {
       ["password", `{"u":"postgres://ad${BS}"min:p${BS}${BS}w${mixed(r, 8)}@db/x"}`],
       ["secret-field", `{"api${esc(0x5f)}key":"v1"}`],
       ["secret-field", `{"d":"{${BS}"token${BS}":${BS}"v1${BS}"}"}`],
-      ["secret-assignment", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nAPI_TOKEN=${v()}${BS}"}"}`],
+      ["secret-assignment", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nGOOGLE_CREDENTIALS=${v()}${BS}"}"}`],
+      ["secret-value", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nAPI_TOKEN=${v()}${BS}"}"}`],
     ];
     for (const [kind, text] of cases) assert.ok(check(text).includes(kind), `${kind} in ${text}`);
-    // Three documents deep: API_TOKEN= after an escaped newline, escaped again at each level.
-    let doc = JSON.stringify({ stdout: `loaded\nAPI_TOKEN=${v()}\n` }, null, 2);
-    for (let i = 0; i < 3; i++) doc = JSON.stringify({ tool_response: { stdout: doc } });
-    assert.ok(check(doc).includes("secret-assignment"));
+    // Three documents deep: a name= after an escaped newline, escaped again at each level.
+    for (const [kind, name] of [["secret-assignment", "GOOGLE_CREDENTIALS"], ["secret-value", "API_TOKEN"]]) {
+      let doc = JSON.stringify({ stdout: `loaded\n${name}=${v()}\n` }, null, 2);
+      for (let i = 0; i < 3; i++) doc = JSON.stringify({ tool_response: { stdout: doc } });
+      assert.ok(check(doc).includes(kind), `${kind} three documents deep`);
+    }
   });
 
   it("passes generated text, in every payload form", () => {
@@ -350,7 +401,12 @@ describe("mayHoldSecret on payloads the default rules change", () => {
 // Generated text: secret-shaped parts near characters that JSON escapes or that sit on a rule's edge.
 const WS = [" ", "\t", "\n", "\r", ch(0x0b), ch(0x0c), ch(0xa0), ch(0x2028), ch(0x2029), ch(0xfeff), "  "];
 const ODD = [...WS, '"', "'", "`", BS, "/", ch(0x08), ch(0x01), ch(0x1f), ch(0x7f), ch(0x212a), ch(0x17f), ch(0xe9), ch(0x130), ch(0xd83d, 0xde00), ch(0xd800), "<", ">", "&", ":", "=", "@", "?", "#", ";", ",", ")", "[", "]", "$", "-", "_", ".", "+", "~"];
-/** Each vendor prefix, the characters of its token and how many its rule needs at least. */
+/** Random text for the formats with a fixed-length part before the token (SG.<22>.<43>, PMAK-<24>-<34>, ...). */
+const MID = prng(9);
+/**
+ * Each vendor prefix, the characters of its token and how many its rule needs at least (for a
+ * format of fixed length, exactly that many, with a break after them).
+ */
 const PREFIXES: [string, string, number][] = [
   [["sk", "-"].join(""), ALNUM + "_-", 20],
   [["sk", "-ant-"].join(""), ALNUM + "_-", 20],
@@ -369,13 +425,47 @@ const PREFIXES: [string, string, number][] = [
   [["np", "m_"].join(""), ALNUM, 36],
   [["cs", "h_ik_"].join(""), ALNUM + "_-", 32],
   [["vc", "k_"].join(""), ALNUM + "_-", 20],
+  [["hf", "_"].join(""), ALNUM, 30],
+  [["gs", "k_"].join(""), ALNUM, 40],
+  [["r8", "_"].join(""), ALNUM, 30],
+  [["xa", "i-"].join(""), ALNUM, 40],
+  [["pp", "lx-"].join(""), ALNUM, 32],
+  [["ya", "29."].join(""), ALNUM + "_-", 30],
+  [["GOC", "SPX-"].join(""), ALNUM + "_-", 24],
+  [["S", "G.", draw(MID, ALNUM + "_-", 22), "."].join(""), ALNUM + "_-", 43],
+  [["do", "p_v1_"].join(""), HEX, 64],
+  [["sh", "pat_"].join(""), HEX, 32],
+  [["py", "pi-AgE"].join(""), ALNUM + "_-", 50],
+  [["dc", "kr_pat_"].join(""), ALNUM + "_-", 24],
+  [["li", "n_api_"].join(""), ALNUM, 32],
+  [["hv", "s."].join(""), ALNUM + "_-", 24],
+  [["wh", "sec_"].join(""), ALNUM, 24],
+  [["ATA", "TT3"].join(""), ALNUM + "_=-", 50],
+  [["da", "pi"].join(""), HEX, 32],
+  [["AGE-", "SECRET-KEY-1"].join(""), UPPER + DIGITS, 58],
+  [["PM", "AK-", draw(MID, HEX, 24), "-"].join(""), HEX, 34],
+  [["sn", "trys_"].join(""), B64 + "=_-", 40],
+  [["pc", "sk_"].join(""), ALNUM + "_", 40],
+  [["ls", "v2_pt_", draw(MID, HEX, 32), "_"].join(""), HEX, 10],
+  [["tv", "ly-"].join(""), ALNUM + "-", 24],
+  [["nv", "api-"].join(""), ALNUM + "_-", 40],
+  [["gl", "sa_", draw(MID, ALNUM, 32), "_"].join(""), HEX, 8],
+  [["gl", "c_"].join(""), B64 + "=", 32],
+  [["fi", "gd_"].join(""), ALNUM + "_-", 30],
+  [["gl", "dt-"].join(""), ALNUM + "_-", 20],
+  [["gl", "rt-"].join(""), ALNUM + "_-", 20],
+  [["xa", "pp-1-"].join(""), ALNUM + "-", 10],
+  ["AccountKey=", B64, 20],
 ];
 const SECRET_WORDS = ["token", "pat", "password", "passwd", "passcode", "pass phrase", "passphrase", "personal access token", "api key", "api_key", "api-key", "apikey", "api.key", "secret", "secret_key", "client_secret", "access_token", "refresh-token", "private_key", "access.key.id", "authorization", "cookie", "x-api-key", "credentials"];
 const SEPS = [": ", ":", " : ", "=", " = ", " is ", "\tis ", '": "', "': '", '"', "'", ": '", '="', " here ya go: ", "\t:", "-", "_", " ", "", ch(0xa0) + ":"];
 const VALUES = ["$VAR", "${TOKEN}", "12345678", "abcdefgh", "[x]", "hunter22", "a1b2c3d4e5", "x"];
 const ENV_NAMES = ["MY_API_KEY=", "DB_PASSWORD=", "GITHUB_TOKEN=", "AWS_ACCESS_KEY_ID=", "GOOGLE_CREDENTIALS=", "CREDENTIAL=", "SECRET=", "MAX_TOKENS=", "APIKEY=", "API_KEY=$", "export ", "TOKEN='", 'PASSWORD="'];
-const URL_PARTS = ["https://api.test/v1", "?", "&", "?password=", "&access_token=", "?client-secret=", "&my_api_key=", "?x_token=", "#"];
-const SCHEMES = ["postgres://", "https://", "a+b.c-d://", "1a://", "mongodb+srv://", "-x://", "://"];
+const URL_PARTS = ["https://api.test/v1", "?", "&", "?password=", "&access_token=", "?client-secret=", "&my_api_key=", "?x_token=", "#", "&sig=", "?sv=1&sig=", "?X-Amz-Signature=", "&x-goog-signature="];
+const SCHEMES = ["postgres://", "https://", "a+b.c-d://", "1a://", "mongodb+srv://", "-x://", "://", "redis://"];
+/** Header names and secret names before a value, for auth-header, cookie and secret-value. */
+const LABELS = ["Authorization: Token ", "authorization: ApiKey ", "Proxy-Authorization: ", '"Authorization": "', "Authorization:", "Cookie: sid=", "Set-Cookie: session=", "cookie:a=", "COOKIE: x.y-z=", "DB_PASSWORD = ", "client_secret: ", 'api_key = "', "X-Api-Key: ", "access_token:\t"];
+const NETRC = ["machine api.test login demo password ", "default login demo password ", "machine h\n  login u\n  password ", "machine a login b password\t", "machine x login password "];
 const FLAGS = [" --api-key ", " --token=", " -token ", " --db-password ", " --openai-api-key=", " --client-secret ", " --access-key-id ", " --passWithNoTests "];
 const BEGINS = ["-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN OPENSSH PRIVATE KEY-----", "-----BEGIN ENCRYPTED PRIVATE KEY-----"];
 const FILLER = ["the", "here", "users", "C:", "path", "ok", "x", "1", "task-1", "keyboard", "tokens", "secretary", "compat"];
@@ -396,23 +486,31 @@ const tokenOf = (r: Rand, chars: string, n: number): string => (n > 0 ? draw(r, 
 /** A part shaped like what one rule looks for, or close to it. */
 function secretPart(r: Rand): string {
   const x = r();
-  if (x < 0.2) {
+  if (x < 0.28) {
     const [prefix, chars, need] = pick(r, PREFIXES);
     return prefix + tokenOf(r, chars, r() < 0.5 ? need : need - 2 + Math.floor(r() * 9));
   }
-  if (x < 0.42) {
+  if (x < 0.46) {
     let word = cased(r, pick(r, SECRET_WORDS));
     // Kelvin sign and long s: an `i` regex without `u` matches neither with k or s.
     if (r() < 0.05) word = word.replace(/k/g, ch(0x212a)).replace(/s/g, ch(0x17f));
     return word + pick(r, SEPS) + (r() < 0.7 ? mixed(r, 6 + Math.floor(r() * 18)) : pick(r, VALUES));
   }
-  if (x < 0.52) return pick(r, ["Bearer", "bearer", "BEARER", "Authorization: Bearer", "Bearer:"]) + pick(r, WS) + (r() < 0.3 ? pick(r, WS) : "") + tokenOf(r, ALNUM + "._~+/-", 12 + Math.floor(r() * 14));
-  if (x < 0.58) return pick(r, ["Authorization: Basic ", "authorization:basic  ", "AUTHORIZATION: BASIC\t"]) + draw(r, ALNUM + "+/", 6 + Math.floor(r() * 20)) + pick(r, ["", "=", "=="]);
-  if (x < 0.67) return pick(r, SCHEMES) + (r() < 0.8 ? draw(r, ALNUM, 1 + Math.floor(r() * 8)) : pick(r, ODD)) + ":" + mixed(r, 4 + Math.floor(r() * 10)) + (r() < 0.8 ? "@" : pick(r, ODD)) + "db.internal";
-  if (x < 0.76) return pick(r, ENV_NAMES) + (r() < 0.7 ? mixed(r, 6 + Math.floor(r() * 14)) : pick(r, VALUES));
-  if (x < 0.82) return pick(r, URL_PARTS) + (r() < 0.6 ? mixed(r, 4 + Math.floor(r() * 16)) : "");
-  if (x < 0.87) return pick(r, BEGINS) + pick(r, ["\n", "", " ", "\r\n"]) + draw(r, ALNUM + "+/=", Math.floor(r() * 90)) + (r() < 0.5 ? "\n" + pick(r, BEGINS).replace("BEGIN", "END") : "");
-  if (x < 0.93) return ["ey", "J"].join("") + draw(r, ALNUM, 6 + Math.floor(r() * 10)) + "." + ["ey", "J"].join("") + draw(r, ALNUM, 6 + Math.floor(r() * 10)) + "." + draw(r, ALNUM + "_-", 8 + Math.floor(r() * 10));
+  if (x < 0.53) return pick(r, ["Bearer", "bearer", "BEARER", "Authorization: Bearer", "Bearer:"]) + pick(r, WS) + (r() < 0.3 ? pick(r, WS) : "") + tokenOf(r, ALNUM + "._~+/-", 12 + Math.floor(r() * 14));
+  if (x < 0.57) return pick(r, ["Authorization: Basic ", "authorization:basic  ", "AUTHORIZATION: BASIC\t"]) + draw(r, ALNUM + "+/", 6 + Math.floor(r() * 20)) + pick(r, ["", "=", "=="]);
+  // The user may be empty (redis://:password@host).
+  if (x < 0.64) return pick(r, SCHEMES) + (r() < 0.8 ? draw(r, ALNUM, Math.floor(r() * 9)) : pick(r, ODD)) + ":" + mixed(r, 4 + Math.floor(r() * 10)) + (r() < 0.8 ? "@" : pick(r, ODD)) + "db.internal";
+  if (x < 0.71) return pick(r, ENV_NAMES) + (r() < 0.7 ? mixed(r, 6 + Math.floor(r() * 14)) : pick(r, VALUES));
+  if (x < 0.76) return pick(r, URL_PARTS) + (r() < 0.6 ? mixed(r, 4 + Math.floor(r() * 16)) : "");
+  if (x < 0.8) return pick(r, BEGINS) + pick(r, ["\n", "", " ", "\r\n"]) + draw(r, ALNUM + "+/=", Math.floor(r() * 90)) + (r() < 0.5 ? "\n" + pick(r, BEGINS).replace("BEGIN", "END") : "");
+  if (x < 0.84) return ["ey", "J"].join("") + draw(r, ALNUM, 6 + Math.floor(r() * 10)) + "." + ["ey", "J"].join("") + draw(r, ALNUM, 6 + Math.floor(r() * 10)) + "." + draw(r, ALNUM + "_-", 8 + Math.floor(r() * 10));
+  if (x < 0.9) return pick(r, LABELS) + (r() < 0.7 ? mixed(r, 6 + Math.floor(r() * 18)) : pick(r, VALUES));
+  if (x < 0.93) return pick(r, NETRC) + (r() < 0.7 ? mixed(r, 6 + Math.floor(r() * 12)) : pick(r, VALUES));
+  if (x < 0.95) {
+    // A private key block in base64 (kubeconfig's client-key-data), cut at any length.
+    const encoded = Buffer.from(pick(r, BEGINS) + "\n" + draw(r, B64, 64)).toString("base64");
+    return pick(r, ["client-key-data: ", "", "key="]) + encoded.slice(0, 14 + Math.floor(r() * (encoded.length - 13)));
+  }
   return pick(r, FLAGS) + mixed(r, 8 + Math.floor(r() * 8));
 }
 
@@ -441,6 +539,7 @@ describe("mayHoldSecret on payloads with nothing to redact", () => {
       JSON.stringify({ cwd: ["C:", "Users", "dev", "work"].join(BS), transcript_path: ["c:", "users", "dev", ".claude", "x.jsonl"].join(BS) }),
       JSON.stringify({ permission_mode: "bypassPermissions", tool_input: { command: "npx vitest --passWithNoTests" } }),
       "passed https://example.com/x task-1 npm_config_cache keyboard tokenizer max_tokens MAX_TOKENS=1000 token_count input_tokens compat path secretary",
+      "from huggingface_hub import hf_hub_download; xai-org rapidapi MSG.x signal=1 design=2 cookies machine-readable",
     ];
     for (const text of plain) {
       assert.equal(mayHoldSecret(text), false, text);

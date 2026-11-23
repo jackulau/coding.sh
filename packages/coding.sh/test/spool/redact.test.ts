@@ -67,8 +67,9 @@ const fake: Adapter = {
 const adapters = new Map([["fake", fake]]);
 
 function payload(session: string, pad: number): string {
-  // A tool result that is itself JSON text, with an env file in one of its strings.
-  const doc = JSON.stringify({ stdout: `loaded\nAPI_TOKEN=${HIDDEN}\n` }, null, 2);
+  // A tool result that is itself JSON text, with an env file in one of its strings. Only
+  // secret-assignment knows the name CREDENTIALS; a name like API_TOKEN is found in the text too.
+  const doc = JSON.stringify({ stdout: `loaded\nGOOGLE_CREDENTIALS=${HIDDEN}\n` }, null, 2);
   return JSON.stringify({ session, cwd: "/w", text: `token ${GITHUB} key ${ANTHROPIC} id ${AWS} ${"y".repeat(pad)}`, doc });
 }
 

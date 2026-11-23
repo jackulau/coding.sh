@@ -67,7 +67,7 @@ match becomes `[redacted:<kind>]`.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
-| `secrets` | Private keys; API keys and tokens from Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm, Vercel and coding.sh; JWTs; bearer and basic auth headers; passwords in URLs; values next to names like `password`, `token` or `api_key` | yes |
+| `secrets` | Private keys, also in base64; API keys and tokens from Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm, Vercel, coding.sh and more than twenty other services and tools whose keys start with a fixed prefix; Azure storage account keys; JWTs; `Authorization` headers with any scheme; cookies; passwords in URLs, with or without a user name; URL signatures; `.netrc` passwords; values next to names like `password`, `token`, `api_key` or `client_secret` | yes |
 | `env` | The values of your environment variables whose names hold `KEY`, `TOKEN`, `SECRET`, `PASSW`, `PWD`, `CREDENTIAL`, `AUTH`, `COOKIE` or `SESSION` | no |
 | `pii` | Email addresses, phone numbers, card numbers, IBANs and national ids | no |
 | `email`, `phone`, `card`, `iban`, `national-id` | One kind of personal data | no |
