@@ -73,6 +73,7 @@ describe("repricing after the price table changed", () => {
       assert.equal(await refolding(reader(index, env), env), false);
     } finally {
       await index.close();
+      await blobs.close?.();
     }
   });
 
@@ -115,6 +116,7 @@ describe("repricing after the price table changed", () => {
         assert.equal(await index.getCursor(REFOLD_CURSOR), foldStamp());
       } finally {
         await index.close();
+        await blobs.close?.();
       }
     } finally {
       SqliteIndexStore.prototype.upsertSession = upsert;
@@ -147,6 +149,7 @@ describe("repricing after the price table changed", () => {
         assert.equal(await first.index.getCursor(REPRICE_CURSOR), stamp);
       } finally {
         await first.index.close();
+        await first.blobs.close?.();
       }
     } finally {
       if (!released) held.release();
@@ -178,6 +181,7 @@ describe("repricing after the price table changed", () => {
     } finally {
       SqliteIndexStore.prototype.setEventCosts = set;
       await index.close();
+      await blobs.close?.();
     }
   });
 });

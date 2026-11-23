@@ -125,12 +125,13 @@ describe("a repricing a person waits for", () => {
       return set.call(this, costs);
     };
     try {
-      const { index } = await openStores(config, { env });
+      const { index, blobs } = await openStores(config, { env });
       try {
         for (const id of IDS) assert.equal((await index.getSession(id))?.stats.usage?.costUsd, 5, `${id} is repriced by the open`);
         assert.equal(await index.getCursor(REPRICE_CURSOR), priceStamp(pricesFor(config.pricing)));
       } finally {
         await index.close();
+        await blobs.close?.();
       }
     } finally {
       SqliteIndexStore.prototype.setEventCosts = set;
