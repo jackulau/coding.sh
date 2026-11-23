@@ -72,27 +72,62 @@ const mayBeJson = (s: string): boolean => {
   return t.startsWith("{") || t.startsWith("[");
 };
 
-/** `v` with `f` applied to every string that may hold a JSON document; the same object where none changed. */
-function mapJsonStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
-  if (typeof v === "string") return mayBeJson(v) ? f(v) : v;
+/**
+ * `v` with `f` applied to every string that may hold a JSON document, given the string at the
+ * same place in `before` (the value `v` was made from, with the same shape) when there is one; the
+ * same object where none changed.
+ */
+function mapJsonStrings(v: unknown, before: unknown, f: (s: string, before: string | undefined) => string, depth = 0): unknown {
+  if (typeof v === "string") {
+    const b = typeof before === "string" ? before : undefined;
+    return mayBeJson(v) || (b !== undefined && mayBeJson(b)) ? f(v, b) : v;
+  }
   if (v === null || typeof v !== "object" || depth > 64) return v;
   if (Array.isArray(v)) {
+    const was = Array.isArray(before) ? before : [];
     let out: unknown[] | undefined;
     for (let i = 0; i < v.length; i++) {
-      const x = mapJsonStrings(v[i], f, depth + 1);
+      const x = mapJsonStrings(v[i], was[i], f, depth + 1);
       if (x !== v[i]) (out ??= v.slice())[i] = x;
     }
     return out ?? v;
   }
+  const was = before !== null && typeof before === "object" && !Array.isArray(before) ? before : {};
   let out: Record<string, unknown> | undefined;
   for (const [k, x] of Object.entries(v)) {
-    const y = mapJsonStrings(x, f, depth + 1);
+    const y = mapJsonStrings(x, Object.getOwnPropertyDescriptor(was, k)?.value, f, depth + 1);
     if (y === x) continue;
     out ??= { ...(v as Record<string, unknown>) };
     Object.defineProperty(out, k, { value: y, writable: true, enumerable: true, configurable: true });
   }
   return out ?? v;
 }
+
+/** The document in a string that looks like a JSON object or array; anything else is undefined. */
+function jsonDocument(s: string): object | undefined {
+  if (!mayBeJson(s)) return undefined;
+  try {
+    const doc: unknown = JSON.parse(s);
+    return typeof doc === "object" && doc !== null ? doc : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** How many JSON documents `s` is or holds in its strings, as deep as redactForBlob follows them (3). */
+function documents(s: string, level = 0): number {
+  const doc = level < 3 ? jsonDocument(s) : undefined;
+  if (doc === undefined) return 0;
+  let n = 1;
+  const visit = (v: unknown, depth: number): void => {
+    if (typeof v === "string") n += documents(v, level + 1);
+    else if (v !== null && typeof v === "object" && depth <= 64) for (const x of Object.values(v)) visit(x, depth + 1);
+  };
+  visit(doc, 0);
+  return n;
+}
+
+const MARKER_ONLY = /^\[redacted:[a-z0-9-]+\]$/;
 
 /**
  * Redacts a hook payload (parsed JSON, or the text when it did not parse). Every
@@ -101,10 +136,26 @@ function mapJsonStrings(v: unknown, f: (s: string) => string, depth = 0): unknow
  * document, as a blob is (redactForBlob), which finds a `NAME=value` after an
  * escaped newline. A document with nothing more to redact keeps its text, so an
  * event built from the result matches the one ingest builds from the original.
+ *
+ * A rule run on the text can take the backslash of an escape with a value (a
+ * value that ends only at a quote), and a document in the text then no longer
+ * parses, at any depth. For such a string the original is redacted as documents
+ * instead (redactForBlob), and the counts the rules made on its text are taken
+ * back, so each value is counted once.
  */
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
-  return mapJsonStrings(r.value(v, tally), (s) => redactForBlob(r, s, tally) as string);
+  return mapJsonStrings(r.value(v, tally), v, (s, before) => {
+    if (before === undefined || before === s || MARKER_ONLY.test(s) || documents(s) >= documents(before)) return redactForBlob(r, s, tally) as string;
+    const onText = redactionTally();
+    r.string(before, onText);
+    for (const [k, n] of Object.entries(onText.kinds)) {
+      const left = (tally.kinds[k] ?? 0) - n;
+      if (left > 0) tally.kinds[k] = left;
+      else delete tally.kinds[k];
+    }
+    return redactForBlob(r, before, tally) as string;
+  });
 }
 
 /**

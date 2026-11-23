@@ -83,6 +83,15 @@ async function writeSide(dir: string, name: string, body: string): Promise<void>
   await writeFile(join(dir, name), body, { mode: 0o600, flag: "wx" });
 }
 
+/** JSON.stringify(v), or undefined for a value too deep to serialize (redaction replaced its deep part). */
+function serialized(v: unknown): string | undefined {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return undefined;
+  }
+}
+
 /** True when the file was rewritten. A file that can't be read or written is left alone (never throws). */
 export async function scrubRawFile(path: string, redactor: Redactor): Promise<boolean> {
   const tmp = `${path}.scrub-${process.pid}`;
@@ -98,7 +107,7 @@ export async function scrubRawFile(path: string, redactor: Redactor): Promise<bo
       // not JSON: redact the text
     }
     const clean = json ? redactBlobValue(redactor, value, redactionTally()) : redactor.string(text, redactionTally());
-    if (clean === text || (json && clean === JSON.stringify(value))) return false;
+    if (clean === text || (json && clean === serialized(value))) return false;
     const before = await stat(path);
     // Same name, mode and times: the file is the same payload with markers in place of secrets.
     await writeFile(tmp, clean, { mode: 0o600, flag: "wx" });
