@@ -199,6 +199,9 @@ describe("classifyRetrieval", () => {
       ["web_search", { query: "x" }, "web"],
       ["mcp__fs__read_file", { path: "a.ts" }, "none"],
       ["Edit", { file_path: "a.ts" }, "none"],
+      // Antigravity's views of a file's outline and of one of its classes or functions.
+      ["view_file_outline", { AbsolutePath: "/work/demo/src/a.ts", ItemOffset: 0 }, "read /work/demo/src/a.ts"],
+      ["view_code_item", { File: "/work/demo/src/a.ts", NodePaths: ["Parser.parse"] }, "read /work/demo/src/a.ts"],
       // Antigravity's and Droid's shell tools.
       ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo/sub" }, "read /work/demo/sub/a.ts"],
       ["Execute", { command: "grep -rn x src" }, "search"],

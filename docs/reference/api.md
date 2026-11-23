@@ -781,7 +781,7 @@ read and then edited. It is absent when the session read, searched and fetched n
 
 | Term | What counts |
 |---|---|
-| Read | A read tool (Read, `read_file`, `view`), or `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` or `Get-Content` |
+| Read | A read tool (Read, `read_file`, `view`, Antigravity's `view_file_outline` and `view_code_item`), or `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` or `Get-Content` |
 | Search | A search or list tool (Grep, Glob), or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `git show <rev>:<folder>/`, `Select-String` or `Get-ChildItem` |
 | Shell line | One shell tool call (Antigravity's `run_command` and Droid's `Execute` included), split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. A line starts in the folder its call names (`workdir`, `cwd`, Antigravity's `Cwd`, Gemini's `dir_path` or `directory`), else the working directory. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
 | Pipeline | Counts as its first command, but `cat f \| grep x` is a search. A search that deletes or rewrites what it found (`find . -delete`) is neither. A pipeline whose output goes to a file (`cat a > b`, `| Out-File`) reads nothing, and its search is quiet |

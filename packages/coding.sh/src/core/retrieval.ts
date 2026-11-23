@@ -33,12 +33,12 @@ import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
 const WEB = new Set(["websearch", "webfetch", "web_search", "web_fetch", "google_web_search", "fetchurl", "read_web_page", "read_url_content", "search_web"]);
 /** Search and listing tools beyond waste.ts's SEARCH_TOOLS (lower case). */
 const SEARCHES = new Set(["codebase_search", "glob_file_search", "find", "find_by_name", "list", "list_files", "search_files", "grep_files"]);
-/** Tools that read a file's content (lower case). */
-const READS = new Set(["read", "view", "read_file", "read_many_files", "view_file", "notebookread", "read_notebook"]);
+/** Tools that read a file's content (lower case): Antigravity's `view_file_outline` and `view_code_item` read a file's outline or one of its classes or functions. */
+const READS = new Set(["read", "view", "read_file", "read_many_files", "view_file", "view_file_outline", "view_code_item", "notebookread", "read_notebook"]);
 /** Editor tools that read a file with `command: "view"`. */
 const EDITOR = /^(?:str_replace_editor|str_replace_based_edit_tool|.*text_editor)$/;
-/** Input fields that name the file a read tool reads: the first that holds a string. */
-const PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "absolutePath", "AbsolutePath", "target_file", "targetFile", "notebook_path", "file"];
+/** Input fields that name the file a read tool reads: the first that holds a string. Antigravity's `view_code_item` names it `File`. */
+const PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "absolutePath", "AbsolutePath", "target_file", "targetFile", "notebook_path", "file", "File"];
 
 /** One tool call, as retrieval sees it. */
 export interface RetrievalCall {
