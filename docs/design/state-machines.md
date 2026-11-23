@@ -93,7 +93,7 @@ Status values: `open`, `fixing`, `fixed` (regression test added), `deferred` (re
 
 ## Capture pipeline
 
-Scope: the hook entry (`src/spool/{hook,host,kick,write,devin}.ts`, its POSIX sh fast path `src/spool/hook.sh`, and `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`), the readers that ingest (`src/cli/common.ts`, `src/cli/ingest-worker.ts`, `src/mcp/server.ts`) and the ingest command (`src/cli/commands/ingest.ts`). Refs name the file and the function, not a line. M1 to M7 describe the code as of 2026-11-23. The lock model (`test/verify/lock-model.test.ts`) checks M3; the capture model (`test/verify/capture-model.test.ts`, with `capture-code.test.ts` against the real code) checks the cursors (M4) and the wake-up (M5). The repro output under "Reached invalid states" is from the 2026-11-06 tree.
+Scope: the hook entry (`src/spool/{hook,host,kick,write,devin}.ts`, its POSIX sh fast path `src/spool/hook.sh`, and `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`), the readers that ingest (`src/cli/common.ts`, `src/cli/ingest-worker.ts`, `src/mcp/server.ts`) and the ingest command (`src/cli/commands/ingest.ts`). Refs name the file and the function, not a line. M1 to M7 describe the code as of 2026-11-23. The lock model (`test/verify/lock-model.test.ts`) checks the design of M3: it copies the steps of `core/lock.ts` and runs none of its code, which `test/core/lock.test.ts` runs in racing processes. The capture model (`test/verify/capture-model.test.ts`, with `capture-code.test.ts` against the real code) checks the cursors (M4) and the wake-up (M5). The repro output under "Reached invalid states" is from the 2026-11-06 tree.
 
 ### M1. Hook process (one process per agent hook call)
 
@@ -172,7 +172,7 @@ Invariants, as the lock model checks them: without a stall, one process holds th
 | Breaking | **open:** a breaker stalls past 10 s under the guard | a second breaker works beside it | – | `breakStale` |
 | Held | **open:** a stall between a fence and the write it guards | the write lands after a peer took the lock. With SQLite the commit's fences run inside the write transaction, so a sink send is the write left exposed | – | `assertHeld`, `ingest.ts` `sinkSend` |
 
-The four open rows need a process that stalls (a sleeping laptop, a stopped process). The lock model reaches each of them ("a stall opens the windows core/lock.ts names").
+The four open rows need a process that stalls (a sleeping laptop, a stopped process). The lock model reaches each of them in its copy of the steps ("a stall opens the windows core/lock.ts names"); no test stalls the code.
 
 Lock users and their wait: `ingest --background` (the kick, the hand-off of M5, and a read that ran out of time) and `monitor` 0; `autoIngest` (CLI reads, the viewer's worker, MCP) up to 1.5 s by default, 0 while a re-parse runs; manual `ingest` and the eval commands (`eval`, `compare`, `toolevals`, `eval-run`, `eval-trigger`, `refine-suite`, `replay-fork`) 30 s. Ingest passes after the first take the lock with waitMs 0. Also under this lock: a re-parse (about a second at a time, 30 s wait, and it looks at the wake-up marker after each release), gc from the CLI and serve's daily sweep (30 s), purge (30 s) and `upgrade-store` (5 s). **Not under this lock:** `tailIngest` (it takes the tail lock), backfill (the sink lock when sinks are set; init's import takes the import lock), and the spool writers (M2).
 
@@ -242,7 +242,7 @@ Repro output on the 2026-11-06 tree. Each of these is fixed (Issue A table).
 
 Still reachable on the current code:
 
-- **Two lock holders after a stall** (M3). Each window needs a process that stalls past a limit; the lock model reaches each one ("a stall opens the windows core/lock.ts names").
+- **Two lock holders after a stall** (M3). Each window needs a process that stalls past a limit; the lock model reaches each one in its copy of the steps ("a stall opens the windows core/lock.ts names"); no test stalls the code.
 - **A sink gets an event twice** when a later pass reads it again: the other line of a hand-off, the second copy of a hook firing, or a line whose events a transcript import stored first (M4). It is the cost of sending again what an earlier run stored.
 - **gc loses a line** a writer appends to an Eligible past day's file between gc's re-stat and its unlink (M2; not modeled).
 
@@ -816,7 +816,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 - **Evidence:** src/core/lock.ts:65-71 (statSync ENOENT -> return true), lock.ts:102-104 (rmSync(path) then retry; deletes a lock a third process just O_EXCL-created); no fencing after acquire, lock.ts:109-127; cursors last-writer-wins at src/store/sqlite.ts:559-561. Repros: audit repro (capture/)r1-lock-race.ts -> 'round 0: 3 of 8 processes hold the lock at once ... BUG: up to 3 concurrent holders'; audit repro (capture/)r1b-lock-contention.ts (no stale lock) -> '240 acquisitions, 2 found another holder inside the critical section'; impact audit repro (capture/)r1c-double-holder-impact.ts -> '20 captured events -> sink received 40'
 - **Fix:** (1) isStale must return false when the file is gone; the caller just retries tryCreate. (2) Break a stale lock atomically: renameSync(path, path+'.stale.'+pid+rand), re-stat the renamed file and only proceed if its ino/content matches what was judged stale (otherwise link it back). (3) Put a random nonce in the lock body; release() and a new lock.assertHeld() compare the nonce, not the pid; ingest calls assertHeld() before every setCursor/sink write and aborts with LockLostError if it was stolen (fencing for the sleep/stall case).
 - **Regression test:** test/core/lock.test.ts: spawn 6 child processes that loop acquire→mkdir(critical marker)→3ms→rmdir→release 40 times, assert zero overlaps; and 8 processes racing on one dead-pid lock with waitMs 0, assert exactly one acquires. Unit test: a lock whose nonce changed makes assertHeld() throw and ingest commits no cursor.
-- **Since:** the fix holds while no process stalls. A holder or breaker that stalls past its limit (`staleMs`, or `BREAK_STALE_MS` under the guard) can still let a second holder in: the three windows are in the `core/lock.ts` header and Capture M3, and the lock model reaches them. With SQLite a commit's cursor writes run inside the store's transaction after `assertHeld`; a sink send is the write left exposed.
+- **Since:** the fix holds while no process stalls. A holder or breaker that stalls past its limit (`staleMs`, or `BREAK_STALE_MS` under the guard) can still let a second holder in: the three windows are in the `core/lock.ts` header and Capture M3, and the lock model reaches them in its copy of the steps; no test stalls the code. With SQLite a commit's cursor writes run inside the store's transaction after `assertHeld`; a sink send is the write left exposed.
 
 ### CAP-2: A leftover lock file (dead holder) disables every hook-triggered background ingest
 
