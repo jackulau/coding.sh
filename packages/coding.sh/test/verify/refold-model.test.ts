@@ -1,5 +1,5 @@
 // A model of the refold and the reprice after an upgrade, checked with test/_model.ts. A build with a
-// new SESSION_FOLD_VERSION (core/sessions.ts:590) folds every stored session again, and one with new
+// new SESSION_FOLD_VERSION (core/sessions.ts) folds every stored session again, and one with new
 // prices (core/pricing.ts) prices the stored events again. Background ingests do both, two at once,
 // and any of them can crash part way.
 //
