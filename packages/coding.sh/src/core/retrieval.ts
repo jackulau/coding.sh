@@ -181,13 +181,13 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     const h = found[head];
     if (!h) continue;
     if (GREPS.has(prog) || (pps && (prog === "where-object" || prog === "where" || prog === "?" || prog === "select-string" || prog === "sls"))) {
-      // A filter: what reaches the agent is what matched.
+      // A filter: what reaches the agent is what matched, counts only when this filter counts (`grep x | grep -c y`).
       const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args, prog);
       const count = GREPS.has(prog) && prog !== "findstr" && grepCount(args, prog);
       if (h.kind === "read") found[head] = { kind: "search", quiet, count };
       else {
         h.quiet ||= quiet;
-        h.count ||= count;
+        h.count = count;
       }
     } else if (prog === "wc" && !pps) {
       // `grep x | wc -l`: what reaches the agent is a count of what the search found.
@@ -195,6 +195,9 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     } else if (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args)) {
       // A removal or an in-place edit: what the head printed went into it (`find . | xargs rm`, `cat list | xargs rm`), not to the agent.
       found[head] = undefined;
+    } else if (h.kind === "search") {
+      // Any other command reshapes the counts (`grep -c x a b | tail -1` prints one file's), so a zero no longer says the search found nothing.
+      h.count = false;
     }
   }
   let read = false;
@@ -507,8 +510,9 @@ function sedRead(args: readonly string[]): string[] | undefined {
   return script ? ops : ops.slice(1);
 }
 
-/** grep's short flags that take a value (`-e`, `-m`, `-A`, …), and ripgrep's and the other searchers' (`-g`, `-t`, `-T`, …). */
+/** grep's short flags that take a value (`-e`, `-m`, `-A`, …), ripgrep's (`-g`, `-t`, `-r`, …) and the other searchers'. ag's and ack's `-r` recurses. */
 const GREP_VALUED = "efmABCdD";
+const RG_VALUED = "ABCdEefgjMmrTt";
 const SEARCHER_VALUED = "efmABCgtTMj";
 
 /** `grep -q`, `--quiet`, `--silent`: the exit status is the answer and nothing prints. */
@@ -523,7 +527,7 @@ function grepCount(args: readonly string[], prog: string): boolean {
 
 /** Whether a grep-like command sets a flag: its letter alone or in a cluster (`-rq`), or one of its long names. */
 function grepFlag(args: readonly string[], prog: string, letter: string, long: readonly string[]): boolean {
-  const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : SEARCHER_VALUED;
+  const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : prog === "rg" ? RG_VALUED : SEARCHER_VALUED;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") break;
