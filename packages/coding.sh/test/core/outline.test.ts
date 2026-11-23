@@ -4,6 +4,7 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { localDate, phaseLabel, sessionOutline, storedOutline } from "../../src/core/outline.ts";
 import { buildSession, isSyntheticPrompt } from "../../src/core/sessions.ts";
+import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS } from "../../src/core/waiting.ts";
 import type { AgentEvent, EventKind, SessionDerail } from "../../src/schema/index.ts";
 import { testCtx } from "../adapters/_helpers.ts";
 
@@ -129,6 +130,25 @@ describe("session outline", () => {
     // A later session.start is still a resume.
     const resumed = sessionOutline([...events, ev("session.start", { source: "resume" }, { gap: 1711 })]);
     assert.deepEqual(resumed.phases.map((p) => [p.kind, phaseLabel(p)]), [["start", "start"], ["resume", "resumed after 2 s"]]);
+  });
+
+  it("a host's marker of an agent's prompt opens no phase and stretches none: the idle phase starts at the prompt", () => {
+    n = 0;
+    clock = T0 - 10 * 3600_000;
+    const events = [ev("session.start", { source: "startup" }), ev("user.message", { text: "fix the cache" }), ev("tool.end", { tool: "Edit", toolUseId: "a", ok: true })];
+    const quiet = clock;
+    const prompt = ev("user.message", { text: "now add the tests" }, { gap: 40 * MIN });
+    // T3 Code stamps its marker just over HOST_MARK_SLACK_MS before the prompt it names (adapters/t3code.ts agentPromptMarks).
+    const mark: AgentEvent = { id: "mark", v: 0, sessionId: "s", ts: prompt.ts - HOST_MARK_SLACK_MS - 1, agent: "t3code", kind: "notification", payload: { type: HOST_AGENT_PROMPT, via: "t3code", promptId: prompt.id, at: prompt.ts } };
+    const o = sessionOutline([...events, mark, prompt]);
+    assert.deepEqual(o.phases.map((p) => [p.kind, p.from, p.to, p.events, p.eventId, p.startTs, p.gapMs]), [
+      ["start", 0, 4, 4, "e1", events[0]!.ts, undefined],
+      ["idle", 4, 5, 1, prompt.id, prompt.ts, 40 * MIN],
+    ]);
+    assert.equal(o.phases[0]!.endTs, quiet, "the phase before the gap ends at its last activity, not at the marker");
+    // The phases start, end and gap as they do without the marker.
+    const plain = sessionOutline([...events, prompt]);
+    assert.deepEqual(plain.phases.map((p) => [p.kind, p.eventId, p.startTs, p.gapMs, p.endTs]), o.phases.map((p) => [p.kind, p.eventId, p.startTs, p.gapMs, p.endTs]));
   });
 
   it("labels a gap under a minute in seconds", () => {
