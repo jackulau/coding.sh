@@ -246,9 +246,13 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "status",
     group: "Capture",
-    summary: "Show capture totals and the latest session",
+    summary: "Show capture totals, each agent's last capture and the latest session",
     flags: [FRESH],
-    notes: [PENDING_NOTE],
+    notes: [
+      "The Last capture row names the agents that captured a session in the last 7 days, most recent first: three, then +N more. An Update row appears when the update check's cache names a newer release.",
+      "With --json: version; update (current, latest, available, checkedAt, and url, install and command when a newer release is out), read from the update check's cache with no network; lastCapture, one row per agent over the last 7 days (agent, at, sessionId, shortId), as the MCP status tool gives it; and index (updatedAt, ageMs, and stale: true while stale), absent until an ingest records its time.",
+      PENDING_NOTE,
+    ],
     load: () => import("./commands/status.ts"),
   },
   {
