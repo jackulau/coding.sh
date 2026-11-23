@@ -19,6 +19,7 @@
 // Session.stats.toolErrors counts real failures only (core/sessions.ts). Pure.
 import type { AgentEvent } from "../schema/index.ts";
 import { exitCodeOf, failingPart, isPlumbing, shellParts, type ShellPart } from "./failing-command.ts";
+import { COMMAND_KEYS, isShellTool } from "./shell-tools.ts";
 
 export type FailureClass = "real" | "benign" | "interrupted";
 export type BenignReason = "no-match" | "probe" | "files-differ";
@@ -32,9 +33,11 @@ export interface ToolFailure {
 const REAL: ToolFailure = { cls: "real" };
 const INTERRUPTED: ToolFailure = { cls: "interrupted" };
 
-/** Tools that take a bare command string as input. */
-const SHELL_TOOL = /^(?:bash|sh|zsh|shell|local_shell|exec|exec_command|run_shell_command|run_terminal_cmd|run_command|execute_command|terminal|command)$/i;
-const COMMAND_KEYS = ["command", "cmd", "script", "commandLine", "CommandLine"] as const;
+/**
+ * Tools whose bare string input is a command: the shell tools (core/shell-tools.ts), and sh, zsh and command. Not exec:
+ * its bare string input is a Codex code-mode cell, which is JavaScript.
+ */
+const takesCommandString = (tool: string) => isShellTool(tool) || /^(?:sh|zsh|command)$/i.test(tool);
 
 /** Search tools whose ok:false "No files found" is an empty result. */
 const SEARCH_TOOL = /grep|search|glob|find/i;
@@ -68,7 +71,7 @@ function textOf(v: unknown): string {
  * shell command. A REPL cell (`code`) is not: its exit status is the cell's.
  */
 export function shellCommandOf(tool: string, input: unknown): string | undefined {
-  if (typeof input === "string") return SHELL_TOOL.test(tool) && input.trim() ? input : undefined;
+  if (typeof input === "string") return takesCommandString(tool) && input.trim() ? input : undefined;
   if (typeof input !== "object" || input === null) return undefined;
   const o = input as Record<string, unknown>;
   for (const k of COMMAND_KEYS) {

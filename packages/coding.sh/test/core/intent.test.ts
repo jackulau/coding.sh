@@ -140,6 +140,37 @@ describe("detectTestTamperTrace", () => {
     assert.equal(f?.tool, "Bash");
   });
 
+  it("sed -i and rm on a test file through Antigravity's run_command or Droid's Execute, as through Bash", () => {
+    // Shaped as the adapters store them (test/fixtures/adapters/antigravity, droid).
+    const shells: [string, (command: string) => Record<string, unknown>][] = [
+      ["Bash", (command) => ({ command })],
+      ["run_command", (command) => ({ CommandLine: command, Cwd: "/work/demo" })],
+      ["Execute", (command) => ({ command })],
+    ];
+    const call = (tool: string, input: Record<string, unknown>) => {
+      const id = `tu${t + 1}`;
+      return [ev("tool.start", { tool, toolUseId: id, input }), ev("tool.end", { tool, toolUseId: id, ok: true })];
+    };
+    for (const [tool, input] of shells) {
+      const [f] = trace([result(2), ...call(tool, input("sed -i 's/== 5/== 4/' tests/test_calc.py")), result(0)]);
+      assert.deepEqual([f?.via, f?.shape, f?.severity, f?.tool], ["shell", "unknown", "high", tool], tool);
+      const [rm] = trace([result(2), ...call(tool, input("rm -f tests/test_old.py"))]);
+      assert.deepEqual([rm?.shape, rm?.severity], ["delete", "high"], tool);
+    }
+  });
+
+  it("a file change by a Codex code-mode cell is an edit, in the fold as in the trace: the cell's input is JavaScript, not a command", () => {
+    const id = `tu${t + 1}`;
+    const cell = 'text(await tools.exec_command({ cmd: "node fix.js" }))';
+    const diff = "--- a/tests/a.test.js\n+++ b/tests/a.test.js\n@@ -1 +1 @@\n-it('adds', () => {\n+it.skip('adds', () => {\n";
+    const [f] = trace([
+      ev("tool.start", { tool: "exec", toolUseId: id, wrapper: true, input: cell }),
+      ev("file.change", { path: "tests/a.test.js", op: "modify", tool: "exec", toolUseId: id, diff }),
+      ev("tool.end", { tool: "exec", toolUseId: id, wrapper: true, ok: true }),
+    ]);
+    assert.deepEqual([f?.via, f?.shape, f?.severity], ["file", "skip", "high"]);
+  });
+
   it("a skip marker is high without any test result", () => {
     for (const [line, was] of [["@pytest.mark.skip", ""], ["it.skip('adds', () => {", "-it('adds', () => {\n"]] as const) {
       const diff = `--- a/tests/a.test.js\n+++ b/tests/a.test.js\n@@ -1 +1,2 @@\n${was}+${line}\n def x(): pass\n`;

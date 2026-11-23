@@ -3,6 +3,7 @@
 // with its own Read tool, `man`, web fetches, spawning subagents.
 import { basename } from "node:path";
 import { commandOf } from "../core/sessions.ts";
+import { isShellCall } from "../core/shell-tools.ts";
 import type { AgentEvent } from "../schema/index.ts";
 
 export type CallCategory = "shell" | "read" | "web" | "mcp" | "edit" | "subagent" | "other";
@@ -15,7 +16,6 @@ export interface Classified {
   mcp?: { server: string; tool: string };
 }
 
-const SHELL = new Set(["bash", "shell", "shell_command", "exec_command", "run_shell_command", "local_shell", "terminal", "run_terminal_cmd", "execute", "sh"]);
 const READ = new Set(["read", "read_file", "readfile", "view", "cat", "open_file", "read_many_files"]);
 const WEB = new Set(["webfetch", "websearch", "web_fetch", "web_search", "google_web_search", "fetch", "browse"]);
 const EDIT = new Set(["edit", "write", "multiedit", "apply_patch", "write_file", "replace", "str_replace_editor", "create_file", "notebookedit"]);
@@ -41,7 +41,8 @@ export function classifyToolStart(e: AgentEvent): Classified {
   const server = str(p.server);
   const mcp = parseMcpToolName(tool, server);
   if (mcp) return { category: "mcp", mcp };
-  if (SHELL.has(lower)) {
+  // A shell call (core/shell-tools.ts), or a tool named `sh`.
+  if (isShellCall(tool, p.input) || lower === "sh") {
     const command = commandOf(p.input);
     return command ? { category: "shell", command } : { category: "shell" };
   }

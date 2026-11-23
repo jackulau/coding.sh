@@ -37,6 +37,22 @@ describe("classify", () => {
     assert.deepEqual(parseMcpToolName("mcp__fake__echo"), { server: "fake", tool: "echo" });
     assert.deepEqual(classifyToolStart(ev("tool.start", 0, { tool: "mcp__fake__echo", input: {} })).mcp, { server: "fake", tool: "echo" });
   });
+  it("classifies a call through Antigravity's run_command, Droid's Execute or any other shell tool as through Bash", () => {
+    const calls: [string, unknown][] = [
+      ["Bash", { command: "npm test" }],
+      ["run_command", { CommandLine: "npm test", Cwd: "/work/demo" }],
+      ["Execute", { command: "npm test" }],
+      ["exec", { command: "npm test", shell_id: "default" }],
+      ["powershell", { command: "npm test" }],
+      // A bare command string, as an SDK or OTel capture can record it.
+      ["Bash", "npm test"],
+      ["run_command", "npm test"],
+      ["powershell", "npm test"],
+    ];
+    for (const [tool, input] of calls) assert.deepEqual(classifyToolStart(ev("tool.start", 0, { tool, input })), { category: "shell", command: "npm test" }, `${tool} ${JSON.stringify(input)}`);
+    // A Codex code-mode cell is JavaScript, not a command.
+    assert.equal(classifyToolStart(ev("tool.start", 0, { tool: "exec", input: "await tools.exec_command({cmd: 'ls'})" })).category, "other");
+  });
 });
 
 describe("computeMetrics", () => {

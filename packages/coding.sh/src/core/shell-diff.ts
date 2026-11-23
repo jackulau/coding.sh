@@ -4,6 +4,7 @@
 // strings, no I/O.
 import { posix } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
+import { commandLineOf, isShellCall } from "./shell-tools.ts";
 
 // The checks before each replace skip it when it would change nothing: a session's fold keys every path it reads.
 const unprivate = (x: string) => (x.startsWith("/private/") ? x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "") : x);
@@ -45,20 +46,13 @@ export function onDrive(p: string, drive: string | undefined): string {
   return d === p[0] ? p : d + p.slice(1);
 }
 
-/** The shell command of a tool call's input, unless it is a patch passed as `command` (Codex apply_patch). */
+/**
+ * The shell command of a tool call's input (commandLineOf: every command key, `bash -lc` unwrapped),
+ * unless it is a patch passed as `command` (Codex apply_patch).
+ */
 export function shellCommand(tool: string | undefined, input: unknown): string | undefined {
   if (tool && /patch/i.test(tool)) return undefined;
-  let cmd: string | undefined;
-  if (typeof input === "string") cmd = input;
-  else if (input && typeof input === "object") {
-    const o = input as Record<string, unknown>;
-    for (const k of ["command", "cmd", "script", "commandLine"]) {
-      const v = o[k];
-      if (typeof v === "string") cmd = v;
-      else if (Array.isArray(v) && v.every((x) => typeof x === "string")) cmd = (v.length >= 3 && /(^|\/)(ba|z|)sh$/.test(v[0] as string) && /^-\w*c$/.test(v[1] as string) ? v.slice(2) : v).join(" ");
-      if (cmd !== undefined) break;
-    }
-  }
+  const cmd = commandLineOf(input);
   if (cmd === undefined || /^\s*(?:\*\*\* Begin Patch|diff --git )/.test(cmd)) return undefined;
   return cmd;
 }
@@ -300,7 +294,6 @@ export function shellWrites(command: string): ShellWrite[] {
   return out;
 }
 
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -331,7 +324,7 @@ export function commandOrigin(command: string, path: string, cwd?: string): Excl
 /** commandOrigin of a file.change, or "edit" when an edit tool (not a shell) made it. `start` is the call's tool.start. */
 export function shellDiffOrigin(change: AgentEvent, start: AgentEvent | undefined, cwd?: string): ShellDiffOrigin {
   const tool = str(change.payload.tool) ?? str(start?.payload.tool);
-  if (!tool || !SHELL_TOOLS.has(tool.toLowerCase())) return "edit";
+  if (!tool || !isShellCall(tool, start?.payload.input)) return "edit";
   const command = start ? shellCommand(str(start.payload.tool), start.payload.input) : undefined;
   if (command === undefined) return "unattributed";
   return commandOrigin(command, normalizeTracePath(str(change.payload.path) ?? "", cwd), cwd);

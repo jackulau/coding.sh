@@ -86,6 +86,22 @@ describe("verifier/setup guessing", () => {
     assert.equal(shellCommandOf(ev("tool.start", { tool: "shell", input: { command: ["pytest", "-x"] } })), "pytest -x");
     assert.equal(shellCommandOf(ev("tool.start", { tool: "Read", input: { file_path: "x" } })), undefined);
   });
+  it("finds the test command through every agent's shell tool, as through Bash", () => {
+    // Antigravity's run_command, Droid's Execute, Codex's shell_command, PowerShell and Devin's exec.
+    const calls: [string, unknown][] = [
+      ["Bash", { command: "npm test" }],
+      ["run_command", { CommandLine: "npm test", Cwd: "/work/demo" }],
+      ["Execute", { command: "npm test" }],
+      ["shell_command", { command: "npm test" }],
+      ["powershell", { command: "npm test" }],
+      ["exec", { command: "npm test", shell_id: "default" }],
+    ];
+    for (const [tool, input] of calls) assert.equal(guessVerifierFromEvents([ev("tool.start", { tool, input })]), "npm test", tool);
+    // `bash -ec` runs its script as `bash -lc` does.
+    assert.equal(shellCommandOf(ev("tool.start", { tool: "shell", input: { command: ["bash", "-ec", "npm test"] } })), "npm test");
+    // A Codex code-mode cell is JavaScript, not a command line.
+    assert.equal(shellCommandOf(ev("tool.start", { tool: "exec", input: "const r = await tools.exec_command({cmd: 'npm test'});" })), undefined);
+  });
   it("uses the last test command the agent ran", () => {
     assert.equal(guessVerifierFromEvents([bash("npm test"), bash("npx vitest run src/a.test.ts")]), "npx vitest run src/a.test.ts");
   });
