@@ -146,7 +146,9 @@ In PowerShell, type `codingsh` for `coding.sh`, and delete the data with
 `Remove-Item -Recurse -Force ~\.coding.sh`.
 
 `uninstall` restores each agent config file byte for byte if nothing else has edited it since
-`init`. Otherwise it removes only the coding.sh entries.
+`init`. Otherwise it removes only the coding.sh entries. If it can't read or parse one of an
+agent's config files, it leaves that file as it is, removes coding.sh from the agent's other
+files, prints the error and exits 1.
 
 ## From source
 

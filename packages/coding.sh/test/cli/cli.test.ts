@@ -483,6 +483,38 @@ describe("cli init/uninstall round trip", () => {
     assert.equal((parseJson(u2.stdout, "uninstall again") as { outcome: string }).outcome, "unchanged");
   });
 
+  it("uninstall removes the hooks when the agent's MCP config can't be read, and names that file", () => {
+    // The agent rewrites this file itself; a write cut short leaves it unreadable, before init or after.
+    const broken = '{"mcpServers": {';
+    for (const when of ["before init", "after init"]) {
+      const h = tmpHome();
+      const settings = join(h.home, ".claude", "settings.json");
+      const mcp = join(h.home, ".claude.json");
+      mkdirSync(dirname(settings), { recursive: true });
+      writeFileSync(settings, '{"theme":"dark"}\n');
+      if (when === "before init") writeFileSync(mcp, broken);
+      cli(h, ["init", "--agent", "claude-code", "--no-import", "--yes"]);
+      assert.match(readFileSync(settings, "utf8"), /_codingsh/, when);
+      if (when === "after init") writeFileSync(mcp, broken);
+
+      const u = cli(h, ["uninstall", "--agent", "claude-code", "--yes", "--json"]);
+      assert.equal(u.status, 1, u.stderr);
+      const res = parseJson(u.stdout, "uninstall") as { outcome: string; agents: { id: string; error: string | null; changes: { path: string }[] }[]; leftInPlace?: unknown };
+      assert.equal(res.outcome, "partial", when);
+      assert.match(res.agents[0]?.error ?? "", /\.claude\.json/, when);
+      assert.deepEqual(res.agents[0]?.changes.map((c) => c.path), [settings], when);
+      assert.equal(res.leftInPlace, undefined, `${when}: the file it can't read is not called an install elsewhere`);
+      assert.equal(readFileSync(settings, "utf8"), '{"theme":"dark"}\n', `${when}: the hooks are gone`);
+      assert.equal(readFileSync(mcp, "utf8"), broken, `${when}: the file it can't read is left as it was`);
+
+      // Run again, it names the file it can't read instead of saying nothing is installed.
+      const again = cli(h, ["uninstall", "--agent", "claude-code", "--yes"]);
+      assert.equal(again.status, 1, again.stderr);
+      assert.match(again.stderr, /\.claude\.json/, when);
+      assert.doesNotMatch(again.stderr, /No coding\.sh hooks or MCP entries installed|outside the config dir/, when);
+    }
+  });
+
   it("without a terminal, uninstall --agent names a rerun that removes only that agent", () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--agent", "codex", "--no-import", "--yes"]).status, 0);

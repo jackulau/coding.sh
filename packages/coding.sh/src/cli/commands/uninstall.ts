@@ -56,20 +56,45 @@ export function leftInPlace(agents: readonly Adapter[], touched: readonly string
   return out;
 }
 
+/** What removing coding.sh from one agent changes, and why each part that failed did. */
+interface Removal {
+  changes: FileChange[];
+  errors: string[];
+}
+
+/** The errors as one `--json` field, null when none. */
+const errorJson = (r: Removal) => (r.errors.length ? r.errors.join("; ") : null);
+
 /**
  * In reverse order of init's writes, so each exact restore sees the file as it
- * wrote it: proxy routing, then MCP entries, then hooks.
+ * wrote it: proxy routing, then MCP entries, then hooks. A part that fails (a
+ * file it can't read) leaves its file as it is; the parts after it still run.
  */
-async function removeAll(a: Adapter, opts: RemoveOpts): Promise<FileChange[]> {
-  const proxy: FileChange[] = [];
-  if (opts.scope === "user" && isProxyAgent(a.id)) {
-    const c = planProxyUninstall(a.id, opts.env);
-    if (c) proxy.push(c);
-    if (!opts.dryRun && c) await applyProxyUninstall(a.id, c, opts.env);
+async function removeAll(a: Adapter, opts: RemoveOpts): Promise<Removal> {
+  const changes: FileChange[] = [];
+  const errors: string[] = [];
+  const part = async (remove: () => Promise<FileChange[]>) => {
+    try {
+      changes.push(...(await remove()));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!errors.includes(msg)) errors.push(msg);
+    }
+  };
+  const id = a.id;
+  if (opts.scope === "user" && isProxyAgent(id)) {
+    await part(async () => {
+      const c = planProxyUninstall(id, opts.env);
+      if (!c) return [];
+      if (!opts.dryRun) await applyProxyUninstall(id, c, opts.env);
+      return [c];
+    });
   }
-  if (opts.proxyOnly) return proxy;
-  const mcp = opts.scope === "user" && a.uninstallMcp ? await a.uninstallMcp({ name: MCP_CONFIG_NAME, dryRun: opts.dryRun }) : [];
-  return [...proxy, ...mcp, ...(await a.uninstall(opts))];
+  if (!opts.proxyOnly) {
+    if (opts.scope === "user" && a.uninstallMcp) await part(async () => (await a.uninstallMcp?.({ name: MCP_CONFIG_NAME, dryRun: opts.dryRun })) ?? []);
+    await part(() => a.uninstall(opts));
+  }
+  return { changes, errors };
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -84,23 +109,18 @@ export async function run(c: CommandContext): Promise<number> {
   const opts = (dry: boolean): RemoveOpts => ({ scope, projectDir: c.cwd, dryRun: dry, env: c.env, proxyOnly });
   const what = proxyOnly ? "No agents routed through the coding.sh proxy" : "No coding.sh hooks or MCP entries installed";
 
-  const plans: { id: string; name: string; changes: FileChange[]; error?: string }[] = [];
-  for (const a of adapters) {
-    try {
-      plans.push({ id: a.id, name: a.displayName, changes: await removeAll(a, opts(true)) });
-    } catch (e) {
-      plans.push({ id: a.id, name: a.displayName, changes: [], error: e instanceof Error ? e.message : String(e) });
-    }
-  }
+  const plans: ({ id: string; name: string } & Removal)[] = [];
+  for (const a of adapters) plans.push({ id: a.id, name: a.displayName, ...(await removeAll(a, opts(true))) });
   const pending = plans.filter((p) => p.changes.length);
   const total = pending.reduce((n, p) => n + p.changes.length, 0);
   for (const p of plans) {
-    if (p.error) out.row(p.name, `can't plan: ${p.error}`, "fail");
-    else if (p.changes.length) out.row(p.name, `${plural(p.changes.length, "file")} to change`);
+    for (const e of p.errors) out.row(p.name, `can't plan: ${e}`, "fail");
+    if (p.changes.length) out.row(p.name, `${plural(p.changes.length, "file")} to change`);
   }
-  const failed = plans.some((p) => p.error);
-  // Proxy-only runs leave hooks and MCP entries by design.
-  const left = proxyOnly || scope !== "user" ? [] : leftInPlace(adapters, plans.flatMap((p) => p.changes.map((ch) => ch.path)), c.env);
+  const failed = plans.some((p) => p.errors.length);
+  // Proxy-only runs leave hooks and MCP entries by design. An agent with a file it couldn't
+  // read is left out: that file may be the one the record names, in the config dir after all.
+  const left = proxyOnly || scope !== "user" ? [] : leftInPlace(adapters.filter((a) => !plans.some((p) => p.id === a.id && p.errors.length)), plans.flatMap((p) => p.changes.map((ch) => ch.path)), c.env);
   const warnLeft = () => {
     for (const l of left) out.warn(`${l.name}: ${l.path} holds a coding.sh install outside the config dir uninstall looked in; it is left in place`);
     for (const l of left.filter((x, i) => left.findIndex((y) => y.agent === x.agent && dirname(y.path) === dirname(x.path)) === i)) {
@@ -114,10 +134,10 @@ export async function run(c: CommandContext): Promise<number> {
   const leftJson = () => (left.length ? { leftInPlace: left.map((l) => ({ id: l.agent, path: l.path })) } : {});
 
   if (dryRun) {
-    if (out.json) out.data({ outcome: "planned", scope, agents: plans.map((p) => ({ id: p.id, error: p.error ?? null, changes: p.changes.map(changeJson) })), ...leftJson() });
+    if (out.json) out.data({ outcome: "planned", scope, agents: plans.map((p) => ({ id: p.id, error: errorJson(p), changes: p.changes.map(changeJson) })), ...leftJson() });
     else {
       for (const p of pending) printChanges(out, p.changes, p.id);
-      if (!total && !left.length) out.ok(what);
+      if (!total && !left.length && !failed) out.ok(what);
       warnLeft();
     }
     return failed ? 1 : 0;
@@ -125,9 +145,10 @@ export async function run(c: CommandContext): Promise<number> {
   if (!total) {
     // A routing record whose entry is already gone (edited by hand): forget it, so the hook stops restarting the proxy.
     if (scope === "user") for (const a of adapters) if (isProxyAgent(a.id) && readProxyInstalls(c.env)[a.id]) await applyProxyUninstall(a.id, undefined, c.env);
-    if (out.json) out.data({ outcome: left.length ? "partial" : "unchanged", scope, agents: [], ...leftJson() });
+    if (out.json) out.data({ outcome: failed || left.length ? "partial" : "unchanged", scope, agents: plans.filter((p) => p.errors.length).map((p) => ({ id: p.id, error: errorJson(p), changes: [] })), ...leftJson() });
     else if (left.length) warnLeft();
-    else out.ok(what);
+    // Nothing to change is not nothing installed when a file couldn't be read: its row says which.
+    else if (!failed) out.ok(what);
     return failed || left.length ? 1 : 0;
   }
   // The command line, for a run in-process without one.
@@ -139,24 +160,25 @@ export async function run(c: CommandContext): Promise<number> {
     rerunWithYes(c, asRun),
   );
 
-  const done: { id: string; changes: FileChange[]; error?: string }[] = [];
-  for (const p of pending) {
-    const a = adapters.find((x) => x.id === p.id)!;
-    try {
-      const changes = await removeAll(a, opts(false));
-      done.push({ id: p.id, changes });
-      out.row(p.name, "removed", "ok");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      done.push({ id: p.id, changes: [], error: msg });
-      out.row(p.name, `couldn't remove: ${msg}`, "fail");
+  // Every agent with a change or an error, in plan order; one whose plan failed outright stays as planned.
+  const done: ({ id: string } & Removal)[] = [];
+  for (const p of plans) {
+    if (!p.changes.length) {
+      if (p.errors.length) done.push({ id: p.id, changes: [], errors: p.errors });
+      continue;
     }
+    const a = adapters.find((x) => x.id === p.id)!;
+    const r = await removeAll(a, opts(false));
+    done.push({ id: p.id, ...r });
+    if (r.changes.length || !r.errors.length) out.row(p.name, "removed", "ok");
+    // The plan's rows already named its errors.
+    for (const e of r.errors) if (!p.errors.includes(e)) out.row(p.name, `couldn't remove: ${e}`, "fail");
   }
-  const errors = done.some((d) => d.error);
-  if (out.json) out.data({ outcome: errors || left.length ? "partial" : "removed", scope, agents: done.map((d) => ({ id: d.id, error: d.error ?? null, changes: d.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })) })), ...leftJson() });
+  const errors = failed || done.some((d) => d.errors.length);
+  if (out.json) out.data({ outcome: errors || left.length ? "partial" : "removed", scope, agents: done.map((d) => ({ id: d.id, error: errorJson(d), changes: d.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })) })), ...leftJson() });
   else {
     for (const d of done) for (const ch of d.changes) out.print(ch.path);
     warnLeft();
   }
-  return errors || failed || left.length ? 1 : 0;
+  return errors || left.length ? 1 : 0;
 }
