@@ -133,15 +133,24 @@ describe("classifyRetrieval", () => {
     }
   });
 
-  it("a pipeline that removes or edits what it found is not a search", () => {
+  it("a pipeline that removes or edits what it found, or the files a list names, is neither a search nor a read", () => {
     bashKinds([
       ["find . -name '*.tmp' -delete", "none"],
       ["find . -name '*.ts' | xargs rm", "none"],
       ["find . -name '*.ts' -exec sed -i s/a/b/ {} +", "none"],
       ["grep -rl foo src | xargs sed -i 's/foo/bar/g'", "none"],
       ["rg -l foo | xargs perl -pi -e 's/foo/bar/g'", "none"],
+      // The list's lines go to rm or sed, not to the agent.
+      ["cat list.txt | xargs rm", "none"],
+      ["cat list.txt | xargs -I {} rm {}", "none"],
+      ["head -n 5 files.txt | xargs sed -i 's/a/b/'", "none"],
+      ["cat list.txt | xargs rm && cat a.ts", "read a.ts"],
+      ["cat a.ts | sed -n 1,10p", "read a.ts"],
     ]);
-    psKinds([["Get-ChildItem *.tmp | Remove-Item", "none"]]);
+    psKinds([
+      ["Get-ChildItem *.tmp | Remove-Item", "none"],
+      ["Get-Content list.txt | Remove-Item", "none"],
+    ]);
   });
 
   it("a quoted `cd` into a folder with spaces, and Windows paths", () => {

@@ -9,9 +9,9 @@
 // wrappers, redirects and heredoc bodies, and splits on `&&`, `||`, `;`, `|` and
 // newlines. A pipeline's first command decides what the pipeline is: `grep x |
 // head` and `cat f | grep x` are searches, and a pipeline that ends in a
-// removal (`find . | xargs rm`) is neither. A line may read and search. `cd`,
-// `pushd` and Set-Location move the directory the later parts' paths resolve
-// against.
+// removal (`find . | xargs rm`, `cat list | xargs rm`) is neither. A line may
+// read and search. `cd`, `pushd` and Set-Location move the directory the later
+// parts' paths resolve against.
 //
 // Read paths are keyed the way Session.stats.filesChanged keys an edit
 // (sessions.ts changeKey): relative to the session's working directory when
@@ -174,7 +174,10 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
       const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args, prog);
       if (h.kind === "read") found[head] = { kind: "search", quiet };
       else h.quiet ||= quiet;
-    } else if (h.kind === "search" && (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args))) found[head] = undefined;
+    } else if (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args)) {
+      // A removal or an in-place edit: what the head printed went into it (`find . | xargs rm`, `cat list | xargs rm`), not to the agent.
+      found[head] = undefined;
+    }
   }
   let read = false;
   let search = false;
