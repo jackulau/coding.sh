@@ -39,12 +39,8 @@
 // window is larger than the events here, so each pass has one), and an event carried by two lines
 // (Claude Code hands a helper's events over twice), with the per-pass dedupe by id that sendToSink
 // does for it. Gc is left out too: a cursor past the end of a file it recreated, and the moment
-// between its last stat of a spool file and the unlink, where a hook's append is lost.
-//
-// docs/design/state-machines.md ("Capture pipeline") describes an older order in places: there the kick
-// (M5) skips when a lock file exists, live or stale, and touches no marker, the holder makes one pass,
-// and a stale lock (M3) is removed without the guard and the compare of lock.ts breakStale and
-// removeIfSame. The model follows the code.
+// between its last stat of a spool file and the unlink, where a hook's append is lost
+// (docs/design/state-machines.md, Capture M2).
 //
 // Bounds: two end events, two spool files of one line each and two ingest processes, with one crash
 // and one stall. Two end events give two kicks, so two processes can run at once, and the second

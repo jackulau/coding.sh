@@ -93,95 +93,144 @@ Status values: `open`, `fixing`, `fixed` (regression test added), `deferred` (re
 
 ## Capture pipeline
 
-Scope: the hook entry (`src/spool/{hook,host,kick,write}.ts`, `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`) and the periodic readers (`src/cli/common.ts`, `src/cli/commands/{ui,ingest}.ts`, `src/mcp/server.ts`). File:line refs point at the working tree as of 2026-11-06.
+Scope: the hook entry (`src/spool/{hook,host,kick,write,devin}.ts`, its POSIX sh fast path `src/spool/hook.sh`, and `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`), the readers that ingest (`src/cli/common.ts`, `src/cli/ingest-worker.ts`, `src/mcp/server.ts`) and the ingest command (`src/cli/commands/ingest.ts`). Refs name the file and the function, not a line. M1 to M7 describe the code as of 2026-11-23. The lock model (`test/verify/lock-model.test.ts`) checks M3; the capture model (`test/verify/capture-model.test.ts`, with `capture-code.test.ts` against the real code) checks the cursors (M4) and the wake-up (M5). The repro output under "Reached invalid states" is from the 2026-11-06 tree.
 
 ### M1. Hook process (one process per agent hook call)
 
-States: `Start → StdinRead → (Disabled | Parsed | Spilled) → Appended → Replied → Kicked → Exit(0)`. Any error goes to `errors.log` and then `Replied`.
+States: `Start → StdinRead → (Disabled | Dropped | Parsed | Spilled) → Appended → Replied → Kicked → Exit(0)`. Any error goes to `errors.log` and then `Replied`.
 
-Invariants: the hook always exits 0. Stdout carries only the `--echo-continue`/`--reply` payload. Exactly one spool line per call, appended to the agent's shared day file `<agent>/<utcDay(ts)>.jsonl` (continued in `<utcDay(ts)>.<n>.jsonl` once a file reaches 64 MB). Before, every hook call created its own `<utcDay(ts)>.<pid>.jsonl`.
-
-| From | Event | To | Guard | Ref |
-|---|---|---|---|---|
-| Start | fd0 is a TTY or closed | StdinRead (empty) | – | hook.ts:49-55 |
-| Start | read until EOF, or 10 s of EAGAIN with no data | StdinRead | capped at 64 MB, then drained | hook.ts:62-85 |
-| StdinRead | `CODING_SH_DISABLE=1` | Disabled: no line; the payload's session id is appended to `spool/disabled-sessions` | – | hook.ts:143-154, write.ts |
-| Disabled | – | Replied | – | hook.ts |
-| StdinRead | ≤1023 bytes and not truncated | Parsed (JSON or plain string) | – | hook.ts:155-165 |
-| StdinRead | over 1023 bytes or truncated | Spilled, unparsed (ingest parses the side file) | – | hook.ts:155-158 |
-| Parsed / too big | serialized line >1023 bytes (1024 with its newline) | Spilled: raw written `wx` to `raw/<ts>-<pid>-<rand>.json` | – | write.ts:87-103 |
-| Spilled / Parsed | `appendFileSync(O_APPEND)` | Appended | – | write.ts:107, 46-54 |
-| any | throw | errors.log | – | hook.ts:152-154 |
-| Appended | END_EVENT matches | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | hook.ts:171-177, kick.ts:23 |
-
-### M2. Spool file lifecycle (per `source = <agent>/<day>.jsonl`, `<day>.<n>.jsonl`, or a legacy `<day>.<pid>.jsonl`)
-
-States: `Absent → Growing → PartiallyRead (cursor < size) → LocallyRead (local cursor = size) → FullyRead (local and every configured sink ≥ size) → Eligible (mtime older than keepSpoolDays) → Deleted`.
-
-Abnormal states: `TornTail` (last line has no `\n`), `Recreated` (same path after Deleted, with cursors still set), `CursorPastEnd` (cursor > size).
+Invariants: the hook exits 0. Stdout carries only the `--echo-continue`/`--reply` payload. At most one spool line per call: none when capture is paused, when a Devin call is dropped, or when a step throws. The line goes to the agent's day file `<agent>/<utcDay(ts)>.jsonl`, continued in `<utcDay(ts)>.<n>.jsonl` once a file reaches 64 MB, and in `<utcDay(ts)>.p<pid>.jsonl` after 1024 files in a day (`write.ts` `spoolFile`). Outside Windows agents run `hook.sh`: it writes the same line without starting node (and without redacting it, as docs/guides/privacy.md says) and hands every case it does not handle to `hook.ts`.
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
-| Absent | first append (0600, dir 0700) | Growing | – | write.ts:46-54 |
-| Growing | ingest reads complete lines | PartiallyRead / LocallyRead | a line without `\n` is never consumed | spool-read.ts:110-112 |
-| PartiallyRead | checkpoint | cursor = readPos (a line boundary) | readPos > local | ingest.ts:346-357 |
-| LocallyRead | sink acks a batch | FullyRead | per-line cursor | ingest.ts:277-318 |
-| FullyRead | `coding.sh gc` | Deleted (raw side files too) | `now − mtime ≥ keepSpoolDays` and all cursors ≥ size; **no ingest lock taken** | gc.ts:125-143 |
-| Deleted | same path is written again | **Recreated with a stale cursor** (invalid) | pid reuse on the same UTC day, or the wrapper | gc.ts:134-139 (cursors not cleared) |
-| any | cursor > size at ingest | local cursor reset to 0 (sink cursors not reset) | – | ingest.ts:321-325 |
-| Growing | partial `write(2)` (ENOSPC/EIO) | **TornTail: never consumed, never gc'd** (invalid) | – | spool-read.ts:112, gc.ts:130 |
+| Start | fd 0 is a character device (a TTY, `/dev/null`) or closed | StdinRead (empty) | – | `hook.ts` `readStdin` |
+| Start | read until EOF, or 10 s of EAGAIN with no data | StdinRead | capped at 64 MB, then drained | `hook.ts` `readStdin` |
+| StdinRead | `CODING_SH_DISABLE=1` | Disabled: no line; the payload's session id is appended to `spool/disabled-sessions` | – | `hook.ts` `main`, `write.ts` `recordDisabledSession` |
+| Disabled | – | Replied, with no ingest kick | – | `hook.ts` `main` |
+| StdinRead | a `claude-code` call with `DEVIN_PROJECT_DIR` set, for an event a coding.sh hook for Devin writes too | Dropped: no line, no ingest kick | – | `hook.ts` `main`, `devin.ts` `devinHookAgent` |
+| StdinRead | ≤1023 bytes and not truncated | Parsed (JSON, or the plain string) | – | `hook.ts` `main` |
+| StdinRead | over 1023 bytes, or truncated | too big: not parsed (ingest parses the side file) | – | `hook.ts` `main` |
+| Parsed / too big | `gate.ts` finds text a redaction rule may replace | redacted with the user's rules first; a failed import of the rules throws | – | `hook.ts` `lineRedactor` |
+| Parsed / too big | the serialized line is >1023 bytes (1024 with its newline) | Spilled: the payload written `wx` to `<agent>/raw/<ts>-<pid>-<rand>.json`, named in `rawFile` | – | `write.ts` `appendSpool` |
+| Parsed / Spilled | O_APPEND write, on a fresh line when the file ends in a torn fragment | Appended | – | `write.ts` `append` |
+| Spilled | the append throws | the side file removed, the error thrown on | – | `write.ts` `appendSpool` |
+| any | throw | errors.log | – | `hook.ts` `main`, `write.ts` `logSpoolError` |
+| Appended | END_EVENT matches, after the reply | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | `hook.ts` `main`, `kick.ts` `kickIngest` |
 
-### M3. Ingest lock (`spool/.ingest.lock`, file created with O_EXCL holding `{pid,host,ts}`)
+### M2. Spool file lifecycle (per `source = <agent>/<day>.jsonl`, `<day>.<n>.jsonl`, `<day>.p<pid>.jsonl`, or a legacy `<day>.<pid>.jsonl`)
 
-States: `Free`, `Held(owner)` (heartbeat refreshes the mtime every 15 s), `Torn` (content unreadable, judged by mtime only), `Stale` (holder is a dead pid on this host, or the mtime is more than 2 min old), `Released`. **Invariant: at most one holder.**
+States: `Absent → Growing → PartiallyRead (local cursor < size) → LocallyRead (local cursor = size) → FullyRead (the local and every configured sink's cursor = size) → Eligible → Deleted`. Eligible: not today's file (UTC), nor yesterday's in the first hour of the day; mtime older than `retention.keepSpoolDays` (default 7); every cursor at its size (`gc.ts` `sweepSpool`).
+
+Abnormal states: `TornTail` (the last line has no `\n`), `Recreated` (the same path written again after Deleted), `CursorPastEnd` (a cursor > size).
+
+Writers: a hook appends to the file of the UTC day it took its timestamp in: today's, or yesterday's for a hook that took it just before midnight. The `coding.sh run` wrapper stamps its `llm.usage` lines with the time of the record they report (`capture/wrapper.ts` `wrapRunDetailed`), so it can append to a past day's file. No writer takes a lock.
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
-| Free | `tryCreate` (`open wx`) | Held | – | lock.ts:77-91, 101 |
-| Held | contender's `isStale` is true | contender `rmSync`s, then retries the create | `isStale` returns true when the file is **gone (ENOENT)**, the holder pid is dead, or the mtime is old | lock.ts:65-75, 102-104 |
-| Held | timer | Held (mtime refreshed; also touches a successor's file) | – | lock.ts:109-116 |
-| Held | `release()` | Free | `readHolder().pid === process.pid` | lock.ts:121-127 |
-| Held | SIGKILL, power loss, `process.exit(130)` on second Ctrl-C, default SIGTERM/SIGHUP | **Orphaned file** (dead pid) | `finally` never runs | main.ts:272, ingest.ts:151-155 |
-| Held | contender ENOENT window, or two breakers of one stale lock | **TwoHolders** (invalid; reached) | unconditional `rmSync` | lock.ts:103 |
-| Held | holder's event loop stalls or the laptop sleeps for more than 2 min | broken by a peer while the holder keeps writing (no fencing) | – | lock.ts:74, 109 |
+| Absent | first append (0600, dir 0700) | Growing | – | `write.ts` `appendSpool` |
+| Growing | ingest reads complete lines | PartiallyRead / LocallyRead | a partial last line is left for the next run | `spool-read.ts` `readSpoolFile` |
+| PartiallyRead | checkpoint | local cursor = readPos (a line boundary), committed with the events and session rows | readPos > local | `ingest.ts` `checkpoint` |
+| LocallyRead | a sink acks a batch | that sink's cursor moves; FullyRead once every cursor is at the size | lines never split across batches | `ingest.ts` `sendToSink` |
+| LocallyRead | a past UTC day, read to its end, not yet scrubbed at this size | inline payloads redacted in place: same size, offsets and mtime | – | `ingest.ts` `scrubPastDays`, `spool-scrub.ts` |
+| Growing | a write cut short (ENOSPC, EIO) | the fragment cut back off; TornTail when another line followed it, the cut fails, or the writer died mid-write | – | `write.ts` `append` |
+| TornTail | a node writer appends | the line starts on a fresh line | – | `write.ts` `append` |
+| TornTail | `hook.sh` appends (it does not look at the file's end) | glued to the fragment; reported, and the whole line after the fragment kept | – | `spool-read.ts` `readSpoolFile`, `gluedLine` |
+| TornTail | unchanged for an hour (`TORN_TAIL_MS`) | reported and skipped, the cursor moved past it | – | `spool-read.ts` `readSpoolFile` |
+| Eligible | `coding.sh gc`, or serve's daily sweep | Deleted: its side files, then the file; then the local and each sink cursor set to 0 | under the ingest lock (`assertHeld` before the unlinks); a re-stat still matches the listing | `gc.ts` `gc`, `sweepSpool` |
+| Eligible | a writer appends between gc's re-stat and its unlink | **the line is lost** (open; not modeled) | a past day's file that is already Eligible: with keepSpoolDays 0, a hook stalled over an hour across midnight, or a wrapper line dated that day | `gc.ts` `sweepSpool` |
+| Deleted | the same path is written again | Recreated, read from 0 by every consumer | – | `gc.ts` `sweepSpool` |
+| any | a cursor > size at ingest | that cursor set to 0 with an error, the local and each sink cursor alike | – | `ingest.ts` `ingestLocked` |
 
-Lock users: `ingest --background` (waitMs 0, ingest.ts cmd:21), `autoIngest` in reads and every 3 s in the ui (waitMs 1500, common.ts:35), MCP (waitMs 1000, mcp/server.ts:71), manual `ingest`, `compare`, `toolevals` (waitMs 30 s). **Not under the lock:** `tailIngest`/backfill (common.ts:44-58, ingest.ts cmd:22) and `gc`.
+Not handled: a file removed by hand, or by a gc that died between its unlink and its cursor writes, and written again past its old cursor before an ingest runs is read from that cursor; ingest cannot tell it from the old file. Only a past day's file can be written again after gc, and purge and the scrub keep every file's length.
+
+### M3. Ingest lock (`spool/.ingest.lock`, `core/lock.ts`)
+
+The file is created with O_EXCL and holds `{pid, host, ts, nonce}`; the nonce names one acquisition.
+
+States: `Free`, `Held(owner)` (the holder refreshes the mtime every 15 s while the file carries its nonce), `Torn` (the content is unreadable, so it is judged by its mtime only), `Stale` (the holder is a dead pid on this host, or the mtime is over 2 min old), `Breaking` (a breaker holds the guard `<lock>.break`), `Lost` (the file is gone or carries another nonce).
+
+Invariants, as the lock model checks them: without a stall, one process holds the lock, one breaker works under the guard, only a dead process's lock file is removed, and no holder loses its lock. With stalls, each stall lets in at most one more holder.
+
+| From | Event | To | Guard | Ref |
+|---|---|---|---|---|
+| Free | create (`open wx`), then write the holder | Held | – | `tryCreate`, `acquireLock` |
+| Held | a contender's create fails (EEXIST, or EPERM on Windows with the file present) | the contender polls every 100 ms until waitMs, then throws `LockBusyError` | the lock is held | `acquireLock`, `inspect` |
+| Free | no file at the look after a failed create | the contender creates again | – | `acquireLock` |
+| Torn | the creator died between its create and its write | Stale after 2 min | – | `inspect` |
+| Stale | a contender takes the guard | Breaking | – | `breakStale` |
+| Breaking | judged again under the guard, still stale | the lock renamed aside, compared (inode, mtime, content) and removed; linked back if it is another file | – | `breakStale`, `removeIfSame` |
+| Breaking | another contender finds the guard held (under 10 s old) | it waits as for a live holder | – | `breakStale` |
+| Breaking | another contender finds the guard stale (over 10 s, or a dead holder) | the guard removed (`removeIfSame`); that contender starts over | – | `breakStale` |
+| Held | heartbeat | mtime refreshed while the file carries the nonce, else Lost | – | `acquireLock` |
+| Held | `assertHeld`, the fence before each cursor write and sink send | passes, or throws `LockLostError` | – | `acquireLock` |
+| Held | `release()` | Free: reads the file, removes it if it carries the nonce | – | `acquireLock` |
+| Held | exit with the lock held (`process.exit(130)` on a second Ctrl-C) | Free, removed by the exit handler | – | `releaseAllOnExit` |
+| Held | SIGKILL, power loss, default SIGTERM/SIGHUP | Stale at once on this host; after 2 min from another host | – | `inspect` |
+| Held | the holder stalls past staleMs (a sleeping laptop) | a peer breaks the lock and takes it; the stalled holder's next fence throws | – | `breakStale`, `acquireLock` |
+| Held | **open:** a stall between release's read and its remove | the lock a peer took is removed, and a third process can take it: two holders | – | `acquireLock` (`release`) |
+| Breaking | **open:** the judged file goes away before the rename (the release of a holder that stalled, or a second breaker) | a peer's fresh lock is renamed aside (its fence fails meanwhile), and removed if a third process creates the lock in that moment or the file system has no hard links | – | `breakStale`, `removeIfSame` |
+| Breaking | **open:** a breaker stalls past 10 s under the guard | a second breaker works beside it | – | `breakStale` |
+| Held | **open:** a stall between a fence and the write it guards | the write lands after a peer took the lock. With SQLite the commit's fences run inside the write transaction, so a sink send is the write left exposed | – | `assertHeld`, `ingest.ts` `sinkSend` |
+
+The four open rows need a process that stalls (a sleeping laptop, a stopped process). The lock model reaches each of them ("a stall opens the windows core/lock.ts names").
+
+Lock users and their wait: `ingest --background` (the kick, the hand-off of M5, and a read that ran out of time) and `monitor` 0; `autoIngest` (CLI reads, the viewer's worker, MCP) up to 1.5 s by default, 0 while a re-parse runs; manual `ingest` and the eval commands (`eval`, `compare`, `toolevals`, `eval-run`, `eval-trigger`, `refine-suite`, `replay-fork`) 30 s. Ingest passes after the first take the lock with waitMs 0. Also under this lock: a re-parse (about a second at a time, 30 s wait, and it looks at the wake-up marker after each release), gc from the CLI and serve's daily sweep (30 s), purge (30 s) and `upgrade-store` (5 s). **Not under this lock:** `tailIngest` (it takes the tail lock), backfill (the sink lock when sinks are set; init's import takes the import lock), and the spool writers (M2).
 
 ### M4. Cursor progression (per consumer × source; consumer is `local` or `sink:<name>`)
 
-States: `0 → k (line boundary) → size`. Sinks also have `Active ⇄ BackingOff(retryAt)`, stored under `sink:<name>#retryAt`.
+States: `0 → k (line boundary) → size`. The local cursor is keyed by the source, a sink's by `sink:<name>:<source>`. Sinks also have `Active ⇄ BackingOff(retryAt)`, stored under `sink:<name>#retryAt`.
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
-| local=k | checkpoint after flush + recompute | readPos | readPos > in-memory `local` (read once per file) | ingest.ts:350-353 |
-| sink=k | ack ok | `nextOffset` of the last line in the batch | lines never split across batches | ingest.ts:285-314 |
-| sink=k | trailing lines with no events | readPos | – | ingest.ts:317 |
-| Active | write throws or `!ok` | BackingOff(now + retryAfter, or 10 min) | – | ingest.ts:302-309 |
-| BackingOff | `retryAt ≤ now` at the start of a run | Active (re-reads from its cursor) | – | ingest.ts:197-203, 326-328 |
-| any | `setCursor` | last writer wins (can regress under two holders) | – | sqlite.ts:559-561 |
-| start position | – | `min(local, active sinks)` | – | ingest.ts:328 |
+| local=k | checkpoint, after the blob flush | readPos, in one transaction with the events and session rows when the store has transactions | readPos > local; a fence before the cursor write | `ingest.ts` `checkpoint` |
+| sink=k | ack ok | the `nextOffset` of the last line in the batch | lines never split across batches; a fence before the send and before the cursor write | `ingest.ts` `sendToSink`, `sinkSend` |
+| sink=k | trailing lines with no events | readPos | – | `ingest.ts` `sendToSink` |
+| Active | the write throws or is not ok | BackingOff(now + the delay the sink asks for, or 10 min); nothing more goes to it in this run | – | `ingest.ts` `sinkSend` |
+| BackingOff | `retryAt ≤ now` at the start of a run | Active (reads again from its cursor) | – | `ingest.ts` `sinkStatesFor` |
+| any | a cursor > size at ingest | 0, with an error; the local and each sink cursor alike | – | `ingest.ts` `ingestLocked` |
+| any | gc deletes the file | 0, the local and each sink cursor | – | `gc.ts` `sweepSpool` |
+| any | `setCursor` | last writer wins; two writers only after a stall (M3) | – | the store's `setCursor` |
+| start position | – | `min(local, active sinks)` | – | `ingest.ts` `ingestLocked` |
 
-### M5. Background kick (debounce is the lock-file existence check)
+What a sink is sent: every event of each line from its cursor on, at least once. Within one pass (one `ingestLocked` call) an id goes to a sink once, and a line new to the index leaves out an event that an earlier checkpoint of the same pass stored from another line. An event stored before the pass is sent again, because the run that stored it may have died before its cursor writes (a store without transactions) or lost the lock between its commit and its send. So a sink gets an event twice when a later pass reads it again: from the other line of a Claude Code hand-off (the parent's Agent-tool PostToolUse and the helper's SubagentStop), from the second copy of one hook firing, or from a line whose events a transcript import stored first. A sink that keeps events by id keeps one copy. Before, a line new to the index left out every event the put found already stored. Those events reached no sink when the run that stored them died before its cursor writes on a store without transactions (the Postgres and ClickHouse stores), or lost the lock between its commit and its send to a process that read the same lines. The capture model checks that a sink gets every event of every line after such a crash or stall.
+
+### M5. Background kick and wake-up marker (`spool/.ingest.pending`)
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
-| Idle | END_EVENT (`stop`, `session.end`, `session.idle`, `afteragent`) | Check | not RUN_ID, not NO_AUTO_INGEST | kick.ts:17, 23 |
-| Check | lock file **exists** (live or stale) | Skipped | no staleness check, no pending marker | kick.ts:25 |
-| Check | `bin/cli-path` readable and target exists | Spawned (detached, `ingest --background`) | – | kick.ts:26-35 |
-| Spawned child | lock busy | exit 0 "busy" | waitMs 0 | ingest.ts cmd:25-28 |
-| Spawned child | lock acquired | ingest one snapshot of `listSpoolFiles`, release, then unlocked `tailIngest` | – | ingest.ts:320, cmd:21-22 |
+| Idle | END_EVENT (`stop`, `session.end`, `session.idle`, `afteragent`), after the append and the reply | Marked: the marker touched | captured, not RUN_ID, not NO_AUTO_INGEST | `kick.ts` `kickIngest` |
+| Marked | a live holder (`isLocked`: the lock file exists and is not stale) | Skipped: the holder picks up the marker | – | `kick.ts` `kickIngest` |
+| Marked | the lock free or stale, `bin/cli-path` readable and its target present | Spawned (detached `ingest --background`) | – | `kick.ts` `kickIngest`, `spawnBackgroundIngest` |
+| Marked | no `bin/cli-path` (init ran from source) | Skipped: the next read ingests | – | `kick.ts` `kickIngest` |
+| Marked (`hook.sh`) | – | Spawned, without looking at the lock | – | `hook.sh` |
+| Spawned child | the lock busy | exits 0 and prints nothing (`{"outcome":"busy"}` with `--json`) | waitMs 0 | `cli/commands/ingest.ts` |
+| Spawned child | the lock taken | the ingest passes below, then `tailIngest` under the tail lock | – | `cli/commands/ingest.ts` |
+| Pass n | – | takes the lock (waitMs as asked on the first pass, 0 after), clears the marker, lists and reads the spool, releases | – | `ingest.ts` `ingestSpool` |
+| Pass n>1 | the lock busy at its start | End: the new holder handles the marker | – | `ingest.ts` `ingestSpool` |
+| after a pass | out of time, or stopped | End; a set marker stays for whoever ingests next | – | `ingest.ts` `ingestSpool` |
+| after a pass | the marker gone | End | – | `ingest.ts` `ingestSpool` |
+| after pass n<3 | the marker back | Pass n+1 | – | `ingest.ts` `ingestSpool` |
+| after pass 3 | the marker back | End, the marker left set for the background ingest it starts (`onPassesExhausted`); with no CLI to start, for the next hook or read | not NO_AUTO_INGEST | `ingest.ts` `ingestSpool`, `context.ts` `openContext` |
 
-### M6. Periodic ingest (ui every 3 s, MCP per interval)
+Order: the hook appends its line, touches the marker, then looks at the lock. Ingest clears the marker before it lists the files and looks at it after it releases the lock, so a line a pass missed leaves the marker set. The holder picks it up with another pass or, after the third, with a new background ingest. The capture model checks that every session that ends is ingested before the runs stop.
 
-`Idle → Busy → Idle`. A busy flag prevents overlap within one process (ui.ts:26-33; mcp/server.ts:86 uses `ingesting ??=`). Each tick runs `ingest(lock wait 1500)`, swallows `LockBusyError`, then runs `tailIngest` without the lock (common.ts:30-41). Other errors become a warning on every tick.
+Gaps: only ingest and a re-parse look at the marker after they release the lock. gc, purge and `upgrade-store` release it without looking, so a session that ends while one of them holds the lock waits for the next hook, read or ingest. A run stopped by a signal or its deadline leaves the marker set; a read whose ingest ran out of time starts a background ingest itself (`common.ts` `autoIngest`). The hand-off and a read's own start can both start one; the second exits on the busy lock.
+
+Before: the kick skipped whenever a lock file existed, live or stale, there was no marker, and ingest ran one pass (CAP-2, CAP-3, INS-5).
+
+### M6. Periodic ingest (the viewer's worker every 3 s, MCP at most every 2 s)
+
+`Idle → Busy → Idle`. The viewer's worker runs `autoIngest` with its stop signal, then waits 3 s (`cli/ingest-worker.ts` `runWorker`). MCP runs it with the read budget when a tool opens the store, at most every 2 s and one at a time (`ingesting ??=` in `mcp/server.ts`). `autoIngest` waits up to 1.5 s for the ingest lock (0 while a re-parse runs; a budgeted read then leaves the spool to the re-parse), and when the lock is busy it counts the spool files still to read. Then it runs `tailIngest` under the tail lock (`cli/common.ts` `autoIngest`). With a remote store it does neither. Errors are reported on every tick: the worker posts them to the viewer, MCP logs them.
 
 ### M7. Raw spill side file
 
-`Absent → Written (wx) → Referenced (line appended) → Resolved (ingest reads it into line.raw; the adapter stores it as a blob) → Deleted (gc, with its spool file)`.
+`Absent → Written (wx) → Referenced (line appended) → Resolved (ingest reads it into line.raw; the adapter stores it as a blob) → Scrubbed (rewritten with secrets redacted once its line is ingested) → Deleted (gc, with its spool file)`.
 
-Invalid: `Orphan` (written, but the append failed or the process was killed before the append; nothing refers to it, so gc never sees it, write.ts:98→107, gc.ts:131). `Dangling` (the line refers to a missing file; ingest keeps the line, flags it, and has no payload, spool-read.ts:146-149).
+`Orphan`: written, but the append failed or the process was killed before it. Both hooks remove the side file when the append fails (`write.ts` `appendSpool`, `hook.sh`). One left by a kill between the two writes is removed by gc once it is older than keepSpoolDays, and an hour at least (`gc.ts` `sweepOrphanRaw`). `Dangling`: the line names a missing file; ingest keeps the line, reports it, and has no payload (`spool-read.ts` `readSpoolFile`).
 
 ### Reached invalid states (details in the JSON)
+
+Repro output on the 2026-11-06 tree. Each of these is fixed (Issue A table).
 
 - **CAP-1: two lock holders.** Repro output: `round 0: 3 of 8 processes hold the lock at once`, and under plain contention `240 acquisitions, 2 found another holder inside the critical section`. Impact repro: `20 captured events -> sink received 40`.
 - **CAP-2: an orphaned lock disables every kick.** `isStale(lock) = true`, yet `0/50 Stop events spawned an ingest`.
@@ -191,7 +240,14 @@ Invalid: `Orphan` (written, but the append failed or the process was killed befo
 - **CAP-6: TornTail.** `cursor: 186 of size 226 | gc deleted: 0`, and the next good line is lost.
 - **CAP-7: file order is by pid string, not time.** `start pid 9999, end pid 10000: tool.end durationMs = undefined`.
 
-Also noted, but **not** listed as findings because I couldn't show them: backfill and `tailIngest` run without the lock, so two processes can each recompute the same session and the last write wins. It looks narrow and mostly heals on the next run. Ingest also re-reports normalize errors and double-counts `excluded` for lines it re-reads only for sinks; that is noise only.
+Still reachable on the current code:
+
+- **Two lock holders after a stall** (M3). Each window needs a process that stalls past a limit; the lock model reaches each one ("a stall opens the windows core/lock.ts names").
+- **A sink gets an event twice** when a later pass reads it again: the other line of a hand-off, the second copy of a hook firing, or a line whose events a transcript import stored first (M4). It is the cost of sending again what an earlier run stored.
+- **gc loses a line** a writer appends to an Eligible past day's file between gc's re-stat and its unlink (M2; not modeled).
+
+Also noted, but **not** listed as findings because I couldn't show them: backfill and `tailIngest` run without the lock, so two processes can each recompute the same session and the last write wins. It looks narrow and mostly heals on the next run. Ingest also re-reports normalize errors and double-counts `excluded` for lines it re-reads only for sinks; that is noise only. Since: `tailIngest` takes the tail lock, and `recomputeSession` folds a session again when events were stored for it after it read them (three tries at most).
+
 ## Sessions and adapters
 
 Scope: `src/core/{sessions,ingest,repo-state,snapshot}.ts`, `src/adapters/**`. All paths below are relative to `packages/coding.sh`.
@@ -277,12 +333,13 @@ States: pending (`tool.start`) → done-ok / errored (`tool.end ok=false`) / int
 
 ### M5. Spool cursor (per spool file, local index and each sink)
 
-| from | event | to | guard | file:line |
+| from | event | to | guard | ref |
 |---|---|---|---|---|
-| offset k | flush + recompute at checkpoint | `readPos` | `readPos > local` | `src/core/ingest.ts:346-357` |
-| offset k | file is now shorter than k | 0 (re-read from the start) | `local > file.size` | `src/core/ingest.ts:322-325` |
-| sink offset | batch acknowledged | last line's `nextOffset` | `ack.ok` | `src/core/ingest.ts:277-318` |
-| file fully read | gc | file deleted, **cursor key kept** | all cursors >= size and older than `keepSpoolDays` | `src/core/gc.ts:125-143` |
+| offset k | flush + recompute at checkpoint | `readPos` | `readPos > local` | `src/core/ingest.ts` `checkpoint` |
+| offset k | file is now shorter than k | 0 (re-read from the start), with an error | `local > file.size` | `src/core/ingest.ts` `ingestLocked` |
+| sink offset k | file is now shorter than k | 0, with an error | sink cursor > `file.size` | `src/core/ingest.ts` `ingestLocked` |
+| sink offset | batch acknowledged | last line's `nextOffset` | `ack.ok` | `src/core/ingest.ts` `sendToSink` |
+| file fully read | gc | file deleted, then its local and sink cursors set to 0 | all cursors at its size, older than `keepSpoolDays`, not today's file (nor yesterday's in the first hour) | `src/core/gc.ts` `sweepSpool` |
 
 Hook event ids are keyed on spool position (`lineKey`, `src/adapters/_shared/normalize.ts:223`), so re-reading after a crash is idempotent.
 
@@ -401,8 +458,8 @@ I found no lost or double-committed items in this machine.
 ### M8. Writer lock (`SqliteIndexStore.acquireWriterLock`, `core/lock.ts`)
 `Free` → `Held(pid, heartbeat 15 s)` → `Stale` (holder pid dead, or mtime older than 2 min **even if the pid is alive**) → broken by another process. The holder never re-checks ownership, so a stalled-then-resumed writer keeps writing next to the new holder (sqlite.ts:783-811; lock.ts:66-75,108-125; serve.ts:120-131).
 
-### M9. Spool file gc (`gc.ts:121-143`)
-`Active` → `Old` (mtime older than keepSpoolDays) → `FullyRead` (local cursor and every sink cursor ≥ size) → `Deleted` (raw side files first).
+### M9. Spool file gc (`gc.ts` `sweepSpool`)
+`Active` → `Old` (mtime older than keepSpoolDays; never today's file, nor yesterday's in the first hour) → `FullyRead` (local cursor and every sink cursor at its size) → `Deleted` (raw side files first, then the file, then its local and sink cursors set to 0). gc holds the ingest lock (30 s wait) and keeps a file whose size or mtime changed since it was listed. Side files that no kept line names are removed once they are older than keepSpoolDays, and an hour at least (`sweepOrphanRaw`). Capture M2 has the details.
 
 ### Findings (repros in audit repro (store/))
 | id | sev | title | repro |
@@ -560,7 +617,7 @@ Invariants: (I1) running init twice makes no change. (I2) Uninstall removes only
 | any | write | same, written via tmp + `rename` | not fsynced; a symlink is **replaced** (INS-2) | files.ts:60-74; more/_util.ts:219-222 |
 | Current | `CODING_SH_HOME` changes (Cursor, no marker) | Untracked | path no longer matches the recognizer | hooks.ts:47-55; cursor.ts:367 (INS-9) |
 | Current | `coding.sh update` | Orphaned (stale hook.mjs) | nothing refreshes the bin | update.ts:137-162; hookbin.ts:28-43 (INS-6) |
-| Current | stale ingest lock exists | auto-ingest off | `existsSync(lock)` | spool/kick.ts:25 (INS-5) |
+| Current | stale ingest lock exists | Current: the kick looks past a stale lock (INS-5, fixed) | `isLocked(lock)` is false for a stale lock | `spool/kick.ts` `kickIngest` |
 
 Project scope uses different files (`.claude/settings.local.json`, `.cursor/hooks.json`, `.codex/hooks.json`, and so on). User and project scope are independent copies of M1. Nothing warns when both are installed, and there is no dedupe beyond the agent's own (INS-10).
 
@@ -625,9 +682,9 @@ Listening → close (`server.close` + `closeIdleConnections`, then await the ser
 
 ### M7. Sink delivery (inside ingest)
 
-Per sink: **Active** → (batch ack fails) → **BackingOff** (`sink:<name>#retryAt` = now + Retry-After, or 30 s for network errors, or 10 min for other 4xx) → Active again once that time has passed. Each sink has its own byte cursor per spool file, which moves only after an ack (ingest.ts:277-318). The read start is the minimum over the local cursor and all active sink cursors (ingest.ts:326-328). gc deletes a spool file only after every cursor has passed it (gc.ts:124-129). Delivery is at-least-once (a crash between the ack and `setCursor` re-sends) with deterministic span and event ids, in file order, never reordered.
+Per sink: **Active** → (batch ack fails) → **BackingOff** (`sink:<name>#retryAt` = now + the delay the sink asks for, or 10 min) → Active again once that time has passed. The HTTP sinks ask for Retry-After (at most an hour) or 30 s after a 408, 429 or 5xx, 30 s after a network error, and nothing after another 4xx (`sinks/post.ts`). Each sink has its own byte cursor per spool file, which moves only after an ack (`ingest.ts` `sendToSink`). The read start is the minimum over the local cursor and all active sink cursors (`ingest.ts` `ingestLocked`). gc deletes a spool file only after every cursor has reached its end (`gc.ts` `sweepSpool`). Delivery is at least once, with deterministic span and event ids, in file order: a run that dies between an ack and its cursor write, or between its commit and its send, leaves the lines to the next run, which sends them (Capture M4).
 
-There is a hidden extra state: **Auto-ingest disabled**. A stale `.ingest.lock` from a killed ingest makes the hook skip every background ingest (kick.ts:25), even though `acquireLock` would break it (lock.ts:65-74,95-103). Sinks then stall until someone runs a CLI command (INS-5).
+The hidden state this section found, **Auto-ingest disabled** (a stale `.ingest.lock` made the hook skip every background ingest), is gone: the kick skips only a live holder (`kick.ts` `kickIngest` asks `isLocked`) and touches the wake-up marker first (INS-5, Capture M5).
 
 ### Confirmed invalid states
 
@@ -759,6 +816,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 - **Evidence:** src/core/lock.ts:65-71 (statSync ENOENT -> return true), lock.ts:102-104 (rmSync(path) then retry; deletes a lock a third process just O_EXCL-created); no fencing after acquire, lock.ts:109-127; cursors last-writer-wins at src/store/sqlite.ts:559-561. Repros: audit repro (capture/)r1-lock-race.ts -> 'round 0: 3 of 8 processes hold the lock at once ... BUG: up to 3 concurrent holders'; audit repro (capture/)r1b-lock-contention.ts (no stale lock) -> '240 acquisitions, 2 found another holder inside the critical section'; impact audit repro (capture/)r1c-double-holder-impact.ts -> '20 captured events -> sink received 40'
 - **Fix:** (1) isStale must return false when the file is gone; the caller just retries tryCreate. (2) Break a stale lock atomically: renameSync(path, path+'.stale.'+pid+rand), re-stat the renamed file and only proceed if its ino/content matches what was judged stale (otherwise link it back). (3) Put a random nonce in the lock body; release() and a new lock.assertHeld() compare the nonce, not the pid; ingest calls assertHeld() before every setCursor/sink write and aborts with LockLostError if it was stolen (fencing for the sleep/stall case).
 - **Regression test:** test/core/lock.test.ts: spawn 6 child processes that loop acquire→mkdir(critical marker)→3ms→rmdir→release 40 times, assert zero overlaps; and 8 processes racing on one dead-pid lock with waitMs 0, assert exactly one acquires. Unit test: a lock whose nonce changed makes assertHeld() throw and ingest commits no cursor.
+- **Since:** the fix holds while no process stalls. A holder or breaker that stalls past its limit (`staleMs`, or `BREAK_STALE_MS` under the guard) can still let a second holder in: the three windows are in the `core/lock.ts` header and Capture M3, and the lock model reaches them. With SQLite a commit's cursor writes run inside the store's transaction after `assertHeld`; a sink send is the write left exposed.
 
 ### CAP-2: A leftover lock file (dead holder) disables every hook-triggered background ingest
 
@@ -775,6 +833,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 - **Evidence:** src/core/ingest.ts:320 single listSpoolFiles() snapshot per run, no re-scan; src/spool/kick.ts:25 skip when the lock exists; ingest.ts:261 10-min endSnapshot cutoff. Repro audit repro (capture/)r3-lost-wakeup.ts -> 'kick for session B: skipped (lock exists)', 'cursor of B's file: 0', 'session B indexed: false'
 - **Fix:** Pending-marker protocol: the hook touches spool/.ingest.pending before checking the lock. The holder clears the marker before its pass and, after release(), re-acquires (waitMs 0) and runs again if the marker exists (bounded loop). The ordering (hook: write→touch→check lock; holder: release→check marker) closes the window.
 - **Regression test:** test/core/ingest.test.ts: fake adapter stalls the first line, a new pid file plus kickIngest is written mid-run, then assert that after ingest() resolves (with the re-run loop) the new file's cursor equals its size and the session exists.
+- **Since:** the bounded loop stopped after three passes with the marker still set, so a session that ended during the last pass waited for the next hook. Now, when the last pass ends with the marker back, `ingestSpool` calls `onPassesExhausted` and `core/context.ts` starts a background ingest, unless `CODING_SH_NO_AUTO_INGEST=1` (Capture M5). The capture model checks that such a session is ingested.
 
 ### CAP-4: gc deletes spool files but keeps their cursors (and runs without the ingest lock); a file recreated at the same path is read from a stale offset
 
@@ -783,6 +842,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 - **Evidence:** src/core/gc.ts:125-143 unlinks the file, never clears index cursors (local or sink:*), takes no lock; src/core/ingest.ts:321-325 resets only local; ingest.ts:282 sink filter offset>=from. Repro audit repro (capture/)r4-gc-stale-cursor.ts -> 'gc deleted spool files: 1 | cursor still: 186', then 'ingest #2 lines: 0 errors: ["invalid JSON: Unexpected non-whitespace character after JSON at position 3"]', 'session 'new' indexed: false'
 - **Fix:** gc's spool phase acquires the ingest lock (waitMs 0; skip the spool phase when busy), re-stats each file under the lock, and after unlinking resets the local and all sink:<name>:<source> cursors (add IndexStore.deleteCursor, or setCursor(...,0)). In ingest, when local > size also reset sink cursors > size. Optionally store file identity (ino/birthtime) next to the cursor and reset on mismatch.
 - **Regression test:** test/core/gc.test.ts: keepSpoolDays=0, ingest one line, gc, append a longer line at the same path, ingest; assert the new session is indexed and no error. Plus: a sink cursor > size is reset when the file is recreated.
+- **Since:** gc waits for the lock (30 s) rather than skipping the spool phase when busy, and keeps a file whose size or mtime changed since it was listed. An append between that last stat and the unlink is still lost. Only a past day's file that gc may already delete can get one: with `keepSpoolDays` 0, a hook stalled over an hour across midnight, or a wrapper line dated that day (Capture M2).
 
 ### CAP-5: Raw spill side file orphaned when the spool append fails or the hook dies between the two writes; gc can never delete it
 
