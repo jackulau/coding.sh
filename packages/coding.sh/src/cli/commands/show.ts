@@ -346,6 +346,24 @@ export function wasteRows(s: Session): [string, string][] {
   return rows;
 }
 
+/** The Retrieval header row: reads, searches and web calls, the files read and then edited, and the calls before the first edit. */
+export function retrievalRow(s: Session): [string, string] | undefined {
+  const r = s.stats.retrieval;
+  if (!r) return undefined;
+  const parts: string[] = [];
+  if (r.reads) {
+    const edited = r.filesRead && r.beforeFirstEdit !== undefined ? ` (${r.editedAfterRead} later edited)` : "";
+    parts.push(`${plural(r.reads, "read")}${r.filesRead ? ` of ${plural(r.filesRead, "file")}${edited}` : ""}`);
+  }
+  if (r.searches) parts.push(`${plural(r.searches, "search", "searches")}${r.emptySearches ? ` (${r.emptySearches} found nothing)` : ""}`);
+  if (r.web) parts.push(plural(r.web, "web call"));
+  if (r.beforeFirstEdit !== undefined) {
+    const [one, many] = !r.searches ? ["read", "reads"] : !r.reads ? ["search", "searches"] : ["read or search", "reads and searches"];
+    parts.push(r.beforeFirstEdit ? `first edit after ${plural(r.beforeFirstEdit, one, many)}` : `first edit before any ${one}`);
+  }
+  return ["Retrieval", parts.join(", ")];
+}
+
 /** Skill use recomputed from the session's events (only the `skill:` tags are stored); undefined when it has none. */
 async function sessionSkills(index: IndexStore, s: Session): Promise<SkillUseReport | undefined> {
   if (!s.flags.some((f) => f.startsWith(SKILL_TAG_PREFIX))) return undefined;
@@ -587,6 +605,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (d) rows.push(...durableRows(d));
     if (outline && outline.phases.length > 1) rows.push(["Phases", phaseCounts(outline)]);
     rows.push(...wasteRows(s));
+    const retrieval = retrievalRow(s);
+    if (retrieval) rows.push(retrieval);
     const red = redactedRow(s);
     if (red) rows.push(red);
     const hooks = hookContextRow(s);
