@@ -89,6 +89,7 @@ grouped by area, with links to the docs for the details.
 - **Site.** coding.sh is served by Vercel instead of a Cloudflare Worker, which had hit its daily request limit and answered 429. Moved pages, `www`, the headers and the installer behave as before. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 - **Dogfood.** A perf or site budget missed by a little gets partial credit: the target divided by the reading for a ceiling, and the reverse for a floor. One reading near a budget moved the headline by 4 points before. `compare` scores the previous scorecard again with the current scorer and keeps its stored headline as `prevStored`. [Dogfood design](https://github.com/jackulau/coding.sh/blob/main/docs/design/dogfood.md)
 - **SDK.** In Python, `coding_sh.flush()` waits at most 5 s by default, as `flush()` does in TypeScript; `flush(timeout=None)` still waits until the queue is sent or given up. Before, a script that ended with `coding_sh.flush()`, as the quick start shows, could hang for over a minute when the server did not answer. [SDK](https://coding.sh/docs/sdk)
+- **Viewer.** The viewer page and every JSON answer of 32 KB or more go gzipped when the browser takes gzip, with `Vary: Accept-Encoding`. On a seeded store the page drops from 705 KB to 213 KB, and a 200-item Work answer from 145 KB to 19 KB. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#read-api))
 
 ### Fixed
 
@@ -395,7 +396,6 @@ grouped by area, with links to the docs for the details.
 - **Doctor.** `doctor` and `doctor --conformance` print their rows to stdout, not stderr, as `status` does, so `coding.sh doctor | less` and `coding.sh doctor > doctor.txt` keep the whole report and not only its last line. The next steps stay on stderr. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Viewer.** The session list names the app that drove an agent after its name, `claude-code via T3 Code`, so a row that `agent:t3code` lists says why it matched. The page drawn before its script runs reads the same. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
 - **Viewer.** Work headings count the whole bucket ("119 of 671") instead of only the cards the page loaded, and Show all lists up to 1,000 items in place, beside the CLI command that lists them all. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
-- **Viewer.** The viewer page and every JSON answer of 32 KB or more go gzipped when the browser takes gzip, with `Vary: Accept-Encoding`. On a seeded store the page drops from 705 KB to 213 KB, and a 200-item Work answer from 145 KB to 19 KB. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#read-api))
 
 ## [0.1.7] - 2026-11-16
 
