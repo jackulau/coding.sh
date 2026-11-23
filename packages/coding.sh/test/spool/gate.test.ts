@@ -309,7 +309,7 @@ describe("mayHoldSecret on payloads the default rules change", () => {
     ];
     for (const [kind, text] of cases) assert.ok(check(text).includes(kind), `${kind} in ${text}`);
     // Three documents deep: a name= after an escaped newline, escaped again at each level.
-    for (const [kind, name] of [["secret-assignment", "GOOGLE_CREDENTIALS"], ["secret-value", "API_TOKEN"]]) {
+    for (const [kind, name] of [["secret-assignment", "GOOGLE_CREDENTIALS"], ["secret-value", "API_TOKEN"]] as const) {
       let doc = JSON.stringify({ stdout: `loaded\n${name}=${v()}\n` }, null, 2);
       for (let i = 0; i < 3; i++) doc = JSON.stringify({ tool_response: { stdout: doc } });
       assert.ok(check(doc).includes(kind), `${kind} three documents deep`);
