@@ -216,7 +216,12 @@ describe("cli improve", () => {
     assert.equal(text.status, 0, text.stderr);
     assert.ok(text.stdout.includes(`\n  ${reason}\n`), text.stdout);
     assert.doesNotMatch(text.stdout, /No sessions yet|No captured session ran|headless sessions after it/, "said once, and not as if no session ran");
-    assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless/);
+    assert.match(text.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --headless$/m);
+    // The command as given plus --headless: the flags given still pick the same sessions.
+    const given = cli(w, ["improve", "check", "--since", "40d", "--agent", "claude-code"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.ok(given.stdout.includes(`\n  ${reason}\n`), given.stdout);
+    assert.match(given.stderr, /Count the headless sessions too:\n\s+(?:coding\.sh|codingsh) improve check --since 40d --agent claude-code --headless$/m);
     const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { commit: string; verdict: string; reason: string; headlessLeftOut?: number }[] };
     const ch = j.changes.find((c) => c.commit === w.commits.rule)!;
     assert.deepEqual([ch.verdict, ch.reason, ch.headlessLeftOut], ["no-sessions-after", reason, 2]);
@@ -237,6 +242,11 @@ describe("cli improve", () => {
     assert.equal(text.status, 0, text.stderr);
     assert.match(text.stdout, /"CLAUDE\.md: keep commits small"\n {4}\+ Keep commits small\.\n {2}No captured session ran with this change yet\.\n/);
     assert.doesNotMatch(text.stdout, /No sessions yet/);
+    assert.match(text.stderr, /Re-check as new sessions arrive:\n\s+(?:coding\.sh|codingsh) improve check --watch$/m);
+    // The command as given plus --watch: the flags given still pick the same changes and sessions.
+    const given = cli(w, ["improve", "check", "--since", "40d", "--agent", "claude-code"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.match(given.stderr, /Re-check as new sessions arrive:\n\s+(?:coding\.sh|codingsh) improve check --since 40d --agent claude-code --watch$/m);
   });
 
   it("improve check cuts a long commit subject to one line, as sessions cuts titles; --json keeps it whole", async () => {

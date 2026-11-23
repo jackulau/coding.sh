@@ -9,6 +9,7 @@ import { isLoopbackHost, startReceiver } from "../../otel/receiver.ts";
 import { SinkMirror } from "../../server/mirror.ts";
 import { parseSince } from "../args.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
+import { envLine } from "../next-steps.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -71,7 +72,7 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const env = otelEnv(receiver.url);
     if (out.json) out.data({ url: receiver.url, host: receiver.host, port: receiver.port, env });
-    else for (const [k, v] of Object.entries(env)) out.print(`export ${k}=${v}`);
+    else for (const [k, v] of Object.entries(env)) out.print(envLine(c.env, k, v));
     out.note(`Ready on ${receiver.url}`);
     out.note("Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
