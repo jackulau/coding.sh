@@ -100,9 +100,16 @@ and the Python SDK is on PyPI as `coding-sh`.
 - Runs lazily when any CLI command or the viewer starts, plus an optional `coding.sh watch`.
 - Reads spool files from the last checkpointed byte offset (stored in the index) and calls the
   adapter's `normalize`. Redaction runs, then a batch write goes to every configured sink.
-- At-least-once delivery. Events have deterministic ids (`sha256(agent, session, raw-line)`), so a
-  replayed write is a no-op.
-- Spool files are deleted once every sink acknowledges them, or kept for N days with `keepSpool`.
+- At-least-once delivery. Events have deterministic ids (`adapters/_shared/normalize.ts`
+  `Emitter`): a hash of the agent, the session and a key the event carries (a tool call id, a
+  subagent id), or else of where the event was read and its place there: a transcript's file and
+  line, a record id in the agent's own store, or a spool line's file and offset. Claude Code and
+  Devin hook lines use the hook firing in place of the offset (the payload's hash and a two-second
+  time slot), so the lines two hook commands spool for one firing share ids. A replayed write is a
+  no-op in the index, and a sink that keeps events by id holds one copy.
+- gc deletes a spool file once every cursor (the local one and each sink's) has reached its end and
+  its last write is older than `retention.keepSpoolDays` (default 7). It never deletes the current
+  UTC day's file, nor the day before in the first hour of a day (`core/gc.ts` `sweepSpool`).
 
 ## Storage
 
