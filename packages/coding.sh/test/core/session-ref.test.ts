@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, test } from "node:test";
-import { findSessionRef, IdSet, loadIdSet, matchRef, MAX_CANDIDATES, SHORT_ID_MIN, shortestRef, shortSessionId, wholeRef } from "../../src/core/session-ref.ts";
+import { findSessionRef, IdSet, loadIdSet, matchRef, MAX_CANDIDATES, printedRefs, printsWhole, SHORT_ID_MIN, shortestRef, shortSessionId, wholeRef } from "../../src/core/session-ref.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { resolveCall } from "../../src/proxy/calls.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -191,14 +191,16 @@ describe("a session whose id is latest or last prints an alias: the word opens t
     });
   }
 
-  test("the short id tree, blame and attribution print for it opens it too", async () => {
+  test("the reference tree, blame and attribution print for it opens it too", async () => {
     const index = new MemoryIndexStore();
     const mine = [call("latest", "latest-1", 1000)];
     const newer = [call(NEWER, "newer-1", 2000)];
     await index.putEvents([...mine, ...newer]);
     await index.upsertSession(buildSession(mine));
     await index.upsertSession(buildSession(newer));
-    assert.equal((await findSessionRef(index, shortSessionId("latest")))?.id, "latest");
+    const refs = await printedRefs(index, { short: ["latest"], whole: ["latest", NEWER] });
+    assert.deepEqual([refs.short("latest"), refs.whole("latest"), refs.whole(NEWER)], ["x_brf2qjp3", "x_brf2qjp3", NEWER]);
+    assert.equal((await findSessionRef(index, refs.short("latest")))?.id, "latest");
   });
 
   test("only the word itself prints an alias: its subagents, other ids and an alias print as before", () => {
@@ -212,6 +214,72 @@ describe("a session whose id is latest or last prints an alias: the word opens t
     const s = new IdSet(["latest", NEWER, "x_brf2qjp30parp9-sdk"]);
     assert.equal(shortestRef(s, "latest"), "x_brf2qjp3");
     assert.equal(resolves(s, "x_brf2qjp3"), "latest");
+  });
+});
+
+describe("printedRefs: a list prints an id whole when it is short and plain, a column the shortest reference", () => {
+  /** A store of `ids` that counts how often every stored id is read. */
+  const idStore = (ids: readonly string[]) => {
+    const store = {
+      reads: 0,
+      listSessions: async (): Promise<never> => assert.fail("read by prefix"),
+      sessionIdsByPrefix: async (prefix: string, limit: number) => {
+        if (prefix === "") store.reads++;
+        return ids.filter((id) => id.startsWith(prefix)).slice(0, limit);
+      },
+    };
+    return store;
+  };
+  const SUB_ID = child(1).split(":sub:")[1]!.slice(0, SHORT_ID_MIN);
+
+  test("printsWhole: at most 40 characters a shell passes as typed, and not latest or last", () => {
+    for (const id of [PARENT, "a".repeat(40), "parent-session-0001:sub:a1", "default/tenant-7/conv-123", "x_brf2qjp3"]) assert.equal(printsWhole(id), true, id);
+    // A Claude Code subagent id is 58 characters.
+    for (const id of ["a".repeat(41), child(1), LONG_A, "t3code-thread%3Aone", "my run", "-rf", "latest", "last"]) assert.equal(printsWhole(id), false, id);
+  });
+
+  test("ids that all print whole read nothing from the store and print as they are", async () => {
+    const store = idStore([PARENT, "7c3e9d10-aaaa-4000-8000-000000000001", "7c3e9d10-bbbb-4000-8000-000000000002"]);
+    const refs = await printedRefs(store, { whole: [PARENT, "7c3e9d10-aaaa-4000-8000-000000000001"] });
+    assert.equal(store.reads, 0);
+    assert.deepEqual([refs.whole(PARENT), refs.whole("7c3e9d10-aaaa-4000-8000-000000000001")], [PARENT, "7c3e9d10-aaaa-4000-8000-000000000001"]);
+    assert.equal((await printedRefs(store, {})).whole(PARENT), PARENT);
+    assert.equal(store.reads, 0);
+  });
+
+  test("one id in a list that does not print whole reads every stored id once; each id prints a reference that names it alone", async () => {
+    const ids = [LONG_A, LONG_B, PARENT, child(1), "latest"];
+    const store = idStore(ids);
+    const refs = await printedRefs(store, { whole: ids });
+    assert.equal(store.reads, 1);
+    assert.deepEqual(ids.map((id) => refs.whole(id)), ["x_d52r41f3", "x_8n2twz83", PARENT, SUB_ID, "x_brf2qjp3"]);
+    assert.deepEqual(ids.map((id) => refs.short(id)), ["x_d52r41f3", "x_8n2twz83", "36d2966a", SUB_ID, "x_brf2qjp3"]);
+    const set = new IdSet(ids);
+    for (const id of ids) assert.deepEqual([resolves(set, refs.whole(id)), resolves(set, refs.short(id))], [id, id]);
+    assert.equal(store.reads, 1, "printing reads nothing more");
+  });
+
+  test("a column reads every stored id once, since an 8-character prefix may name two sessions", async () => {
+    const a = "7c3e9d10-aaaa-4000-8000-000000000001";
+    const b = "7c3e9d10-bbbb-4000-8000-000000000002";
+    const store = idStore([a, b, PARENT]);
+    const refs = await printedRefs(store, { short: [a, b, PARENT] });
+    assert.equal(store.reads, 1);
+    assert.deepEqual([a, b, PARENT].map((id) => refs.short(id)), ["7c3e9d10-a", "7c3e9d10-b", "36d2966a"]);
+  });
+
+  // A commit can name a session recorded on another machine, or one since removed: blame and
+  // attribution print it in a column sized for 8 characters.
+  test("an id the store lacks prints as shortSessionId, in a column and in a list", async () => {
+    const gone = "7c3e9d10-aaaa-4000-8000-000000000001";
+    const ids = [gone, child(1), LONG_A, "latest"];
+    const store = idStore([PARENT]);
+    const refs = await printedRefs(store, { short: ids, whole: ids });
+    assert.equal(store.reads, 1);
+    const want = ["7c3e9d10", `36d2966a:sub:${SUB_ID}`, "t3code-t", "x_brf2qjp3"];
+    assert.deepEqual(ids.map((id) => refs.short(id)), want);
+    assert.deepEqual(ids.map((id) => shortSessionId(id)), want);
+    assert.deepEqual(ids.map((id) => refs.whole(id)), [gone, ...want.slice(1)]);
   });
 });
 

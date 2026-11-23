@@ -548,7 +548,9 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: ["coding.sh tree latest", "coding.sh tree 9f1c2e", "coding.sh tree 9f1c2e --all", "coding.sh tree my-fanout-123 --run", "coding.sh tree latest --json --limit 100"],
     notes: [
-      "The tree is the session and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the tree's totals and worst flag. From a subagent, an in: line above the tree names the sessions above it by short id and role, from the top-level agent down; --all shows the whole tree from the top-level agent.",
+      "The tree is the session and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the tree's totals and worst flag.",
+      "From a subagent, an in: line above the tree lists the sessions above it, from the top-level agent down: each by the shortest reference that opens it, and its role. --all shows the whole tree from the top-level agent.",
+      "A node prints its session id, or the shortest reference that opens it when the id is over 40 characters, needs quoting in a shell, or is latest or last.",
       "With --json the tree comes a page at a time: 50 nodes, depth-first, with nextCursor and truncated: true when more are left. totals and worst cover the whole tree on every page. A node whose parent was on an earlier page is at the top level of its page; depth and parentSessionId say where it hangs. Nodes are session digests, as in sessions --json.",
       "From a subagent, --json adds ancestors: the sessions above the tree's root (id, agent, role), the top-level agent first. depth counts from the top-level agent, so the root's depth is the number of ancestors.",
       "Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.",
@@ -643,7 +645,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: ["coding.sh blame src/app.ts", "coding.sh blame src/app.ts:40-60", "coding.sh blame src/app.ts --json"],
     notes: [
-      "Each line shows the commit that last changed it and, when a captured session wrote that line, the session and agent; '-' means no session did. Matching works as in coding.sh attribution.",
+      "Each line shows the commit that last changed it and, when a captured session wrote that line, the session (the shortest reference that opens it) and agent; '-' means no session did. Matching works as in coding.sh attribution.",
       "--json: {root, rev, path, unattributed, sessions, lines: [{line, commit, text, sessionId?, agent?, model?, confidence?, method?}]}.",
     ],
     load: () => import("./commands/blame.ts"),

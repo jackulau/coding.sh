@@ -2,6 +2,7 @@
 import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { searchWhere } from "../../query/run.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { printedRefs } from "../../core/session-ref.ts";
 import { agentQuery, agentsFlag, autoIngest, emptyStateNext, pendingField, queryCliError, readIngest, oneLine, rejectAgentTypos, str, whereFlag, withContext } from "../common.ts";
 import { ago, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -43,9 +44,12 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
     const tty = out.stdoutTTY;
+    // Every stored id is read only when a hit's session id prints shorter: one that is long, needs
+    // quoting, or is `latest` or `last` (the word opens the newest session).
+    const refs = await printedRefs(ctx.index, { whole: hits.map((h) => h.event.sessionId) });
     out.table(
       ["SESSION", "KIND", "WHEN", "MATCH"],
-      hits.map((h) => [h.event.sessionId, h.event.kind, ago(h.event.ts), oneLine(clean(h.snippet), tty ? 80 : 10_000)]),
+      hits.map((h) => [refs.whole(h.event.sessionId), h.event.kind, ago(h.event.ts), oneLine(clean(h.snippet), tty ? 80 : 10_000)]),
     );
     return 0;
   }, { create: false });

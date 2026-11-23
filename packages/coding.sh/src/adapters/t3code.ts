@@ -598,9 +598,11 @@ function agentPromptMarks(ctx: NormalizeContext, p: SessionPlan, events: AgentEv
   return em.events;
 }
 
-async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number): AsyncIterable<AgentEvent> {
+/** `whole` is called once every session of the thread was yielded, none left out by the window. */
+async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number, whole?: () => void): AsyncIterable<AgentEvent> {
   const plans = plansFor(t, primary, starts);
   const person = personStarted(t, rows);
+  let cut = false;
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
@@ -620,7 +622,9 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
     // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
     // cutoff lost its T3 attribution and thread title.
     if (since === undefined || events.some((e) => e.ts >= since)) yield* events;
+    else if (events.length) cut = true;
   }
+  if (!cut) whole?.();
 }
 
 // ---------------------------------------------------------------- v2 store
@@ -1075,9 +1079,13 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         opts.copied?.(primaryOf(thread), cover.owner);
         continue;
       }
+      let whole: (() => void) | undefined;
       if (opts.changed) {
         const act = acts.map((m) => m.get(thread.id)).filter((a): a is { n: number; t: number } => a !== undefined);
-        if (!(await opts.changed(await threadFile(native, path, thread, act)))) continue;
+        const file = await threadFile(native, path, thread, act);
+        if (!(await opts.changed(file))) continue;
+        // Read whole although a window was given: a wider window later finds nothing more in it.
+        whole = () => opts.whole?.(file);
       }
       let rows: StoreRows;
       try {
@@ -1090,7 +1098,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         if (!sqliteShapeError(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
         continue; // schema drift in one thread's rows: skip it, keep the rest
       }
-      yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since);
+      yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since, whole);
     }
   } finally {
     v2?.close();

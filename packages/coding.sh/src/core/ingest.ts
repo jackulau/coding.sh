@@ -1722,6 +1722,13 @@ export class BackfillStop extends Error {
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
 export const backfillCursorKey = (agent: string, path: string, field: "size" | "mtime" | "since"): string => `backfill:${agent}:${path}#${field}`;
 
+/** A file a backfill read through, to mark read. `whole`: all of its events were imported, so its cursors record no window. */
+interface FileCursor {
+  agent: string;
+  file: BackfillFile;
+  whole: boolean;
+}
+
 /**
  * A sink's cursor for one transcript source: a file a backfill reports, else
  * the adapter. It holds the file's mtime (floored ms) once the sink has every
@@ -1817,7 +1824,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   const touched = new Set<string>();
   const since = opts.since ?? 0;
   // File cursors to commit once the events they cover are stored and their sessions recomputed.
-  const fileCursors: { agent: string; file: BackfillFile }[] = [];
+  const fileCursors: FileCursor[] = [];
   /** Changed files read so far (the deadline only defers files after the first). */
   let accepted = 0;
 
@@ -1842,11 +1849,11 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     await recomputeSessions(index, touched, { linker, repo, versionFor, onFoldError }, (id) => updated.add(id));
     touched.clear();
   };
-  /** Marks files read: mtime last, it is what says a file was read. */
-  const setFileCursors = async (list: { agent: string; file: BackfillFile }[]) => {
-    for (const { agent, file } of list) {
+  /** Marks files read: mtime last, it is what says a file was read. A file read whole records no window. */
+  const setFileCursors = async (list: FileCursor[]) => {
+    for (const { agent, file, whole } of list) {
       await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
-      await index.setCursor(backfillCursorKey(agent, file.path, "since"), since);
+      await index.setCursor(backfillCursorKey(agent, file.path, "since"), whole ? 0 : since);
       await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
     }
   };
@@ -2056,6 +2063,15 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     let cover: BackfillFile | undefined;
     /** The walk left a file it was asked about for lateness. */
     let left = false;
+    /**
+     * Files read whole although a window was given (`BackfillOpts.whole`): their cursors record no window.
+     * A store's cover always records the window: the walk may have cut other files by it.
+     */
+    const wholeFiles = new Set<BackfillFile>();
+    const whole = (f: BackfillFile) => {
+      if (reading && reading.path === f.path) wholeFiles.add(reading);
+    };
+    const cursorsOf = (list: BackfillFile[]): FileCursor[] => list.map((file) => ({ agent: adapter.id, file, whole: wholeFiles.has(file) }));
     /** Commits the files read through so far, with the sessions they touched. */
     const commitFiles = async () => {
       reading = undefined;
@@ -2063,7 +2079,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       await flush();
       await blobBatch?.flush();
       await recompute();
-      const done = files.map((file) => ({ agent: adapter.id, file }));
+      const done = cursorsOf(files);
       files = [];
       await inTransaction(index, async () => {
         await deferRepos();
@@ -2118,7 +2134,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
       return true;
     };
-    const adapterOpts = opts.since !== undefined ? { since: opts.since, changed } : { changed };
+    const adapterOpts = opts.since !== undefined ? { since: opts.since, changed, whole } : { changed };
     try {
       let stop = false;
       for await (const e of adapter.backfill(ctx, adapterOpts)) {
@@ -2162,13 +2178,13 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
         // cursors follow theirs, so a run killed before they are all in finds the store changed again.
         if (cover && !left) files.push(cover);
       }
-      for (const file of files) fileCursors.push({ agent: adapter.id, file });
+      fileCursors.push(...cursorsOf(files));
     } catch (err) {
       if (err instanceof BackfillStop) {
         // Not a failure: what was read is stored and its cursors are set, as at the end of a whole walk.
         await flush();
         await endSource();
-        for (const file of files) fileCursors.push({ agent: adapter.id, file });
+        fileCursors.push(...cursorsOf(files));
         continue;
       }
       await flush().catch(() => {});
