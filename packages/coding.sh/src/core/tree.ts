@@ -45,6 +45,8 @@ export interface Tree {
   roots: TreeNode[];
   /** Set when the tree was gathered by run id rather than from one session. */
   runId?: string;
+  /** Set on a tree built from a subagent (buildSubtree): the sessions above its root, the top-level agent first. */
+  ancestors?: Session[];
   totals: TreeTotals;
   /** Nodes in tree order (depth-first, roots first), for a flat render. */
   flat: TreeNode[];
@@ -89,17 +91,28 @@ export function worstFirst(flags: readonly string[]): string[] {
  * it is already top-level, and stops on a missing or repeated link.
  */
 export async function rootOf(index: IndexStore, id: string): Promise<string> {
-  const seen = new Set<string>([id]);
-  let cur = await index.getSession(id);
-  for (let hop = 0; cur?.parent?.sessionId && hop < MAX_DEPTH; hop++) {
+  const s = await index.getSession(id);
+  return s ? ((await ancestorsOf(index, s))[0]?.id ?? s.id) : id;
+}
+
+/**
+ * The sessions above `session`, the top-level agent first: the walk rootOf does.
+ * Empty when the session is top-level or its parent was never captured.
+ */
+async function ancestorsOf(index: IndexStore, session: Session): Promise<Session[]> {
+  const seen = new Set<string>([session.id]);
+  const up: Session[] = [];
+  let cur = session;
+  for (let hop = 0; cur.parent?.sessionId && hop < MAX_DEPTH; hop++) {
     const parentId = cur.parent.sessionId;
     if (seen.has(parentId)) break;
     const parent = await index.getSession(parentId);
     if (!parent) break; // parent process never captured: treat this session as the root
     seen.add(parentId);
+    up.push(parent);
     cur = parent;
   }
-  return cur?.id ?? id;
+  return up.reverse();
 }
 
 /**
@@ -247,6 +260,23 @@ export async function buildSessionTree(index: IndexStore, id: string): Promise<T
   const seen = new Set<string>([root.id]);
   const node = await nodeOf(index, root, 0, seen);
   return { roots: [node], totals: treeTotals([node]), flat: flatten([node]) };
+}
+
+/**
+ * The tree under the session `id`: the session and every subagent below it, with the
+ * sessions above it in `ancestors`. Depths count from the top-level agent, as in
+ * buildSessionTree, so the root's depth is the number of ancestors. From a top-level
+ * session it is the tree buildSessionTree builds.
+ */
+export async function buildSubtree(index: IndexStore, id: string): Promise<Tree | undefined> {
+  const session = await index.getSession(id);
+  if (!session) return undefined;
+  const ancestors = await ancestorsOf(index, session);
+  const seen = new Set<string>([...ancestors.map((a) => a.id), session.id]);
+  const node = await nodeOf(index, session, ancestors.length, seen);
+  const tree: Tree = { roots: [node], totals: treeTotals([node]), flat: flatten([node]) };
+  if (ancestors.length) tree.ancestors = ancestors;
+  return tree;
 }
 
 /**

@@ -11,6 +11,7 @@ import { after, before, describe, it } from "node:test";
 import { printDiff } from "../../src/cli/commands/diff-calls.ts";
 import { Output } from "../../src/cli/output.ts";
 import { loadConfig } from "../../src/core/config.ts";
+import { shortener } from "../../src/core/session-ref.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { CallRefError, diffCalls, lineDiff, loadCall, previousCall, resolveCall } from "../../src/proxy/calls.ts";
@@ -126,6 +127,35 @@ describe("proxy calls: refs, load and diff", () => {
     await index.putEvents([ev("abcdef01aaaa"), ev("abcdef02bbbb")]);
     await assert.rejects(resolveCall(index, "abcdef"), (e: unknown) => e instanceof CallRefError && e.reason === "ambiguous" && e.candidates.length === 2);
     assert.equal((await resolveCall(index, "abcdef02")).id, "abcdef02bbbb");
+  });
+
+  it("<session>#n takes every session reference show takes: the alias of a long id, a parent's prefix", async () => {
+    const index = new MemoryIndexStore();
+    // Two T3 Code thread ids, percent-encoded and alike for 200 characters: the shortest prefix
+    // that names one is long and needs quoting, so coding.sh prints an alias for it. Made up.
+    const shared = `t3code-thread%3Aproj%253Ademo%253A${"abcdefghij".repeat(17)}`;
+    const long = `${shared}-first`;
+    const ev = (id: string, sessionId: string, ts: number): AgentEvent => ({ id, v: 0, sessionId, ts, agent: "claude-code", kind: "llm.call", payload: {} });
+    const sessions = [
+      [ev("longcall-1", long, 1), ev("longcall-2", long, 2)],
+      [ev("othercall-1", `${shared}-second`, 2)],
+      [ev("parentcall-1", "5e1f0a2b-parent", 3)],
+      [ev("subcall-1", "5e1f0a2b-parent:sub:agent-1", 4)],
+      [ev("twin-a-1", "9c8d7e6f-a", 5)],
+      [ev("twin-b-1", "9c8d7e6f-b", 6)],
+    ];
+    for (const events of sessions) {
+      await index.putEvents(events);
+      await index.upsertSession(buildSession(events));
+    }
+    const alias = (await shortener(index))(long);
+    assert.match(alias, /^x_[0-9a-z]{8,14}$/, "the long id prints as an alias");
+    assert.equal((await resolveCall(index, `${alias}#1`)).id, "longcall-1");
+    assert.equal((await resolveCall(index, `${alias}#-1`)).id, "longcall-2");
+    // A prefix its subagent shares names the parent, as in show.
+    assert.equal((await resolveCall(index, "5e1f0a2b#1")).id, "parentcall-1");
+    await assert.rejects(resolveCall(index, "9c8d7e6f#1"), (e: unknown) => e instanceof CallRefError && e.reason === "ambiguous" && /Session id prefix "9c8d7e6f" is ambiguous/.test(e.message) && e.candidates.sort().join() === "9c8d7e6f-a,9c8d7e6f-b");
+    await assert.rejects(resolveCall(index, "x_zzzzzzzz#1"), (e: unknown) => e instanceof CallRefError && e.reason === "not_found" && /Can't find session "x_zzzzzzzz"/.test(e.message));
   });
 
   it("re-inlines the system prompt and tools the event keeps in blobs, and never the API key", async () => {
