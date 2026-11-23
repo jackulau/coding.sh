@@ -29,7 +29,8 @@
 // Each linked call gets one companion event (kind "span", source "gateway",
 // parentId = the llm.call) whose usage.costUsd is the difference between the
 // billed cost and the cost the call already reported, so summing usage over a
-// session gives what the gateway billed without double counting. Event ids are
+// session gives what the gateway billed without double counting. That cost is
+// read when the companion is written, in the same transaction. Event ids are
 // derived from the llm.call id, so re-running is a no-op.
 import { hashParts } from "../../core/ids.ts";
 import { storeEnrichment } from "../../core/ingest.ts";
@@ -372,11 +373,13 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
   });
 
   // 3. Write companion events and rebuild touched sessions.
+  const made: { t: Pending; g: GenerationInfo }[] = [];
   const out: AgentEvent[] = [];
   for (const t of todo) {
     const g = records.get(rkey(t.gateway, t.gen));
     if (!g) continue;
     const e = generationEvent(t.call, g, t.linkedBy, t.gateway);
+    made.push({ t, g });
     out.push(e);
     const billed = num(e.payload.billedCostUsd);
     if (billed !== undefined) r.billedUsd += billed;
@@ -392,6 +395,14 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
   const touched = [...new Set(out.map((e) => e.sessionId))];
   r.touchedSessions = touched;
   if (o.dryRun || !out.length) return r;
-  await storeEnrichment(index, out);
+  // Each correction is taken against the call as stored now, in the write's transaction: a reprice
+  // (core/reprice.ts, often in the background ingest) may have priced the call since step 1, and a
+  // correction against the cost read then would count that estimate twice.
+  const write = async () => {
+    const stored = new Map<string, AgentEvent>();
+    for (const id of touched) for (const e of await index.listEvents(id, { kinds: ["llm.call"] })) stored.set(e.id, e);
+    await storeEnrichment(index, made.map(({ t, g }) => generationEvent(stored.get(t.call.id) ?? t.call, g, t.linkedBy, t.gateway)));
+  };
+  await (index.transaction ? index.transaction(write) : write());
   return r;
 }
