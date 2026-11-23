@@ -169,6 +169,14 @@ describe("scoring", () => {
     assert.equal(a.prompts.find((p) => p.prompt.startsWith("Merge"))!.n, 0);
   });
 
+  it("names each expected route once, summed over the prompts that expect it", async () => {
+    const s = parseTriggerSpec(`${SPEC}\n[[should_not]]\nprompt = "Turn these notes into a docx letter"\nexpect_skill = "docx"\n\n[[should_not]]\nprompt = "Save the slides as pptx"\nexpect_skill = "pptx"\n`);
+    const r = await runTriggerEval({ spec: s, skill: "pdf", arms: [arm("current")], k: 2, runProbe: keywordProbe() });
+    const text = formatTrigger(scoreTrigger({ spec: s, skill: "pdf", agent: "claude-code", arms: [arm("current")], observations: r.observations, k: 2 }));
+    // Two docx prompts at k=2 both routed every time; nothing loads pptx.
+    assert.match(text, /^ {2}expected routes: docx 4\/4, pptx 0\/2$/m);
+  });
+
   // A current description and a broader candidate; the fake agent loads pdf when the
   // prompt names a word from the installed description. Returns B vs A and A vs B.
   const describedPair = async (should: string[]) => {

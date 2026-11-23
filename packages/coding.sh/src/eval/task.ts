@@ -228,14 +228,15 @@ const reads = (s: string | undefined): s is string => typeof s === "string" && s
 /**
  * The prompt in a wrapped command line, e.g. `claude -p "fix the tests"` or
  * `./agent.sh "make sum add"` (the wrapper adapter's own `run` passes the
- * instruction as the last argument). Positional arguments must contain
- * whitespace so file names and subcommands are never taken for a prompt.
+ * instruction as the last argument). A prompt must contain whitespace, in
+ * every form, so file names, subcommands and one-word values such as
+ * `--task=lint` are never taken for one.
  */
 export function instructionFromArgs(args: readonly string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
     const eq = PROMPT_FLAG_EQ.exec(a);
-    if (eq && (eq[2] as string).trim()) return (eq[2] as string).trim();
+    if (eq && /\s/.test((eq[2] as string).trim())) return (eq[2] as string).trim();
     if (PROMPT_FLAGS.has(a) && reads(args[i + 1]) && /\s/.test((args[i + 1] as string).trim())) return (args[i + 1] as string).trim();
   }
   for (let i = args.length - 1; i >= 0; i--) {

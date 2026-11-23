@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { runBench } from "../../src/bench/run.ts";
 import { runsDir } from "../../src/bench/store.ts";
 import { benchmarkDir, BLOB_CAP_BYTES, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
@@ -15,6 +16,8 @@ import { FakeBlobs, FakeIndex, event, experimentResult, failedRequestFixtures, s
 interface Res {
   status: number;
   headers: Record<string, string | string[] | undefined>;
+  /** The bytes as sent: gzipped when the answer says Content-Encoding: gzip. */
+  raw: Buffer;
   body: string;
   json(): any;
 }
@@ -32,8 +35,9 @@ function req(
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        resolve({ status: res.statusCode ?? 0, headers: res.headers, body, json: () => JSON.parse(body) });
+        const raw = Buffer.concat(chunks);
+        const body = raw.toString("utf8");
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, raw, body, json: () => JSON.parse(body) });
       });
       res.on("error", reject);
     });
@@ -156,6 +160,34 @@ describe("viewer server", () => {
       assert.equal(r.headers["x-content-type-options"], "nosniff");
       const again = await req(v, "/");
       assert.notEqual(String(again.headers["content-security-policy"]), csp, "nonce is per response");
+    });
+
+    test("page is gzipped when the request takes gzip, keeping its CSP and no-store; HEAD is unchanged", async () => {
+      const plain = await req(v, "/");
+      assert.equal(plain.headers["content-encoding"], undefined);
+      assert.equal(plain.headers.vary, "Accept-Encoding");
+      const r = await req(v, "/", { headers: { "accept-encoding": "gzip, deflate, br" } });
+      assert.equal(r.status, 200);
+      assert.equal(r.headers["content-encoding"], "gzip");
+      assert.equal(r.headers.vary, "Accept-Encoding");
+      assert.equal(r.headers["cache-control"], "no-store");
+      assert.equal(r.headers["content-type"], "text/html; charset=utf-8");
+      assert.equal(Number(r.headers["content-length"]), r.raw.length);
+      const nonce = /script-src 'nonce-([^']+)'/.exec(String(r.headers["content-security-policy"]))?.[1];
+      assert.ok(nonce, String(r.headers["content-security-policy"]));
+      assert.ok(gunzipSync(r.raw).toString("utf8").includes(`<script nonce="${nonce}">`), "the gzipped page carries its own response's nonce");
+      assert.ok(r.raw.length * 3 < plain.raw.length, `${r.raw.length} gzipped bytes, ${plain.raw.length} plain`);
+      // A client that refuses gzip gets the page plain.
+      const refused = await req(v, "/", { headers: { "accept-encoding": "gzip;q=0, identity" } });
+      assert.equal(refused.headers["content-encoding"], undefined);
+      assert.ok(refused.body.includes("<script nonce="));
+      // HEAD: the headers with no body, and nothing gzipped.
+      const head = await req(v, "/", { method: "HEAD", headers: { "accept-encoding": "gzip" } });
+      assert.equal(head.status, 200);
+      assert.equal(head.raw.length, 0);
+      assert.equal(head.headers["content-encoding"], undefined);
+      assert.equal(head.headers["cache-control"], "no-store");
+      assert.match(String(head.headers["content-security-policy"]), /script-src 'nonce-[^']+'/);
     });
   });
 

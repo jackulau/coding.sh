@@ -172,6 +172,12 @@ describe("renderSuitesMarkdown", () => {
     );
   });
 
+  it("names the CLI as the user's shell runs it in the line under a long table", () => {
+    const r = suiteReport("s", "regression", [task("a", [P]), task("b", [P]), task("c", [P])]);
+    assert.match(renderSuitesMarkdown([{ suite: "s", report: r }], { limit: 1 }), /\n2 more tasks: `coding\.sh eval run s --json` lists them all\.\n/);
+    assert.match(renderSuitesMarkdown([{ suite: "s", report: r }], { limit: 1, bin: "codingsh" }), /\n2 more tasks: `codingsh eval run s --json` lists them all\.\n/);
+  });
+
   it("says when every suite passed", () => {
     const ok = suiteReport("s", "regression", [task("a", [P, P])]);
     assert.match(renderSuitesMarkdown([{ suite: "s", report: ok }]), /^### Evals: the suite passed\n[\s\S]*\| pass \|/);

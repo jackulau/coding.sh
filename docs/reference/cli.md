@@ -49,7 +49,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
-| [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
+| [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
 | [`attribution`](#codingsh-attribution) | Explore | Which agent session wrote the lines each commit added; export them as Agent Trace |
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
@@ -661,7 +661,7 @@ coding.sh show <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -685,7 +685,7 @@ coding.sh show 'latest#-1'
 
 ## `coding.sh tree`
 
-Show a whole multi-agent run as one tree, with rolled-up totals.
+Show a session and its subagents, or a whole run, as one tree, with rolled-up totals.
 
 ```text
 coding.sh tree <SESSION|RUN> [options]
@@ -693,10 +693,11 @@ coding.sh tree <SESSION|RUN> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session|run` | yes | A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out) |
+| `session|run` | yes | A session id, prefix or x_ alias (the session and every subagent under it), or a run id (every agent of the fan-out) |
 
 | Option | Default | Description |
 |---|---|---|
+| `--all` |  | From a subagent, show the whole tree from its top-level agent down. |
 | `--run` |  | Read the argument as a run id (CODING_SH_RUN_ID), not a session. |
 | `-n, --limit <N>` | `50` | With --json: most nodes in one page. |
 | `--cursor <CURSOR>` |  | With --json: the nextCursor of the last page. |
@@ -705,12 +706,14 @@ coding.sh tree <SESSION|RUN> [options]
 ```sh
 coding.sh tree latest
 coding.sh tree 9f1c2e
+coding.sh tree 9f1c2e --all
 coding.sh tree my-fanout-123 --run
 coding.sh tree latest --json --limit 100
 ```
 
-- From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.
+- The tree is the session and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the tree's totals and worst flag. From a subagent, an in: line above the tree names the sessions above it by short id and role, from the top-level agent down; --all shows the whole tree from the top-level agent.
 - With --json the tree comes a page at a time: 50 nodes, depth-first, with nextCursor and truncated: true when more are left. totals and worst cover the whole tree on every page. A node whose parent was on an earlier page is at the top level of its page; depth and parentSessionId say where it hangs. Nodes are session digests, as in sessions --json.
+- From a subagent, --json adds ancestors: the sessions above the tree's root (id, agent, role), the top-level agent first. depth counts from the top-level agent, so the root's depth is the number of ancestors.
 - Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.
 
 ## `coding.sh replay`
@@ -723,7 +726,7 @@ coding.sh replay <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'. |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
 
 | Option | Default | Description |
 |---|---|---|
@@ -1131,7 +1134,7 @@ coding.sh usage [options]
 | `-r, --repo <PATH|NAME>` |  | Only sessions in this repo, as sessions --repo and a repo budget count them: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
-| `--reprice` |  | Recompute estimated costs from the current price table first. |
+| `--reprice` |  | Recompute estimated costs from the current price table first (waits up to 30 s while another process reprices or rebuilds stats) |
 | `--baseline` |  | With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -1398,7 +1401,7 @@ coding.sh work show <ID> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `id` | yes | Work item id (w + 6 hex characters), or a session id in the item. |
+| `id` | yes | Work item id (w + 6 hex characters), or a session in the item: its id, a prefix or its x_ alias. |
 
 | Option | Default | Description |
 |---|---|---|

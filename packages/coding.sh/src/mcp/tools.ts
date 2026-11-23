@@ -370,7 +370,7 @@ async function sessionByRef(ctx: Context, id: string): Promise<Session | undefin
   }
 }
 
-/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", a unique prefix, an SDK id or a subagent's id. */
+/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", an x_ alias, a unique prefix, an SDK id or a subagent's id. */
 async function resolveSession(ctx: Context, id: string): Promise<Session> {
   const s = await sessionByRef(ctx, id);
   if (s) return s;

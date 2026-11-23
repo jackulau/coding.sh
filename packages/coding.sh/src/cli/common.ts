@@ -316,16 +316,19 @@ async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> 
 }
 
 /**
- * Whether the index is being rebuilt after an upgrade: a re-parse holds reparse.lock, or the
+ * Whether the index is being rebuilt after an upgrade: a re-parse holds reparse.lock, the
  * sessions were last folded by an older coding.sh and the background ingest kickReparse starts
- * folds them again. A session is rewritten whole, so one not reached yet shows the stats of the
- * old fold. Two reads of the cursors table; never fails a read.
+ * folds them again, or this open left repricing stored cost estimates to that ingest
+ * (store/factory.ts). A session is rewritten whole, so one not reached yet shows the stats and
+ * cost estimates of before. A few reads of the cursors table; never fails a read.
  */
 export async function refolding(ctx: Context, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   // A remote store is not rebuilt by this machine's ingest.
   if (ctx.storeOverridden) return false;
   try {
     if (isLocked(ctx.paths.reparseLock)) return true;
+    const { repricePending } = await import("../core/reprice.ts");
+    if (await repricePending(ctx.index)) return true;
     // Nothing refolds with background ingests off, or in a store that keeps no event rows to fold from.
     if (env.CODING_SH_NO_AUTO_INGEST === "1" || !ctx.index.replaceSessionEvents) return false;
     const [{ REFOLD_CURSOR }, { foldStamp }] = await Promise.all([import("../core/ingest.ts"), import("../core/sessions.ts")]);
@@ -449,9 +452,10 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
 /**
  * The session a reference names (core/session-ref.ts findSessionRef, which the MCP tools and
  * `work show` use too): the exact id, "latest" or "last" (the newest top-level session worth
- * opening), a unique prefix of at least MIN_ID_PREFIX characters like a git short hash, an SDK id
- * without its default project, a subagent's own id, or a short subagent id (shortSessionId). An
- * ambiguous prefix fails with the candidates listed (data.candidates in --json).
+ * opening), the x_ alias shortestRef prints, a unique prefix of at least MIN_ID_PREFIX characters
+ * like a git short hash, an SDK id without its default project, a subagent's own id, or a short
+ * subagent id (shortSessionId). An ambiguous prefix fails with the candidates listed
+ * (data.candidates in --json).
  */
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
   let s: Session | undefined;
