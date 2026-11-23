@@ -225,6 +225,32 @@ describe("threads", () => {
     const events = [prompt(0), prompt(1, "Find the flaky test", sub), turnEnd(10, {}, sub), prompt(12, "and fix it", sub), turnEnd(20), prompt(80)];
     assert.deepEqual(stats(events), { count: 1, ms: MIN, byKind: { turn: { count: 1, ms: MIN } } });
   });
+
+  test("a prompt in a subagent's thread ends no wait, not even its thread's; the person's prompt on the main thread ends the main thread's", () => {
+    const events = [
+      prompt(0),
+      call(1, "Agent", "sp1"),
+      call(5, "AskUserQuestion", "q1", sub),
+      prompt(20, "and fix it", sub),
+      done(35, "AskUserQuestion", "q1", true, sub),
+      done(40, "Agent", "sp1"),
+      call(41, "AskUserQuestion", "q2"),
+      prompt(61, "skip the question, run the suite"),
+      call(90, "Bash", "b1", sub),
+      permission(91, sub),
+      prompt(100, "go on", sub),
+      prompt(110, "approve it"),
+      done(121, "Bash", "b1", true, sub),
+    ];
+    // q1 waits until its call ends at 35 (30 s), q2 until the person's prompt at 61 (20 s), and the
+    // subagent's permission prompt until its call ends at 121 (30 s): no prompt ended it.
+    assert.deepEqual(stats(events, "headless"), {
+      count: 3,
+      ms: 80_000,
+      medianMs: 30_000,
+      byKind: { permission: { count: 1, ms: 30_000 }, question: { count: 2, ms: 50_000, medianMs: 20_000 } },
+    });
+  });
 });
 
 describe("subagent sessions", () => {
@@ -347,6 +373,11 @@ describe("host app requests (T3 Code)", () => {
     // The call ends first: the joined wait ends with it, and the resolution after it ends nothing.
     const endFirst = [call(5, "Bash", "c1"), asked(10, "r1", "command"), permission(10.2), done(40, "Bash", "c1"), resolved(45, "r1")];
     assert.deepEqual(stats(endFirst, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
+  });
+
+  test("a request still open ends at the person's next prompt, not at an agent's", () => {
+    const events = [asked(10, "r1", "command"), ev(25, "user.message", { text: "Status from the other thread", from: "agent" }), prompt(40, "skip that, run the suite"), ev(70, "assistant.message", { text: "Running the suite." })];
+    assert.deepEqual(stats(events, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
   });
 });
 

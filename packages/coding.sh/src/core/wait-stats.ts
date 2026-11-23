@@ -2,8 +2,9 @@
 // core/waiting.ts says what a session waits on now; this module counts every wait from
 // its start to its end, by kind:
 // - permission: a permission prompt, from the prompt to the call's end (approved, refused) or,
-//   with no end, the next call, turn end or prompt on its thread; a host app's approval
-//   request (T3 Code) to its resolution.
+//   with no end, the next call or turn end on its thread (on the main thread, the person's
+//   prompt too); a host app's approval request (T3 Code) to its resolution or the person's
+//   prompt. A prompt in a subagent's thread ends no wait.
 // - question, plan: an open question or plan-approval call, from its start to its end.
 // - request: any other request a host app put to the person (T3 Code's secrets and links).
 // - turn: the main thread's turn ended, until the person's next prompt (a session launched

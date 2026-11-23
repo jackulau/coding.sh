@@ -844,14 +844,17 @@ What ends a wait:
 
 - A permission, question or plan wait ends when its call ends, whatever the answer, so a permission
   wait includes the time the call ran.
-- A wait on a call that never ends lasts until the next call, turn end or prompt on its thread.
-- A T3 Code approval or question waits until T3 Code marks it resolved.
+- A wait on a call that never ends lasts until the next call or turn end on its thread.
+- The person's prompt on the session's own thread (its main thread) ends every wait still open on
+  that thread, the turn wait among them.
+- A T3 Code approval or question waits until T3 Code marks it resolved, or until the person's next
+  prompt.
 - An agent's prompt ends a turn wait, which then counts in `agent`: a task notification, a delegated
   result, a message from another thread, or a prompt marked `from: "agent"`.
 - So does the agent going on by itself, with a call or reply more than 5 seconds after its turn
   ended. That wait counts up to the call or reply.
-- A subagent's prompt comes from its parent and ends no wait. A subagent's own waits count in its own
-  session.
+- A prompt in a subagent's thread comes from its parent and ends no wait, not even one on that
+  thread. A subagent's own waits count in its own session.
 
 Limits:
 

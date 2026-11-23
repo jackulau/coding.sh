@@ -998,7 +998,7 @@ describe("T3 provider instances", () => {
 describe("T3 prompts an agent made, and threads a person started", () => {
   // A v2 message says who made it: createdBy "user" for the person; createdBy "agent", a
   // creationSource (provider, mcp, server) or a field only an agent's message carries
-  // (senderThreadId, notification, delegatedCompletion) for an agent.
+  // (senderThreadId, notification, delegatedCompletion, workflowScript) for an agent.
   let env: TmpEnv;
   const saved: Record<string, string | undefined> = {};
   let events: AgentEvent[];
@@ -1037,6 +1037,16 @@ describe("T3 prompts an agent made, and threads a person started", () => {
     thread(db, "thr-unknown", { provider: "grok", title: "List files", created: T(2) });
     providerThread(db, "pt-unknown", "thr-unknown", "grok", "grok-unknown", 1);
     msg.run("mu1", "thr-unknown", "user", T(2), T(2), J({ text: "List the files" }));
+    // A thread with the other ways a message says an agent made it: a provider's own prompt, T3's server, a
+    // workflow step. A field set to null (as a store writes one it leaves empty) says nothing.
+    thread(db, "thr-sources", { provider: "grok", title: "Ship the release", created: T(10) });
+    providerThread(db, "pt-sources", "thr-sources", "grok", "grok-sources", 1);
+    const sent = (id: string, at: string, payload: Record<string, unknown>) => msg.run(id, "thr-sources", "user", at, at, J(payload));
+    sent("src1", T(10), { text: "Ship the release", createdBy: "user" });
+    sent("src2", T(11), { text: "Check the release notes", creationSource: "provider" });
+    sent("src3", T(12), { text: "The release job started", creationSource: "server" });
+    sent("src4", T(13), { text: "Tag the release", workflowScript: { name: "release" } });
+    sent("src5", T(14), { text: "Publish it", createdBy: "user", workflowScript: null, senderThreadId: null });
     db.close();
     events = await collect(backfillT3(testCtx().ctx));
   });
@@ -1060,6 +1070,20 @@ describe("T3 prompts an agent made, and threads a person started", () => {
         ["The other thread finished the review.", "agent"],
         ["Opened the pull request", "agent"],
         ["Continue with the next step", "agent"],
+      ],
+    );
+  });
+
+  it("a provider's prompt, T3's server prompt and a workflow step are an agent's; a field set to null is not", () => {
+    const prompts = events.filter((e) => e.sessionId === "grok-sources" && e.kind === "user.message").sort((a, b) => a.ts - b.ts);
+    assert.deepEqual(
+      prompts.map((e) => [e.payload.text, e.payload.from]),
+      [
+        ["Ship the release", undefined],
+        ["Check the release notes", "agent"],
+        ["The release job started", "agent"],
+        ["Tag the release", "agent"],
+        ["Publish it", undefined],
       ],
     );
   });
