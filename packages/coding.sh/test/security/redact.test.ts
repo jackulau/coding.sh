@@ -223,7 +223,7 @@ describe("text that only looks like a secret", () => {
     "MAX_TOKENS=4096",
     "password: string",
     "https://github.com/demo/repo.git",
-    "ssh://git@github.com:22/demo/repo.git",
+    "ssh://git@git.example.test:22/demo/repo.git",
     "left-pad@1.3.0 lodash@4.17.21",
     "from huggingface_hub import hf_hub_download",
     "the dapi folder",
