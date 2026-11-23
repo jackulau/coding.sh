@@ -388,6 +388,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** A repo's `.coding.sh/config.toml` can turn snapshots off or lower `snapshot.maxFiles` and `snapshot.timeoutMs`, but no longer turn snapshots on or raise their limits over your own config. A snapshot keeps files as they are, not redacted. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#snapshot))
 - **Capture.** The OTLP receiver that `coding.sh collector` and `compare --otel` start gives a client 20 seconds to send its request headers and 120 seconds for the whole request, as `coding.sh serve` does, instead of the 60 seconds and 5 minutes Node allows by default. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#which-process-serves-what))
 - **Capture.** Spans and logs an agent exports during `compare --otel` are redacted with your `capture.redact` and `capture.redactPatterns` rules, as ingest does, instead of only the built-in secret rules. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#opentelemetry-per-run))
+- **Capture.** The node hook, and ingest when it rewrites a spool side file, replace a value nested too deep to copy with `[redacted:too-deep]`, as the index does. The node hook now writes a payload with a JSON document that deep inside a string, instead of dropping it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 
 ## [0.1.7] - 2026-11-16
 

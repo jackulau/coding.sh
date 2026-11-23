@@ -863,8 +863,13 @@ export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, le
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
-    const clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
-    if (clean === JSON.stringify(doc)) return s;
+    let clean: string;
+    try {
+      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
+      if (clean === JSON.stringify(doc)) return s;
+    } catch {
+      return tooDeepMarker(tally); // a document too deep to serialize
+    }
     for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     return clean;
   });
@@ -976,8 +981,17 @@ function tooDeep(v: object, redact: (s: string) => string, tally?: RedactionTall
     const out = walk(JSON.parse(text), redact, 0, tally);
     return JSON.stringify(out) === text ? v : out;
   } catch {
-    return marker("too-deep");
+    return tooDeepMarker(tally);
   }
+}
+
+/**
+ * The marker for a value too deep to copy, counted as `too-deep`: a caller that keeps its input
+ * when the tally is empty (the spool, a side file's scrub) writes the marker instead.
+ */
+function tooDeepMarker(tally?: RedactionTally): string {
+  if (tally) tally.kinds["too-deep"] = (tally.kinds["too-deep"] ?? 0) + 1;
+  return marker("too-deep");
 }
 
 function isAlreadyRedacted(s: string): boolean {

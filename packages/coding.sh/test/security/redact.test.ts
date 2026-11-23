@@ -6,18 +6,19 @@
 // up at run time, so the source holds no key-shaped literal.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import type { Adapter } from "../../src/core/types.ts";
+import type { Adapter, SpoolLine } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
 import { createRedactor, HIGH_CONFIDENCE_KINDS, redactionTally } from "../../src/core/redact.ts";
 import { exposesSecret } from "../../src/core/redaction-stats.ts";
+import { scrubRawFile } from "../../src/core/spool-scrub.ts";
 import { mayHoldSecret } from "../../src/spool/gate.ts";
-import { redactPayload } from "../../src/spool/redact.ts";
+import { redactLine, redactPayload } from "../../src/spool/redact.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { PKG_ROOT, tsNodeArgs } from "../capture/_helpers.ts";
 
@@ -208,6 +209,40 @@ describe("JSON documents inside strings", () => {
     const out = redactPayload(r, { doc }, tally) as { doc: string };
     assert.equal(out.doc, doc.replace(value, "[redacted:url-secret]"));
     assert.deepEqual(tally.kinds, { "url-secret": 1 });
+  });
+});
+
+describe("values nested too deep to copy", () => {
+  // Far deeper than JSON.stringify can follow on any platform; JSON.parse still reads it.
+  const DEEP = 100_000;
+  const nest = (inner: string): string => `${"[".repeat(DEEP)}${inner}${"]".repeat(DEEP)}`;
+  const token = FORMATS[0]![2];
+  const line: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: 1, pid: 1, cwd: "/work/demo", raw: undefined };
+
+  it("a spool line's payload replaces such a value with a marker and counts it", () => {
+    const out = redactLine(line, `{"session":"sec-2","tool_response":${nest(JSON.stringify(token))}}`, r);
+    assert.ok(out.rawText !== undefined && !out.rawText.includes(token), "the side-file text holds the token");
+    assert.equal(out.line.redactions?.["too-deep"], 1);
+  });
+
+  it("a JSON document that deep inside a string is replaced, and the rest of the payload is still redacted", () => {
+    const password = pw();
+    const out = redactLine(line, JSON.stringify({ session: "sec-3", tool_response: nest("1"), note: `password=${password}` }), r);
+    assert.ok(out.rawText !== undefined && !out.rawText.includes(password));
+    assert.equal(JSON.parse(out.rawText).tool_response, "[redacted:too-deep]");
+    assert.equal(out.line.redactions?.["too-deep"], 1);
+  });
+
+  it("a spool side file with such a value is rewritten without it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-sec-deep-"));
+    try {
+      const file = join(dir, "side.json");
+      writeFileSync(file, `{"tool_response":${nest(JSON.stringify(token))}}`);
+      assert.equal(await scrubRawFile(file, r), true);
+      assert.ok(!readFileSync(file, "utf8").includes(token));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
