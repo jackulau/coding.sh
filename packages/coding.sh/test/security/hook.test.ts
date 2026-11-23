@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { after, describe, it } from "node:test";
+import { safeAgentId } from "../../src/spool/write.ts";
 import { PKG_ROOT, tsNodeArgs } from "../capture/_helpers.ts";
 
 const HOOK = join(PKG_ROOT, "src", "spool", "hook.ts");
@@ -52,6 +53,15 @@ describe("the hook", () => {
       assert.equal(written.length, 1, agent);
       assert.equal(DAY_FILE.exec(written[0]!)?.[1], "unknown", agent);
     }
+  });
+
+  it("writes an agent name Windows keeps for a device, or one that ends in a dot, under spool/unknown", () => {
+    for (const agent of ["con", "PRN", "aux", "nul", "com0", "com1", "lpt9", "con.txt", "nul.jsonl", "a.", "claude-code."]) assert.equal(safeAgentId(agent), "unknown", agent);
+    for (const agent of ["console", "nullable", "com", "com10", "lpt", "auxiliary", "a.b", "claude-code"]) assert.equal(safeAgentId(agent), agent, agent);
+    const { root, home } = fresh();
+    assert.deepEqual(hook(home, ["CON", "Stop"], PAYLOAD), [0, "", ""]);
+    assert.deepEqual(readdirSync(root), ["home"]);
+    assert.deepEqual(files(home).map((f) => DAY_FILE.exec(f)?.[1]), ["unknown"]);
   });
 
   it("keeps an event name of any length as data", () => {
