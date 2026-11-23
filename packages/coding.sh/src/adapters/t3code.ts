@@ -627,6 +627,21 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
 
 const hasTable = (db: DatabaseSync, name: string): boolean => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
 
+/**
+ * What a v2 thread's change check reads besides its row: each query gives a thread's row count `n` and, for rows
+ * that change in place, their newest time `t`.
+ */
+export const V2_ACTIVITY = {
+  // Counts only, which an index on thread_id answers. T3 Code sets a thread's updated_at with each message or turn
+  // item it writes, so an edit in place changes the thread row. A row's own updated_at sits beside its payload:
+  // reading it read the whole turn items table on every pass.
+  messages: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_messages GROUP BY thread_id",
+  turnItems: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_turn_items GROUP BY thread_id",
+  providerTurns: "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id",
+  // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
+  runtimeRequests: "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id",
+};
+
 /** Per-thread activity summary (row counts and latest timestamp) for change detection. */
 function activity(db: DatabaseSync, sql: string): Map<string, { n: number; t: number }> {
   const out = new Map<string, { n: number; t: number }>();
@@ -1040,13 +1055,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
           runPt.db = db;
         }
       });
-      acts.push(
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_messages GROUP BY thread_id"),
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_turn_items GROUP BY thread_id"),
-        activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id"),
-        // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
-        activity(v2.db, "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id"),
-      );
+      acts.push(...Object.values(V2_ACTIVITY).map((sql) => activity(v2.db, sql)));
     }
     if (v1) {
       const db = v1.db;
