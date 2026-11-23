@@ -46,7 +46,8 @@ before(async () => {
     sess("review", 30 * MIN, { title: "fix the flaky test", stats: { filesChanged: 1 } }),
     sess("run", 50 * MIN, { title: "run the migration", endedAt: now - 40 * MIN, stats: { testsFailed: 2 } }),
     sess("run:sub:a1", 49 * MIN, { title: "check the schema", parent: { sessionId: "run", subagentId: "a1", type: "Explore" } }),
-    sess(A, 20 * MIN, { title: "first of a pair" }),
+    // `work show` reads the real clock, which runs on past `now`: ended 19m30s before `now`, the item's reason reads the same minute on both clocks for 30 s.
+    sess(A, 20 * MIN, { title: "first of a pair", endedAt: now - 19 * MIN - 30e3 }),
     sess(B, 10 * MIN, { title: "second of a pair" }),
   ]);
   mcp = createCodingShMcp({ env: sb.env as Record<string, string>, cwd: sb.root, log: () => {}, now: () => now });
