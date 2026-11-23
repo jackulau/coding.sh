@@ -8,6 +8,7 @@
 // written when CODING_SH_NO_STAR_PROMPT=1, NO_UPDATE_NOTIFIER is set, or CI is set.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { AGENT_ENV } from "../cli/output.ts";
 import { paths } from "../core/paths.ts";
 import { isCI } from "./index.ts";
 
@@ -107,13 +108,16 @@ export interface StarOutput {
 
 /**
  * Call once after a command succeeded. Prints one dim stderr line (TTY only, not --json, not
- * mcp or update, not in the run that printed the update notice) when eligible, then records
- * `cliShownAt` so it never prints again. Never throws. Returns true when it printed.
+ * when an agent runs the command, not mcp or update, not in the run that printed the update
+ * notice) when eligible, then records `cliShownAt` so it never prints again. Never throws.
+ * Returns true when it printed.
  */
 export function starNotice(env: NodeJS.ProcessEnv, out: StarOutput, opts: StarOptions = {}): boolean {
   try {
     const stderr = opts.stderr ?? process.stderr;
-    if (out.json || stderr.isTTY !== true || opts.command === "mcp" || opts.command === "statusline" || opts.command === "update") return false;
+    // An agent at a terminal (Codex runs some commands in one) would use up the line meant for the person.
+    const agent = AGENT_ENV.some((k) => !!env[k]);
+    if (out.json || agent || stderr.isTTY !== true || opts.command === "mcp" || opts.command === "statusline" || opts.command === "update") return false;
     const now = (opts.now ?? Date.now)();
     const state = checked(env, now);
     if (!state || opts.skip || state.cliShownAt !== undefined || !eligible(state, now)) return false;
