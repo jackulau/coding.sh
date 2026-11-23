@@ -2036,7 +2036,7 @@ Item fields for workflow runs and replaced failures:
 
 ### `GET /api/work/{id}`
 
-The viewer's item page (`#/w/<id>`): one item, as `coding.sh work show <id> --json` prints it, built by the same code, plus the list's `now` and `index` and, for a superseded failure, `sessionOf`. Only `coding.sh ui` answers.
+The viewer's item page (`#/w/<id>`): one item, as `coding.sh work show <id> --json` prints it, built by the same code, plus the list's `now` and `index` and, for a superseded failure, `sessionOf`. It leaves out the CLI's `indexUpdatedAt`, `asOf` and `pending`: `index` gives the index's age. Only `coding.sh ui` answers.
 
 It takes `since`, `agent` and `repo` as `GET /api/work` does. An id that is not an item id answers 400; an item not in the window, or not matching the filters, answers 404.
 
