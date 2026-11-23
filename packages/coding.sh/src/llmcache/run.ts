@@ -81,9 +81,12 @@ export function recordedTaskSpec(task: unknown): Record<string, unknown> | undef
   return out;
 }
 
-/** `metadata.llm` of an experiment that ran with the cache (a recording also keeps its task spec). */
+/**
+ * `metadata.llm` of an experiment that ran with the cache, with its task spec: a replay records
+ * too, so it can be the source of the next replay, and that replay's control arm is this task.
+ */
 export function llmMetadata(o: LlmRunOpts, task?: unknown): Record<string, unknown> {
-  const spec = o.mode === "record" ? recordedTaskSpec(task) : undefined;
+  const spec = recordedTaskSpec(task);
   return { mode: o.mode, ...(o.source ? { source: o.source } : {}), ...(o.until !== undefined ? { until: o.until } : {}), ...(spec ? { task: spec } : {}), ...(o.meta ?? {}) };
 }
 

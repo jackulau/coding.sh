@@ -998,7 +998,8 @@ describe("cli judge sample → judge calibrate --plan", () => {
     assert.deepEqual((parseJson(cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--json"]).stdout, "again") as { plan: Plan }).plan, plan, "seeded");
     const text = cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--out", "plan.json"]);
     assert.match(text.stdout, /audit plan correct {2}split test {2}4 of 12 cases \(seed 3\); 0 of 4 already labelled/);
-    assert.match(text.stdout, /Then: coding\.sh judge calibrate .* --grader correct --plan plan\.json/);
+    // Named for the user's shell (codingsh in PowerShell), and a test-split plan needs no --split.
+    assert.match(text.stdout, new RegExp(`^Then: ${esc(BIN)} judge calibrate \\S+ --grader correct --plan plan\\.json$`, "m"));
 
     // Three of four picks labelled: 2 pass, 1 fail.
     const labels = plan.picks.slice(0, 3).map((p, i) => JSON.stringify({ caseId: p.caseId, value: i < 2 ? "pass" : "fail" }));
@@ -1093,6 +1094,9 @@ describe("cli judge calibrate --grader <verifier>", () => {
     assert.deepEqual((parseJson(cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3", "--json"]).stdout, "again") as { queue: unknown }).queue, queue, "seeded");
     const plain = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3"]);
     assert.match(plain.stdout, /Label 3 passing case\(s\) of exact \(seed 0\)/);
+    assert.match(plain.stdout, new RegExp(`^  ${esc(BIN)} judge calibrate \\S+ --grader exact --labels labels\\.jsonl$`, "m"));
+    const named = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3", "--criterion", "right answer"]);
+    assert.match(named.stdout, new RegExp(`^  ${esc(BIN)} judge calibrate \\S+ --grader exact --criterion ${esc(process.platform === "win32" ? '"right answer"' : "'right answer'")} --labels labels\\.jsonl$`, "m"));
 
     const labels = queue.map((x, i) => JSON.stringify({ caseId: x.caseId, value: i < 2 ? "pass" : "fail" })).join("\n");
     writeFileSync(join(h.home, "labels.jsonl"), labels + "\n");

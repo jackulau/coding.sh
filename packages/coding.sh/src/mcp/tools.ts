@@ -13,7 +13,6 @@ import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
 import { nextStepBin } from "../cli/next-steps.ts";
-import { isNewer } from "../update/semver.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
   clip,
@@ -22,7 +21,6 @@ import {
   currentByCwd,
   failures,
   iso,
-  lastActivity,
   latency,
   pageSessions,
   parsePlace,
@@ -47,9 +45,10 @@ import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
-import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
+import { maskStoreUrl } from "../core/store-url.ts";
+import { indexField, lastCaptures, storeIndexAge, updateInfo } from "../cli/status-info.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -68,6 +67,7 @@ export interface ToolCtx {
 // Shared argument descriptions, kept short: every tool definition is sent on every
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
 const AGENT = { type: "string", description: "Only this agent." };
+const HEADLESS = { type: "boolean", description: "Also headless runs (claude -p, codex exec)." };
 const REPO = { type: "string", description: "Only sessions under this path or repo name." };
 const SINCE = (d: string) => ({ type: "string", description: `Start: 30m, 12h, 7d, today or a date. Default ${d}.` });
 const UNTIL = { type: "string", description: "End. Default now." };
@@ -352,11 +352,10 @@ function shortIds(ctx: Context): Promise<(id: string) => string> {
   return get;
 }
 
-/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", an x_ alias, a unique prefix, an SDK id or a subagent's id. */
-async function resolveSession(ctx: Context, id: string): Promise<Session> {
-  let s: Session | undefined;
+/** The session `id` names, or undefined for none. A prefix several sessions share is a tool error that lists them. */
+async function sessionByRef(ctx: Context, id: string): Promise<Session | undefined> {
   try {
-    s = await findSessionRef(ctx.index, id);
+    return await findSessionRef(ctx.index, id);
   } catch (e) {
     if (!(e instanceof AmbiguousRef)) throw e;
     const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
@@ -369,6 +368,11 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
     if (e.more) data.more = true;
     throw new ToolError(`Session id prefix ${JSON.stringify(id)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
   }
+}
+
+/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", an x_ alias, a unique prefix, an SDK id or a subagent's id. */
+async function resolveSession(ctx: Context, id: string): Promise<Session> {
+  const s = await sessionByRef(ctx, id);
   if (s) return s;
   if (id === "latest" || id === "last") throw new ToolError(noSessionsHint(ctx.env));
   const short = id.length < MIN_ID_PREFIX ? ` A prefix needs at least ${MIN_ID_PREFIX} characters.` : "";
@@ -466,30 +470,33 @@ async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay
   }
 }
 
-function readUpdateCache(file: string): Obj | undefined {
-  try {
-    const v = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    return v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** The status tool lists this many work items at most; `coding.sh work --json` lists the rest. */
 export const STATUS_WORK_ROWS = 5;
 
 /**
- * The index's age (core/ingest-health.ts). A store named by CODING_SH_STORE_URL is filled
- * elsewhere, so this home's record says nothing about it: undefined then, as `coding.sh work` does.
+ * work's `id`: the item it names, found as `work show` finds it (cli/commands/work.ts matchItem: an
+ * item id, a unique prefix of one, or a session in the item), hidden or not. None, or a prefix several
+ * items share, is a tool error; the latter lists them newest first, as work show does.
  */
-function storeIndexAge(ctx: Context, now: number): IndexAge | undefined {
-  return ctx.storeOverridden ? undefined : indexAge(ctx.paths.root, now);
-}
-
-/** `index: { updatedAt, ageMs, stale? }` for a tool answer, absent without a record. */
-function indexField(age: IndexAge | undefined): { index?: Obj } {
-  const f = indexAgeField(age);
-  return f.index && age ? { index: { ...f.index, ageMs: age.ageMs } } : {};
+async function workItemById(ctx: Context, id: string, since: number, sinceText: string, now: number) {
+  const { matchItem } = await import("../cli/commands/work.ts");
+  const found = await matchItem(ctx, id, since, readOverlay(ctx.paths.work), now, (r) => sessionByRef(ctx, r));
+  if (found && "ambiguous" in found) {
+    const list = found.ambiguous.map((i) => `${i.id} (${i.agent}, ${iso(i.startedAt)}${i.title ? `, ${JSON.stringify(clip(i.title, 60))}` : ""})`);
+    const candidates = found.ambiguous.map((i) => {
+      const c: Record<string, unknown> = { id: i.id, agent: i.agent, startedAt: iso(i.startedAt) };
+      if (i.title) c.title = clip(i.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { reason: "ambiguous", candidates };
+    if (found.more) data.more = true;
+    throw new ToolError(`Work item id prefix ${JSON.stringify(id)} matches more than one item: ${list.join("; ")}${found.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
+  }
+  if (!found) {
+    const short = id.length < MIN_ID_PREFIX && id !== "latest" && id !== "last" ? ` A prefix needs at least ${MIN_ID_PREFIX} characters.` : "";
+    throw new ToolError(`No work item ${JSON.stringify(id)} since ${sinceText}.${short} List the items with all: true, or pass an earlier since.`, { reason: "not_found" });
+  }
+  return found;
 }
 
 /**
@@ -505,6 +512,15 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const asked = numArg(a, "limit", 20);
   const age = storeIndexAge(ctx, now);
   const stale = age?.stale ? age : undefined;
+  const id = strArg(a, "id");
+  if (id) {
+    // One item, shaped as an item of a page; limit and cursor do not apply.
+    const { item, sessions } = await workItemById(ctx, id, since, strArg(a, "since") ?? "7d", stale?.at ?? now);
+    await settleWorkFiles(ctx.index, [item], sessions, stale?.at ?? now);
+    const one: Obj = { since: iso(since), items: [workItemJson(item)] };
+    if (stale) one.asOf = iso(stale.at);
+    return () => ({ ...one, ...indexField(age) });
+  }
   const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work), shortId: await shortIds(ctx) });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
   await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
@@ -515,27 +531,6 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     if (offset + limit < queue.items.length) page.nextCursor = String(offset + limit);
     if (stale) page.asOf = iso(stale.at);
     return { ...page, ...indexField(age) };
-  };
-}
-
-/**
- * Update availability from the cache the update checker keeps (no network here).
- * `command` names the CLI the way the user's shell runs it (nextStepBin of `env`,
- * the environment the agent started this server with).
- */
-export function updateInfo(home: string, current = version(), env: NodeJS.ProcessEnv = process.env): Obj {
-  const c = readUpdateCache(join(home, "update.json"));
-  const latest = typeof c?.latest === "string" ? c.latest : undefined;
-  const available = isNewer(latest, current);
-  const install = typeof c?.install === "string" ? c.install : undefined;
-  return {
-    current,
-    latest,
-    available,
-    checkedAt: typeof c?.checkedAt === "number" ? iso(c.checkedAt) : undefined,
-    url: available && typeof c?.url === "string" ? c.url : undefined,
-    install: available && install ? `npm install -g ${install}` : undefined,
-    command: available ? `${nextStepBin(env)} update` : undefined,
   };
 }
 
@@ -832,7 +827,7 @@ function toolDefs(): PagedTool[] {
         repo: { type: "string", description: 'Repo path or folder name; "all" for every repo. Default: the server\'s repo.' },
         since: SINCE("14d"),
         agent: AGENT,
-        headless: { type: "boolean", description: "Also headless runs (claude -p, codex exec)." },
+        headless: HEADLESS,
         limit: LIMIT(5, 20),
       }),
       outputSchema: out({ scope: out({ sessions: I }), issues: arr(out({ rank: I, id: S, title: S, line: S, next: arr(S) }, ["rank", "id", "title", "next"])), changes: arr(out({ commit: S, verdict: S }, ["commit", "verdict"])) }, ["scope", "issues", "changes"]),
@@ -848,12 +843,13 @@ function toolDefs(): PagedTool[] {
       name: "harness_changes",
       title: "Did an AGENTS.md change help?",
       description:
-        "Did a committed AGENTS.md, CLAUDE.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
+        "Did a committed AGENTS.md, CLAUDE.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls.",
       inputSchema: input({
         repo: { type: "string", description: "Repo path or folder name. Default: the server's repo." },
         commit: { type: "string", description: "Only this change: a commit sha or prefix." },
         since: SINCE("30d"),
         agent: AGENT,
+        headless: HEADLESS,
         limit: LIMIT(5, 20),
       }),
       outputSchema: out({ repo: S, changes: arr(out({ commit: S, verdict: S, reason: S, before: out({ sessions: I, flagged: I }), after: out({ sessions: I, flagged: I, flaggedSessions: arr(out({ sessionId: S, flags: arr(S) }, ["sessionId", "flags"])), moreFlagged: I }) }, ["commit", "verdict", "reason"])) }, ["repo", "changes"]),
@@ -862,7 +858,7 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const { harnessChangesReport } = await import("./improve.ts");
         const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
-        return harnessChangesReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), commit: strArg(a, "commit"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+        return harnessChangesReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), commit: strArg(a, "commit"), ...(limit ? { limit } : {}), headless: a.headless === true }, { cwd: c.cwd, env: c.env, now: c.now() });
       },
     },
     {
@@ -1214,19 +1210,22 @@ function toolDefs(): PagedTool[] {
       name: "eval_candidates",
       title: "Rank sessions as eval tasks",
       description:
-        "Rank this repo's recent sessions by how good a repo-replay eval task each would make: failure flags, pushback and a guessable verifier score up; subagents, eval runs and sessions with no git start, prompt or edits are rejected.",
+        "Rank this repo's recent sessions as repo-replay eval tasks: failure flags, pushback and a guessable verifier score up; subagents, eval runs and sessions with no git start, prompt or edits are rejected.",
       inputSchema: input({
-        since: { type: "string", description: "How far back: 30m, 12h, 7d, 2w. Default 14d." },
+        since: { type: "string", description: "30m, 12h, 7d or 2w back. Default 14d." },
         limit: LIMIT(10, 50),
-        repo: { type: "string", description: "Sessions under this directory, or all. Default: this git repo." },
+        repo: { type: "string", description: "Under this directory, or all. Default: this git repo." },
         flagged: { type: "boolean", description: "Only failed or flagged sessions (what eval_init drafts from)." },
-        includeRejected: { type: "boolean", description: "Also return rejected sessions with the reason." },
+        includeRejected: { type: "boolean", description: "Also list rejected sessions." },
       }),
+      // rejected and rejectedBy (a count per reject reason) cover every considered session, not just the page.
       outputSchema: out(
         {
           candidates: arr(out({ sessionId: S, eligible: B, reject: S, score: N, reasons: arr(S), verifierGuess: S }, ["sessionId", "eligible", "score"])),
           considered: N,
           eligible: N,
+          rejected: N,
+          rejectedBy: { type: "object" },
           next: S,
         },
         ["candidates", "considered", "eligible"],
@@ -1234,7 +1233,7 @@ function toolDefs(): PagedTool[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const { rankSessions } = await import("../eval/candidates.ts");
+        const { rankSessions, CANDIDATE_REJECTS } = await import("../eval/candidates.ts");
         const { recentSessions, DEFAULT_SINCE_MS } = await import("../eval/init.ts");
         const { repoRoot } = await import("../core/git.ts");
         const { resolve } = await import("node:path");
@@ -1255,10 +1254,19 @@ function toolDefs(): PagedTool[] {
         const eligible = ranked.filter((x) => x.eligible);
         const limit = numArg(a, "limit", 10);
         const shown = [...eligible.slice(0, limit), ...(a.includeRejected === true ? ranked.filter((x) => !x.eligible).slice(0, limit) : [])];
+        // In the order eval candidates names the reasons; a reason no session has is left out.
+        const rejectedBy: Record<string, number> = {};
+        for (const r of CANDIDATE_REJECTS) {
+          const n = ranked.filter((x) => x.reject === r).length;
+          if (n) rejectedBy[r] = n;
+        }
         return {
           candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: new Date(x.startedAt).toISOString() })),
           considered: ranked.length,
           eligible: eligible.length,
+          // As eval candidates --json names it.
+          rejected: ranked.length - eligible.length,
+          rejectedBy,
           ...(eligible.length ? { next: "eval_init with source: sessions and these sessionIds builds a suite from them (ask the user first)" } : {}),
         };
       },
@@ -1623,10 +1631,11 @@ function toolDefs(): PagedTool[] {
     {
       name: "work",
       title: "What needs you",
-      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs and supersededBy. Paged.",
+      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs, supersededBy. Paged; id reads one.",
       inputSchema: input({
         since: SINCE("7d"),
         all: { type: "boolean", default: false, description: "Also running, done and snoozed items." },
+        id: { type: "string", description: "Work id, prefix or session id." },
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
@@ -1642,7 +1651,7 @@ function toolDefs(): PagedTool[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version and update, data dir, 24h sessions and last capture per agent, pending spool, last error, index age, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs you (7d): counts, top 5 items; the work tool has the rest.",
+        "Health of coding.sh: version, update, data dir, 24h sessions, last capture per agent, spool, last error, index age, plan usage. Use when data looks missing or stale. work: counts and top 5 items needing you (7d); the work tool has the rest.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1652,8 +1661,8 @@ function toolDefs(): PagedTool[] {
           last24h: out({ sessions: I, agents: arr(S) }),
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
           latest: SESSION_OUT,
-          lastError: out({ error: S }),
-          // { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
+          // lastError: { at, error, bytes }; index: { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
+          lastError: { type: "object" },
           index: { type: "object" },
           work: { type: "object" },
           hints: arr(S),
@@ -1667,12 +1676,6 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const now = c.now();
         const day = await collectSessions(ctx.index, { topLevel: false, since: now - 86400e3 }, 10_000);
-        const week = await collectSessions(ctx.index, { topLevel: false, since: now - 7 * 86400e3 }, 10_000);
-        const lastByAgent = new Map<string, Session>();
-        for (const s of week.sessions) {
-          const prev = lastByAgent.get(s.agent);
-          if (!prev || lastActivity(s) > lastActivity(prev)) lastByAgent.set(s.agent, s);
-        }
         const [latest] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
         const update = updateInfo(ctx.paths.root, version(), ctx.env);
         const bin = nextStepBin(ctx.env);
@@ -1680,7 +1683,8 @@ function toolDefs(): PagedTool[] {
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         // The work queue `coding.sh work` shows (core/work.ts), over its default window, with acks and snoozes applied.
         const short = await shortIds(ctx);
-        const { queue, truncated } = await readWorkQueue(ctx.index, { since: now - WORK_WINDOW_MS, now, overlay: readOverlay(ctx.paths.work), shortId: short });
+        const since = now - WORK_WINDOW_MS;
+        const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, now, overlay: readOverlay(ctx.paths.work), shortId: short });
         const hints: string[] = [];
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? update.command}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
@@ -1691,9 +1695,11 @@ function toolDefs(): PagedTool[] {
           version: version(),
           update,
           home: ctx.paths.root,
-          store: ctx.config.store.index,
+          // Masked as `coding.sh status` prints it: the answer goes into the agent's context and on to its model provider.
+          store: maskStoreUrl(ctx.config.store.index),
           last24h: { sessions: day.sessions.length, agents: [...new Set(day.sessions.map((s) => s.agent))].sort() },
-          lastCapture: [...lastByAgent].sort((x, y) => x[0].localeCompare(y[0])).map(([agent, s]) => ({ agent, at: iso(lastActivity(s)), sessionId: s.id, shortId: short(s.id) })),
+          // Folded over the sessions the work queue read (cli/status-info.ts), as `coding.sh status` folds them.
+          lastCapture: lastCaptures(sessions, since, short),
           latest: latest ? sessionSummary(latest, now) : undefined,
           spool,
           lastError,

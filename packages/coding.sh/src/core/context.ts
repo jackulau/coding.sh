@@ -95,7 +95,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     if (missing) throw new StoreMissingError(missing);
   }
   const config = opts.config ?? loadConfig({ env, cwd: opts.cwd });
-  const { index, blobs, sinks } = await openStores(config);
+  const { index, blobs, sinks } = await openStores(config, { env });
   let closed = false;
   const p = paths(env);
   const ctx: Context = {

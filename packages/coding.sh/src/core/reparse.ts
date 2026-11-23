@@ -68,13 +68,23 @@
 // short lock holds. Its progress is kept (REFOLD_AFTER), so a cut-short pass
 // resumes; the stamp it finished is kept under REFOLD_CURSOR, so a store last
 // folded by another build is folded again once.
+//
+// Repricing: when the price table changed since stored costs were estimated
+// (core/reprice.ts), a run reprices them, so opening the index does not wait
+// for it (store/factory.ts). A session the run folds (a target, a session a
+// host links, or a refolded session) has its events repriced right before that fold, in the
+// same lock hold, so it is folded once; the other sessions get the pass, which
+// refreshes the totals of those that changed, at the end of the run. The cursor
+// is set only when every session was repriced, so a cut-short run does it again.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentEvent } from "../schema/index.ts";
+import type { AgentEvent, Session } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore } from "./types.ts";
 import { sha256Hex } from "./ids.ts";
 import { acquireLock, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
 import { paths } from "./paths.ts";
+import { pricesFor } from "./pricing.ts";
+import { priceStamp, refreshTotals, REPRICE_CURSOR, repriceEvents, repricePending, repriceStored } from "./reprice.ts";
 import { foldStamp, isBackfillEvent } from "./sessions.ts";
 import { COPY_SLACK_MS, copyFilter, messageKey } from "./message-copies.ts";
 import { listSpoolFiles, readSpoolFile } from "./spool-read.ts";
@@ -157,10 +167,13 @@ export function parseStamp(adapters: ReadonlyMap<string, Adapter>): number {
 }
 
 export interface ReparseProgress {
-  phase: "spool" | "transcripts" | "sessions" | "refold";
+  phase: "spool" | "transcripts" | "sessions" | "refold" | "reprice";
   /** Agent whose transcripts are being read (phase "transcripts"). */
   agent?: string;
-  /** Sessions done so far, of `total` (phase "refold": sessions refolded, of those to refold). */
+  /**
+   * Sessions done so far, of `total` (phase "refold": sessions refolded, of those to refold;
+   * phase "reprice": sessions the repricing pass at the end looked at, of those the run did not reprice before).
+   */
   done: number;
   total: number;
 }
@@ -236,13 +249,15 @@ async function hostsBehind(index: IndexStore, adapters: ReadonlyMap<string, Adap
 
 /**
  * True when stale sessions wait for an automatic re-parse, stored sessions for
- * a refold, or a host's changed parse for a pass over its links. A few cursor
- * reads while the adapter versions match the last run's stamp and the fold
- * version its refold; otherwise a scan of the session rows, and the stamp is
- * set right away when none is stale.
+ * a refold, a host's changed parse for a pass over its links, or stored costs
+ * for the repricing an open of this index left to the run (store/factory.ts).
+ * A few cursor reads while the adapter versions match the last run's stamp and
+ * the fold version its refold; otherwise a scan of the session rows, and the
+ * stamp is set right away when none is stale.
  */
 export async function reparseDue(index: IndexStore, adapters: ReadonlyMap<string, Adapter>): Promise<boolean> {
   if (!index.replaceSessionEvents) return false;
+  if (await repricePending(index)) return true;
   if ((await index.getCursor(REFOLD_CURSOR)) !== foldStamp()) {
     if ((await index.listSessions({ limit: 1 })).length) return true;
     await index.setCursor(REFOLD_CURSOR, foldStamp());
@@ -404,6 +419,26 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     const failed = new Set<string>();
     const progress = (p: Omit<ReparseProgress, "done" | "total">) => opts.onProgress?.({ ...p, done: done.size + failed.size, total: targets.length });
 
+    // Repricing (see the top of this file): due while the cursor holds another price table's stamp.
+    const prices = pricesFor(config.pricing);
+    const repricing = !!index.setEventCosts && (await index.getCursor(REPRICE_CURSOR)) !== priceStamp(prices);
+    const targetRows = new Map(repricing ? targets.map((s) => [s.id, s]) : []);
+    /** Sessions this run repriced, each right before its fold. */
+    const repriced = new Set<string>();
+    /** Of those, the ones whose costs changed and whose fold was not written yet. */
+    const owed = new Set<string>();
+    let repriceFailed = false;
+    const reprice = async (s: Session | undefined): Promise<void> => {
+      if (!repricing || !s || repriced.has(s.id)) return;
+      repriced.add(s.id);
+      try {
+        if (await repriceEvents(index, s, prices)) owed.add(s.id);
+      } catch (err) {
+        repriceFailed = true;
+        error({ message: `repricing the cost estimates of session ${s.id} failed: ${(err as Error).message}` });
+      }
+    };
+
     // Which sources to read: the adapters that made each target's backfill and hook rows.
     const agents = new Map(targets.map((s) => [s.id, s.agent]));
     const transcriptAdapters = new Set<string>();
@@ -485,13 +520,15 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       if (!fresh.length) return 0;
       const r = await index.replaceSessionEvents!(id, [], await toolDurationFiller(viewOf([...stored, ...fresh]))(fresh));
       result.inserted += r.inserted;
-      await recomputeSession(index, id, { linker, repo, onFoldError });
+      if (await recomputeSession(index, id, { linker, repo, onFoldError })) owed.delete(id);
       return r.inserted;
     };
 
     /** Rebuilds one session: transcript events read for it (undefined = none found) and its re-normalized spool events. */
     const rebuild = async (id: string, transcript: AgentEvent[] | undefined): Promise<void> => {
       const agent = agents.get(id);
+      // Repriced before its rows are read, so a fold below counts the new costs.
+      if (repricing && !repriced.has(id)) await reprice(agent !== undefined ? targetRows.get(id) : await index.getSession(id));
       const stored = await index.listEvents(id);
       // Not a target: a session a host links, given the host's rows it lacks.
       if (agent === undefined) {
@@ -510,6 +547,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       if (owner && index.deleteSessions && stored.length && stored.every(isBackfillEvent) && (await index.getSession(owner))) {
         result.removed += (await index.deleteSessions([id])).events;
         result.copiesRemoved++;
+        owed.delete(id);
         await index.kvSet?.(reparseKeptKey(id), undefined);
         await index.kvSet?.(childLinkKey(id), undefined);
         return;
@@ -551,7 +589,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         result.removed += r.removed;
         result.inserted += r.inserted;
       }
-      await recomputeSession(index, id, reparsed ? { linker, repo, parseVersion: version, onFoldError } : { linker, repo, onFoldError });
+      if (await recomputeSession(index, id, reparsed ? { linker, repo, parseVersion: version, onFoldError } : { linker, repo, onFoldError })) owed.delete(id);
       if (reparsed) {
         result.reparsed++;
         await index.kvSet?.(reparseKeptKey(id), undefined);
@@ -669,22 +707,54 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       } catch {
         // unreadable progress: start over
       }
-      const ids = (await index.listSessions({}))
-        .map((s) => s.id)
-        .filter((id) => id > after && !done.has(id) && !failed.has(id))
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const rows = (await index.listSessions({}))
+        .filter((s) => s.id > after && !done.has(s.id) && !failed.has(s.id))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       let n = 0;
-      opts.onProgress?.({ phase: "refold", done: 0, total: ids.length });
-      await underLock(ids, async (id) => {
+      opts.onProgress?.({ phase: "refold", done: 0, total: rows.length });
+      await underLock(rows, async (s) => {
+        const id = s.id;
         try {
-          if (await recomputeSession(index, id, { linker, repo, onFoldError })) result.refolded++;
+          await reprice(s);
+          if (await recomputeSession(index, id, { linker, repo, onFoldError })) {
+            result.refolded++;
+            owed.delete(id);
+          }
         } catch (err) {
           error({ message: `refold of session ${id} failed: ${(err as Error).message}` });
         }
         n++;
         if (n % REFOLD_SAVE_EVERY === 0) await index.kvSet?.(REFOLD_AFTER, JSON.stringify({ v: foldStamp(), id }));
-        opts.onProgress?.({ phase: "refold", done: n, total: ids.length });
+        opts.onProgress?.({ phase: "refold", done: n, total: rows.length });
       });
+    }
+
+    /**
+     * The end of a repricing: a session whose costs changed and whose fold was not written (it
+     * failed) gets its totals refreshed alone; then the pass runs over the sessions this run did
+     * not reprice, refreshing the totals of those whose costs changed, and sets the cursor. Not
+     * after a session's repricing failed: the cursor stays, so a later run does it again.
+     */
+    async function repriceRest(): Promise<void> {
+      await underLock([...owed], async (id) => {
+        try {
+          await refreshTotals(index, id);
+        } catch (err) {
+          error({ message: `the cost totals of session ${id} were not refreshed: ${(err as Error).message}` });
+        }
+      });
+      owed.clear();
+      if (repriceFailed) return;
+      try {
+        await repriceStored(index, config.pricing, {
+          each: underLock,
+          skip: (id) => repriced.has(id),
+          lock: false,
+          onProgress: (n, total) => opts.onProgress?.({ phase: "reprice", done: n, total }),
+        });
+      } catch (err) {
+        error({ message: `repricing stored cost estimates failed: ${(err as Error).message}` });
+      }
     }
 
     // Everything not rebuilt from a transcript: spool only, or nothing left to read.
@@ -703,6 +773,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     // A host pass that read the whole store links nothing more until the host's parse changes; one cut short runs again.
     const relinkFailed = [...failed].some((sid) => !agents.has(sid));
     for (const h of relinkHosts) if (!wanted && !hostFailed.has(h) && !relinkFailed) await index.setCursor(relinkCursor(h), adapters.get(h)!.parseVersion ?? 1);
+    if (repricing) await repriceRest();
     await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, copiesRemoved: result.copiesRemoved, relinked: result.relinked, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
   }
 }

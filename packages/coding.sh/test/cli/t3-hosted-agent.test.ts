@@ -137,7 +137,7 @@ describe("viewer on a mixed store", () => {
     assert.deepEqual(await pick("t3code"), [HOSTED_CLAUDE, HOSTED_CODEX].sort());
   });
 
-  test("the cell's tooltip and the session header say via T3 Code", () => {
+  test("the list cell, its tooltip and the session header say via T3 Code", () => {
     const html = readFileSync(new URL("../../src/viewer/ui/index.html", import.meta.url), "utf8");
     const a = html.indexOf("function viaHost(");
     const b = html.indexOf("\n}\n", a);
@@ -146,6 +146,8 @@ describe("viewer on a mixed store", () => {
     assert.equal(viaHost({ agent: "claude-code", host: "t3code" }), " via T3 Code");
     assert.equal(viaHost({ agent: "claude-code" }), "");
     assert.match(html, /title: \[s\.agent \+ viaHost\(s\), s\.model\]/, "the list cell's tooltip");
+    // The row itself says why `--agent t3code` matched: "claude-code via T3 Code", the host muted after the name.
+    assert.match(html, /s\.host \? h\("span", \{ class: "host" \}, viaHost\(s\)\) : null/, "the list cell's line");
     assert.match(html, /fact\("agent", s\.agent \+ \(s\.agentVersion \? " " \+ s\.agentVersion : ""\) \+ viaHost\(s\)\)/, "the header's agent fact");
   });
 });

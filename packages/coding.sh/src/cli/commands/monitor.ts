@@ -14,7 +14,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseSince, UsageError } from "../args.ts";
 import { num, str, withContext } from "../common.ts";
-import { ago, CliError, plural } from "../output.ts";
+import { ago, CliError, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { SIGNING_NOTES } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
@@ -151,7 +151,7 @@ async function list(c: CommandContext): Promise<number> {
       describe(m),
       m.where ?? "",
       m.sample !== undefined ? String(m.sample) : "all",
-      String(m.scored ?? 0) + (m.kind === "judge" ? ` ($${spentToday(m, now).toFixed(2)}/$${m.maxUsdDay} today)` : ""),
+      String(m.scored ?? 0) + (m.kind === "judge" ? ` (${usd(spentToday(m, now))}/${usd(m.maxUsdDay)} today)` : ""),
       m.lastRunAt ? ago(m.lastRunAt) : "never",
       m.lastError ? `${m.lastError.message} (${ago(m.lastError.at)})` : "",
     ]),

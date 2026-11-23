@@ -135,15 +135,25 @@ export async function storeControlNoise(store: FileEvalStore, a: ExperimentResul
   await store.putExperiment(a);
 }
 
+/** The run made model calls and the recording served every one: none ran live. */
+function servedAll(e: ExperimentResult): boolean {
+  let calls = 0;
+  for (const r of e.runs) {
+    if (r.llm?.live) return false;
+    calls += r.llm?.calls ?? 0;
+  }
+  return calls > 0;
+}
+
 /** exp run --replay with one task: the recorded config (control) and the candidate as one interleaved A/B. */
 export async function replayWithControl(c: CommandContext, store: FileEvalStore, plan: LlmPlan, specFile: string | undefined, seed: number | undefined): Promise<number> {
   const { loadSpec, runArms, cancelledWarning } = await import("./exp.ts");
   const source = plan.source!;
   const control = recordedTask(source);
   if (!control) {
-    throw new UsageError(`${source.id} did not record a command or http task spec, so there is no control arm to replay`, {
+    throw new UsageError(`${source.id} did not record a command or http task spec, so there is no control arm to replay. Give the recorded config as an arm of its own, or pass --no-control to replay your task alone`, {
       reason: "no_control",
-      suggestion: `coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay ${source.id}, or pass --no-control to replay one task alone`,
+      suggestion: `coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay ${source.id}`,
     });
   }
   const loaded = await loadSpec(c, store, specFile);
@@ -162,6 +172,7 @@ export async function replayWithControl(c: CommandContext, store: FileEvalStore,
     cancelledWarning(c, ab.b);
     return 1;
   }
+  if (servedAll(ab.b)) c.out.warn("llm cache: every model call of the candidate matched the recording, so it made no live call. The key leaves out the system prompt: a change to it alone is never sent. Test one with a live run, without --replay");
   const broken = (r: ExperimentResult) => r.summary.n > 0 && r.summary.errors === r.summary.n;
   return broken(ab.a) || broken(ab.b) ? 1 : 0;
 }

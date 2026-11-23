@@ -22,6 +22,7 @@ import type { AgentEvent } from "../../src/schema/index.ts";
 import { openStores } from "../../src/store/factory.ts";
 import { anthropicStream, call, startUpstream, type Upstream } from "../proxy/_helpers.ts";
 import { CLI } from "../_cli.ts";
+import { NO_USER_SHELL, runEnvLines } from "../cli/_env-lines.ts";
 
 const SESSION = "5f0e9d8c-7b6a-4c5d-8e9f-0a1b2c3d4e5f";
 const USER_KEY = "sk-ant-api03-FORKKEYFORKKEYFORKKEYFORK-abcdefAA";
@@ -273,6 +274,26 @@ describe("CLI: replay --fork against a stub API", () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
     assert.equal(sent.length, 0);
+  });
+
+  it("a fork without a key names it as the user's shell sets it, in a line that runs as printed", async () => {
+    const before = sent.length;
+    const n = await toolStep();
+    const next = async (extra: NodeJS.ProcessEnv) => {
+      const r = await cli(["replay", SESSION, "--step", String(n), "--fork", "--with", "CLAUDE.md=fixed.md", "--json"], extra);
+      assert.equal(r.status, 1, r.stderr);
+      const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
+      assert.ok(line, r.stderr);
+      return (JSON.parse(line) as { next: string[] }).next;
+    };
+    // The note after the line is a comment in sh and in PowerShell, so the whole line runs.
+    const or = "   # or a subscription token in $CLAUDE_CODE_OAUTH_TOKEN";
+    assert.deepEqual(await next({ SHELL: "/bin/bash" }), ["Next:", `export ANTHROPIC_API_KEY=...${or}`]);
+    // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows.
+    const plain = await next({});
+    assert.deepEqual(plain, ["Next:", `${process.platform === "win32" ? "$env:ANTHROPIC_API_KEY = '...'" : "export ANTHROPIC_API_KEY=..."}${or}`]);
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain[1]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    assert.equal(sent.length, before);
   });
 
   it("sends the step's stored call with the new CLAUDE.md and shows recorded vs forked", async () => {

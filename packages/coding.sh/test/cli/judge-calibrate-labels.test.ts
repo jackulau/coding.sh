@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { openContext } from "../../src/core/context.ts";
+import { FileEvalStore } from "../../src/datasets/store.ts";
 import { addScore } from "../../src/scores/scores.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { CLI } from "../_cli.ts";
@@ -56,5 +58,104 @@ describe("judge calibrate with case labels", () => {
     const picks = (JSON.parse(sample.stdout) as { plan: { picks: { alreadyLabelled?: boolean }[] } }).plan.picks;
     assert.ok(picks.length > 0);
     assert.ok(picks.every((p) => p.alreadyLabelled === true), JSON.stringify(picks));
+  });
+
+  it("labels under another name than the judge's criterion: calibrate and sample name them and the --criterion that reads them", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `q${i}`, expected: `q${i}` })]).flat();
+    const add = run("dataset", "add", "named", ...cases, "--split", "test");
+    assert.equal(add.status, 0, add.stderr);
+    // The judge's criterion is its name, "quality"; the person labelled the cases "correct".
+    const ran = run("exp", "run", "-d", "named", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"quality","rubric":"right?","provider":"mock","tunedOn":["dev"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[] } }).experiment;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "correct", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+
+    // The 23 "correct" labels on the other dataset's cases are not counted.
+    const hint = /No human label on these cases is named "quality"; there are labels named correct \(3\)\. Pass --criterion correct to read those\./;
+    const cal = run("judge", "calibrate", exp.id);
+    assert.equal(cal.status, 1, cal.stderr);
+    assert.match(cal.stderr, hint);
+    const sample = run("judge", "sample", exp.id, "--budget", "2");
+    assert.equal(sample.status, 0, sample.stderr);
+    assert.match(sample.stderr, hint);
+    const named = run("judge", "calibrate", exp.id, "--criterion", "correct");
+    assert.match(named.stdout, /n=3\b/);
+    assert.doesNotMatch(named.stderr, /No human label/);
+  });
+
+  it("the calibrate command judge sample prints runs as printed: the plan's split and criterion, in the user's shell", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `d${i}`, expected: `d${i}` })]).flat();
+    const add = run("dataset", "add", "devset", ...cases, "--split", "dev");
+    assert.equal(add.status, 0, add.stderr);
+    const ran = run("exp", "run", "-d", "devset", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"quality","rubric":"right?","provider":"mock","tunedOn":["train"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[] } }).experiment;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "correct", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+
+    // PowerShell and cmd set no MSYSTEM or SHELL; there the CLI is codingsh.
+    const ps = spawnSync(process.execPath, ["--no-warnings", CLI, "judge", "sample", exp.id, "--budget", "2", "--split", "dev", "--criterion", "correct", "--out", "plan.json"], { env: { ...env, MSYSTEM: undefined, SHELL: undefined }, encoding: "utf8", cwd: root, timeout: 60_000 });
+    assert.equal(ps.status, 0, ps.stderr);
+    const then = /^Then: (\S+) (.+)$/m.exec(ps.stdout);
+    assert.ok(then, ps.stdout);
+    assert.equal(then[1], process.platform === "win32" ? "codingsh" : "coding.sh");
+    assert.equal(then[2], `judge calibrate ${exp.id} --grader quality --plan plan.json --split dev`);
+
+    // As printed, it reads the plan's dev split and the "correct" labels the plan was drawn for.
+    const cal = run(...then[2].split(" "));
+    assert.notEqual(cal.status, 2, cal.stderr);
+    assert.match(cal.stdout, /human-audited pass rate 1\.00 \[[^\]]*\] \(2\/2 of plan labelled/);
+    assert.doesNotMatch(cal.stderr, /No human label/);
+  });
+
+  it("a calibrate that reads no labels keeps the judge's stored calibration", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `k${i}`, expected: `k${i}` })]).flat();
+    const add = run("dataset", "add", "keep", ...cases, "--split", "test");
+    assert.equal(add.status, 0, add.stderr);
+    const ran = run("exp", "run", "-d", "keep", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"kept","rubric":"right?","provider":"mock","tunedOn":["dev"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[]; graders: { id: string; version: string }[] } }).experiment;
+    const version = exp.graders.find((g) => g.id === "kept")!.version;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "kept", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+    const stored = async () => {
+      const ctx = await openContext({ env, cwd: root });
+      try {
+        return (await new FileEvalStore({ env, index: ctx.index }).getJudge(version))?.calibration;
+      } finally {
+        await ctx.close();
+      }
+    };
+
+    const first = run("judge", "calibrate", exp.id, "--json");
+    assert.notEqual(first.status, 2, first.stderr);
+    assert.equal((JSON.parse(first.stdout) as { outcome: string }).outcome, "updated");
+    const measured = await stored();
+    assert.equal(measured?.n, 3);
+
+    // A criterion no label has: nothing is measured, so the n=3 calibration stays.
+    const none = run("judge", "calibrate", exp.id, "--criterion", "nothing", "--json");
+    assert.notEqual(none.status, 2, none.stderr);
+    const doc = JSON.parse(none.stdout) as { outcome: string; calibration: { n: number }; kept: unknown };
+    assert.equal(doc.calibration.n, 0);
+    assert.equal(doc.outcome, "kept");
+    assert.deepEqual(doc.kept, measured);
+    assert.deepEqual(await stored(), measured);
+    const text = run("judge", "calibrate", exp.id, "--criterion", "nothing");
+    assert.match(text.stderr, /Kept the judge's stored calibration \(insufficient-data, n=3, \d{4}-\d\d-\d\d\): this run has no held-out case with both a human label and a verdict/);
+    assert.deepEqual(await stored(), measured);
   });
 });
