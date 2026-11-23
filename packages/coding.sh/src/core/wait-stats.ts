@@ -4,7 +4,10 @@
 // - permission: a permission prompt, from the prompt to the call's end (approved, refused) or,
 //   with no end, the next call or turn end on its thread (on the main thread, the person's
 //   prompt too); a host app's approval request (T3 Code) to its resolution or the person's
-//   prompt. A prompt in a subagent's thread ends no wait.
+//   prompt. A prompt in a subagent's thread ends no wait. A host's request and a hook's prompt
+//   about the same call are one wait: the prompt joins a request asked up to SLACK_MS before
+//   it, and a request joins a prompt still open, when the request's kind fits the call's tool
+//   (`fits`: a command request is not about a file edit or a read).
 // - question, plan: an open question or plan-approval call, from its start to its end.
 // - request: any other request a host app put to the person (T3 Code's secrets and links).
 // - turn: the main thread's turn ended, until the person's next prompt (a session launched
@@ -27,6 +30,7 @@ import type { AgentEvent, WaitKind, WaitStats, WaitTotal } from "../schema/index
 import { DELEGATED_NOTICE, isSyntheticPrompt, percentile } from "./sessions.ts";
 import { QUESTION_TOOL, SPAWN_TOOL } from "./unapproved.ts";
 import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS, HOST_QUESTION, HOST_RESOLVED, isPermissionNotification, PLAN_TOOL, type WaitingState } from "./waiting.ts";
+import { isFileEditTool, isFileReadTool, isShellTool } from "../adapters/_shared/tools.ts";
 
 /** A wait counts this long at most: a longer one is the person away (a session picked up days later). */
 const WAIT_CAP_MS = 12 * 3600_000;
@@ -57,6 +61,8 @@ interface OpenWait {
   tool?: string;
   /** Host requests it is (T3 Code): their resolution ends it. */
   requests?: string[];
+  /** The kind of a host request that no prompt joined yet (T3 Code: command, file-change, file-read, permission). */
+  requestKind?: string;
   /** A turn wait: when the agent went on by itself (a call or reply well after the turn ended). */
   resumed?: number;
 }
@@ -336,12 +342,34 @@ function permissionPrompt(s: WaitStatsState, waiting: WaitingState, e: AgentEven
   if (s.waits.some(same)) return;
   // A prompt on another call of the thread: the one before was answered.
   close(s, (w) => w.kind === "permission" && w.thread === on && !hostOnly(w), e.ts, "person");
-  // The host's request for this approval sorted first (T3 Code): the prompt joins its wait.
-  const host = s.waits.findLast((w) => w.kind === "permission" && w.thread === on && hostOnly(w));
+  // The host's request for this approval, asked just before the prompt (T3 Code): the prompt joins its wait.
+  // A request asked earlier, or about another kind of call, is another approval, still open.
+  const host = s.waits.findLast((w) => w.kind === "permission" && w.thread === on && hostOnly(w) && e.ts - w.at <= SLACK_MS && fits(w.requestKind, call?.tool));
   const wait: OpenWait = host ?? { kind: "permission", at: e.ts, thread: on };
   if (call?.id !== undefined) wait.id = call.id;
   else if (call) wait.tool = call.tool;
   if (!host) open(s, wait);
+}
+
+/**
+ * Whether a host's request of this kind (T3 Code's) can be about a call to this tool: a command
+ * request is not about a file edit or a read, a file-read request not about a shell call or an
+ * edit, and a file-change request not about a read (a patch may run in a shell). An unknown kind
+ * or tool fits.
+ */
+function fits(requestKind: string | undefined, tool: string | undefined): boolean {
+  if (!requestKind || !tool) return true;
+  const does = isShellTool(tool) ? "command" : isFileEditTool(tool) ? "file-change" : isFileReadTool(tool) ? "file-read" : undefined;
+  switch (requestKind) {
+    case "command":
+      return does !== "file-change" && does !== "file-read";
+    case "file-change":
+      return does !== "file-read";
+    case "file-read":
+      return does !== "command" && does !== "file-change";
+    default:
+      return true;
+  }
 }
 
 /** What a host request asks for: an approval, a question, or something else (a secret, a link). */
@@ -363,10 +391,18 @@ function hostRequest(s: WaitStatsState, waiting: WaitingState, e: AgentEvent, th
   // Resolved at the time it was asked (the resolution sorted first), or already open.
   if (waiting.ended.includes(id) || s.waits.some((w) => w.requests?.includes(id))) return;
   const kind = hostKind(e);
-  // The prompt or call it is about, already waiting on the thread: one wait.
-  const same = s.waits.find((w) => w.thread === thread && !w.requests?.length && (kind === "permission" ? w.kind === "permission" : w.kind === "question" || w.kind === "plan"));
-  if (same) same.requests = [id];
-  else open(s, { kind, at: e.ts, thread, requests: [id] });
+  const requestKind = str(e.payload.requestKind);
+  // The prompt or call it is about, already waiting on the thread: one wait. A prompt about
+  // another kind of call (one running beside it) is not this request's.
+  const toolOf = (w: OpenWait) => w.tool ?? (w.id === undefined ? undefined : waiting.open.find((c) => c.id === w.id)?.tool);
+  const same = s.waits.find((w) => w.thread === thread && !w.requests?.length && (kind === "permission" ? w.kind === "permission" && fits(requestKind, toolOf(w)) : w.kind === "question" || w.kind === "plan"));
+  if (same) {
+    same.requests = [id];
+    return;
+  }
+  const w: OpenWait = { kind, at: e.ts, thread, requests: [id] };
+  if (requestKind) w.requestKind = requestKind;
+  open(s, w);
 }
 
 /**

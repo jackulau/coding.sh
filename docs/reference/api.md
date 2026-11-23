@@ -903,6 +903,11 @@ Limits:
 - Where nothing marks a resume, as in a transcript or T3 Code's store, a wait in a session picked up
   days later counts 12 hours.
 - Waits on different threads at the same time each count.
+- A T3 Code approval and the live hook's permission prompt for one call count as one wait. The
+  prompt joins an approval asked on its thread up to 5 seconds before it, and an approval joins a
+  prompt still open there, unless the approval is for another kind of call: a command approval
+  joins no file edit or read, a file-change approval no read, a file-read approval no command or
+  edit. A T3 Code question joins a question or plan still open on its thread.
 - Permission prompts come from live hooks and T3 Code's store. A session read only from its
   transcript has none; its questions, plans and turns still count. A transcript's quiet markers end
   no wait.

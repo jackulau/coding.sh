@@ -375,6 +375,45 @@ describe("host app requests (T3 Code)", () => {
     assert.deepEqual(stats(endFirst, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
   });
 
+  const prompted = (sec: number, tool: string) => ev(sec, "notification", { type: "permission_prompt", text: `Claude needs your permission to use ${tool}` });
+
+  test("a request and a hook's prompt join when the request's kind fits the call, in either order", () => {
+    // A Codex patch may run in a shell; a "permission" request is any approval. The prompt may come up to 5 s after the request.
+    const pairs = [["command", "Bash"], ["file-change", "Edit"], ["file-change", "shell"], ["file-read", "Read"], ["permission", "WebFetch"]] as const;
+    for (const [kind, tool] of pairs) {
+      const hostFirst = [call(5, tool, "c1"), asked(10, "r1", kind), prompted(15, tool), resolved(40, "r1"), done(45, tool, "c1")];
+      const hookFirst = [call(5, tool, "c1"), prompted(10, tool), asked(10.2, "r1", kind), resolved(40, "r1"), done(45, tool, "c1")];
+      for (const events of [hostFirst, hookFirst]) assert.deepEqual(stats(events, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } }, `${kind} and ${tool}`);
+    }
+  });
+
+  test("a request about another kind of call does not join the prompt, in either order", () => {
+    const pairs = [["command", "Read"], ["command", "Edit"], ["file-change", "Read"], ["file-read", "Bash"], ["file-read", "Edit"]] as const;
+    for (const [kind, tool] of pairs) {
+      const hostFirst = [call(5, tool, "c1"), asked(10, "r1", kind), prompted(10.2, tool), resolved(40, "r1"), done(45, tool, "c1")];
+      const hookFirst = [call(5, tool, "c1"), prompted(10, tool), asked(10.2, "r1", kind), resolved(40, "r1"), done(45, tool, "c1")];
+      for (const events of [hostFirst, hookFirst]) assert.equal(stats(events, null)?.byKind.permission?.count, 2, `${kind} and ${tool}`);
+    }
+  });
+
+  test("a hook's prompt does not join a request asked more than 5 s before it: that is another approval, still open", () => {
+    // r1 never resolves (the store still has it pending). Ten minutes on, an agent sends the next prompt and the hook asks about c2.
+    const events = [prompt(0), call(5, "Bash", "c1"), asked(6, "r1", "command"), done(8, "Bash", "c1"), turnEnd(10), ev(600, "user.message", { text: "Status from the other thread", from: "agent" }), call(605, "Bash", "c2"), permission(606), done(616, "Bash", "c2"), turnEnd(620)];
+    assert.deepEqual(stats(events, null), {
+      count: 2,
+      ms: 624_000,
+      medianMs: 10_000,
+      byKind: { permission: { count: 2, ms: 624_000, medianMs: 10_000, open: 1 } },
+      open: { count: 1, ms: 614_000 },
+    });
+  });
+
+  test("a hook's prompt about a shell call joins its command request, not a file-read request open beside it", () => {
+    // Read c1 waits on r1 from 6 to 40. Bash c2's prompt and its request r2 are one wait, from 9 to 25.
+    const events = [call(5, "Read", "c1"), asked(6, "r1", "file-read"), call(8, "Bash", "c2"), permission(9), asked(9.2, "r2", "command"), resolved(25, "r2"), done(26, "Bash", "c2"), resolved(40, "r1"), done(41, "Read", "c1")];
+    assert.deepEqual(stats(events, null), { count: 2, ms: 50_000, medianMs: 16_000, byKind: { permission: { count: 2, ms: 50_000, medianMs: 16_000 } } });
+  });
+
   test("a request still open ends at the person's next prompt, not at an agent's", () => {
     const events = [asked(10, "r1", "command"), ev(25, "user.message", { text: "Status from the other thread", from: "agent" }), prompt(40, "skip that, run the suite"), ev(70, "assistant.message", { text: "Running the suite." })];
     assert.deepEqual(stats(events, null), { count: 1, ms: 30_000, byKind: { permission: { count: 1, ms: 30_000 } } });
