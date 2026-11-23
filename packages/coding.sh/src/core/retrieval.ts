@@ -901,6 +901,62 @@ function drop(s: RetrievalState, key: string): void {
   }
 }
 
+/**
+ * The needles that some line holds, as `lines.some((l) => l.includes(n))` finds each, in one pass
+ * over the lines (Aho–Corasick): a failed `cat` of many files is not a scan of the output per file.
+ */
+function heldBy(needles: readonly string[], lines: readonly string[]): Set<string> {
+  const held = new Set<string>();
+  if (!lines.length) return held;
+  // A trie of the needles by UTF-16 code unit, the unit `includes` compares; ends[s]: the needles that end at state s.
+  const next: Map<number, number>[] = [new Map()];
+  const ends: string[][] = [[]];
+  for (const n of needles) {
+    // Every line holds "".
+    if (!n) held.add(n);
+    let s = 0;
+    for (let i = 0; i < n.length; i++) {
+      const c = n.charCodeAt(i);
+      let t = next[s]!.get(c);
+      if (t === undefined) {
+        t = next.length;
+        next[s]!.set(c, t);
+        next.push(new Map());
+        ends.push([]);
+      }
+      s = t;
+    }
+    ends[s]!.push(n);
+  }
+  // fail[s]: the state of the longest proper suffix of s's text that starts a needle, breadth first.
+  const fail: number[] = new Array<number>(next.length).fill(0);
+  const order = [...next[0]!.values()];
+  for (let q = 0; q < order.length; q++) {
+    const s = order[q]!;
+    for (const [c, t] of next[s]!) {
+      let f = fail[s]!;
+      while (f && !next[f]!.has(c)) f = fail[f]!;
+      fail[t] = next[f]!.get(c) ?? 0;
+      order.push(t);
+    }
+  }
+  /** States whose needles, and their suffixes' needles, are in `held`. */
+  const done = new Uint8Array(next.length);
+  for (const line of lines) {
+    let s = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line.charCodeAt(i);
+      while (s && !next[s]!.has(c)) s = fail[s]!;
+      s = next[s]!.get(c) ?? 0;
+      for (let o = s; o && !done[o]; o = fail[o]!) {
+        done[o] = 1;
+        for (const n of ends[o]!) held.add(n);
+      }
+    }
+  }
+  return held;
+}
+
 /** Settles a call at its end: a read that failed reads no file, a search may have found nothing. */
 function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: ToolFailure | undefined): void {
   const p = e.payload;
@@ -908,7 +964,9 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   else if (p.ok === false && pending.keys.length) {
     // A shell line fails as a whole: a file counts as not read when an error line names it.
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
-    for (const k of pending.keys) if (lines.some((l) => l.includes(posix.basename(k)))) drop(s, k);
+    const names = pending.keys.map((k) => posix.basename(k));
+    const named = heldBy(names, lines);
+    for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
   if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
 }

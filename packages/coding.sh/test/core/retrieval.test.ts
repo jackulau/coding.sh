@@ -269,6 +269,20 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });
   });
 
+  it("a failed `cat` of 5,000 files, its error naming each missing one, is folded in linear time", () => {
+    const files = Array.from({ length: 5000 }, (_, i) => `f${i}.ts`);
+    const missing = (gone: (i: number) => boolean) => {
+      const output = ["Exit code 1", ...files.filter((_, i) => gone(i)).map((f) => `cat: ${f}: No such file or directory`)].join("\n");
+      return bash(`cat ${files.join(" ")}`, { ok: false, output });
+    };
+    const all = missing(() => true);
+    assertCpuUnder("every file missing", () => buildSession(all));
+    assert.deepEqual(buildSession(all).stats.retrieval, { reads: 1, filesRead: 0, editedAfterRead: 0, searches: 0 });
+    const odd = missing((i) => i % 2 === 1);
+    assertCpuUnder("every other file missing", () => buildSession(odd));
+    assert.equal(buildSession(odd).stats.retrieval?.filesRead, 2500);
+  });
+
   it("an empty search: no output, No matches found, No files found, or exit 1 with nothing printed", () => {
     const empty = (...events: AgentEvent[][]) => retrieval(...events)?.emptySearches ?? 0;
     // Claude Code's transcript and hook results for a command that printed nothing.
