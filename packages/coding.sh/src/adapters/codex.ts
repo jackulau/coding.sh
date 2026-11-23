@@ -1038,11 +1038,13 @@ async function* backfillCodex(ctx: NormalizeContext, opts: BackfillOpts = {}): A
   for (const dir of ["sessions", "archived_sessions"]) {
     for await (const f of walkFiles(join(home, dir), { match: (n) => /^rollout-.*\.jsonl(\.zst)?$/.test(n), maxDepth: 4, since: opts.since })) {
       if (f.path.endsWith(".zst") && existsSync(f.path.slice(0, -4))) continue; // the plain file wins when both exist
-      if (opts.changed && !(await opts.changed(cursorView(f, ROLLOUT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
+      const view = cursorView(f, ROLLOUT_IDLE_MS);
+      if (opts.changed && !(await opts.changed(view))) continue; // unchanged since the last backfill (or since it went idle)
       // A rollout written inside the window is imported whole, as Claude Code's transcripts are: cutting it at
       // `since` left a session without session.start, its first prompt as title, or its earlier turns.
       // (walkFiles already left out rollouts last written before `since`.)
       yield* await convertRollout(ctx, f.path, { mode: "full", endIfIdleMs: ROLLOUT_IDLE_MS });
+      opts.whole?.(view);
     }
   }
 }

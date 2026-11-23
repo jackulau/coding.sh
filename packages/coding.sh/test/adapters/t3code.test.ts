@@ -295,6 +295,49 @@ describe("t3code adapter", () => {
     // A session with nothing inside the window stays out.
     assert.deepEqual(await collect(backfillT3(testCtx().ctx, { since: Date.now() + 86_400_000 })), []);
   });
+
+  // Dogfood: after `ingest --backfill --since`, each read's tail import (no window) read every thread the
+  // window had let through again, though each had been imported whole. Only the threads the window cut are
+  // read again, then none.
+  it("a thread read whole under a --since window is not read again without one", async () => {
+    const sessions = [CLAUDE_ID, CODEX_ID, "grok-session-1", "muse-session-1", "t3code-thr-sub", "v1-codex-thread-not-on-disk"].sort();
+    // Claude ends before 10:01; Codex too, but T3's cost report for it is stamped 10:30, when its provider
+    // thread last changed. thr-grok runs Grok from 10:02 to 10:04:30, then Muse from 10:05; thr-sub is at
+    // 10:04; thr-old (v1 only) runs from 10:10.
+    const cases = [
+      { since: Date.parse(T(3)), again: ["thr-claude"] },
+      { since: Date.parse(T(4, 45)), again: ["thr-claude", "thr-grok", "thr-sub"] },
+    ];
+    for (const { since, again } of cases) {
+      for (const deadline of [undefined, Date.now() + 600_000]) {
+        const label = `since ${new Date(since).toISOString()}${deadline === undefined ? "" : ", with a deadline"}`;
+        const reads: string[] = [];
+        const spy: Adapter = {
+          ...t3code,
+          backfill: (ctx, o = {}) =>
+            t3code.backfill!(ctx, {
+              ...o,
+              changed: async (f) => {
+                const r = await o.changed!(f);
+                if (r && !f.covers) reads.push(f.path.slice(f.path.lastIndexOf("#") + 1));
+                return r;
+              },
+            }),
+        };
+        const index = new MemoryIndexStore();
+        const cenv = { ...process.env };
+        const base = { config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [spy], env: cenv };
+        const opts = deadline === undefined ? base : { ...base, deadline };
+        assert.deepEqual((await backfill({ ...opts, since })).errors, []);
+        assert.deepEqual(reads.splice(0).sort(), ["thr-claude", "thr-codex", "thr-grok", "thr-old", "thr-sub"], label);
+        assert.deepEqual((await backfill(opts)).errors, []);
+        assert.deepEqual(reads.splice(0).sort(), again, `${label}: only the threads the window cut are read again`);
+        assert.deepEqual((await index.listSessions({})).map((s) => s.id).sort(), sessions, label);
+        assert.deepEqual((await backfill(opts)).events, 0);
+        assert.deepEqual(reads, [], `${label}: then none`);
+      }
+    }
+  });
 });
 
 describe("T3 live capture", () => {
