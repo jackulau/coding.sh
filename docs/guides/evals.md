@@ -52,9 +52,10 @@ whose repository is no longer on this machine (put it back at the same path to u
 and a `coding.sh run --` session around an agent whose own session was captured inside it (that
 session is the one to use). A `coding.sh run --` session's prompt is its command's prompt argument:
 the value of `-p`, `--prompt`, `--print`, `--message`, `--instruction`, `--task` or `--query` when
-it has a space in it, or else the last argument with a space in it. The rest go best first: a
-failure flag, the user pushing back, a verifier guessable from the commands the session ran, a
-test edited after a failing run, more than one turn and a recent start each add to the score.
+it has a space in it, or else the last argument with a space in it that is not code (`sh -c`), a
+`NAME=value` setting or a path. The rest go best first: a failure flag, the user pushing back, a
+verifier guessable from the commands the session ran, a test edited after a failing run, more than
+one turn and a recent start each add to the score.
 
 `--where '<query>'` takes the sessions a [query](../reference/query.md) matches instead of every
 flagged one, for example `--where 'flag:premature-completion repo:api'`. `--validate` runs

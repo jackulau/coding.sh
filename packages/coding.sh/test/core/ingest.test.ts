@@ -988,6 +988,67 @@ describe("transcript import sends to the sinks (qa:server-7)", () => {
     assert.ok(asked.length <= 2, `walk stopped early (${asked.length} files asked)`);
   });
 
+  const STORE = "/t/#store";
+  /** T3 Code's shape: a fingerprint of the whole store (`covers`), asked about first, then a file per thread. Reading `broken.path` fails the walk. */
+  const storeAdapter = (files: Map<string, TFile>, asked: string[], broken: { path?: string } = {}): Adapter => ({
+    ...fakeAdapter,
+    id: "hist",
+    async *backfill(_ctx, o) {
+      asked.push(STORE);
+      const mtimeMs = Math.max(...[...files.values()].map((f) => f.mtimeMs));
+      if (o?.changed && !(await o.changed({ path: STORE, size: files.size, mtimeMs, covers: true }))) return;
+      for (const [path, f] of files) {
+        asked.push(path);
+        if (o?.changed && !(await o.changed({ path, size: f.events.length, mtimeMs: f.mtimeMs }))) continue;
+        if (path === broken.path) throw new Error("database is locked");
+        yield* f.events;
+      }
+    },
+  });
+  const threeThreads = () => new Map<string, TFile>(["a", "b", "c"].map((n, i) => [`/t/${n}.jsonl`, { mtimeMs: base + i, events: [ev(n, "session.start", i), ev(n, "user.message", i + 100, { text: n })] }]));
+
+  it("a store's fingerprint is saved only by a walk that reads every changed file in it, so files left out of time are read next run", async () => {
+    const t = setup();
+    const asked: string[] = [];
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [storeAdapter(threeThreads(), asked)] };
+    const storeMtime = () => t.index.getCursor(backfillCursorKey("hist", STORE, "mtime"));
+
+    // Out of time from the start: the fingerprint is not a file read, so the first file is read and the others wait.
+    const late = await backfill({ ...opts, deadline: Date.now() - 1 });
+    assert.deepEqual([late.events, late.pendingFiles, late.errors], [2, 2, []]);
+    assert.equal(await storeMtime(), 0, "files were left: the fingerprint is not saved");
+
+    // The store is as it was: the next run reads the files left, then saves the fingerprint.
+    const rest = await backfill(opts);
+    assert.deepEqual([rest.events, rest.pendingFiles, rest.errors], [4, 0, []]);
+    assert.equal(await storeMtime(), base + 2);
+    assert.equal((await t.index.listSessions()).length, 3);
+
+    // Nothing changed: the walk is skipped, and out of time nothing is pending.
+    asked.length = 0;
+    const idle = await backfill({ ...opts, deadline: Date.now() - 1 });
+    assert.deepEqual([asked, idle.events, idle.pendingFiles], [[STORE], 0, 0]);
+  });
+
+  it("a walk that fails part way leaves the store's fingerprint unsaved, so the next run reads the files after the failure", async () => {
+    const t = setup();
+    const asked: string[] = [];
+    const broken: { path?: string } = { path: "/t/b.jsonl" };
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [storeAdapter(threeThreads(), asked, broken)] };
+    // With a deadline each file's cursors commit as it ends, as in a read's tail import.
+    const failed = await backfill({ ...opts, deadline: Date.now() + 60_000 });
+    assert.equal(failed.events, 2);
+    assert.match(failed.errors[0]?.message ?? "", /database is locked/);
+    assert.equal(await t.index.getCursor(backfillCursorKey("hist", STORE, "mtime")), 0);
+
+    delete broken.path;
+    asked.length = 0;
+    const next = await backfill(opts);
+    assert.deepEqual([next.events, next.errors], [4, []]);
+    assert.deepEqual(asked, [STORE, "/t/a.jsonl", "/t/b.jsonl", "/t/c.jsonl"]);
+    assert.equal(await t.index.getCursor(backfillCursorKey("hist", STORE, "mtime")), base + 2);
+  });
+
   it("sends only what is new as a file grows, in the sink's batches; a failed sink gets the file once it is back", async () => {
     const t = setup();
     let now = 1_000_000;

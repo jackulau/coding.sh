@@ -10,7 +10,8 @@
 //   state.sqlite    v1 projections (projection_threads/_thread_messages/
 //                   _thread_activities/_turns). v2 imports v1 threads under the
 //                   same id, so v1 is read only for threads v2 lacks.
-// Both are opened as copies (more/_util.ts openSqliteCopy); T3's files are never written.
+// Both are read in place, read-only, while T3 Code has them open in WAL mode, and otherwise from
+// copies (more/_util.ts openSqliteInPlace); a thread's rows are read in one short read transaction.
 //
 // Sessions: one per provider thread, keyed by the provider's native id, so a
 // T3-run Codex rollout or Claude transcript is the same session the codex and
@@ -43,7 +44,7 @@ import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText,
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
 import { ROLLOUT_IDLE_MS, codeModeCellOk, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
-import { openSqliteCopy } from "./more/_util.ts";
+import { openSqliteCopy, openSqliteInPlace, readSnapshot, sqliteShapeError, type FreeSpace } from "./more/_util.ts";
 import { reapSqliteCopies } from "./_shared/sqlite-copies.ts";
 import { piSessionsDir } from "./more/pi.ts";
 import { opencodeDataDir } from "./opencode.ts";
@@ -841,7 +842,7 @@ function readV1Rows(db: DatabaseSync, threadId: string): StoreRows {
 
 // ---------------------------------------------------------------- backfill
 
-/** Size/mtime summary over the store files, for the whole-store unchanged check. */
+/** Size/mtime summary over the store files, for the whole-store unchanged check: saved once a walk has read every changed thread. */
 function storeFingerprint(dir: string, dbs: string[]): BackfillFile {
   let size = 0;
   let mtimeMs = 0;
@@ -852,7 +853,7 @@ function storeFingerprint(dir: string, dbs: string[]): BackfillFile {
       mtimeMs = Math.max(mtimeMs, s.mtimeMs);
     }
   }
-  return { path: join(dir, "#store"), size, mtimeMs };
+  return { path: join(dir, "#store"), size, mtimeMs, covers: true };
 }
 
 async function threadFile(native: NativeIndex, dbPath: string, t: Thread, act: { n: number; t: number }[]): Promise<BackfillFile> {
@@ -874,25 +875,60 @@ async function threadFile(native: NativeIndex, dbPath: string, t: Thread, act: {
   return { path: `${dbPath}#${t.id}`, size, mtimeMs: Math.floor(mtimeMs) };
 }
 
-export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}, env: NodeJS.ProcessEnv = process.env): AsyncIterable<AgentEvent> {
+/**
+ * Run id to provider thread, and each provider thread's first request time, read once a pass. A
+ * thread's rows are read later, in a snapshot of their own: a run this lacks (begun since, or given its
+ * provider thread since) is looked up in that snapshot, so a message is attributed by its run as the
+ * snapshot that holds the message has it, not as an older read had it.
+ */
+class RunThreads extends Map<string, string> {
+  readonly starts = new Map<string, number>();
+  /** The store get looks a missing run up in; unset when it has no runs table. */
+  db: DatabaseSync | undefined;
+  readonly #looked = new Set<string>();
+
+  add(r: Row): void {
+    const pt = String(r.provider_thread_id);
+    this.set(String(r.run_id), pt);
+    const at = ms(r.requested_at);
+    if (at !== undefined && !this.starts.has(pt)) this.starts.set(pt, at);
+  }
+
+  override get(runId: string): string | undefined {
+    const pt = super.get(runId);
+    if (pt !== undefined || !this.db || this.#looked.has(runId)) return pt;
+    this.#looked.add(runId);
+    try {
+      const r = this.db.prepare("SELECT run_id, provider_thread_id, requested_at FROM orchestration_v2_projection_runs WHERE run_id = ? AND provider_thread_id IS NOT NULL").get(runId) as Row | undefined;
+      if (r) this.add(r);
+    } catch {
+      // columns differ in this store version
+    }
+    return super.get(runId);
+  }
+}
+
+/** `room` measures the free space in the temp directory before a copy of the store (replaced in tests). */
+export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}, env: NodeJS.ProcessEnv = process.env, room?: FreeSpace): AsyncIterable<AgentEvent> {
   const dir = t3UserData(env);
   const v2Path = join(dir, "statev2.sqlite");
   const v1Path = join(dir, "state.sqlite");
   if (!existsSync(v2Path) && !existsSync(v1Path)) return;
   if (opts.changed && !(await opts.changed(storeFingerprint(dir, [v2Path, v1Path])))) {
     // Copies a killed import left (a read's tail child, killed at its deadline mid-copy) go even when
-    // the store is unchanged; opening a copy removes them otherwise.
+    // the store is unchanged; opening the store removes them otherwise.
     reapSqliteCopies();
     return;
   }
   const native = new NativeIndex(env);
-  // The store is this adapter's only source: a copy that fails (no room in the temp dir for a
-  // 1.7 GB store) is a backfill error, not an import of nothing.
+  // The store is this adapter's only source: a copy that fails or is refused (no room in the temp dir
+  // for a 1.7 GB store) is a backfill error, not an import of nothing.
   const open = async (path: string) => {
     try {
-      return await openSqliteCopy(path, { throwOnError: true });
+      // In place while T3 Code has the store open in WAL mode: a store of several GB is not copied on every read.
+      return await openSqliteInPlace(path, { throwOnError: true, room });
     } catch (e) {
-      throw new Error(`T3 Code's store was not read: ${(e as Error).message}. It is read from a copy in the temp directory (TMPDIR, or TEMP on Windows), which needs room for it`, { cause: e });
+      throw new Error(`T3 Code's store was not read: ${(e as Error).message}. When it can't be read in place, it is read from a copy in the temp directory (TMPDIR, or TEMP on Windows), which needs room for it`, { cause: e });
     }
   };
   const v2 = await open(v2Path);
@@ -906,19 +942,21 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
   try {
     // Threads from both stores first, so subagent and provider-switch edges resolve across them.
     const all: { thread: Thread; db: DatabaseSync; path: string; v1: boolean }[] = [];
-    const runPt = new Map<string, string>();
-    const starts = new Map<string, number>();
+    const runPt = new RunThreads();
+    const starts = runPt.starts;
     const acts: Map<string, { n: number; t: number }>[] = [];
+    // A store's threads, provider threads and runs come from one snapshot, so they agree with each other. The
+    // activity counts are read after it, each on its own: they only pick the threads to read, and a thread's
+    // rows are read later still, so a count newer than the thread list at worst reads a thread again next pass.
     if (v2 && hasTable(v2.db, "orchestration_v2_projection_threads")) {
-      for (const t of readV2Threads(v2.db)) all.push({ thread: t, db: v2.db, path: v2Path, v1: false });
-      if (hasTable(v2.db, "orchestration_v2_projection_runs")) {
-        for (const r of v2.db.prepare("SELECT run_id, provider_thread_id, requested_at FROM orchestration_v2_projection_runs WHERE provider_thread_id IS NOT NULL ORDER BY ordinal").all() as Row[]) {
-          const pt = String(r.provider_thread_id);
-          runPt.set(String(r.run_id), pt);
-          const at = ms(r.requested_at);
-          if (at !== undefined && !starts.has(pt)) starts.set(pt, at);
+      const db = v2.db;
+      readSnapshot(db, () => {
+        for (const t of readV2Threads(db)) all.push({ thread: t, db, path: v2Path, v1: false });
+        if (hasTable(db, "orchestration_v2_projection_runs")) {
+          for (const r of db.prepare("SELECT run_id, provider_thread_id, requested_at FROM orchestration_v2_projection_runs WHERE provider_thread_id IS NOT NULL ORDER BY ordinal").all() as Row[]) runPt.add(r);
+          runPt.db = db;
         }
-      }
+      });
       acts.push(
         activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_messages GROUP BY thread_id"),
         activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_turn_items GROUP BY thread_id"),
@@ -928,8 +966,9 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
       );
     }
     if (v1) {
+      const db = v1.db;
       const known = new Set(all.map((x) => x.thread.id));
-      for (const { thread } of readV1Threads(v1.db, known)) all.push({ thread, db: v1.db, path: v1Path, v1: true });
+      for (const { thread } of readSnapshot(db, () => readV1Threads(db, known))) all.push({ thread, db, path: v1Path, v1: true });
       acts.push(
         activity(v1.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM projection_thread_messages GROUP BY thread_id"),
         activity(v1.db, "SELECT thread_id, COUNT(*) n, MAX(created_at) t FROM projection_thread_activities GROUP BY thread_id"),
@@ -950,8 +989,13 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
       }
       let rows: StoreRows;
       try {
-        rows = old ? readV1Rows(db, thread.id) : readV2Rows(db, thread.id, runPt);
-      } catch {
+        // One short read transaction a thread: its rows come from one snapshot, never half of a write.
+        rows = readSnapshot(db, () => (old ? readV1Rows(db, thread.id) : readV2Rows(db, thread.id, runPt)));
+      } catch (e) {
+        // Locked for longer than the busy timeout (another connection recovering the WAL after a crash, say),
+        // or failing (an I/O error, a corrupt page): fail the pass, so this thread and the rest are not marked
+        // read. The store's fingerprint is not saved either, so the next pass looks at them again.
+        if (!sqliteShapeError(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
         continue; // schema drift in one thread's rows: skip it, keep the rest
       }
       yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since);
