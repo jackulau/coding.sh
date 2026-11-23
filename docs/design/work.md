@@ -242,7 +242,8 @@ session ids and joined per item, so an item keeps them when its root falls out o
 An ack covers one cause: its fingerprint is the bucket, the session and the wait's tool call id or
 time, so acknowledging one prompt does not hide the next. Acking the top cause shows the next one.
 A snooze is stored on the item's main session and on the session behind its cause, with the bucket
-the item was in. A new snooze of the item replaces the earlier one on all of its sessions.
+the item was in and the item's id. A new snooze of the item replaces the earlier one on all of its
+sessions, including one that a shorter time window leaves out.
 It ends at its time. Until then the item shows only while it is in a bucket more urgent than the
 one it was snoozed in, and hides again when it is back in that bucket or a less urgent one. No
 bucket is more urgent than blocked, so a blocked item's snooze runs to the end, even if the item
