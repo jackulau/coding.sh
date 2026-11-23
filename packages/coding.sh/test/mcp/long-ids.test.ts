@@ -191,4 +191,12 @@ describe("work names a failed thread by its alias", () => {
     assert.equal(s.status, 0, s.stderr);
     assert.equal(JSON.parse(s.stdout).session.id, LONG_B);
   });
+
+  test("`work show <alias>` opens the item the session is in", () => {
+    const r = cli(["work", "show", ALIAS_A, "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const item = JSON.parse(r.stdout);
+    assert.equal(item.id, workItemId(LONG_A));
+    assert.equal(item.sessions[0].id, LONG_A);
+  });
 });
