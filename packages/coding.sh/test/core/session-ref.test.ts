@@ -267,6 +267,20 @@ describe("printedRefs: a list prints an id whole when it is short and plain, a c
     assert.equal(store.reads, 1);
     assert.deepEqual([a, b, PARENT].map((id) => refs.short(id)), ["7c3e9d10-a", "7c3e9d10-b", "36d2966a"]);
   });
+
+  // A commit can name a session recorded on another machine, or one since removed: blame and
+  // attribution print it in a column sized for 8 characters.
+  test("an id the store lacks prints as shortSessionId, in a column and in a list", async () => {
+    const gone = "7c3e9d10-aaaa-4000-8000-000000000001";
+    const ids = [gone, child(1), LONG_A, "latest"];
+    const store = idStore([PARENT]);
+    const refs = await printedRefs(store, { short: ids, whole: ids });
+    assert.equal(store.reads, 1);
+    const want = ["7c3e9d10", `36d2966a:sub:${SUB_ID}`, "t3code-t", "x_brf2qjp3"];
+    assert.deepEqual(ids.map((id) => refs.short(id)), want);
+    assert.deepEqual(ids.map((id) => shortSessionId(id)), want);
+    assert.deepEqual(ids.map((id) => refs.whole(id)), [gone, ...want.slice(1)]);
+  });
 });
 
 describe("matchRef", () => {

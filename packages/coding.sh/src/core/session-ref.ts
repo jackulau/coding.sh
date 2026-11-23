@@ -324,7 +324,7 @@ export function printsWhole(id: string): boolean {
 
 /** How a command prints the stored session ids it names (printedRefs). Each opens its session alone. */
 export interface PrintedRefs {
-  /** For a narrow column: the shortest reference (shortestRef). */
+  /** For a narrow column: the shortest reference (shortestRef), or shortSessionId for an id the store lacks. */
   short(id: string): string;
   /** For a list: the id itself when it printsWhole, else short(id). */
   whole(id: string): string;
@@ -332,14 +332,25 @@ export interface PrintedRefs {
 
 /**
  * The references a command prints for the ids it names: `short` the ids it prints short, `whole`
- * the ids it prints whole. Every stored id is read (shortener) at most once, and only when an id in
+ * the ids it prints whole. Every stored id is read (loadIdSet) at most once, and only when an id in
  * `short`, or one in `whole` that does not print whole, needs it. Pass every id the command prints:
- * without the read, short(id) is the id as wholeRef prints it.
+ * without the read, short(id) is the id as wholeRef prints it. An id the store lacks, such as the
+ * session a commit names from another machine, prints as shortSessionId: no reference opens it here.
  */
 export async function printedRefs(index: Pick<IndexStore, "listSessions" | "sessionIdsByPrefix">, ids: { short?: readonly string[]; whole?: readonly string[] }): Promise<PrintedRefs> {
   const read = !!ids.short?.length || !!ids.whole?.some((id) => !printsWhole(id));
-  const short = read ? await shortener(index) : wholeRef;
+  const short = read ? refsOf(await loadIdSet(index)) : wholeRef;
   return { short, whole: (id) => (printsWhole(id) ? id : short(id)) };
+}
+
+/** shortestRef for each id in `set`, shortSessionId for one it lacks, remembered per id. */
+function refsOf(set: IdSet): (id: string) => string {
+  const seen = new Map<string, string>();
+  return (id) => {
+    let s = seen.get(id);
+    if (s === undefined) seen.set(id, (s = set.has(id) ? shortestRef(set, id) : shortSessionId(id)));
+    return s;
+  };
 }
 
 /** One session an ambiguous reference matches, as the CLI's --json and the MCP error list them. */

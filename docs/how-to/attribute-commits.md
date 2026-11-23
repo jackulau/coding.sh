@@ -110,7 +110,7 @@ Session links point at `http://127.0.0.1:4319/#/s/<id>` unless you pass `--viewe
 | Column | Means |
 |---|---|
 | `AGENT LINES` | Lines credited to a session, out of lines the commit added. |
-| `SESSIONS` | Each session credited, by the shortest reference that opens it (an id prefix or an `x_` alias), and its agent. |
+| `SESSIONS` | Each session credited and its agent, by the shortest reference that opens it: an id prefix, an `x_` alias, or for a subagent a prefix of its own id or 8 characters of each part (`a03d2f6b:sub:a7d49789`). A session this store lacks shows 8 characters of its id, or of each part. |
 | `-` in `blame` | No captured session wrote the line: a person wrote or rewrote it, or an agent coding.sh did not capture. |
 | `confidence` | 1 from a pre-agent snapshot, 0.9 from HEAD at the session's start, 0.8 from edit tool calls, lowered for looser matches. |
 
