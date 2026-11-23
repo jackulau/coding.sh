@@ -201,10 +201,13 @@ export class ResponseSessions {
   }
 }
 
+/** The agent a call is stored under: Claude Code's or Codex's id when the call names its session, else "proxy". The budget guard uses it too. */
+export const storedAgent = (client: Client, namesSession: boolean): string => (namesSession && (client.id === "claude-code" || client.id === "codex") ? client.id : "proxy");
+
 export function linkCall(h: Headers, client: Client, req: RequestInfo | undefined, systemHash: string | undefined, responses: ResponseSessions, lineage: Lineage = {}): Link {
   const named = namedSession(h, client, req);
   if (named) {
-    const agent = client.id === "claude-code" || client.id === "codex" ? client.id : "proxy";
+    const agent = storedAgent(client, true);
     // A Claude Code subagent sends its parent's session id: its calls go to the child
     // session the transcript adapter builds for it (normalize.ts childSessionId).
     const explicit = named.id === safe(one(h, "x-coding-sh-session"));
@@ -212,6 +215,6 @@ export function linkCall(h: Headers, client: Client, req: RequestInfo | undefine
     return { sessionId: named.id, agent, linkedBy: named.by };
   }
   const prev = responses.get(req?.previousResponseId);
-  if (prev) return { sessionId: prev, agent: "proxy", linkedBy: "previous-response" };
-  return { sessionId: conversationSessionId(client, req, systemHash), agent: "proxy", linkedBy: "conversation" };
+  if (prev) return { sessionId: prev, agent: storedAgent(client, false), linkedBy: "previous-response" };
+  return { sessionId: conversationSessionId(client, req, systemHash), agent: storedAgent(client, false), linkedBy: "conversation" };
 }

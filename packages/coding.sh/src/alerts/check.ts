@@ -1,11 +1,12 @@
 // One pass over every alert: read its measure, work out each group's state, and
 // notify the target of each change of state. `coding.sh alert check` runs it (cron,
 // Task Scheduler) and `coding.sh serve` runs it every minute. Nothing else does:
-// not the hook, and not a read command.
+// not the hook, and not a read command. A change the target did not get is sent
+// again by the next check, until a delivery gets through or the target is turned off.
 import type { IndexStore } from "../core/types.ts";
 import { type AlertPayload, deliver, type DeliverOptions } from "./notify.ts";
 import { readMeasure } from "./measure.ts";
-import { type AlertDef, type AlertState, loadAlerts, MAX_FAILED_DELIVERIES, saveAlerts, withAlertsLock } from "./store.ts";
+import { type AlertDef, type AlertState, type GroupState, loadAlerts, MAX_FAILED_DELIVERIES, saveAlerts, withAlertsLock } from "./store.ts";
 
 /** A group's state for a value; null is no data, which --no-data maps. Direction "under" fires below the thresholds. */
 export function classify(def: Pick<AlertDef, "over" | "warn" | "noData" | "direction">, value: number | null, previous: AlertState): AlertState {
@@ -33,6 +34,11 @@ export interface GroupResult {
   previous: AlertState;
   value: number | null;
   changed: boolean;
+  /**
+   * Set when an earlier check could not deliver a change and the target still has an older
+   * state: this one. The notification this check sends names it as `previous`.
+   */
+  lastDelivered?: AlertState;
 }
 
 export interface AlertResult {
@@ -103,15 +109,22 @@ async function checkOne(def: AlertDef, o: CheckOptions, now: number): Promise<Al
   }
   // Groups seen before and absent now have no data.
   const keys = [...new Set([...values.keys(), ...Object.keys(def.states)])].sort();
+  const due: { group: GroupResult; saved: GroupState; from: AlertState }[] = [];
   for (const key of keys) {
     const prev = def.states[key];
     const previous = prev?.state ?? "OK";
     const value = values.get(key) ?? null;
     const state = classify(def, value, previous);
     const changed = state !== previous;
-    def.states[key] = { state, value, since: changed || !prev ? now : prev.since, checkedAt: now };
+    const saved: GroupState = { state, value, since: changed || !prev ? now : prev.since, checkedAt: now };
+    def.states[key] = saved;
     const group: GroupResult = { state, previous, value, changed };
     if (def.by) group.agent = key;
+    // The target has the previous state, or an older one when a delivery did not get through.
+    // Back at that one, there is nothing to tell it.
+    const from = prev?.lastDelivered ?? previous;
+    if (prev?.lastDelivered !== undefined && state !== from) group.lastDelivered = from;
+    if (state !== from) due.push({ group, saved, from });
     r.groups.push(group);
   }
   const worst = r.groups.reduce<GroupResult | undefined>((w, g) => (!w || RANK[g.state] > RANK[w.state] ? g : w), undefined);
@@ -119,25 +132,28 @@ async function checkOne(def: AlertDef, o: CheckOptions, now: number): Promise<Al
     r.state = worst.state;
     r.value = worst.value;
   }
-  for (const g of r.groups) {
-    if (!g.changed) continue;
+  for (const { group, saved, from } of due) {
+    // Kept until a delivery gets through, so the next check sends this change again.
+    saved.lastDelivered = from;
     if (def.delivery.disabledAt !== undefined) {
       r.skipped++;
       continue;
     }
     const opts: DeliverOptions = { ...o };
     if (def.secret) opts.secret = def.secret;
-    const d = await deliver(def.notify, payloadOf(def, g, now), opts);
+    const d = await deliver(def.notify, payloadOf(def, { ...group, previous: from }, now), opts);
     recordDelivery(def, d, now);
-    if (d.ok) r.notified++;
-    else r.failed++;
+    if (d.ok) {
+      r.notified++;
+      delete saved.lastDelivered;
+    } else r.failed++;
   }
   r.disabled = def.delivery.disabledAt !== undefined;
   if (def.delivery.lastError && def.delivery.failures) r.deliveryError = def.delivery.lastError;
   return r;
 }
 
-/** Checks every alert in the file under its lock, notifies each change of state, and saves the states. */
+/** Checks every alert in the file under its lock, notifies each change of state the target does not have, and saves the states. */
 export async function runAlertChecks(o: CheckOptions): Promise<AlertResult[]> {
   return withAlertsLock(
     o.file,
