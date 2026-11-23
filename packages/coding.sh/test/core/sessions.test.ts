@@ -561,6 +561,13 @@ describe("session usage rollup", () => {
     assert.equal(mixed.estimatedCostUsd, 1e6);
   });
 
+  it("a nested call's reported cost beats the wrapper's estimate when that estimate is $0 (a [prices] row of 0)", () => {
+    // api.md: "A cost a nested call reported, even $0, beats an estimate on the outer call."
+    const wrapper = ev("llm.call", { costEstimated: true }, { model: "house-coder", traceId: "t", spanId: "w", usage: { inputTokens: 1_000_000, costUsd: 0 } });
+    const billed = ev("llm.call", {}, { model: "house-coder", traceId: "t", spanId: "n", parentSpanId: "w", usage: { inputTokens: 1_000_000, costUsd: 3 } });
+    assert.equal(buildSession([wrapper, billed]).stats.usage?.costUsd, 3);
+  });
+
   it("fills fields the wrapper lacks from its nested calls", () => {
     const r = rollupUsage([llm("a", undefined, { inputTokens: 100 }), llm("b", "a", { inputTokens: 90, cacheReadTokens: 10 }), llm("c", "a", { cacheReadTokens: 5 })]);
     assert.deepEqual(r.usage, { inputTokens: 100, cacheReadTokens: 15 });
