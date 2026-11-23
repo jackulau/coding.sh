@@ -64,6 +64,11 @@ test("ci.yml builds and checks the site in a job of its own", () => {
   assert.match(site, /\n      - name: Site build\n        working-directory: apps\/site\n        run: npm run build\n/);
   assert.match(site, /\n      - name: Site check\n        working-directory: apps\/site\n        env:\n          CODING_SH_REQUIRE_DIST: "1"\n        run: npm run check\n/);
   assert.match(site, /\n      - name: Install\n        run: npm ci\n/);
+  // Full history, as the deploy has: a page is dated by the last commit to its source, and a
+  // shallow checkout's merge-commit date changes the page's size from the one the deploy checks.
+  const fullHistory = /\n      - uses: actions\/checkout@v5\n        with:\n(?: +#.*\n)*          fetch-depth: 0\n/;
+  assert.match(site, fullHistory, "the site job fetches full history");
+  assert.match(read(".github/workflows/site.yml"), fullHistory, "the deploy fetches full history");
   // No step of either job is skipped or let through: a failure fails the job.
   for (const body of [build, site]) {
     assert.doesNotMatch(body, /\n        if: /);

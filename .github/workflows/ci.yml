@@ -236,7 +236,13 @@ jobs:
       # here puts that nav through the build, the site tests and the perf budget.
       SITE_GITHUB_STARS: "1234"
     steps:
+      # Full history, as the Site workflow fetches: a page's date (the sitemap <lastmod>, a docs
+      # page's dateModified) is the last commit to its source, as in the deploy. A shallow checkout
+      # dates every page at the merge commit, and those digits alone have put a page over its
+      # weight budget in one build and not the other. It adds about 1 s to the checkout.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
