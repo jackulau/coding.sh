@@ -2,17 +2,21 @@
 // what `coding.sh work --json` gives for the same store and filters, and an ack or a
 // snooze made in the viewer must be one `coding.sh work` sees (the same work.json).
 import assert from "node:assert/strict";
-import { createServer, request as httpRequest, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
+import { gunzipSync } from "node:zlib";
 import * as work from "../../src/cli/commands/work.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { FLAGS } from "../../src/core/sessions.ts";
-import type { Session } from "../../src/core/types.ts";
+import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { workItemId } from "../../src/core/work.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
@@ -21,6 +25,9 @@ import { workSessions } from "./_work.ts";
 
 interface Res {
   status: number;
+  headers: IncomingHttpHeaders;
+  /** The bytes as sent: gzipped when the answer says Content-Encoding: gzip. */
+  raw: Buffer;
   body: string;
   json: () => any;
 }
@@ -33,8 +40,9 @@ function req(port: number, path: string, opts: { method?: string; headers?: Reco
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        resolve({ status: res.statusCode ?? 0, body, json: () => JSON.parse(body) });
+        const raw = Buffer.concat(chunks);
+        const body = raw.toString("utf8");
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, raw, body, json: () => JSON.parse(body) });
       });
       res.on("error", reject);
     });
@@ -47,6 +55,14 @@ function req(port: number, path: string, opts: { method?: string; headers?: Reco
 /** The fields of `work --json` both sides give: `since` is the window start, read a few ms apart. */
 const KEYS = ["counts", "needYou", "hidden", "noPromptSignal", "items", "more", "groups", "truncated"];
 const pick = (doc: Record<string, unknown>) => Object.fromEntries(KEYS.filter((k) => k in doc).map((k) => [k, doc[k]]));
+
+/** `work show <id> --json`, less what only the CLI gives: an old index's time and the ingest backlog. */
+async function showJson(sb: Sandbox, id: string): Promise<Record<string, unknown>> {
+  const r = await runCmd(work, sb, { action: "show", positionals: [id], json: true });
+  assert.equal(r.error, undefined, r.error?.stack);
+  const { indexUpdatedAt: _, asOf: __, pending: ___, ...doc } = r.json as Record<string, unknown>;
+  return doc;
+}
 
 describe("viewer /api/work", () => {
   let sb: Sandbox;
@@ -75,6 +91,14 @@ describe("viewer /api/work", () => {
       const want = pick(await cli(flags));
       const res = await get(path);
       if (isDeepStrictEqual(pick(await cli(flags)), want) || i === 2) return { want, res };
+    }
+  };
+  /** `work show <id> --json` and GET /api/work/<id>, read before and after as cliAndApi reads them. */
+  const showAndApi = async (id: string) => {
+    for (let i = 0; ; i++) {
+      const want = await showJson(sb, id);
+      const res = await get(`/api/work/${id}`);
+      if (isDeepStrictEqual(await showJson(sb, id), want) || i === 2) return { want, res };
     }
   };
 
@@ -140,6 +164,65 @@ describe("viewer /api/work", () => {
     const all = (await get("/api/work?all=1")).json();
     assert.deepEqual(got.stages, all.stages);
     assert.deepEqual(got.hiddenBy, { done: 1 });
+  });
+
+  test("totals count each bucket over the whole answer, before limit cuts it", async () => {
+    const countOf = (items: { bucket?: string }[]) => {
+      const t: Record<string, number> = { blocked: 0, failed: 0, stalled: 0, turn: 0, review: 0, hidden: 0 };
+      for (const i of items) t[i.bucket ?? "hidden"]!++;
+      return t;
+    };
+    const two = (await get("/api/work?limit=2")).json();
+    assert.equal(two.items.length, 2);
+    assert.deepEqual(two.totals, { blocked: 1, failed: 1, stalled: 1, turn: 1, review: 1, hidden: 0 });
+    assert.equal(two.more, 3);
+    // Hidden items count when the answer lists them: with all=1, or a stage filter.
+    assert.deepEqual((await get("/api/work?all=1&limit=1")).json().totals, { ...two.totals, hidden: 1 });
+    const staged = (await get("/api/work?stage=review,done")).json();
+    assert.deepEqual(staged.totals, countOf(staged.items));
+    assert.equal(staged.totals.hidden, 1);
+    // The filters narrow the totals as they narrow the items.
+    assert.deepEqual((await get("/api/work?agent=codex&limit=1")).json().totals, { ...countOf([]), failed: 1 });
+  });
+
+  test("GET /api/work/<id> gives the item work show <id> --json gives, and the list's now", async () => {
+    for (const sid of ["blocked", "failed", "review"]) {
+      const { want, res } = await showAndApi(workItemId(sid));
+      assert.equal(res.status, 200, res.body);
+      const { now: at, ...got } = res.json();
+      assert.deepEqual(got, want);
+      assert.match(at, /^\d{4}-\d{2}-\d{2}T/);
+    }
+    const blocked = (await get(`/api/work/${workItemId("blocked")}`)).json();
+    assert.deepEqual(blocked.sessions.map((s: { id: string }) => s.id), ["blocked", "blocked:sub:a1"]);
+    assert.match(blocked.reason, /\S/);
+    assert.equal(blocked.bucket, "blocked");
+    // A hidden item has a page too, as `work show` shows it.
+    assert.equal((await get(`/api/work/${workItemId("done")}`)).json().hidden, "done");
+  });
+
+  test("GET /api/work/<id>: a malformed id is a 400, an unknown one a 404, and the list's filters apply", async () => {
+    const unknown = await get("/api/work/w000000");
+    assert.equal(unknown.status, 404, unknown.body);
+    assert.equal(unknown.json().error, "no work item w000000 since 7d");
+    const bad = await get("/api/work/not-an-id");
+    assert.equal(bad.status, 400, bad.body);
+    assert.match(bad.json().error, /^id must be a work item id/);
+    assert.equal((await get("/api/work/W1A2B3C")).status, 400);
+    const id = workItemId("blocked");
+    const other = await get(`/api/work/${id}?agent=codex`);
+    assert.equal(other.status, 404, other.body);
+    assert.equal(other.json().error, `no work item ${id} since 7d that matches the filters`);
+    assert.equal((await get(`/api/work/${id}?repo=api`)).status, 404);
+    assert.equal((await get(`/api/work/${id}?agent=claude-code&repo=demo`)).status, 200);
+    // An item older than the window is found once the window takes it in.
+    const old = workItemId("old");
+    assert.equal((await get(`/api/work/${old}`)).status, 404);
+    assert.equal((await get(`/api/work/${old}?since=60d`)).status, 200);
+    assert.equal((await get(`/api/work/${id}?since=yesterdayish`)).status, 400);
+    assert.equal((await post(`/api/work/${id}`, {})).status, 405);
+    assert.equal((await get(`/api/work/${id}/sessions`)).status, 404);
+    assert.equal((await req(v.port, `/api/work/${id}`)).status, 401);
   });
 
   test("ack and snooze write the overlay coding.sh work reads", async () => {
@@ -228,6 +311,7 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
   const agent = (id: string, phase: string, startAgo: number, extra: Extra = {}): Session =>
     sess(`lead:sub:${id}`, startAgo, { ...extra, parent: { sessionId: "lead", subagentId: id, workflowId: "run-a", workflowName: "round", phase, label: `${phase}:${id}` } });
   const repo = { root: "/work/web", head: "", branch: "main" } as Extra["repo"];
+  const change: AgentEvent = { id: "c1", v: 0, sessionId: "change", ts: now - 75 * MIN, agent: "claude-code", kind: "file.change", payload: { path: "src/header.ts", op: "modify" } };
 
   before(async () => {
     sb = sandbox();
@@ -238,7 +322,9 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
       { ...agent("v1", "review", 120 * MIN), endedAt: undefined },
       sess("failed", 150 * MIN, { ...failing, cwd: "/work/web", repo, title: "deploy the site" }),
       sess("passed", 100 * MIN, { cwd: "/work/web", repo, title: "deploy the site again" }),
-    ]);
+      // A change to review that ended 70 minutes ago, 30 minutes before the last ingest.
+      sess("change", 80 * MIN, { title: "fix the header", endedAt: now - 70 * MIN, stats: { filesChanged: 1 } }),
+    ], [change]);
     const home = sb.env.CODING_SH_HOME!;
     index = await SqliteIndexStore.open(join(home, "index.db"));
     await index.migrate();
@@ -276,6 +362,29 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
     assert.deepEqual(got.sessionOf, { [workItemId("passed")]: "passed" });
   });
 
+  test("an item's page carries a run's agents and a superseded failure's link, as work show gives them", async () => {
+    const items = (await req(v.port, "/api/work?all=1", { token: v.token })).json().items;
+    const run = items.find((i: { workflow?: { id: string } }) => i.workflow?.id === "run-a");
+    const failed = workItemId("failed");
+    const review = workItemId("change");
+    for (const id of [run.id, failed, review]) {
+      const res = await req(v.port, `/api/work/${id}`, { token: v.token });
+      assert.equal(res.status, 200, res.body);
+      // The index is old, so both sides judge the item as of its last ingest: no clock to split them.
+      const { now: at, index: age, sessionOf: _, ...got } = res.json();
+      assert.deepEqual(got, await showJson(sb, id));
+      assert.equal(at, age.updatedAt);
+    }
+    assert.equal((await showJson(sb, review)).reason, "finished 30m ago with 1 file changed", "work show counts a review item's age from the last ingest, as the list does");
+    const agents = (await req(v.port, `/api/work/${run.id}`, { token: v.token })).json().workflowAgents;
+    assert.deepEqual(agents.map((a: Record<string, unknown>) => [a.sessionId, a.phase, a.state]), [["lead:sub:b1", "build", "done"], ["lead:sub:b2", "build", "failed"], ["lead:sub:v1", "review", "running"]]);
+    assert.match(agents[0].startedAt, /^\d{4}-\d{2}-\d{2}T/);
+    const superseded = (await req(v.port, `/api/work/${failed}`, { token: v.token })).json();
+    assert.equal(superseded.supersededBy, workItemId("passed"));
+    assert.deepEqual(superseded.sessionOf, { [workItemId("passed")]: "passed" });
+    assert.equal((await req(bare.port, `/api/work/${failed}`, { token: bare.token })).json().index, undefined);
+  });
+
   test("carries the index's age in the CLI's words, and judges an old index's queue as of its last ingest", async () => {
     const got = (await req(v.port, "/api/work", { token: v.token })).json();
     assert.deepEqual(got.index, { updatedAt: new Date(now - 40 * MIN).toISOString(), stale: true, text: "index updated 40m ago: waits and stalls are as of then; run coding.sh ingest" });
@@ -297,5 +406,68 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
     const got = (await req(bare.port, "/api/work", { token: bare.token })).json();
     assert.equal("index" in got, false);
     assert.equal("index" in (await req(bare.port, "/api/ingest", { token: bare.token })).json(), false);
+  });
+});
+
+describe("viewer /api/work: a big queue", () => {
+  const MIN = 60e3;
+  const now = Date.now();
+  const index = new MemoryIndexStore();
+  let dir: string;
+  let v: Viewer;
+  const get = (path: string, headers: Record<string, string> = {}) => req(v.port, path, { token: v.token, headers });
+  const gunzip = (r: Res) => JSON.parse(gunzipSync(r.raw).toString("utf8"));
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), "work-big-"));
+    // 1,050 changes to review, one a minute: more than one answer lists.
+    for (let n = 0; n < 1050; n++) await index.upsertSession(mkSession(`r${n}`, now - (n + 10) * MIN, { cwd: "/work/demo", title: `change ${n}`, stats: { filesChanged: 1 } }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any, work: { overlay: join(dir, "work.json"), home: dir, cwd: dir } });
+  });
+  after(async () => {
+    await v?.close();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a limit lists up to 1,000 items, and totals count the rest", async () => {
+    const got = (await get("/api/work?limit=5000")).json();
+    assert.equal(got.items.length, 1000);
+    assert.equal(got.more, 50);
+    assert.equal(got.totals.review, 1050);
+    assert.equal((await get("/api/work?limit=600")).json().items.length, 600);
+  });
+
+  test("gzips the answer when the request takes gzip, and sends it plain when not", async () => {
+    const path = "/api/work?limit=200";
+    const plain = await get(path);
+    assert.equal(plain.status, 200);
+    assert.equal(plain.headers["content-encoding"], undefined);
+    assert.equal(plain.headers.vary, "Accept-Encoding");
+    assert.ok(plain.raw.length > 32 * 1024, `${plain.raw.length} bytes: big enough to gzip`);
+    const zipped = await get(path, { "accept-encoding": "gzip, deflate, br" });
+    assert.equal(zipped.status, 200);
+    assert.equal(zipped.headers["content-encoding"], "gzip");
+    assert.equal(zipped.headers.vary, "Accept-Encoding");
+    assert.equal(zipped.headers["content-type"], "application/json; charset=utf-8");
+    assert.equal(Number(zipped.headers["content-length"]), zipped.raw.length);
+    assert.ok(zipped.raw.length * 4 < plain.raw.length, `${zipped.raw.length} gzipped bytes, ${plain.raw.length} plain`);
+    const ids = (doc: { items: { id: string }[] }) => doc.items.map((i) => i.id);
+    assert.deepEqual(ids(gunzip(zipped)), ids(plain.json()));
+    // A client that refuses gzip gets it plain.
+    const refused = await get(path, { "accept-encoding": "gzip;q=0, identity" });
+    assert.equal(refused.headers["content-encoding"], undefined);
+    assert.deepEqual(ids(refused.json()), ids(plain.json()));
+    // A small answer goes plain, with no Vary: it is the same whatever the client takes.
+    const small = await get("/api/work?limit=1", { "accept-encoding": "gzip" });
+    assert.equal(small.headers["content-encoding"], undefined);
+    assert.equal(small.headers.vary, undefined);
+  });
+
+  test("gzips a big /api/sessions answer too", async () => {
+    const r = await get("/api/sessions?scope=top&limit=500", { "accept-encoding": "gzip" });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers["content-encoding"], "gzip");
+    assert.equal(r.headers.vary, "Accept-Encoding");
+    assert.equal(gunzip(r).items.length, 500);
   });
 });

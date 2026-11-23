@@ -49,7 +49,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
-| [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
+| [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
 | [`attribution`](#codingsh-attribution) | Explore | Which agent session wrote the lines each commit added; export them as Agent Trace |
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
@@ -685,7 +685,7 @@ coding.sh show 'latest#-1'
 
 ## `coding.sh tree`
 
-Show a whole multi-agent run as one tree, with rolled-up totals.
+Show a session and its subagents, or a whole run, as one tree, with rolled-up totals.
 
 ```text
 coding.sh tree <SESSION|RUN> [options]
@@ -693,10 +693,11 @@ coding.sh tree <SESSION|RUN> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session|run` | yes | A session id, prefix or x_ alias (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out) |
+| `session|run` | yes | A session id, prefix or x_ alias (the session and every subagent under it), or a run id (every agent of the fan-out) |
 
 | Option | Default | Description |
 |---|---|---|
+| `--all` |  | From a subagent, show the whole tree from its top-level agent down. |
 | `--run` |  | Read the argument as a run id (CODING_SH_RUN_ID), not a session. |
 | `-n, --limit <N>` | `50` | With --json: most nodes in one page. |
 | `--cursor <CURSOR>` |  | With --json: the nextCursor of the last page. |
@@ -705,12 +706,14 @@ coding.sh tree <SESSION|RUN> [options]
 ```sh
 coding.sh tree latest
 coding.sh tree 9f1c2e
+coding.sh tree 9f1c2e --all
 coding.sh tree my-fanout-123 --run
 coding.sh tree latest --json --limit 100
 ```
 
-- From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.
+- The tree is the session and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the tree's totals and worst flag. From a subagent, an in: line above the tree names the sessions above it by short id and role, from the top-level agent down; --all shows the whole tree from the top-level agent.
 - With --json the tree comes a page at a time: 50 nodes, depth-first, with nextCursor and truncated: true when more are left. totals and worst cover the whole tree on every page. A node whose parent was on an earlier page is at the top level of its page; depth and parentSessionId say where it hangs. Nodes are session digests, as in sessions --json.
+- From a subagent, --json adds ancestors: the sessions above the tree's root (id, agent, role), the top-level agent first. depth counts from the top-level agent, so the root's depth is the number of ancestors.
 - Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.
 
 ## `coding.sh replay`
