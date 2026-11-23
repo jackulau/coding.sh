@@ -9,6 +9,7 @@
 //   response and its errors go to onError.
 // - Nothing is pooled or rotated: one client request, one upstream request,
 //   with the client's credentials.
+import { timingSafeEqual } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import type { Socket } from "node:net";
@@ -29,8 +30,12 @@ export const DEFAULT_UPSTREAMS = {
 } as const;
 /** Request and response bodies larger than this are forwarded but not kept for parsing. */
 export const DEFAULT_MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
-/** Paths under this prefix are the proxy's own (health), never forwarded. */
+/** Paths under this prefix are the proxy's own (health, stop), never forwarded. */
 export const CONTROL_PREFIX = "/__codingsh/";
+/** `proxy stop` POSTs here, with the proxy's stop secret in STOP_HEADER. */
+export const STOP_PATH = `${CONTROL_PREFIX}stop`;
+/** An x-coding-sh- header, so forwardHeaders would drop it even on a path that is forwarded. */
+export const STOP_HEADER = "x-coding-sh-secret";
 
 export interface Upstreams {
   anthropic: string;
@@ -53,6 +58,11 @@ export interface ProxyHandlerOptions {
   budget?: BudgetGuard;
   /** A call the budget stopped. */
   onBlock?: (block: BudgetBlock, route: Route) => void;
+  /**
+   * `coding.sh proxy`: a POST to STOP_PATH with this secret in STOP_HEADER calls onStop. Without
+   * it (serve's proxy) the path is a 404 like any other unknown control path.
+   */
+  stop?: { secret: string; onStop: () => void };
 }
 
 export interface ProxyRequestContext {
@@ -136,6 +146,34 @@ function decoderFor(encoding: string | undefined): Transform | undefined | null 
 
 const jsonError = (status: number, message: string): string => JSON.stringify({ type: "error", error: { type: status === 502 ? "api_error" : "invalid_request_error", message } });
 
+/**
+ * STOP_PATH: calls onStop when a POST carries the secret, which only the proxy's state file holds.
+ * Everything else gets an error from the proxy and changes nothing. Another method gets a 405
+ * with no CORS headers, so a web page's preflight fails and its request never goes out. A
+ * request with an Origin, which browsers send, gets a 403, as does a wrong or missing secret.
+ */
+function answerStop(req: IncomingMessage, res: ServerResponse, stop: { secret: string; onStop: () => void }): void {
+  const json = { "Content-Type": "application/json" };
+  if (req.method !== "POST") {
+    res.writeHead(405, { ...json, Allow: "POST" }).end(jsonError(405, "coding.sh proxy: stop takes a POST"));
+    return;
+  }
+  if (req.headers.origin !== undefined) {
+    res.writeHead(403, json).end(jsonError(403, "coding.sh proxy: cross-origin requests are not allowed"));
+    return;
+  }
+  const sent = req.headers[STOP_HEADER];
+  const given = Buffer.from(typeof sent === "string" ? sent : "");
+  const want = Buffer.from(stop.secret);
+  // timingSafeEqual needs equal lengths; the length of a random hex secret is no secret.
+  if (given.length !== want.length || !timingSafeEqual(given, want)) {
+    res.writeHead(403, json).end(jsonError(403, "coding.sh proxy: wrong or missing stop secret"));
+    return;
+  }
+  res.writeHead(200, { ...json, Connection: "close" }).end(JSON.stringify({ ok: true, stopping: true }));
+  stop.onStop();
+}
+
 export function createProxyHandler(o: ProxyHandlerOptions = {}): ProxyHandler {
   const forward = forwardingHandler(o);
   const guard = o.budget;
@@ -199,9 +237,11 @@ function forwardingHandler(o: ProxyHandlerOptions): ProxyHandler {
     }
     if (path.startsWith(CONTROL_PREFIX)) {
       req.resume();
-      if (path.split("?")[0] === `${CONTROL_PREFIX}health`) {
+      const control = path.split("?")[0];
+      if (control === `${CONTROL_PREFIX}health`) {
         res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, service: "coding.sh proxy", upstreams: up, ...o.info }));
-      } else res.writeHead(404, { "Content-Type": "application/json" }).end(jsonError(404, `coding.sh proxy: no route ${path}`));
+      } else if (control === STOP_PATH && o.stop) answerStop(req, res, o.stop);
+      else res.writeHead(404, { "Content-Type": "application/json" }).end(jsonError(404, `coding.sh proxy: no route ${path}`));
       return;
     }
     // A browser page must not use the proxy (it would log into the store).
@@ -442,7 +482,14 @@ export async function startProxy(o: ProxyServerOptions = {}): Promise<ProxyServe
     server,
     async close() {
       await new Promise<void>((resolve) => {
-        server.close(() => resolve());
+        // server.close() closes the connections idle at that moment. A keep-alive connection whose
+        // call finishes later is closed once it is idle too, not when the client or
+        // keepAliveTimeout gets to it.
+        const idle = setInterval(() => server.closeIdleConnections(), 100);
+        server.close(() => {
+          clearInterval(idle);
+          resolve();
+        });
         server.closeIdleConnections();
       });
       await o.recorder?.flush();
