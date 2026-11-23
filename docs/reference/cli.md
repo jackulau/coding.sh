@@ -1239,6 +1239,7 @@ coding.sh stats --by flag --where 'agent:codex' --json
 - Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
 - With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
 - Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.
+- --json also prints waits: how often and how long the window's sessions waited on you, by kind, subagents included. GET /api/metrics does not have it. A store other than SQLite stops reading them at 100,000 sessions and sets waits.truncated.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh sql`
@@ -1363,7 +1364,7 @@ coding.sh work [action] [options]
 |---|---|
 | [`show`](#codingsh-work-show) | What one item is doing, what it waits on, its files and child sessions, and the next step |
 | [`ack`](#codingsh-work-ack) | Acknowledge an item's current cause: it leaves the queue until something new happens |
-| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; it comes back sooner if it moves to a more urgent bucket |
+| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; until then it shows only while it is in a more urgent bucket |
 
 | Option | Default | Description |
 |---|---|---|
@@ -1436,7 +1437,7 @@ coding.sh work ack w3f9a1c
 
 ### `coding.sh work snooze`
 
-Hide an item for a while; it comes back sooner if it moves to a more urgent bucket.
+Hide an item for a while; until then it shows only while it is in a more urgent bucket.
 
 ```text
 coding.sh work snooze <ID> <DURATION> [options]

@@ -11,9 +11,10 @@ import { failureState, foldFailure } from "../core/failures.ts";
 import type { IndexStore } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { isWeightsEvent, weightsEventText } from "../core/weights.ts";
+import { isAgentPromptMark } from "../core/waiting.ts";
 
 /** Bump when the model's shape or its rules change: cached models are rebuilt. */
-export const MODEL_VERSION = 3; // 2: a weight edit has its own code, so a fold never hides it. 3: a weights checkpoint has that code too.
+export const MODEL_VERSION = 4; // 2: a weight edit has its own code, so a fold never hides it. 3: a weights checkpoint has that code too. 4: a host's agent-prompt marker (T3 Code) sets no turn's endTs.
 
 const KINDS = ["other", "session.start", "session.end", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "context.compact", "turn.end", "subagent.start", "subagent.end", "file.change", "test.result", "notification", "span", "error", "weights.edit"] as const;
 const CODE = new Map<string, number>(KINDS.map((k, i) => [k, i]));
@@ -151,7 +152,8 @@ export function modelBuilder(key = ""): { add(batch: readonly AgentEvent[]): voi
       }
       const t = turn!;
       t.end = i;
-      if (e.ts > t.endTs) t.endTs = e.ts;
+      // A host's marker that an agent sent the next prompt is stamped just before that prompt: no activity of the turn before.
+      if (e.ts > t.endTs && !isAgentPromptMark(e)) t.endTs = e.ts;
       if (code === C["tool.start"]) {
         // A wrapper (a Codex code-mode cell) runs the calls that count; it is not one itself.
         if (e.payload.wrapper !== true) { tools++; t.tools++; }
@@ -345,7 +347,8 @@ export async function readRows(index: Pick<IndexStore, "listEvents">, sessionId:
       continue;
     }
     const e = at.get(s.i);
-    if (!e) continue;
+    // A host's marker that an agent sent the next prompt: no row, at a time it made up.
+    if (!e || isAgentPromptMark(e)) continue;
     const r: EventRow = { i: s.i, id: e.id, kind: e.kind, ts: e.ts, label: rowLabel(e) };
     if (failed.has(s.i)) r.failed = true;
     if (e.subagentId) r.subagentId = e.subagentId;

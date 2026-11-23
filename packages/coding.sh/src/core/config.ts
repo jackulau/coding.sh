@@ -2,7 +2,8 @@
 //
 // A repo-level file is untrusted (it arrives with `git clone`), so it may only
 // touch capture/snapshot settings, and only in ways that keep or add privacy:
-// redactors and patterns are unioned, never removed, and its patterns are literal text. It can never add sinks or
+// redactors and patterns are unioned, never removed, and its patterns are literal text;
+// snapshots can be turned off and their limits lowered, never the reverse. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
@@ -250,7 +251,7 @@ function applyUserConfig(base: Config, root: TomlTable, file: string, env: NodeJ
   }
 
   applyCapture(out, r, "replace", file);
-  applySnapshot(out, r);
+  applySnapshot(out, r, "replace");
 
   const retention = r.table("retention");
   if (retention) {
@@ -445,19 +446,30 @@ function literalPattern(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
-function applySnapshot(out: Config, r: Reader): void {
+function applySnapshot(out: Config, r: Reader, how: "replace" | "tighten"): void {
   const snapshot = r.table("snapshot");
   if (!snapshot) return;
-  out.snapshot.enabled = r.bool(snapshot, "enabled", "snapshot.enabled") ?? out.snapshot.enabled;
-  out.snapshot.maxFiles = r.int(snapshot, "maxFiles", "snapshot.maxFiles", 1) ?? out.snapshot.maxFiles;
-  out.snapshot.timeoutMs = r.int(snapshot, "timeoutMs", "snapshot.timeoutMs", 1) ?? out.snapshot.timeoutMs;
+  const enabled = r.bool(snapshot, "enabled", "snapshot.enabled");
+  const maxFiles = r.int(snapshot, "maxFiles", "snapshot.maxFiles", 1);
+  const timeoutMs = r.int(snapshot, "timeoutMs", "snapshot.timeoutMs", 1);
+  if (how === "replace") {
+    if (enabled !== undefined) out.snapshot.enabled = enabled;
+    if (maxFiles !== undefined) out.snapshot.maxFiles = maxFiles;
+    if (timeoutMs !== undefined) out.snapshot.timeoutMs = timeoutMs;
+  } else {
+    // A snapshot keeps the working tree's files as they are, not redacted, so a repo may turn
+    // snapshots off or lower their limits, never turn them on or raise them.
+    if (enabled === false) out.snapshot.enabled = false;
+    if (maxFiles !== undefined) out.snapshot.maxFiles = Math.min(out.snapshot.maxFiles, maxFiles);
+    if (timeoutMs !== undefined) out.snapshot.timeoutMs = Math.min(out.snapshot.timeoutMs, timeoutMs);
+  }
 }
 
 function applyRepoConfig(base: Config, root: TomlTable, file: string): Config {
   const r = reader(root, file);
   const out: Config = structuredClone(base);
   applyCapture(out, r, "union", file);
-  applySnapshot(out, r);
+  applySnapshot(out, r, "tighten");
   return out;
 }
 
@@ -468,35 +480,97 @@ const isWin = process.platform === "win32";
 /** Windows paths with `/` only, so `C:/work/**` and `~\x` globs match native `C:\work\…` paths. */
 const slashed = (p: string): string => (isWin ? p.replaceAll("\\", "/") : p);
 
-/** Converts a path glob (`*`, `**`, `?`, leading `~`) to an anchored RegExp. */
-export function globToRegExp(glob: string, env: NodeJS.ProcessEnv = process.env): RegExp {
+// Glob tokens other than a character code.
+/** `**`: any characters. */
+const ANY_RUN = -1;
+/** `*`: any characters but `/`. */
+const SEGMENT_RUN = -2;
+/** `?`: one character but `/`. */
+const ONE = -3;
+const SLASH = 0x2f;
+
+/** A path glob (`*`, `**`, `?`, leading `~`) as tokens. A `**` also takes the `/` after it. */
+function globTokens(glob: string, env: NodeJS.ProcessEnv = process.env): number[] {
   let g = expandHome(glob, env);
   // Windows: give a rooted glob (`/work/**`) the drive resolve() gives paths.
   if (isWin && isAbsolute(g)) g = resolve(g);
   g = slashed(g).replace(/\/+$/, "");
-  let re = "";
+  const out: number[] = [];
   for (let i = 0; i < g.length; i++) {
     const c = g[i]!;
     if (c === "*") {
       if (g[i + 1] === "*") {
-        re += ".*";
+        out.push(ANY_RUN);
         i++;
         if (g[i + 1] === "/") i++;
-      } else re += "[^/]*";
-    } else if (c === "?") re += "[^/]";
-    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      } else out.push(SEGMENT_RUN);
+    } else if (c === "?") out.push(ONE);
+    else out.push(fold(g.charCodeAt(i)));
   }
-  // NTFS paths are case-insensitive.
-  return new RegExp(`^${re}$`, isWin ? "i" : "");
+  return out;
+}
+
+/** NTFS paths are case-insensitive: Windows compares characters as a case-insensitive RegExp does. */
+function fold(c: number): number {
+  if (!isWin) return c;
+  if (c < 128) return c >= 0x61 && c <= 0x7a ? c - 32 : c;
+  const u = String.fromCharCode(c).toUpperCase();
+  return u.length === 1 && u.charCodeAt(0) >= 128 ? u.charCodeAt(0) : c;
+}
+
+/**
+ * True when the glob's tokens match all of `text`. A repo's config can set exclude globs, so this
+ * walks a table of the text positions each token can reach rather than running a regular
+ * expression, which can take hours on a glob with many stars. The time is at most the glob's
+ * length times the text's.
+ */
+function globMatches(tokens: readonly number[], text: string): boolean {
+  const n = text.length;
+  // live[j] is 1 when the tokens so far match text[0, j); lo and hi bound the positions set.
+  let live = new Uint8Array(n + 1);
+  let next = new Uint8Array(n + 1);
+  live[0] = 1;
+  let lo = 0;
+  let hi = 0;
+  for (const t of tokens) {
+    next.fill(0, lo);
+    let nlo = -1;
+    let nhi = -1;
+    if (t === ANY_RUN || t === SEGMENT_RUN) {
+      for (let j = lo; j <= n; j++) {
+        if (live[j] === 1 || (j > lo && next[j - 1] === 1 && (t === ANY_RUN || text.charCodeAt(j - 1) !== SLASH))) {
+          next[j] = 1;
+          if (nlo < 0) nlo = j;
+          nhi = j;
+        } else if (j > hi) break;
+      }
+    } else {
+      for (let j = lo; j <= hi && j < n; j++) {
+        if (live[j] !== 1) continue;
+        const c = text.charCodeAt(j);
+        if (t === ONE ? c !== SLASH : fold(c) === t) {
+          next[j + 1] = 1;
+          if (nlo < 0) nlo = j + 1;
+          nhi = j + 1;
+        }
+      }
+    }
+    if (nlo < 0) return false;
+    [live, next] = [next, live];
+    lo = nlo;
+    hi = nhi;
+  }
+  return live[n] === 1;
 }
 
 /** True when `path` or any of its ancestors matches one of the exclude globs. */
 export function isExcluded(path: string, globs: readonly string[], env: NodeJS.ProcessEnv = process.env): boolean {
   if (!globs.length || !path) return false;
-  const res = globs.map((g) => globToRegExp(g, env));
+  const tokens = globs.map((g) => globTokens(g, env));
   let p = resolve(path);
   for (;;) {
-    if (res.some((re) => re.test(slashed(p)))) return true;
+    const s = slashed(p);
+    if (tokens.some((t) => globMatches(t, s))) return true;
     const parent = dirname(p);
     if (parent === p) return false;
     p = parent;

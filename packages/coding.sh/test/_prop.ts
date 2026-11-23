@@ -12,8 +12,9 @@
 // or as long and smaller in order, so shrinking always ends.
 //
 // forAll runs 100 cases by default. CODING_SH_PROP_RUNS raises the count for
-// a longer run. A failure names its seed; CODING_SH_PROP_SEED=<seed> replays
-// the run exactly, and CODING_SH_PROP_SEED=random picks a new seed.
+// a longer run. A failure prints the command that replays the run exactly:
+// CODING_SH_PROP_SEED=<seed>, and the run's CODING_SH_PROP_RUNS when that
+// raised the count. CODING_SH_PROP_SEED=random picks a new seed.
 import { fileURLToPath } from "node:url";
 import { relative, sep } from "node:path";
 import { inspect } from "node:util";
@@ -670,7 +671,8 @@ export async function forAll<T>(gen: Gen<T>, prop: Property<T>, opts: ForAllOpti
   const where = new Error().stack;
   const env = opts.env ?? process.env;
   const envRuns = Number(env.CODING_SH_PROP_RUNS);
-  const runs = Math.max(opts.runs ?? 100, Number.isInteger(envRuns) && envRuns > 0 ? envRuns : 0);
+  const asked = opts.runs ?? 100;
+  const runs = Math.max(asked, Number.isInteger(envRuns) && envRuns > 0 ? envRuns : 0);
   const seed = seedFrom(env, (opts.seed ?? hash32(opts.label ?? String(prop))) >>> 0);
   const maxDiscards = opts.maxDiscards ?? runs * 10;
   const next = xoshiro128ss(seed);
@@ -691,11 +693,14 @@ export async function forAll<T>(gen: Gen<T>, prop: Property<T>, opts: ForAllOpti
     // Shown from a fresh replay: the property may have changed the value it was given.
     const counterexample = replay(gen, best.draws);
     const reason = best.error instanceof Error ? best.error.message : String(best.error);
+    // The count too when the environment raised it: the failing case may lie past the default count,
+    // and the discards allowed grow with the count.
+    const count = runs > asked ? ` CODING_SH_PROP_RUNS=${runs}` : "";
     const message = [
       `Property${opts.label ? ` "${opts.label}"` : ""} failed on case ${caseIndex + 1} (seed ${seed}); shrunk ${shrinks} times to:`,
       `  input: ${formatValue(counterexample)}`,
       `  error: ${reason.split("\n").join("\n         ")}`,
-      `Replay: CODING_SH_PROP_SEED=${seed} node --no-warnings --test ${callerFile(where)}`,
+      `Replay: CODING_SH_PROP_SEED=${seed}${count} node --no-warnings --test ${callerFile(where)}`,
     ].join("\n");
     throw new PropertyFailure(message, { cause: best.error, seed, caseIndex, counterexample, shrinks });
   }

@@ -1,6 +1,7 @@
 // Acks and snoozes for `coding.sh work` (core/work.ts), kept in
 // <CODING_SH_HOME>/work.json. Both are keyed by member session ids and joined
 // per item on read, so an item keeps them when its root leaves the time window.
+// A snooze also holds its item's id, so the item's next snooze replaces it.
 // An ack holds a cause's fingerprint (bucket, session, and the wait's tool call
 // id or time), so acknowledging one prompt does not hide the next. The file is
 // written to a temp file and renamed; a missing or corrupt file reads as empty.
@@ -12,6 +13,8 @@ export interface WorkSnooze {
   until: number;
   /** The bucket the item was in: a move to a more urgent one shows it again. */
   bucket: Bucket;
+  /** The id of the item it snoozes (WorkItem.id). snoozeItem finds the item's earlier snooze by it, on a session outside the time window too. Unset in a file written before it was stored. */
+  item?: string;
 }
 
 export interface WorkOverlay {
@@ -52,9 +55,11 @@ export function readOverlay(path: string): WorkOverlay {
   }
   if (r.snoozes && typeof r.snoozes === "object") {
     for (const [id, s] of Object.entries(r.snoozes as Record<string, unknown>)) {
-      const z = s as { until?: unknown; bucket?: unknown } | null;
+      const z = s as { until?: unknown; bucket?: unknown; item?: unknown } | null;
       if (z && typeof z.until === "number" && Number.isFinite(z.until) && typeof z.bucket === "string" && BUCKET_NAMES.has(z.bucket)) {
-        out.snoozes[id] = { until: z.until, bucket: z.bucket as Bucket };
+        const snooze: WorkSnooze = { until: z.until, bucket: z.bucket as Bucket };
+        if (typeof z.item === "string") snooze.item = z.item;
+        out.snoozes[id] = snooze;
       }
     }
   }
@@ -100,21 +105,26 @@ export function addSnooze(o: WorkOverlay, sessionIds: readonly string[], snooze:
 
 /** What snoozeItem needs of a work item (core/work.ts WorkItem). */
 export interface SnoozeTarget {
+  /** The item's id, the same through every time window. */
+  id: string;
   primaryId: string;
-  /** Every session of the item: the ones snoozeOf reads. */
+  /** Every session of the item in the time window: the ones snoozeOf reads. */
   sessionIds: readonly string[];
   cause?: { sessionId: string };
 }
 
 /**
  * Snoozes a work item, as `coding.sh work snooze` and POST /api/work/snooze do: stored on its main
- * session and on the session behind its cause. It replaces the item's earlier snooze, which goes from
- * every session of the item first: a copy left on the session behind an earlier cause could end later
- * than the new snooze and win in snoozeOf. Other items' snoozes stay, even one that ends at the same time.
+ * session and on the session behind its cause, with the item's id. It replaces the item's earlier
+ * snooze, which goes first from every session that holds the item's id and from every session of the
+ * item: a copy left on the session behind an earlier cause could end later than the new snooze and win
+ * in snoozeOf, even on a session that a shorter time window leaves out of the item. Other items' snoozes
+ * stay, even one that ends at the same time.
  */
 export function snoozeItem(o: WorkOverlay, item: SnoozeTarget, snooze: WorkSnooze): void {
+  for (const [id, z] of Object.entries(o.snoozes)) if (z.item === item.id) delete o.snoozes[id];
   for (const id of item.sessionIds) delete o.snoozes[id];
-  addSnooze(o, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], snooze);
+  addSnooze(o, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], { ...snooze, item: item.id });
 }
 
 /** The active snooze on any of these sessions (the latest ending one), or undefined. */

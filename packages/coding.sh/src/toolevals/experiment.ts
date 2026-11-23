@@ -277,8 +277,10 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   }
   if (result.error === "schema-rejected-by-provider") result.metrics.success = false;
   result.pass = result.metrics.success;
-  // An agent that could not be started (exit 127), or that exited non-zero before its first turn, never worked on the task: an error, not a plain fail.
-  if (job.driver.kind === "agent" && !result.error && run.exitCode && (run.exitCode === 127 || result.metrics.turns === 0)) {
+  // An agent whose program could not be started (the spawn error its adapter recorded), or that exited non-zero before
+  // its first turn, never worked on the task: an error, not a plain fail. An agent that took turns and then exited 127
+  // did start (a command of its own was not found), so that is its own failure.
+  if (job.driver.kind === "agent" && !result.error && (run.spawnError || (run.exitCode && result.metrics.turns === 0))) {
     const said = (run.stderrTail.trim() || run.stdoutTail.trim()).slice(-300);
     result.error = `agent never ran, exit ${run.exitCode}${said ? `: ${said}` : ""}`;
   }
