@@ -6,7 +6,7 @@
 // since when ingest is stopped, then fails with the store's error.
 import { indexUpdatedText, ingestStoppedField, readIngestStopped, spoolSize, type IngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
-import { shortener } from "../../core/session-ref.ts";
+import { printedRefs, shortener } from "../../core/session-ref.ts";
 import { maskStoreUrl } from "../../core/store-url.ts";
 import { countsLine, needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
 import { readOverlay } from "../../core/work-overlay.ts";
@@ -119,7 +119,9 @@ async function status(c: CommandContext): Promise<number> {
     if (update.available) out.row("Update", `coding.sh ${String(update.latest)} is available (running ${String(update.current)}); run ${cliCommand(c.env, ["update"])}`, "warn", true);
     out.row("Work", `${countsLine(queue.counts)}${needYou(queue) ? ` (${cliCommand(c.env, ["work"])})` : ""}`, needYou(queue) ? "warn" : "none", true);
     if (latest) {
-      out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
+      // Every stored id is read only when the latest id prints shorter (long, needs quoting, or a word).
+      const refs = await printedRefs(ctx.index, { whole: [latest.id] });
+      out.print(`${refs.whole(latest.id)}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {
       out.note("No sessions captured yet");
       const n = noSessionsNext(c.env);

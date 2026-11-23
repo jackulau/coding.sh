@@ -123,10 +123,10 @@ coding.sh search migration --where 'kind:tool.end' --limit 3
 ```
 
 ```text
-SESSION                                              KIND      WHEN     MATCH
-9887c95d-2739-4dae-8222-4471386def67                 tool.end  42m ago  …SqliteIndexStore.migrate reads MAX(version) from «migrations» before BEGIN IMMEDIATE…
-9887c95d-2739-4dae-8222-4471386def67:sub:a8f20c41e7  tool.end  43m ago  …431: this.db.prepare("INSERT INTO «migrations» (version, applied_at) VALUES (?, ?)")
-9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
+SESSION                               KIND      WHEN     MATCH
+9887c95d-2739-4dae-8222-4471386def67  tool.end  42m ago  …SqliteIndexStore.migrate reads MAX(version) from «migrations» before BEGIN IMMEDIATE…
+a8f20c41                              tool.end  43m ago  …431: this.db.prepare("INSERT INTO «migrations» (version, applied_at) VALUES (?, ?)")
+9887c95d-2739-4dae-8222-4471386def67  tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
 Search covers prompts, replies, tool input and output, error events, failed model calls, tool
@@ -222,7 +222,7 @@ Apply each SQLite migration once when two processes open the index
   in 13k  out 2.8k  cache 324k
 
 9887c95d-2739-4dae-8222-4471386def67  claude-code  claude-opus-4-8  5m18s  9 tools (1 failed)  $0.3387  Apply each SQLite migration once when two proce…
-  └ 9887c95d-2739-4dae-8222-4471386def67:sub:a8f20c41e7  Explore  claude-haiku-4-5  50s  2 tools  $0.0145  Find user_version reads
+  └ a8f20c41  Explore  claude-haiku-4-5  50s  2 tools  $0.0145  Find user_version reads
 ```
 
 From a subagent, `tree` shows its part, and `--all` the whole run. `--run` takes a run id, so a
