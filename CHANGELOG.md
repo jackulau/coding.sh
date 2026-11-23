@@ -100,6 +100,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** A tool eval trial whose agent took turns and then exited 127 counts as a failing trial in its arm's pass rate. Before, it was taken for an agent that never started and left out. Only a spawn error, or a non-zero exit before the first turn, means the agent never ran. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md#31-task-kinds-bad-guard-control)
 - **Serve.** `coding_sh_session_cost_usd_total` counts a session's cost when one of its turns ends too, so an OpenTelemetry trace with a conversation id counts its root's own cost, not only its subagents'. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#17-metrics-and-logs)
 - **Work.** A session that merged more than 20 pull requests keeps every PR it opened, merged or closed; only the PRs it just viewed or linked are capped at 20. An orchestrator's early merges no longer leave their items "open" in Ready for review. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#work-items)
 - **Work.** Work whose session pushed to a pull request or linked it to its T3 Code thread leaves Ready for review once another session merges that PR. Sessions get `stats.prs.own`. A PR the work only viewed still does not count. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#the-queue)
