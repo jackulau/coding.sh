@@ -1,12 +1,17 @@
 // `coding.sh sessions`: what counts as empty, the hidden-count footer, how
-// many sessions matched against how many are shown, the host app a row names, and
-// the alias sessions, tree and show print for a session whose id is `latest`.
+// many sessions matched against how many are shown, the host app a row names,
+// the alias sessions, tree and show print for a session whose id is `latest`, and
+// what sessions, tree, search and status print for an id too long to print whole.
 import assert from "node:assert/strict";
-import { after, before, describe, test } from "node:test";
+import { after, before, describe, mock, test } from "node:test";
+import * as search from "../../src/cli/commands/search.ts";
 import * as sessions from "../../src/cli/commands/sessions.ts";
 import * as show from "../../src/cli/commands/show.ts";
+import * as status from "../../src/cli/commands/status.ts";
 import * as tree from "../../src/cli/commands/tree.ts";
 import { buildSession, isEmptySession } from "../../src/core/sessions.ts";
+import { fixtureEvent } from "../../src/store/conformance.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
 describe("isEmptySession", () => {
@@ -158,5 +163,152 @@ describe("sessions, tree and show: a session whose id is latest prints its x_ al
   test("show --json names the command for the rest of its subagents by the alias", async () => {
     const doc = (await runCmd(show, sb, { positionals: ["x_brf2qjp3"], json: true })).json;
     assert.deepEqual({ truncated: doc.subagentsTruncated, rest: doc.subagentsRest }, { truncated: true, rest: "coding.sh tree x_brf2qjp3 --json" });
+  });
+});
+
+/** The id of the session `show` opens for `ref`. */
+const opens = async (sb: Sandbox, ref: string): Promise<string | undefined> => (await runCmd(show, sb, { positionals: [ref], json: true, flags: { fields: "session" } })).json?.session?.id;
+/** Off a TTY a table is a header row, then one tab-separated row per line: the first cell of each. */
+const firstCells = (stdout: string) => stdout.trim().split("\n").slice(1).map((l) => l.split("\t")[0]!);
+/** What `run` returns, and how often it read every stored id (loadIdSet, through the store's prefix lookup). */
+async function idReads<T>(run: () => Promise<T>): Promise<{ reads: number; result: T }> {
+  const spy = mock.method(SqliteIndexStore.prototype, "sessionIdsByPrefix");
+  try {
+    const result = await run();
+    return { reads: spy.mock.calls.filter((c) => c.arguments[0] === "").length, result };
+  } finally {
+    spy.mock.restore();
+  }
+}
+
+describe("sessions, tree, search and status: ids over 200 characters that hold % and share their first 8 print a reference that opens each", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  // T3 Code names a session after its thread: the ids run past 200 characters and start alike.
+  const SHARED = `t3code-thread%3Aproj%253Ademo%253A${"abcdefghij".repeat(17)}`;
+  const LONG_A = `${SHARED}-first`;
+  const LONG_B = `${SHARED}-second`;
+  // A Claude Code subagent of LONG_A: its own id is "a" and 16 hex digits.
+  const SUB = `${LONG_A}:sub:a0123456789abcdef`;
+  const prompt = (id: string, sessionId: string, ts: number) => fixtureEvent({ id, sessionId, ts, kind: "user.message", payload: { text: "rename the widget" } });
+  before(async () => {
+    sb = sandbox();
+    await sb.seed(
+      [
+        mkSession(LONG_A, now - 3000, { title: undefined }),
+        mkSession(SUB, now - 2900, { title: "look around", parent: { sessionId: LONG_A, type: "Explore" } } as never),
+        mkSession(LONG_B, now - 1000, { title: "newer work" }),
+      ],
+      [prompt("a-1", LONG_A, now - 3000), prompt("b-1", LONG_B, now - 1000)],
+    );
+  });
+  after(() => sb.cleanup());
+
+  test("each prints an alias, and the subagent 8 characters of its own id, which show opens", async () => {
+    for (const [ref, id] of [["x_d52r41f3", LONG_A], ["x_8n2twz83", LONG_B], ["a0123456", SUB]] as const) assert.equal(await opens(sb, ref), id, ref);
+  });
+
+  test("the sessions ID column, with --subagents too", async () => {
+    assert.deepEqual(firstCells((await runCmd(sessions, sb)).stdout), ["x_8n2twz83", "x_d52r41f3"]);
+    assert.deepEqual(firstCells((await runCmd(sessions, sb, { flags: { subagents: true } })).stdout).sort(), ["a0123456", "x_8n2twz83", "x_d52r41f3"]);
+  });
+
+  test("tree: the label of a session with no title, and each node", async () => {
+    const r = await runCmd(tree, sb, { positionals: ["x_d52r41f3"] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.equal(r.stdout.split("\n")[0], "x_d52r41f3");
+    assert.match(r.stdout, /^x_d52r41f3 {2}claude-code/m, r.stdout);
+    assert.match(r.stdout, /^ {2}└ a0123456 {2}Explore/m, r.stdout);
+    assert.doesNotMatch(r.stdout, /t3code-thread/, "no line prints an id over 200 characters");
+  });
+
+  test("tree from the subagent: its node and the in: line above it", async () => {
+    const r = await runCmd(tree, sb, { positionals: ["a0123456"] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /^in: x_d52r41f3 claude-code$/m, r.stdout);
+    assert.match(r.stdout, /^a0123456 {2}Explore/m, r.stdout);
+    assert.doesNotMatch(r.stdout, /t3code-thread/);
+  });
+
+  test("the search SESSION column", async () => {
+    const r = await runCmd(search, sb, { positionals: ["widget"] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.deepEqual(firstCells(r.stdout).sort(), ["x_8n2twz83", "x_d52r41f3"]);
+  });
+
+  test("the latest session status names", async () => {
+    const r = await runCmd(status, sb);
+    assert.match(r.stdout, /^x_8n2twz83 {2}claude-code {2}/m, r.stdout);
+    assert.doesNotMatch(r.stdout, /t3code-thread/);
+  });
+});
+
+describe("tree: the Fix first line names a flagged subagent by the reference its node prints", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  const TOP = `t3code-thread%3Aproj%253Ademo%253A${"abcdefghij".repeat(17)}-fix`;
+  // A Claude Code subagent of TOP, and the only flagged node: the one to fix first.
+  const SUB = `${TOP}:sub:a89abcdef01234567`;
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      mkSession(TOP, now - 3000, { title: "the run" }),
+      mkSession(SUB, now - 2900, { title: "look around", parent: { sessionId: TOP, type: "Explore" }, flags: ["looping"] } as never),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("the node and the Fix first line print 8 characters of the subagent's own id, which show opens", async () => {
+    const r = await runCmd(tree, sb, { positionals: [TOP] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /^ {2}└ a89abcde {2}Explore/m, r.stdout);
+    const lines = r.stdout.split("\n");
+    const fix = lines.indexOf("Fix first");
+    assert.ok(fix >= 0, r.stdout);
+    assert.equal(lines[fix + 1], "  subagent Explore a89abcde: looping");
+    assert.doesNotMatch(r.stdout, /t3code-thread/, "no line prints an id over 200 characters");
+    assert.equal(await opens(sb, "a89abcde"), SUB);
+  });
+});
+
+describe("sessions and tree: a store of 36-character ids prints them whole, as before, and reads the stored ids only for the in: line", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  const TOP = "6f1c2e3d-0a1b-4c2d-8e3f-405162738495";
+  // A subagent whose agent gives it an id of its own, as Codex does.
+  const KID = "0b9e8d7c-1111-4222-8333-444455556666";
+  const OTHER = "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d";
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      mkSession(TOP, now - 3000, { title: undefined }),
+      mkSession(KID, now - 2900, { title: "look around", parent: { sessionId: TOP, type: "Explore" } } as never),
+      mkSession(OTHER, now - 1000, { title: "newer work" }),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("the sessions ID column prints each id whole, reading no other id", async () => {
+    const { reads, result } = await idReads(async () => ({ plain: await runCmd(sessions, sb), all: await runCmd(sessions, sb, { flags: { subagents: true } }) }));
+    assert.deepEqual(firstCells(result.plain.stdout), [OTHER, TOP]);
+    assert.deepEqual(firstCells(result.all.stdout).sort(), [KID, TOP, OTHER].sort());
+    assert.equal(reads, 0);
+  });
+
+  test("tree prints its label and nodes by whole id, reading no other id", async () => {
+    const { reads, result: r } = await idReads(() => runCmd(tree, sb, { positionals: [TOP] }));
+    assert.equal(r.code, 0, String(r.error));
+    assert.equal(r.stdout.split("\n")[0], TOP);
+    assert.match(r.stdout, new RegExp(`^${TOP} {2}claude-code`, "m"));
+    assert.match(r.stdout, new RegExp(`^ {2}└ ${KID} {2}Explore`, "m"));
+    assert.equal(reads, 0);
+  });
+
+  test("from the subagent, the in: line names the session above by its 8 characters, read from every id once", async () => {
+    const { reads, result: r } = await idReads(() => runCmd(tree, sb, { positionals: [KID] }));
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /^in: 6f1c2e3d claude-code$/m, r.stdout);
+    assert.match(r.stdout, new RegExp(`^${KID} {2}Explore`, "m"));
+    assert.equal(reads, 1);
   });
 });

@@ -1,5 +1,6 @@
 // `coding.sh attribution`, `attribution export` and `blame` end to end: the
-// fixture repo's sessions stored in a throwaway home, the CLI run against it.
+// fixture repo's sessions stored in a throwaway home, the CLI run against it, and
+// the same sessions under ids too long to print whole.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -8,6 +9,7 @@ import { after, before, describe, test } from "node:test";
 import { validateAgentTrace } from "../../src/attribution/export.ts";
 import { openContext } from "../../src/core/context.ts";
 import { nextStepBin } from "../../src/cli/next-steps.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { isolate, removeTmp, tmp } from "../capture/_helpers.ts";
 import { buildFixture, type Fixture } from "./_fixture.ts";
 import { CLI } from "../_cli.ts";
@@ -126,5 +128,84 @@ describe("coding.sh attribution / blame", () => {
     const blame = cli(fx.root, "blame", "src/util.ts");
     assert.equal(blame.status, 0, blame.stderr);
     assert.ok(blame.stderr.includes(`${npx} show s2-codex`), blame.stderr);
+  });
+});
+
+// T3 Code names a session after its thread: ids over 200 characters that hold % and share their
+// first 8 characters. The same sessions under such ids, in a store of their own.
+describe("coding.sh attribution / blame: session ids over 200 characters", () => {
+  const SHARED = `t3code-thread%3Aproj%253Ademo%253A${"abcdefghij".repeat(17)}`;
+  const LONG: Record<string, string> = { "s1-claude": `${SHARED}-first`, "s2-codex": `${SHARED}-second`, "s3-claude": `${SHARED}-third` };
+  let longEnv: NodeJS.ProcessEnv;
+  const runLong = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: longEnv, encoding: "utf8", cwd: fx.root });
+  const jsonLong = (...args: string[]) => {
+    const r = runLong(...args, "--json");
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout) as Record<string, unknown>;
+  };
+  /** The session `show` opens for a reference: asked once per reference. */
+  const opened = new Map<string, string>();
+  const opens = (ref: string): string => {
+    let id = opened.get(ref);
+    if (id === undefined) {
+      id = (jsonLong("show", ref, "--fields", "session").session as { id: string }).id;
+      opened.set(ref, id);
+    }
+    return id;
+  };
+  /** A reference a person can paste back: short, with nothing a shell or URL would mangle. */
+  const pasteable = (ref: string) => assert.ok(ref.length <= 40 && !ref.includes("%"), ref);
+  /** Off a TTY a table is its header row, then one tab-separated row per line. */
+  const tableRows = (stdout: string, header: string) => {
+    const lines = stdout.split("\n");
+    const at = lines.indexOf(header);
+    assert.notEqual(at, -1, stdout);
+    return lines.slice(at + 1).filter((l) => l.includes("\t")).map((l) => l.split("\t"));
+  };
+
+  before(async () => {
+    const db = join(tmp("csh-attr-long-"), "index.db");
+    const index = await SqliteIndexStore.open(db);
+    try {
+      await index.migrate();
+      for (const s of Object.values(fx.sessions)) {
+        const id = LONG[s.id]!;
+        await index.upsertSession({ ...s, id });
+        await index.putEvents((await fx.index.listEvents(s.id)).map((e) => ({ ...e, sessionId: id })));
+      }
+    } finally {
+      await index.close();
+    }
+    longEnv = { ...env, CODING_SH_STORE_URL: `sqlite://${db}` };
+  });
+
+  test("blame names each line's session, and each session in its table, by a reference show opens", () => {
+    const doc = jsonLong("blame", "src/math.ts");
+    const wrote = new Map((doc.lines as { line: number; sessionId?: string }[]).flatMap((l) => (l.sessionId ? [[l.line, l.sessionId] as const] : [])));
+    assert.deepEqual([...new Set(wrote.values())].sort(), Object.values(LONG).sort(), "each of the three sessions wrote lines of the file");
+    const r = runLong("blame", "src/math.ts");
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /t3code-thread/, "no line prints an id over 200 characters");
+    const lines = [...r.stdout.matchAll(/^ *(\d+) {2}[0-9a-f]{8} {2}(\S+) /gm)].filter((m) => m[2] !== "-");
+    assert.equal(lines.length, wrote.size, r.stdout);
+    for (const [, line, ref] of lines) {
+      pasteable(ref!);
+      assert.equal(opens(ref!), wrote.get(Number(line)), `line ${line}`);
+    }
+    const table = tableRows(r.stdout, "SESSION\tAGENT\tMODEL\tLINES").map((row) => row[0]!);
+    for (const ref of table) pasteable(ref);
+    assert.deepEqual(table.map(opens), (doc.sessions as { id: string }[]).map((s) => s.id));
+  });
+
+  test("attribution names each commit's sessions by a reference show opens", () => {
+    const doc = jsonLong("attribution");
+    const r = runLong("attribution");
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /t3code-thread/);
+    const cells = tableRows(r.stdout, "COMMIT\tDATE\tAGENT LINES\tSESSIONS\tSUBJECT").map((row) => row[3]!.split(", ").map((x) => x.split(" ")[0]!));
+    for (const ref of cells.flat()) pasteable(ref);
+    const want = (doc.commits as { attributions: { sessionId: string }[] }[]).map((c) => [...new Set(c.attributions.map((a) => a.sessionId))]);
+    assert.deepEqual(cells.map((refs) => refs.map(opens)), want);
+    assert.deepEqual(want.flat().sort(), Object.values(LONG).sort(), "each of the three sessions wrote a commit");
   });
 });
