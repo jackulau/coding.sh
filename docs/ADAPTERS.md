@@ -187,13 +187,31 @@ order.
   item ends, a `request_resolved` notification follows. `stats.waiting` reads both, so a thread
   waiting on one is blocked on you in `coding.sh work` until T3 resolves it. T3's secret and link requests
   are not read. The v1 store has no requests.
+- **Who sent a prompt:** T3's v2 store says when a user-role message is an agent's, not the person's:
+  `createdBy: "agent"`, a `creationSource` of `provider`, `mcp` or `server`, or a field only such a message
+  carries (`senderThreadId`, `notification`, `delegatedCompletion`, `workflowScript`). In a session built from
+  the store, that message is a `user.message` with `from: "agent"`. A Codex or Claude transcript doesn't say
+  who sent a prompt, so each of its main-thread prompts is matched to the store message with the same text,
+  whitespace folded (a clipped prompt matches a message that starts with its kept part): the latest one sent
+  at or before the prompt, else the first one sent up to 5 s after it. Each message matches one prompt. When
+  the store says an agent sent it, an `agent_prompt` notification is stamped just over 5 s before the prompt,
+  and `stats.waits` counts the prompt as an agent's: the transcript's copy, or else the hook's live copy
+  closest in time, within 5 s. A prompt in the session's first 5 s gets no notification. The v1 store doesn't
+  say who sent a message.
+- **Launch:** the `host-link` notification of a thread a person started (its first user-role message has
+  `createdBy: "user"`, and it isn't a subagent's thread) says `launch: "interactive"`, and that is the
+  session's `stats.launch`, whatever its agent's start says (T3 drives Claude Code through the Agent SDK). A
+  session the OpenCode, Cursor or Pi adapter imports gets no launch from T3: T3's adapter doesn't read its
+  prompts, so an agent's prompt there would count as the person's.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped. The store isn't opened when nothing in it changed since an import that read
   every changed thread, so threads an import left when it ran out of time are read by the next import.
 - **Links lost by an older import:** a session another agent's adapter stored without its T3 link (an older
   `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
-  The re-parse reads T3's store and adds the T3 rows such a session lacks. It runs once after the T3
-  adapter's parse version changes, once on a store an older coding.sh kept, and on `ingest --rebuild`.
+  The re-parse reads T3's store and adds the T3 rows such a session lacks. A T3 row it holds from an older
+  parse, with the same id and other content (a host link with no `launch`), is replaced. The re-parse runs
+  once after the T3 adapter's parse version changes, once on a store an older coding.sh kept, and on
+  `ingest --rebuild`.
 - **Store reads:** while the T3 store is in WAL mode and its `-wal` and `-shm` files exist, as they do while
   T3 Code has it open, it is read where it is: read-only, with no copy. Each thread's rows are read in one
   short read transaction, so they come from one snapshot of the store. A WAL reader doesn't block the writer,
