@@ -293,4 +293,21 @@ describe("review fixes", () => {
     assert.equal(changeKey("C:/work/demo/docs/a.md", sub, "C:\\work\\demo"), "docs/a.md");
     assert.equal(changeKey("/work/demo/docs/a.md", "/work/demo/app", "/work/demo"), "docs/a.md");
   });
+
+  test("a file named the Git Bash way (/c/x) and the Windows way counts once, and work show agrees", async () => {
+    const start = { id: "s0", v: 0, sessionId: "m", ts: ago(10 * MIN), agent: "claude-code", kind: "session.start", cwd: "C:\\work\\demo", payload: {} } as AgentEvent;
+    const sub = "C:\\work\\demo\\packages\\app";
+    const events = [start, fc("m", "C:\\work\\demo\\docs\\a.md", "C:\\work\\demo"), fc("m", "/c/work/demo/docs/a.md", sub), fc("m", "c:/work/demo/docs/a.md", "C:\\work\\demo"), fc("m", "/d/other/x.md", sub), fc("m", "d:\\other\\x.md", sub)];
+    const s = buildSession(events);
+    assert.equal(s.stats.filesChanged, 2, "docs/a.md three ways, and D:/other/x.md two ways");
+    const item = queue([s], { all: true }).items[0]!;
+    const files = await workFiles({ listEvents: async () => events }, item, [s], NOW);
+    assert.equal(files.length, s.stats.filesChanged);
+    assert.equal(item.filesChanged, s.stats.filesChanged);
+    assert.equal(changeKey("/c/work/demo/docs/a.md", "C:\\work\\demo", "C:\\work\\demo"), "docs/a.md");
+    assert.equal(changeKey("/C/work/demo/docs/a.md", undefined, "c:\\work\\demo"), "docs/a.md");
+    assert.equal(changeKey("src/a.md", "c:\\work\\demo\\app", "C:\\work\\demo"), "app/src/a.md", "the event's drive letter in another case");
+    assert.equal(changeKey("/d/other/x.md", sub, "C:\\work\\demo"), "D:/other/x.md", "another drive stays absolute, its letter upper case");
+    assert.equal(changeKey("/c/x.md", "/work/demo", "/work/demo"), "/c/x.md", "in a POSIX folder, /c is a folder");
+  });
 });

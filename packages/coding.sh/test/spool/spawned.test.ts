@@ -123,6 +123,15 @@ describe("matchSpawnedParent", () => {
     assert.equal((await matchSpawnedParent(index, session("a", "codex", 2_000 + MAX_OPEN_MS)))?.sessionId, "claude-1");
     assert.equal(await matchSpawnedParent(index, session("b", "codex", 2_001 + MAX_OPEN_MS)), undefined);
   });
+
+  it("a call whose input names an absolute folder (Antigravity's `Cwd`) is matched in that folder", async () => {
+    const index = new MemoryIndexStore();
+    await index.upsertSession(session("agy-1", "antigravity", 1_000));
+    const input = { CommandLine: "codex exec 'fix it'", Cwd: "/srv/other" };
+    await index.putEvents([event("agy-1", "tool.start", 2_000, { tool: "run_command", toolUseId: "tu1", input }), event("agy-1", "tool.end", 60_000, { tool: "run_command", toolUseId: "tu1" })]);
+    assert.equal((await matchSpawnedParent(index, session("in-cwd", "codex", 3_000, { cwd: "/srv/other/pkg" })))?.sessionId, "agy-1");
+    assert.equal(await matchSpawnedParent(index, session("in-session-dir", "codex", 3_000)), undefined, "the session's folder is not where the call ran");
+  });
 });
 
 // Ingest, with fake adapters for two agents: raw = { session, kind, ...payload } → one event.
