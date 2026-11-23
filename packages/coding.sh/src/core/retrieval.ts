@@ -25,7 +25,7 @@ import { exitCodeOf, isPowerShellTool, shellParts, type ShellPart } from "./fail
 import type { ToolFailure } from "./failures.ts";
 import { changeKeyer } from "./sessions.ts";
 import { normalizeTracePath, operandsOf, slashed } from "./shell-diff.ts";
-import { ABSOLUTE, PS_COMMON } from "./shell-files.ts";
+import { ABSOLUTE, PS_COMMON, shellWorkdir } from "./shell-files.ts";
 // waste.ts imports sessions.ts, which imports this file: its sets are read inside functions only.
 import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
 
@@ -84,12 +84,9 @@ function readPaths(i: Record<string, unknown>): string[] {
   return [...out];
 }
 
-/** The directory a shell call starts in, relative to the event's cwd: its `workdir`, `cwd` or `Cwd` input, else "" (the cwd itself). */
+/** The directory a shell call starts in, relative to the event's cwd: the folder its input names (shellWorkdir), else "" (the cwd itself). */
 function startDir(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const i = input as Record<string, unknown>;
-  const d = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : typeof i.Cwd === "string" ? i.Cwd : "";
-  return d.replace(/\\/g, "/");
+  return (shellWorkdir(input) ?? "").replace(/\\/g, "/");
 }
 
 // ---------------------------------------------------------------- shell lines

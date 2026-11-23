@@ -95,6 +95,17 @@ export function writtenFileKey(path: string, cwd?: string, workdir?: string): st
   return p === "." || p === ".." || p.startsWith("../") ? undefined : p;
 }
 
+/** Shell tool inputs that name the folder the call ran in: the first that holds a string. Antigravity's run_command names it `Cwd`. */
+const WORKDIR_KEYS = ["workdir", "cwd", "Cwd"] as const;
+
+/** The folder a shell call ran in, as its input names it (WORKDIR_KEYS), or undefined. */
+export function shellWorkdir(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const i = input as Record<string, unknown>;
+  for (const k of WORKDIR_KEYS) if (typeof i[k] === "string") return i[k] as string;
+  return undefined;
+}
+
 /**
  * The filesChanged keys of the files a shell tool call writes (shellWrittenPaths,
  * then writtenFileKey), or none for a call that is not a shell command.
@@ -103,8 +114,7 @@ export function shellCallFiles(tool: unknown, input: unknown, cwd?: string): str
   if (typeof tool !== "string" || !isShellCall(tool, input)) return [];
   const command = shellCommandOf(tool, input);
   if (!command) return [];
-  const i = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const workdir = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : undefined;
+  const workdir = shellWorkdir(input);
   const keys = new Set<string>();
   for (const p of shellWrittenPaths(command, /powershell/i.test(tool))) {
     const k = writtenFileKey(p, cwd, workdir);

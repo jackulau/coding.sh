@@ -236,6 +236,13 @@ describe("Session.stats.retrieval", () => {
     }
   });
 
+  it("a shell write through run_command resolves against its Cwd, as its reads do", () => {
+    const s = buildSession([...call("view_file", { AbsolutePath: "/work/demo/src/a.ts" }), ...call("run_command", { CommandLine: "sed -i 's/x/y/' a.ts", Cwd: "/work/demo/src" }), ...call("run_command", { CommandLine: "cat b.ts", Cwd: "/work/demo/src" }), edit("src/b.ts")]);
+    assert.equal(s.stats.filesChanged, 2);
+    // The sed's a.ts is the src/a.ts read before it.
+    assert.deepEqual(s.stats.retrieval, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 1 });
+  });
+
   it("a relative read from an event with no cwd resolves against the session's", () => {
     const r = retrieval(ev("user.message", { text: "hi" }), read("../README.md", { at: { cwd: undefined } }), edit("/work/README.md"));
     assert.deepEqual(r, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });

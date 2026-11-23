@@ -49,4 +49,11 @@ describe("shellCallFiles", () => {
     assert.deepEqual(shellCallFiles("exec", { code: "echo x > a.txt" }, "/w"), [], "an exec with no command line");
     assert.deepEqual(shellCallFiles(undefined, { command: "echo x > a.txt" }, "/w"), []);
   });
+
+  it("resolves paths against the folder the call ran in: workdir, cwd or Antigravity's Cwd", () => {
+    assert.deepEqual(shellCallFiles("exec_command", { cmd: "echo x > a.txt", workdir: "/w/pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("Bash", { command: "echo x > a.txt", cwd: "/w/pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "/w/src" }, "/w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "C:\\w\\src" }, "C:\\w"), ["src/a.ts"]);
+  });
 });
