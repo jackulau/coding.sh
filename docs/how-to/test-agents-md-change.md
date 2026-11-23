@@ -140,7 +140,7 @@ coding.sh improve check
 
 `improve check` compares the sessions after the commit with those before it, on real work. It makes
 no model calls and exits 1 when the change made things worse. Until 5 sessions ran with the change,
-it says No sessions yet or Too early to tell. See [Did your last change help?](../guides/improve.md#did-your-last-change-help)
+it says No captured session ran with this change yet, or Too early to tell. See [Did your last change help?](../guides/improve.md#did-your-last-change-help)
 
 ## Flags
 

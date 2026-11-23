@@ -47,8 +47,10 @@ describe("doctor --conformance", () => {
     loadDb(join(PKG_ROOT, "test", "fixtures", "conformance", "f3-opencode-unknown-schema.db.json"), db);
     const r = doctor(["--conformance", "--agent", "opencode", "--since", "3650d"], { OPENCODE_DB: db });
     assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stdout + r.stderr, /empty-backfill 1 \(F3\)/);
-    assert.match(r.stdout, /0\/1 agents conform/);
+    // The report is on stdout, ending with the verdict; the next step is on stderr.
+    assert.match(r.stdout, /^✗ OpenCode\s.*empty-backfill 1 \(F3\)/m);
+    assert.match(r.stdout, /\n0\/1 agents conform\n$/);
+    assert.match(r.stderr, /See every violation:\n {4}.*doctor --conformance --json --agent opencode\n/);
     assert.equal(r.storeCreated, false);
     const j = doctor(["--conformance", "--agent", "opencode", "--since", "3650d", "--json"], { OPENCODE_DB: db });
     assert.equal(j.status, 1);
@@ -58,7 +60,8 @@ describe("doctor --conformance", () => {
   it("no transcripts since the cut is not a failure", () => {
     const r = doctor(["--conformance"]);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout + r.stderr, /no agent transcripts since 7d/);
+    assert.match(r.stdout, /^ {2}Conformance +no agent transcripts since 7d\nok\n$/);
+    assert.match(r.stderr, /Look further back:\n {4}.*doctor --conformance --since 30d\n/);
     assert.equal(r.storeCreated, false);
   });
 

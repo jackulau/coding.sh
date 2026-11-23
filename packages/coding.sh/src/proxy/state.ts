@@ -8,7 +8,7 @@ import { request } from "node:http";
 import { atomicWrite } from "../adapters/_shared/files.ts";
 import { readUserConfigTable } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
-import { DEFAULT_PROXY_PORT, DEFAULT_UPSTREAMS, type Upstreams } from "./server.ts";
+import { DEFAULT_PROXY_PORT, DEFAULT_UPSTREAMS, STOP_HEADER, STOP_PATH, type Upstreams } from "./server.ts";
 
 export interface ProxyState {
   pid: number;
@@ -17,6 +17,8 @@ export interface ProxyState {
   port: number;
   startedAt: number;
   upstreams: Upstreams;
+  /** What `proxy stop` sends to ask this proxy to stop. Absent in a state file an older version wrote. */
+  secret?: string;
 }
 
 export const proxyStatePath = (env: NodeJS.ProcessEnv = process.env): string => paths(env).proxyState;
@@ -32,7 +34,8 @@ export function readProxyState(env: NodeJS.ProcessEnv = process.env): ProxyState
 }
 
 export async function writeProxyState(state: ProxyState, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  await atomicWrite(proxyStatePath(env), `${JSON.stringify(state, null, 2)}\n`);
+  // Mode 600: the stop secret is for this user's commands only. Windows has no file modes.
+  await atomicWrite(proxyStatePath(env), `${JSON.stringify(state, null, 2)}\n`, 0o600);
 }
 
 /** Removes the state file if it still names `pid` (another proxy may have replaced it). */
@@ -78,6 +81,29 @@ export function probeProxy(url: string, timeoutMs = 1000): Promise<Record<string
     });
     req.on("timeout", () => req.destroy());
     req.on("error", () => resolve(undefined));
+    req.end();
+  });
+}
+
+/**
+ * POST <url>/__codingsh/stop with the proxy's stop secret: asks it to stop. Resolves the status it
+ * answered (200: it is stopping), or 0 when nothing answered.
+ */
+export function requestStop(url: string, secret: string, timeoutMs = 2000): Promise<number> {
+  return new Promise((resolve) => {
+    let u: URL;
+    try {
+      u = new URL(STOP_PATH, url);
+    } catch {
+      resolve(0);
+      return;
+    }
+    const req = request({ hostname: u.hostname.replace(/^\[|\]$/g, ""), port: u.port, path: u.pathname, method: "POST", timeout: timeoutMs, headers: { [STOP_HEADER]: secret, "Content-Length": 0 } }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(0));
     req.end();
   });
 }

@@ -127,6 +127,10 @@
     "title": "Evaluate AGENTS.md and skills",
     "template": "v1:docs:coding.sh docs"
   },
+  "og/docs-how-to-alerts": {
+    "title": "Get an alert when failures or spend cross a threshold",
+    "template": "v1:docs:coding.sh docs"
+  },
   "og/docs-how-to-attribute-commits": {
     "title": "See which agent session wrote each commit",
     "template": "v1:docs:coding.sh docs"

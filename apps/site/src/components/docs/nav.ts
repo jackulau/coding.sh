@@ -128,6 +128,13 @@ export const DOC_GROUPS: DocGroup[] = [
         summary: "Tokens and cost per session, agent, model, repo and day, your most expensive sessions, and where each number comes from.",
       },
       {
+        path: "/docs/how-to/alerts",
+        label: "Alerts",
+        title: "Get an alert when failures or spend cross a threshold",
+        metaTitle: "Alerts on AI agent failures and spend · coding.sh",
+        summary: "Watch the failure rate, cost or a score across your AI agents' sessions, and post to a webhook or run a command when it crosses a threshold.",
+      },
+      {
         path: "/docs/use-cases/replay-agent-session",
         label: "Replay a session",
         title: "Replay a session step by step",
