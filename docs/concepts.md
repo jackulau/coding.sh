@@ -25,6 +25,7 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - A session with no failure opens on its first prompt. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
+- [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
 - `<id>` may be a prefix or `latest`; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 

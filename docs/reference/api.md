@@ -192,6 +192,10 @@ Kinds: `session.start`, `session.end`, `user.message`, `assistant.message`, `llm
 `tool.end`, `context.compact`, `turn.end`, `subagent.start`, `subagent.end`, `file.change`,
 `test.result`, `notification`, `span`, `error`.
 
+A `user.message` that an agent sent, not a person (another agent's brief, a notification, a
+message from another thread), may carry `"from": "agent"` in its payload. Then `stats.waits` does
+not count it as the person's answer.
+
 The server sets `project` from the key, `source` to `"sdk"` when absent, and `agent` to the
 kebab-cased `service` (or `"sdk"`) when absent. An invalid event is rejected on its own and the rest
 are kept.
@@ -765,7 +769,7 @@ prints `-` under TOOLS and `show` says so on its Turns row.
 
 | Field | Meaning |
 |---|---|
-| `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
+| `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). A T3 Code thread whose first prompt a person sent is `interactive`, whatever its agent's start says (T3 Code's `host-link` notification carries `launch`). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
 | `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. Absent for other sessions |
 
 - A fork subagent's session holds only its own model calls, so the parent's calls count once, in the parent. The fork's reads of the inherited context from the prompt cache count in its `usage`.
@@ -815,6 +819,58 @@ skills). It is what `coding.sh harness audit` counts.
 | `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, for a permission prompt that came before its call started, for an agent whose calls have no ids (Devin CLI), and for a T3 Code request |
 | `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
 | `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
+
+**Waits.** How often and how long the session waited on the person, and on what. Each wait counts
+from its start to its end, by kind. A prompt the person sends while the main thread's turn runs is a
+steer; stopping the turn (Esc) is not.
+
+| Field | Meaning |
+|---|---|
+| `stats.waits` (`count`, `ms`, `byKind`, `open`, `agent`, `steers`, `capped`) | Absent when the session never waited on the person and nobody steered. `coding.sh show` prints it on one line, and `coding.sh stats --json` sums it over the window |
+| `stats.waits.count`, `stats.waits.ms` | The waits and their time, answered or not. Each wait counts 12 hours at most |
+| `stats.waits.byKind` | The same by kind, each with `count`, `ms`, `medianMs` (when `count` is over 1; over the first 500 waits) and `open`. Kinds: `permission` (a permission prompt, until its call ends; a T3 Code approval, until it is resolved), `question`, `plan`, `request` (another request from a host app, such as T3 Code's secret and link requests) and `turn` (the main thread's turn ended, until the person's next prompt; only in a session launched interactively that is not a subagent) |
+| `stats.waits.open` (`count`, `ms`) | Waits nobody answered: still open at the last event (counted up to it), or ended by the session's end or a resume. They are in `count` and `ms` |
+| `stats.waits.agent` (`count`, `ms`) | Turn waits an agent ended, not the person: a prompt an agent made, or the agent going on by itself. They are not in `count` and `ms` |
+| `stats.waits.steers` | Prompts the person sent while the main thread's turn ran |
+| `stats.waits.capped` | Waits longer than 12 hours, counted as 12 hours |
+
+What ends a wait:
+
+- A permission, question or plan wait ends when its call ends, whatever the answer, so a permission
+  wait includes the time the call ran.
+- A wait on a call that never ends lasts until the next call, turn end or prompt on its thread.
+- A T3 Code approval or question waits until T3 Code marks it resolved.
+- An agent's prompt ends a turn wait, which then counts in `agent`: a task notification, a delegated
+  result, a message from another thread, or a prompt marked `from: "agent"`.
+- So does the agent going on by itself, with a call or reply more than 5 seconds after its turn
+  ended. That wait counts up to the call or reply.
+- A subagent's prompt comes from its parent and ends no wait. A subagent's own waits count in its own
+  session.
+
+Limits:
+
+- A wait counts 12 hours at most, and `capped` counts the longer ones.
+- A resume, as Claude Code's live hook reports it, ends the open waits at the last event before it,
+  as unanswered.
+- Where nothing marks a resume, as in a transcript or T3 Code's store, a wait in a session picked up
+  days later counts 12 hours.
+- Waits on different threads at the same time each count.
+- Permission prompts come from live hooks and T3 Code's store. A session read only from its
+  transcript has none; its questions, plans and turns still count. A transcript's quiet markers end
+  no wait.
+- Turn waits, steers and `agent` need a session launched interactively; one with no launch mode has
+  none. A T3 Code thread is interactive when its store says the person sent its first prompt.
+- Who sent a prompt: T3 Code's v2 store says when an agent made a message; a v1 store does not.
+- For other agents, and for a T3 Code thread read from its agent's own transcript or captured live,
+  only task notifications and T3 Code's delegated-task notices are told apart, by their text.
+- A session read from a Claude Code transcript shows no steers: there, each prompt ends the turn
+  before it.
+- A permission prompt in a subagent counts in its parent's session when the hook does not name the
+  subagent.
+- With `capture.mode = "metadata"` no prompt text, `from` or `source` is stored. An agent's prompt,
+  or stopping a turn, counts as the person's, and a compaction ends open waits as a resume does.
+- In that mode `request` stays empty: T3 Code's other requests count as permission prompts or
+  questions.
 
 **Pull requests.**
 
