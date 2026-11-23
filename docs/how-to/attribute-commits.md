@@ -66,7 +66,7 @@ SESSION                               AGENT        MODEL            LINES
 9887c95d-2739-4dae-8222-4471386def67  claude-code  claude-opus-4-8  3
 
   Open the session that wrote the most of it:
-    coding.sh show 9887c95d-2739-4dae-8222-4471386def67
+    coding.sh show 9887c95d
 ```
 
 Each line shows the commit that last changed it, as `git blame` does, and the session that wrote
