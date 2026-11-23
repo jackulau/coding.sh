@@ -10,6 +10,12 @@
 //   would be counted twice. A companion with no billed cost bills nothing, and
 //   its call is priced like any other;
 // - each changed session gets its usage totals (and cache-break cost) refolded, nothing else.
+//   Where the store has transactions (SQLite), a session's new costs and totals commit as one,
+//   from its row and events read again inside it: an ingest's store-and-fold of the session
+//   (one transaction too) falls before or after it, and a pass stopped halfway leaves the old
+//   costs for the next pass to find. Where it has none, the pass holds the ingest lock around
+//   each session's writes, as the refold does, and a later pass refreshes totals that a pass
+//   stopped between the two left behind the session's events.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
 // Opening the index (store/factory.ts) leaves the pass to the background ingest that
@@ -17,9 +23,12 @@
 // That ingest reprices a session it folds anyway right before the fold (repriceEvents),
 // so the session is folded once, and runs the pass over the rest at its end.
 // `coding.sh usage --reprice` forces a pass. A pass holds the lock the refold holds
-// (repriceLock), so two processes never run one at once.
-import { mkdirSync } from "node:fs";
+// (repriceLock), so two processes never run one at once. Where that lock file can't
+// be made (a read-only home), the pass waits for a run that can make it (a forced
+// pass fails) rather than run without it.
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { AgentEvent, CostByTokenType, Session } from "../schema/index.ts";
 import { repriceProgress } from "../store/upgrade.ts";
 import { sha256Hex } from "./ids.ts";
@@ -30,6 +39,8 @@ import type { EventCost, IndexStore } from "./types.ts";
 
 export const REPRICE_CURSOR = "pricing:repriced";
 const KINDS = ["llm.call", "notification", "span"];
+/** Longest the pass holds the ingest lock at a time, so ingests waiting for it get turns (as core/reparse.ts LOCK_HOLD_MS). */
+const HOLD_MS = 1_000;
 
 /** Positive int that changes whenever the effective price table, or the rules that look it up, do. */
 export function priceStamp(prices: Prices, rules: number = PRICING_RULES_VERSION): number {
@@ -47,7 +58,11 @@ export interface RepriceResult {
 export interface RepriceOptions {
   /** Run even when this price table was applied (`coding.sh usage --reprice`). */
   force?: boolean;
-  /** Runs `fn` over the stored sessions in order (default one after another). The background ingest passes its short lock holds. */
+  /**
+   * Runs `fn` over the stored sessions in order. The background ingest passes its short lock holds. Default: one after
+   * another, under the ingest lock repriceLock set when the store has no transactions (up to 5 s of waiting for it, 30 s
+   * when forced; busy longer, LockBusyError).
+   */
   each?: (sessions: Session[], fn: (prev: Session) => Promise<void>) => Promise<void>;
   /** True for a session the pass leaves out: the caller repriced it already, right before its fold (core/reparse.ts). */
   skip?: (id: string) => boolean;
@@ -56,17 +71,30 @@ export interface RepriceOptions {
   /**
    * The lock file the pass holds: default the one repriceLock set for this store, if any. false: none,
    * for a caller that holds it already (core/reparse.ts). A forced pass waits up to 30 s for it; any
-   * other pass tries once. Busy, the pass throws LockBusyError and leaves the cursor as it was.
+   * other pass tries once. Busy, the pass throws LockBusyError and leaves the cursor as it was. Where
+   * no lock file can be made, a pass that is not forced does nothing and leaves the cursor; a forced one throws.
    */
   lock?: string | false;
 }
 
-/** The lock a store's pass holds, by store: set where the store is opened (store/factory.ts). */
-const locks = new WeakMap<IndexStore, string>();
+/** The lock files a store's pass holds, by store: set where the store is opened (store/factory.ts). */
+const locks = new WeakMap<IndexStore, { pass: string; ingest: string | undefined }>();
 
-/** Sets the lock file a pass on this store holds: the one the refold of its home holds (core/reparse.ts). */
-export function repriceLock(index: IndexStore, path: string): void {
-  locks.set(index, path);
+/**
+ * Sets the lock files a pass on this store holds: `path`, the one the refold of its home holds for a whole
+ * run (core/reparse.ts), and `ingest`, that home's ingest lock, held around each session's writes when the
+ * store has no transactions.
+ */
+export function repriceLock(index: IndexStore, path: string, ingest?: string): void {
+  locks.set(index, { pass: path, ingest });
+}
+
+/** No lock file can be made where the pass needs one (a read-only home). */
+class NoLockError extends Error {
+  constructor(path: string, cause: unknown) {
+    super(`cannot make the lock file ${path} (${cause instanceof Error ? cause.message : String(cause)}); repricing runs only while it holds it, so it never runs beside a refold`);
+    this.name = "NoLockError";
+  }
 }
 
 /** Fills missing (or our own stale) cost estimates on stored events, once per price table. `force` reruns it. */
@@ -76,41 +104,68 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
   const prices = pricesFor(overrides);
   const stamp = priceStamp(prices);
   if (!opts.force && (await index.getCursor(REPRICE_CURSOR)) === stamp) return none;
-  const path = opts.lock === undefined ? locks.get(index) : opts.lock || undefined;
-  const lock = path ? await takeLock(path, opts.force ? 30_000 : 0) : undefined;
+  const set = locks.get(index);
+  const path = opts.lock === undefined ? set?.pass : opts.lock || undefined;
+  let lock: Lock | undefined;
   try {
+    lock = path ? await takeLock(path, opts.force ? 30_000 : 0) : undefined;
     // Another process may have run it while this one looked.
     if (lock && !opts.force && (await index.getCursor(REPRICE_CURSOR)) === stamp) return none;
-    const each = opts.each ?? (async (list, fn) => {
-      for (const s of list) await fn(s);
-    });
+    // A store without transactions: each session's writes under the ingest lock, so an ingest's store-and-fold falls before or after them.
+    const held: { lock?: Lock } = {};
+    const each = opts.each ?? sessionsUnder(index.transaction ? undefined : set?.ingest, opts.force ? 30_000 : 5_000, held);
     const progress = opts.onProgress ?? repriceProgress();
     const all = (await index.listSessions({})).filter((s) => !opts.skip?.(s.id));
     let events = 0;
     let sessions = 0;
     let done = 0;
     await each(all, async (prev) => {
-      const r = await repriceSession(index, prev, prices, true);
+      const r = await repriceSession(index, prev, prices, true, () => held.lock?.assertHeld());
       events += r.events;
       if (r.changed) sessions++;
       progress(++done, all.length);
     });
     await index.setCursor(REPRICE_CURSOR, stamp);
     return { ran: true, events, sessions };
+  } catch (err) {
+    // Left for a run that can make the lock file: the sessions done so far stay done, and the cursor says the rest is due.
+    if (err instanceof NoLockError && !opts.force) return none;
+    throw err;
   } finally {
     lock?.release();
   }
 }
 
-/** The lock at `path`, or undefined where no lock file can be made (a read-only home): the pass then runs as it did before it took one. Busy throws. */
-async function takeLock(path: string, waitMs: number): Promise<Lock | undefined> {
+/** The lock at `path`. Busy throws LockBusyError; where no lock file can be made, NoLockError. */
+async function takeLock(path: string, waitMs: number): Promise<Lock> {
   try {
     mkdirSync(dirname(path), { recursive: true });
     return await acquireLock(path, { waitMs });
   } catch (err) {
     if ((err as Error).name === "LockBusyError") throw err;
-    return undefined;
+    throw new NoLockError(path, err);
   }
+}
+
+/**
+ * The pass's own `each`: the sessions in order, under the ingest lock at `path` when one is given and the spool
+ * exists (an ingest takes it only then), held HOLD_MS at most at a time. `held` holds the lock while it is held.
+ */
+function sessionsUnder(path: string | undefined, waitMs: number, held: { lock?: Lock }): NonNullable<RepriceOptions["each"]> {
+  return async (list, fn) => {
+    let i = 0;
+    while (i < list.length) {
+      held.lock = path && existsSync(dirname(path)) ? await takeLock(path, waitMs) : undefined;
+      const until = Date.now() + HOLD_MS;
+      try {
+        do await fn(list[i++]!);
+        while (i < list.length && (!held.lock || Date.now() < until));
+      } finally {
+        held.lock?.release();
+        held.lock = undefined;
+      }
+    }
+  };
 }
 
 /**
@@ -122,8 +177,41 @@ export async function repriceEvents(index: IndexStore, prev: Session, prices: Pr
   return (await repriceSession(index, prev, prices, false)).changed;
 }
 
-/** One session's pass: its events' new costs, then, with `totals`, its totals when they changed. */
-async function repriceSession(index: IndexStore, prev: Session, prices: Prices, totals: boolean): Promise<{ events: number; changed: boolean }> {
+/**
+ * One session's pass: its events' new costs, then, with `totals`, its totals; nothing when nothing is due.
+ * `guard` runs before each write (the ingest lock's assertHeld, which throws once the lock is lost).
+ */
+async function repriceSession(index: IndexStore, listed: Session, prices: Prices, totals: boolean, guard: () => void = () => {}): Promise<{ events: number; changed: boolean }> {
+  const unchanged = { events: 0, changed: false };
+  const costs = await dueCosts(index, listed, prices, totals);
+  if (!costs) return unchanged;
+  if (totals && index.transaction) {
+    return index.transaction(async () => {
+      // Read again under the write lock: costs and a row another process wrote since count, and a session deleted since stays deleted.
+      const cur = await index.getSession(listed.id);
+      const now = cur && (await dueCosts(index, cur, prices, totals));
+      if (!now) return unchanged;
+      guard();
+      const events = now.length ? await index.setEventCosts!(now) : 0;
+      await index.upsertSession(withUsage(cur, buildSession(await index.listEvents(cur.id), cur)));
+      return { events, changed: true };
+    });
+  }
+  guard();
+  const events = costs.length ? await index.setEventCosts!(costs) : 0;
+  if (totals) {
+    guard();
+    await refreshTotals(index, listed.id);
+  }
+  return { events, changed: true };
+}
+
+/**
+ * The new costs of a session's events: estimates added, changed, or removed where no price backs one now. Undefined when
+ * nothing is due: no cost changes, and the row's totals already say which part is estimated and, on a store without
+ * transactions, still match the events (a pass stopped between a session's costs and its totals left them behind).
+ */
+async function dueCosts(index: IndexStore, prev: Session, prices: Prices, totals: boolean): Promise<EventCost[] | undefined> {
   const stored = await index.listEvents(prev.id, { kinds: KINDS });
   const enriched = new Set(stored.map(billedCallOf).filter((id) => id !== undefined));
   const costs: EventCost[] = [];
@@ -150,22 +238,29 @@ async function repriceSession(index: IndexStore, prev: Session, prices: Prices, 
     }
   }
   // Sessions folded before session totals said which part is estimated are refolded once.
-  const unmarked = estimates && prev.stats.usage?.estimatedCostUsd === undefined;
-  if (!costs.length && !unmarked) return { events: 0, changed: false };
-  const events = costs.length ? await index.setEventCosts!(costs) : 0;
-  if (totals) await refreshTotals(index, prev.id, prev);
-  return { events, changed: true };
+  if (costs.length || (estimates && prev.stats.usage?.estimatedCostUsd === undefined)) return costs;
+  const marked = estimates || prev.stats.usage?.estimatedCostUsd !== undefined;
+  if (totals && !index.transaction && marked && !sameTotals(prev, buildSession(await index.listEvents(prev.id), prev))) return costs;
+  return undefined;
 }
 
 /**
  * Folds a session's priced totals again from its stored events, keeping the rest of the stored
- * session (links, repo state). Reads the session again, so totals written meanwhile are not
- * undone; `prev` is the row to use when it can't be read.
+ * session (links, repo state). Reads the row and the events together where the store can (one
+ * transaction, or rebuildSession's lock), so totals written meanwhile are not undone; a session
+ * that is gone stays gone.
  */
-export async function refreshTotals(index: IndexStore, id: string, prev?: Session): Promise<void> {
-  const cur = (await index.getSession(id)) ?? prev;
-  if (!cur) return;
-  await index.upsertSession(withUsage(cur, buildSession(await index.listEvents(id), cur)));
+export async function refreshTotals(index: IndexStore, id: string): Promise<void> {
+  const build = (cur: Session | undefined, events: AgentEvent[]) => (cur ? withUsage(cur, buildSession(events, cur)) : undefined);
+  if (index.rebuildSession) {
+    await index.rebuildSession(id, build);
+    return;
+  }
+  const write = async () => {
+    const next = build(await index.getSession(id), await index.listEvents(id));
+    if (next) await index.upsertSession(next);
+  };
+  await (index.transaction ? index.transaction(write) : write());
 }
 
 /**
@@ -199,6 +294,12 @@ function withoutCost(e: AgentEvent): AgentEvent {
 function sameParts(parts: CostByTokenType | undefined, stored: unknown): boolean {
   if (!parts || !stored || typeof stored !== "object") return !parts && stored === undefined;
   return TOKEN_TYPES.every((k) => (stored as Record<string, unknown>)[k] === parts[k]);
+}
+
+/** Whether the stored row's priced totals are the ones `rebuilt` folded from its events (compared as stored: JSON). */
+function sameTotals(row: Session, rebuilt: Session): boolean {
+  const priced = (s: Session) => JSON.parse(JSON.stringify({ u: s.stats.usage ?? null, d: s.stats.duplicateUsage ?? null, c: s.stats.cacheBreaks ?? null })) as unknown;
+  return isDeepStrictEqual(priced(row), priced(rebuilt));
 }
 
 /** The stored session with only its priced totals refolded (links, repo state and the rest stay). */

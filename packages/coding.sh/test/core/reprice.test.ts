@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
+import { acquireLock } from "../../src/core/lock.ts";
 import { PRICING_RULES_VERSION, pricesFor } from "../../src/core/pricing.ts";
-import { priceStamp, REPRICE_CURSOR, repriceStored } from "../../src/core/reprice.ts";
+import { priceStamp, REPRICE_CURSOR, repriceLock, repriceStored } from "../../src/core/reprice.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -203,8 +205,119 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       assert.deepEqual(await repriceStored(store, undefined, { force: true }), { ran: true, events: 0, sessions: 0 }, "a later pass finds nothing to do");
       await store.close();
     });
+
+    it("a pass stopped between a session's new costs and its totals: the next pass brings the totals in line with the costs", async () => {
+      const store = await open();
+      await seed(store);
+      await repriceStored(store);
+      assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 61);
+      const cheaper = { "claude-opus-4-5": { input: 1, output: 1 } };
+      const upsert = store.upsertSession;
+      store.upsertSession = async () => {
+        throw new Error("disk I/O error");
+      };
+      try {
+        await assert.rejects(repriceStored(store, cheaper), /disk I\/O error/);
+      } finally {
+        store.upsertSession = upsert;
+      }
+      assert.notEqual(await store.getCursor(REPRICE_CURSOR), priceStamp(pricesFor(cheaper)), "the cursor stays, so the pass runs again");
+      const c = await costs(store);
+      if (name === "sqlite") assert.deepEqual([c.plain, c.stale], [5, 25], "the session's new costs rolled back with its totals");
+      else assert.deepEqual([c.plain, c.stale], [1, 1], "a store without transactions keeps the new costs");
+      assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 61, "and the old totals");
+      assert.deepEqual(await repriceStored(store, cheaper), { ran: true, events: name === "sqlite" ? 2 : 0, sessions: 1 });
+      assert.deepEqual(await costs(store), { start: undefined, plain: 1, reported: 9, stale: 1, unknown: undefined, billed: undefined, gw: 7, snap: 15 });
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [1 + 9 + 1 + 7 + 15, 1 + 1 + 15]);
+      await store.close();
+    });
+
+    it("does not run where its lock file can't be made: a pass that is not forced leaves the cursor, a forced one fails", async () => {
+      const root = mkdtempSync(join(tmpdir(), "csh-reprice-nolock-"));
+      roots.push(root);
+      // The home is a file, so no lock file can be made in it, as on a read-only mount.
+      const home = join(root, "home");
+      writeFileSync(home, "");
+      const store = await open();
+      await seed(store);
+      repriceLock(store, join(home, "reparse.lock"), join(home, "spool", ".ingest.lock"));
+      assert.deepEqual(await repriceStored(store), { ran: false, events: 0, sessions: 0 });
+      assert.equal(await store.getCursor(REPRICE_CURSOR), 0, "left for a run that can make the lock file");
+      await assert.rejects(repriceStored(store, undefined, { force: true }), (err: Error) => err.name === "NoLockError" && /cannot make the lock file/.test(err.message));
+      assert.equal((await costs(store)).plain, undefined, "nothing was written without the lock");
+      await store.close();
+    });
   });
 }
+
+describe("a reprice pass beside an ingest in another process", () => {
+  it("sqlite: no other connection writes between a session's reads and its new costs and totals", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-tx-"));
+    roots.push(root);
+    const path = join(root, "index.db");
+    const store = await SqliteIndexStore.open(path);
+    await seed(store);
+    // An ingest in another process stores an event and folds its session in one write transaction (core/ingest.ts).
+    const ingest = new DatabaseSync(path);
+    ingest.exec("PRAGMA busy_timeout = 0");
+    const list = store.listEvents.bind(store);
+    let tried: string | undefined;
+    store.listEvents = async (id, o) => {
+      const out = await list(id, o);
+      // The pass has read the session's events to total them and has not written its row yet.
+      if (!o?.kinds && tried === undefined) {
+        try {
+          ingest.exec("BEGIN IMMEDIATE");
+          ingest.exec("ROLLBACK");
+          tried = "wrote";
+        } catch (err) {
+          tried = (err as Error).message;
+        }
+      }
+      return out;
+    };
+    try {
+      assert.equal((await repriceStored(store)).ran, true);
+      assert.match(tried ?? "", /database is locked/, "the ingest's write waits for the session's repricing to commit");
+      ingest.exec("BEGIN IMMEDIATE");
+      ingest.exec("ROLLBACK");
+      assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 61);
+    } finally {
+      ingest.close();
+      await store.close();
+    }
+  });
+
+  it("a store without transactions: each session's writes wait for the ingest lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-lock-"));
+    roots.push(root);
+    const spool = join(root, "spool");
+    mkdirSync(spool);
+    const store = new MemoryIndexStore();
+    await seed(store);
+    repriceLock(store, join(root, "reparse.lock"), join(spool, ".ingest.lock"));
+    // An ingest holds the lock while it stores and folds.
+    const ingest = await acquireLock(join(spool, ".ingest.lock"), { waitMs: 0 });
+    const seen: (number | undefined)[] = [];
+    const letGo = setTimeout(() => {
+      void costs(store).then((c) => {
+        seen.push(c.plain);
+        ingest.release();
+      });
+    }, 300);
+    try {
+      assert.equal((await repriceStored(store)).ran, true);
+    } finally {
+      clearTimeout(letGo);
+      ingest.release();
+    }
+    assert.deepEqual(seen, [undefined], "nothing was written while the ingest held the lock");
+    assert.equal((await costs(store)).plain, 5);
+    assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 61);
+    await store.close();
+  });
+});
 
 describe("priceStamp", () => {
   it("changes with the table and with the lookup rules", () => {

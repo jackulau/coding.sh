@@ -169,8 +169,9 @@ export async function openIndexStore(url: string, config: Config, o: OpenIndexOp
       throw err;
     }
     // A pass on a store other processes open holds the lock the refold of this home holds
-    // (core/reparse.ts), so two processes never run one at once.
-    if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
+    // (core/reparse.ts), so two processes never run one at once, and, on a store without
+    // transactions, the home's ingest lock around each session's writes.
+    if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"), join(config.home, "spool", ".ingest.lock"));
     // Never fails the open: a cursor that can't be read or written now is tried again on a later open.
     await repriceOnOpen(store, url, config, o).catch(() => {});
     return store;

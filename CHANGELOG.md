@@ -455,6 +455,7 @@ grouped by area, with links to the docs for the details.
 - **Work.** When the index is old, `work show` counts a review item's age from the last ingest, as `work` and the Work page do, so all three give the same reason. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
 - **Capture.** T3 Code's store is read where it is while T3 Code has it open, each thread in one short read transaction, instead of copied to the temp directory on every read. A SQLite store is copied only when the temp directory keeps room to spare, and a refused T3 copy names the space needed and free. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
 - **Cost.** Repricing removes an estimate that no price makes any more, such as one from a deleted `[prices]` row, so the call has no cost, as a model with no price has none. Before, the old estimate stayed in the call and its session. Stored estimates are checked once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#prices))
+- **Cost.** Repricing no longer undoes what an ingest or a refold wrote to a session meanwhile, and one stopped between a session's costs and totals no longer leaves the totals on the old costs. Where the refold's lock file can't be made, it waits for a run that can, and `usage --reprice` fails. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#the-first-command-after-an-upgrade-is-slow))
 
 ## [0.1.7] - 2026-11-16
 
