@@ -174,6 +174,19 @@ describe("the hook redacts before it writes", () => {
     assert.deepEqual(redactPayload(r, plain, redactionTally()), plain);
   });
 
+  it("redactPayload redacts a document inside a document next to a value the rules replace, and counts each value once", () => {
+    const r = createRedactor();
+    // The password is too short for the text rules: only its key in the inner document shows it
+    // is secret. In the outer document's text, the rule that takes the log's value takes the
+    // backslash of the escaped quote after it too.
+    const inner = JSON.stringify({ password: "hunter", log: `the password is ${HIDDEN}` });
+    const tally = redactionTally();
+    const clean = redactPayload(r, { tool_response: { stdout: JSON.stringify({ content: inner }) } }, tally) as { tool_response: { stdout: string } };
+    const doc: unknown = JSON.parse((JSON.parse(clean.tool_response.stdout) as { content: string }).content);
+    assert.deepEqual(doc, { password: "[redacted:secret-field]", log: "the password is [redacted:prose-secret]" });
+    assert.deepEqual(tally.kinds, { "secret-field": 1, "prose-secret": 1 });
+  });
+
   it("withSpoolRedactions adds the line's counts to the event's", () => {
     const e: AgentEvent = { id: "e", v: 0, sessionId: "s", ts: 1, agent: "fake", kind: "user.message", payload: { text: "x", redactions: { password: 1 } } };
     assert.deepEqual(withSpoolRedactions(e, { "github-token": 2, password: 1 }).payload.redactions, { "github-token": 2, password: 2 });

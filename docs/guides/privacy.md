@@ -145,7 +145,9 @@ proxy has no auth: anyone who can reach its port can send calls through it.
 The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
 what agents run on Windows) redacts the payload first, with `capture.redact` and
 `capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
-spool.
+spool. A string that holds a JSON document, such as a tool's output, is redacted as that document
+too, so a value that only its key marks as secret is replaced, also when a rule has changed the
+text around it.
 
 To stay fast, the node hook loads those rules only for a payload whose text may hold a secret, or
 when your `config.toml` sets other rules; the rules would leave any other payload as it is. If it
