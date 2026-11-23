@@ -30,12 +30,12 @@ const edit = (path: string, o: Partial<AgentEvent> = {}) => ev("file.change", { 
 /** Session.stats.retrieval of the events, folded as one session. */
 const retrieval = (...events: (AgentEvent | AgentEvent[])[]): RetrievalStats | undefined => buildSession(events.flat()).stats.retrieval;
 
-/** A call as a short string: what it does, whether its searches are quiet, and the files it reads. */
+/** A call as a short string: what it does, whether its searches are quiet or print counts, and the files it reads. */
 const kind = (tool: string, input: unknown): string => {
   const c = classifyRetrieval(tool, input);
   if (!c) return "none";
   const what = [c.read && "read", c.search && "search", c.web && "web"].filter(Boolean).join("+");
-  return [what + (c.quiet ? " (quiet)" : ""), ...c.paths].join(" ");
+  return [what + (c.quiet ? " (quiet)" : "") + (c.count ? " (count)" : ""), ...c.paths].join(" ");
 };
 const bashKinds = (rows: [string, string][]) => {
   for (const [command, want] of rows) assert.equal(kind("Bash", { command }), want, command);
@@ -90,6 +90,25 @@ describe("classifyRetrieval", () => {
     psKinds([
       ["Select-String foo a.txt | Out-File o.txt", "search (quiet)"],
       ["Get-ChildItem -Recurse | Out-File list.txt", "search (quiet)"],
+    ]);
+  });
+
+  it("a search that prints counts (`grep -c`, `| wc -l`) is marked so; a read piped into `wc` stays a read", () => {
+    bashKinds([
+      ["grep -c foo a.ts", "search (count)"],
+      ["grep -rc foo src", "search (count)"],
+      ["rg --count foo", "search (count)"],
+      ["rg --count-matches foo", "search (count)"],
+      ["grep -rn foo src | wc -l", "search (count)"],
+      ["find . -name '*.ts' | wc -l", "search (count)"],
+      ["cat a.ts | grep -c foo", "search (count)"],
+      ["grep -q foo a.ts && grep -c bar b.ts", "search (count)"],
+      // `-e -c` searches for "-c"; `-C` is context, not a count.
+      ["grep -e -c foo a.ts", "search"],
+      ["grep -C 3 foo a.ts", "search"],
+      ["grep -c foo a.ts; ls", "search"],
+      ["findstr /c:foo a.ts", "search"],
+      ["cat a.ts | wc -l", "read a.ts"],
     ]);
   });
 
@@ -340,6 +359,11 @@ describe("Session.stats.retrieval", () => {
     assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 1\ngrep: warning: stray \\ before -" })), 1);
     assert.equal(empty(bash("egrep -rn 'a|b' src", { ok: false, output: "Exit code 1\negrep: warning: egrep is obsolescent; using grep -E" })), 1);
     assert.equal(empty(bash("grep -rn 'a\\-b' src | head", { output: '{"stdout":"","stderr":"grep: warning: stray \\\\ before -\\n","interrupted":false,"isImage":false}' })), 1);
+    // A search that prints counts and counted nothing: `grep -c` prints 0 for each file and exits 1, `| wc -l` prints 0.
+    assert.equal(empty(bash("grep -c foo a.ts", { ok: false, output: "Exit code 1\n0" })), 1);
+    assert.equal(empty(bash("grep -rc foo src", { ok: false, output: "Exit code 1\nsrc/a.ts:0\nsrc/b.ts:0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | wc -l", { output: '{"stdout":"0\\n","stderr":"","interrupted":false,"isImage":false}' })), 1);
+    assert.equal(empty(bash("ls src | wc -l", { output: "       0" })), 1);
   });
 
   it("a search that found something, printed nothing by design, or was cut is not empty", () => {
@@ -363,6 +387,11 @@ describe("Session.stats.retrieval", () => {
     // A shell search's matches that start like "No files found" are matches.
     assert.equal(empty(bash('grep "No files found" msgs.txt', { output: "No files found in src\nNo files found in lib" })), 0);
     assert.equal(empty(bash('grep -h "No matches found" a.log', { output: "No matches found for x" })), 0);
+    // A count that is not zero, a 0 that grep matched, and a count beside an error.
+    assert.equal(empty(bash("grep -rc foo src", { output: "src/a.ts:0\nsrc/b.ts:2" })), 0);
+    assert.equal(empty(bash("grep -rn foo src | wc -l", { output: "3" })), 0);
+    assert.equal(empty(bash("grep 0 nums.txt", { output: "0" })), 0);
+    assert.equal(empty(bash("grep -c foo a.ts b.ts", { ok: false, output: "Exit code 2\na.ts:0\ngrep: b.ts: No such file or directory" })), 0);
   });
 
   it("a read after `cd` into a Windows folder with spaces keys like the edit of the same file", () => {

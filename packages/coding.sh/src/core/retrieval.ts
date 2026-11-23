@@ -52,6 +52,8 @@ export interface RetrievalCall {
   paths: string[];
   /** Its searches print no matches by design (`grep -q`, `Select-String -Quiet`) or send them elsewhere (`> out.txt`). */
   quiet?: true;
+  /** Its searches print counts, not matches (`grep -c`, `grep x | wc -l`): a count of zero is no match. */
+  count?: true;
   /** A shell command. */
   shell?: true;
 }
@@ -91,8 +93,8 @@ function startDir(input: unknown): string {
 
 // ---------------------------------------------------------------- shell lines
 
-/** A pipeline's finding: a read of these paths (resolved against the directory it ran in), or a search. */
-type Found = { kind: "read"; paths: string[] } | { kind: "search"; quiet: boolean };
+/** A pipeline's finding: a read of these paths (resolved against the directory it ran in), or a search that may print counts. */
+type Found = { kind: "read"; paths: string[] } | { kind: "search"; quiet: boolean; count?: boolean };
 
 /** A word that is not a literal path (a variable, a glob, a substitution): it counts as an operand with no file. */
 const MARK = "\u0000";
@@ -172,8 +174,15 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     if (GREPS.has(prog) || (pps && (prog === "where-object" || prog === "where" || prog === "?" || prog === "select-string" || prog === "sls"))) {
       // A filter: what reaches the agent is what matched.
       const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args, prog);
-      if (h.kind === "read") found[head] = { kind: "search", quiet };
-      else h.quiet ||= quiet;
+      const count = GREPS.has(prog) && prog !== "findstr" && grepCount(args, prog);
+      if (h.kind === "read") found[head] = { kind: "search", quiet, count };
+      else {
+        h.quiet ||= quiet;
+        h.count ||= count;
+      }
+    } else if (prog === "wc" && !pps) {
+      // `grep x | wc -l`: what reaches the agent is a count of what the search found.
+      if (h.kind === "search") h.count = true;
     } else if (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args)) {
       // A removal or an in-place edit: what the head printed went into it (`find . | xargs rm`, `cat list | xargs rm`), not to the agent.
       found[head] = undefined;
@@ -182,6 +191,8 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
   let read = false;
   let search = false;
   let quiet = true;
+  /** Every search whose output reaches the agent prints counts. */
+  let count = true;
   const paths = new Set<string>();
   for (let i = 0; i < found.length; i++) {
     const f = found[i];
@@ -193,12 +204,16 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
       for (const x of f.paths) paths.add(x);
     } else {
       search = true;
-      if (!f.quiet && !gone[i]) quiet = false;
+      if (!f.quiet && !gone[i]) {
+        quiet = false;
+        if (!f.count) count = false;
+      }
     }
   }
   if (!read && !search) return undefined;
   const out: RetrievalCall = { read, search, web: false, paths: [...paths], shell: true };
   if (search && quiet) out.quiet = true;
+  else if (search && count) out.count = true;
   return out;
 }
 
@@ -407,7 +422,7 @@ function shFound(prog: string, args: readonly string[], dir: string | undefined)
     return ops ? readOf(ops, dir) : undefined;
   }
   if (prog === "git") return gitFound(args, dir);
-  if (GREPS.has(prog)) return { kind: "search", quiet: prog !== "findstr" && grepQuiet(args, prog) };
+  if (GREPS.has(prog)) return prog === "findstr" ? { kind: "search", quiet: false } : { kind: "search", quiet: grepQuiet(args, prog), count: grepCount(args, prog) };
   if (prog === "find") return findDestroys(args) ? undefined : { kind: "search", quiet: false };
   if (SHELL_SEARCHERS.has(prog) || LISTERS.has(prog)) return { kind: "search", quiet: false };
   return undefined;
@@ -461,15 +476,25 @@ const SEARCHER_VALUED = "efmABCgtTMj";
 
 /** `grep -q`, `--quiet`, `--silent`: the exit status is the answer and nothing prints. */
 function grepQuiet(args: readonly string[], prog: string): boolean {
+  return grepFlag(args, prog, "q", ["--quiet", "--silent"]);
+}
+
+/** `grep -c`, `--count`, ripgrep's `--count-matches`: a count for each file, not the lines that match. */
+function grepCount(args: readonly string[], prog: string): boolean {
+  return grepFlag(args, prog, "c", ["--count", "--count-matches"]);
+}
+
+/** Whether a grep-like command sets a flag: its letter alone or in a cluster (`-rq`), or one of its long names. */
+function grepFlag(args: readonly string[], prog: string, letter: string, long: readonly string[]): boolean {
   const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : SEARCHER_VALUED;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") break;
-    if (a === "--quiet" || a === "--silent") return true;
+    if (long.includes(a)) return true;
     if (!/^-[^-]/.test(a)) continue;
     for (let j = 1; j < a.length; j++) {
       const c = a[j]!;
-      if (c === "q") return true;
+      if (c === letter) return true;
       // A flag that takes a value: the rest of the word is the value, or the next word when it ends the word (`grep -e -q`).
       if (valued.includes(c)) {
         if (j === a.length - 1) i++;
@@ -742,7 +767,7 @@ function bodyText(v: unknown): string {
 }
 
 /** A search's structured result (Claude Code's Grep and Glob, a shell's stdout and stderr): whether it found nothing, or undefined when it is not one. */
-function shapeEmpty(output: unknown): boolean | undefined {
+function shapeEmpty(output: unknown, pending: Pending): boolean | undefined {
   let o = output;
   if (typeof o === "string") {
     if (!o.trimStart().startsWith("{")) return undefined;
@@ -758,12 +783,28 @@ function shapeEmpty(output: unknown): boolean | undefined {
   if (r.mode === "count" && typeof r.numMatches === "number") return r.numMatches === 0;
   if (typeof r.numFiles === "number") return r.numFiles === 0;
   if (Array.isArray(r.filenames)) return r.filenames.length === 0;
-  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout) && blank(typeof r.stderr === "string" ? unwarned(r.stderr) : r.stderr);
+  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout, pending) && blank(typeof r.stderr === "string" ? unwarned(r.stderr) : r.stderr, pending);
   return undefined;
 }
 
-/** Not a string, or only white space. */
-const blank = (v: unknown): boolean => typeof v !== "string" || !v.trim();
+/** Not a string, only white space, or output that shows no match (showsNoMatch). */
+const blank = (v: unknown, pending: Pending): boolean => typeof v !== "string" || !v.trim() || showsNoMatch(v, pending);
+
+/** A count of zero: `0`, or wc's `0 0 0`. */
+const ZERO_COUNT = /^0(?:\s+0)*$/;
+
+/** Output that shows no match: from a search that counts (`grep -c`, `| wc -l`), only counts of zero (`0`, `a.ts:0`) and blank lines. */
+function showsNoMatch(t: string, pending: Pending): boolean {
+  if (!pending.count) return false;
+  for (let at = 0; at <= t.length; ) {
+    let nl = t.indexOf("\n", at);
+    if (nl < 0) nl = t.length;
+    const line = t.slice(at, nl).trim();
+    at = nl + 1;
+    if (line && !ZERO_COUNT.test(line.slice(line.lastIndexOf(":") + 1).trim())) return false;
+  }
+  return true;
+}
 
 const num = (m: RegExpExecArray | null): number | undefined => (m ? Number(m[1]) : undefined);
 
@@ -776,19 +817,23 @@ function exitStatus(p: Record<string, unknown>): number | undefined {
 /**
  * A search that found nothing: it printed nothing, its tool said "No matches found" or "No files
  * found" (a shell command: that line and nothing else), or it exited 1 (grep's and rg's "no
- * match") with nothing printed. grep's warnings are not printed output. A search whose output was
- * cut, that was stopped, or whose matches went elsewhere (`quiet`) did not find nothing.
+ * match") with nothing printed. grep's warnings are not printed output, nor are counts of zero
+ * from a search that counts (`grep -c`). A search whose output was cut, that was stopped, or whose
+ * matches went elsewhere (`quiet`) did not find nothing.
  */
-function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: boolean, shell: boolean): boolean {
+function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, pending: Pending): boolean {
   const p = e.payload;
+  const quiet = !!pending.quiet;
+  const shell = !!pending.shell;
   if (failure?.cls === "interrupted" || p.interrupted === true) return false;
   if (p.cut && typeof p.cut === "object") return false;
-  const shape = shapeEmpty(p.output);
+  const shape = shapeEmpty(p.output, pending);
   if (shape === false) return false;
   // A quiet search prints nothing by design: only its exit status says it found nothing.
   if (shape && !quiet) return true;
   let printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
   if (shell) printed = unwarned(printed);
+  if (printed && showsNoMatch(printed, pending)) printed = "";
   const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
   if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
   if (p.ok === false) return !printed && exitStatus(p) === 1;
@@ -807,6 +852,8 @@ interface Pending {
   /** It searches and reads nothing: its result may be empty. */
   search?: true;
   quiet?: true;
+  /** Its searches print counts (RetrievalCall.count). */
+  count?: true;
 }
 
 /** The fold state behind Session.stats.retrieval. Plain data (Maps, Sets, arrays), saved with the session's fold. */
@@ -879,6 +926,7 @@ function begin(s: RetrievalState, e: AgentEvent, cwd: string | undefined): Pendi
   if (c.shell) pending.shell = true;
   if (c.search && !c.read) pending.search = true;
   if (c.quiet) pending.quiet = true;
+  if (c.count) pending.count = true;
   return pending;
 }
 
@@ -958,7 +1006,7 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
     const named = heldBy(names, lines);
     for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
-  if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
+  if (pending.search && foundNothing(e, failure, pending)) s.empty++;
 }
 
 /** The queue a call without a tool-use id waits in: by subagent and tool. Built only for such calls. */
