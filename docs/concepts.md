@@ -20,9 +20,8 @@ One run of your agent, from the first prompt to the end: a Claude Code conversat
 thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 
 - In the viewer: a row in the session list, a link to its timeline.
-- A session with a failure opens on its first failing step. First failure in the header, or
-  `F`, goes back to it.
-- A session with no failure opens on its first prompt. A link to a step opens on that step.
+- A session opens on its first failing step, or on its first prompt when nothing failed. First
+  failure in the header, or `F`, goes back to it. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
 - [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
