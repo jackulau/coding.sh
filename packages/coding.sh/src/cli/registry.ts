@@ -392,7 +392,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     actions: [
       { name: "status", summary: "Show whether a proxy is running, and where (exit 1 when not)", examples: ["coding.sh proxy status"] },
-      { name: "stop", summary: "Stop the background proxy", examples: ["coding.sh proxy stop"] },
+      { name: "stop", summary: "Stop the running proxy: it finishes the calls in flight first, for up to 10 s", examples: ["coding.sh proxy stop"] },
       { name: "env", summary: "Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy", examples: ['eval "$(coding.sh proxy env)"'] },
     ],
     examples: ["coding.sh proxy", "coding.sh proxy --background", "coding.sh init --proxy", "coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic"],
