@@ -50,6 +50,47 @@ export function globRe(glob: string): RegExp {
 }
 
 const WORD = /'[^']*'|"(?:\\.|[^"\\])*"|[^\s'"]+/g;
+/** A `'…'` word or a run of unquoted text, at one index (sticky). */
+const PLAIN_WORD = /'[^']*'|[^\s'"]+/y;
+/** A `"` and the escaped or plain text after it, up to the next unescaped `"` (sticky). */
+const QUOTED = /"(?:\\.|[^"\\])*/y;
+
+/**
+ * The words of a segment, as `seg.match(WORD)` finds them. A `"` whose string never closes makes
+ * that regex scan to the end again at every escaped `"` after it; here one scan rules out every
+ * `"` it passed.
+ */
+function wordsOf(seg: string): string[] {
+  // Without a `\"` no scan runs past a `"`: the scans that fail cover separate stretches, and the regex is linear.
+  if (!seg.includes('\\"')) return seg.match(WORD) ?? [];
+  const out: string[] = [];
+  /** A `"` before this index opens no string: an earlier scan ran past it without finding the close. */
+  let unclosed = 0;
+  for (let i = 0; i < seg.length; ) {
+    if (seg[i] === '"') {
+      if (i >= unclosed) {
+        QUOTED.lastIndex = i;
+        const end = i + QUOTED.exec(seg)![0].length;
+        if (seg[end] === '"') {
+          out.push(seg.slice(i, end + 1));
+          i = end + 1;
+          continue;
+        }
+        unclosed = end;
+      }
+      i++;
+      continue;
+    }
+    PLAIN_WORD.lastIndex = i;
+    const m = PLAIN_WORD.exec(seg);
+    if (m) {
+      out.push(m[0]);
+      i += m[0].length;
+    } else i++;
+  }
+  return out;
+}
+
 const unquote = (w: string) => (w.length >= 2 && (w[0] === "'" || w[0] === '"') && w.endsWith(w[0]) ? w.slice(1, -1) : w);
 const pathLike = (w: string) => w !== "" && !w.startsWith("-") && !w.includes("$") && /^[\w.@~+/*[\]{},:-]+$/.test(w) && /[./]/.test(w) && w !== "." && w !== "..";
 
@@ -93,7 +134,7 @@ export function simpleCommands(command: string): SimpleCommand[] {
   let dir: string | undefined;
   const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
-    const words = (seg.match(WORD) ?? []).map(unquote);
+    const words = wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.
     const rest: string[] = [];
     const redirects: SimpleCommand["redirects"] = [];
