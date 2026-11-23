@@ -9,6 +9,7 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import { pricesFor } from "../../core/pricing.ts";
 import type { Replay } from "../../core/replay.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { caseExpectation, saveForkCase } from "../../experiments/fork-case.ts";
 import { firstPrompt, runFork, type ForkRunResult } from "../../experiments/fork-run.ts";
 import { bundleChange, emptyChange, ForkError, forkStep, parseWith, prepareFork, requestContextFiles, type ForkResult, type HarnessChange } from "../../experiments/fork.ts";
@@ -106,10 +107,13 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
     }
   }
 
+  // This fork again with `k` trials, saved into `into`. It names the session by a reference that opens
+  // it when pasted (core/session-ref.ts): a full id can be `latest`, which opens the newest session.
+  const rerun = async (k: number, into: string) => cliCommand(c.env, ["replay", (await shortener(ctx.index))(s.id), "--step", String(n), "--fork", ...forkArgs(c, k), "--save-case", into]);
   let saved: { suite: string; dir: string; caseId: string; created: boolean } | undefined;
   if (suite !== undefined) {
     const expected = caseExpectation(rc.recorded, result);
-    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", cliCommand(c.env, ["replay", s.id, "--step", String(n), "--fork", ...forkArgs(c, Math.max(trials, 3)), "--save-case", suite])] });
+    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", await rerun(Math.max(trials, 3), suite)] });
     const root = (await repoRoot(c.cwd)) ?? c.cwd;
     const dir = join(root, SUITES_DIR, suite);
     const caseId = `fork-${s.id.slice(0, 8)}-step${n}`;
@@ -142,7 +146,7 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
     out.print(`Saved case ${saved.caseId} in ${saved.dir}${saved.created ? " (new suite)" : ""}`);
     out.print(out.style("Its request file holds the conversation up to this step, redacted as stored. Read it before you commit it.", "faint"));
     out.next("Run it", `coding.sh eval run ${saved.suite}`);
-  } else if (result && result.differ) out.next("Keep this step as a regression case", cliCommand(c.env, ["replay", s.id, "--step", String(n), "--fork", ...forkArgs(c, trials), "--save-case", "forks"]));
+  } else if (result && result.differ) out.next("Keep this step as a regression case", await rerun(trials, "forks"));
   return run?.verify && !run.verify.ok ? 1 : 0;
 }
 

@@ -11,10 +11,13 @@ import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { which } from "../../src/adapters/_shared/detect.ts";
+import * as doctor from "../../src/cli/commands/doctor.ts";
 import * as evalCmd from "../../src/cli/commands/eval.ts";
 import * as improve from "../../src/cli/commands/improve.ts";
+import * as replay from "../../src/cli/commands/replay.ts";
 import * as review from "../../src/cli/commands/review.ts";
 import * as show from "../../src/cli/commands/show.ts";
+import { wholeRef } from "../../src/core/session-ref.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
 import { createCodingShMcp } from "../../src/mcp/server.ts";
@@ -426,6 +429,67 @@ describe("review and score add name the session by a reference that opens it", (
       assert.equal(await opens(sb, refIn(`coding.sh show ${on}`, "show")), id, on);
     });
   }
+});
+
+describe("doctor and replay name the session by a reference that opens it", () => {
+  // Sessions named latest and last, older than B: `latest` and `last` as typed open B, the newest.
+  // Each is given by the reference coding.sh sessions lists it by. And a subagent of B, whose
+  // reference must not open B.
+  const at = { cwd: "/work/demo" };
+  const child = `${B}:sub:a7d49789c0ffee00`;
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const now = Date.now();
+    const write = { tool: "Write", toolUseId: "toolu_w", input: { file_path: "/work/demo/notes.md", content: "# Notes\n" } };
+    await sb.seed([mkSession("latest", now - 3000, at), mkSession("last", now - 2000, at), mkSession(child, now - 1500, at), mkSession(B, now - 1000, at)], [
+      // latest: a prompt, then a file written.
+      ev("latest", "user.message", { text: "write the notes" }, at),
+      ev("latest", "tool.start", write, at),
+      ev("latest", "tool.end", { tool: "Write", toolUseId: "toolu_w", ok: true }, at),
+      // last: no steps, and one model call at 9,000 tokens a second, past doctor's limit.
+      ev("last", "llm.call", { ok: true }, { ...at, durationMs: 1000, usage: { inputTokens: 10, outputTokens: 9000 } }),
+      ev(B, "user.message", { text: "fix the tests" }, at),
+      ev(child, "user.message", { text: "read the notes" }, at),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("doctor's Stats warning names the session with the most implausible calls by a reference that opens it", async () => {
+    const r = await runCmd(doctor, sb, { flags: { agent: "claude-code" }, json: true });
+    const w = r.json?.warnings.find((x: { check: string }) => x.check === "stats");
+    assert.ok(w, r.stdout + String(r.error?.message));
+    const most = /; most in (.+)$/.exec(w.message)?.[1];
+    assert.ok(most, w.message);
+    assert.equal(await opens(sb, refIn(`coding.sh show ${most}`, "show")), "last", w.message);
+    assert.equal(await opens(sb, refIn(w.next, "show")), "last", w.next);
+    // The store's own field keeps the whole id.
+    assert.equal(r.json.store.implausible.worst, "last");
+  });
+
+  test("replay's next steps name the session by a reference that opens it", async () => {
+    const idx = await runCmd(replay, sb, { positionals: [wholeRef("latest")] });
+    const step = /^\s*(coding\.?sh replay .*)$/m.exec(idx.stderr)?.[1];
+    assert.ok(step, idx.stdout + idx.stderr + String(idx.error?.message));
+    assert.equal(await opens(sb, refIn(step, "replay")), "latest", step);
+    // The step that wrote the file: the command that shows the file as of that step.
+    const n = /--step (\d+)/.exec(step)?.[1];
+    assert.ok(n, step);
+    const one = await runCmd(replay, sb, { positionals: [wholeRef("latest")], flags: { step: Number(n) } });
+    const file = /^\s*(coding\.?sh replay .* --file .*)$/m.exec(one.stderr)?.[1];
+    assert.ok(file, one.stdout + one.stderr + String(one.error?.message));
+    assert.equal(await opens(sb, refIn(file, "replay")), "latest", file);
+    // A session with no steps: the command that shows what it recorded.
+    const none = await runCmd(replay, sb, { positionals: [wholeRef("last")] });
+    const show = /^\s*(coding\.?sh show .*)$/m.exec(none.stderr)?.[1];
+    assert.ok(show, none.stdout + none.stderr + String(none.error?.message));
+    assert.equal(await opens(sb, refIn(show, "show")), "last", show);
+    // A subagent: its step command opens the subagent, not its parent.
+    const sub = await runCmd(replay, sb, { positionals: [child] });
+    const own = /^\s*(coding\.?sh replay .*)$/m.exec(sub.stderr)?.[1];
+    assert.ok(own, sub.stdout + sub.stderr + String(sub.error?.message));
+    assert.equal(await opens(sb, refIn(own, "replay")), child, own);
+  });
 });
 
 // The viewer's copied commands, built by the page's own functions (src/viewer/ui/index.html) from the

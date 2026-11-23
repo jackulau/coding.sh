@@ -1,5 +1,5 @@
-// The next-step hints replay prints name the session by its full id, so a
-// subagent's hint does not resolve to its parent.
+// The next-step hints replay prints name the session by a reference that opens it
+// (core/session-ref.ts), so a subagent's hint does not resolve to its parent.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -24,8 +24,12 @@ before(() => {
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 
-test("replay hints print the full session id", () => {
+test("replay hints name the session by a reference that opens it", () => {
   const r = exec("replay", SID);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout + r.stderr, new RegExp(`coding\\.sh replay ${SID} --step \\d+`));
+  const ref = /coding\.?sh replay (\S+) --step \d+/.exec(r.stdout + r.stderr)?.[1];
+  assert.ok(ref, r.stdout + r.stderr);
+  const shown = exec("show", ref, "--json", "--fields", "session.id");
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.equal(JSON.parse(shown.stdout).session.id, SID);
 });
