@@ -339,9 +339,13 @@ function psWord(w: string): { text: string; literal: boolean } {
   return { text, literal };
 }
 
+/** Words with no quote, escape, variable, glob or backslash: each is its own text (sh, PowerShell). */
+const SH_PLAIN = /^[^'"\\$`*?[\]{}]*$/;
+const PS_PLAIN = /^[^'"`$*?[\](){}@\\]*$/;
+
 /** A word as an operand: its literal text with `/` separators, or MARK and the word when it is not literal. A flag stays as written. */
 function unq(raw: string, ps: boolean): string {
-  if (raw.startsWith("-")) return raw;
+  if (raw.startsWith("-") || (ps ? PS_PLAIN : SH_PLAIN).test(raw)) return raw;
   const { text, literal } = ps ? psWord(raw) : shWord(raw);
   return literal ? text.replace(/\\/g, "/") : MARK + raw;
 }
@@ -720,11 +724,17 @@ function bodyText(v: unknown): string {
     t = keep.filter((l) => !NO_OUTPUT.test(l.trim())).join("\n");
   }
   // Copilot CLI ends a shell result with `<shellId: 3 completed with exit code 1>`.
-  t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
-  const lines = t.split("\n");
-  let i = 0;
-  while (i < lines.length && (HEADER_LINE.test(lines[i]!.trim()) || (i === 0 && !lines[i]!.trim()))) i++;
-  const body = lines.slice(i).join("\n").trim();
+  if (t.includes("<shellId: ")) t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
+  // Header lines, and a blank first line, come off the top; the body is the text from the first other line.
+  let start = 0;
+  for (let first = true; ; first = false) {
+    const nl = t.indexOf("\n", start);
+    const line = t.slice(start, nl < 0 ? t.length : nl).trim();
+    if (!HEADER_LINE.test(line) && (!first || line)) break;
+    if (nl < 0) return "";
+    start = nl + 1;
+  }
+  const body = t.slice(start).trim();
   return NO_OUTPUT.test(body) ? "" : body;
 }
 
@@ -745,9 +755,12 @@ function shapeEmpty(output: unknown): boolean | undefined {
   if (r.mode === "count" && typeof r.numMatches === "number") return r.numMatches === 0;
   if (typeof r.numFiles === "number") return r.numFiles === 0;
   if (Array.isArray(r.filenames)) return r.filenames.length === 0;
-  if (typeof r.stdout === "string" || typeof r.stderr === "string") return !`${typeof r.stdout === "string" ? r.stdout : ""}${typeof r.stderr === "string" ? r.stderr : ""}`.trim();
+  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout) && blank(r.stderr);
   return undefined;
 }
+
+/** Not a string, or only white space. */
+const blank = (v: unknown): boolean => typeof v !== "string" || !v.trim();
 
 const num = (m: RegExpExecArray | null): number | undefined => (m ? Number(m[1]) : undefined);
 
@@ -774,7 +787,7 @@ function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: bo
   const printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
   const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
   if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
-  if (p.ok === false) return exitStatus(p) === 1 && !printed;
+  if (p.ok === false) return !printed && exitStatus(p) === 1;
   if (none.test(printed)) return true;
   if (quiet || ((p.output === undefined || p.output === null) && (p.error === undefined || p.error === null))) return false;
   return !printed;
@@ -888,6 +901,9 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
 }
 
+/** The queue a call without a tool-use id waits in: by subagent and tool. Built only for such calls. */
+const queueOf = (e: AgentEvent): string => `${e.subagentId ?? ""}\u0000${typeof e.payload.tool === "string" ? e.payload.tool.toLowerCase() : ""}`;
+
 /**
  * Folds the next event. `cwd`: the session's working directory. `seen`: the tool-use ids the
  * session saw before this event (sessions.ts SessionState.toolIds), so a call seen live and from
@@ -898,7 +914,6 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
   const p = e.payload;
   if (p.wrapper === true) return;
   const id = typeof p.toolUseId === "string" && p.toolUseId ? p.toolUseId : undefined;
-  const queue = `${e.subagentId ?? ""}\u0000${typeof p.tool === "string" ? p.tool.toLowerCase() : ""}`;
   if (e.kind === "tool.start") {
     if (id) {
       if (o.seen.has(id)) return;
@@ -908,6 +923,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
       if (s.open.size > MAX_OPEN) s.open.delete(s.open.keys().next().value!);
       return;
     }
+    const queue = queueOf(e);
     let q = s.idless.get(queue);
     if (!q) {
       if (s.idless.size >= MAX_QUEUES) s.idless.delete(s.idless.keys().next().value!);
@@ -926,6 +942,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
     }
     if (o.seen.has(id)) return;
   } else {
+    const queue = queueOf(e);
     const q = s.idless.get(queue);
     if (q) {
       const pending = q.shift();

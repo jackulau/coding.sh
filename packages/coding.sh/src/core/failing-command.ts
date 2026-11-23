@@ -212,7 +212,8 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
 
 /** Words of one part, quotes kept with the word they belong to. */
 const words = (text: string): string[] => text.match(/(?:[^\s"'`]+|"(?:\\.|[^"\\])*"?|'[^']*'?|`[^`]*`?)+/g) ?? [];
-const unquote = (w: string): string => w.replace(/^(["'])(.*)\1$/s, "$2");
+// Most words start with no quote: the regex runs only on those that do.
+const unquote = (w: string): string => (w[0] === '"' || w[0] === "'" ? w.replace(/^(["'])(.*)\1$/s, "$2") : w);
 
 /**
  * A redirect word's operator and target, and whether the target is the next word: `> f`, `>f`,
@@ -300,6 +301,8 @@ const PS_LAUNCH = /^\s*("[^"]+"|'[^']+'|\S+)\s+((?:\S+\s+)*?)-c(?:ommand)?\s+([\
  * Any other line comes back as it is.
  */
 export function launchedCommand(cmd: string): string {
+  // The launcher's name is in the line: most lines name neither.
+  if (!/pwsh|powershell/i.test(cmd)) return cmd;
   const m = PS_LAUNCH.exec(cmd);
   if (!m) return cmd;
   const prog = unquote(m[1]!);
@@ -538,13 +541,19 @@ function powerShellParts(script: string): ShellPart[] {
 export function shellParts(cmd: string, shell: Shell = "sh"): ShellPart[] {
   const script = launchedCommand(cmd);
   if (shell === "powershell" || script !== cmd) return powerShellParts(script);
-  return splitParts(cmd).flatMap((p) => {
+  // A loop, not flatMap: the session fold parses every shell call, and flatMap costs more than the parts.
+  const out: ShellPart[] = [];
+  for (const p of splitParts(cmd)) {
     // `cd x && powershell -Command "npm test"`: the launcher's script, as PowerShell.
     const inner = launchedCommand(p.text);
-    if (inner !== p.text) return powerShellParts(inner);
+    if (inner !== p.text) {
+      for (const q of powerShellParts(inner)) out.push(q);
+      continue;
+    }
     const part = partOf(p.text, p.last);
-    return part ? [part] : [];
-  });
+    if (part) out.push(part);
+  }
+  return out;
 }
 
 /** Shell plumbing: a builtin, a setup step, a file tool or a PowerShell pipeline cmdlet. It never runs a test suite, whatever its output holds. */

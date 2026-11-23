@@ -186,7 +186,7 @@ export function simpleCommands(command: string): SimpleCommand[] {
     const redirects: SimpleCommand["redirects"] = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i] as string;
-      const r = /^\d*(>>?)(.*)$/.exec(w);
+      const r = w.includes(">") ? /^\d*(>>?)(.*)$/.exec(w) : null;
       if (r) {
         const target = r[2] || words[++i];
         if (target) redirects.push({ path: target, append: r[1] === ">>" });
@@ -195,7 +195,7 @@ export function simpleCommands(command: string): SimpleCommand[] {
     let k = 0;
     while (k < rest.length && (/^[A-Za-z_]\w*=/.test(rest[k] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[k] as string))) k++;
     const name = rest[k] ?? "";
-    const cmd = name.replace(/^.*\//, "");
+    const cmd = name.includes("/") ? name.replace(/^.*\//, "") : name;
     const args = rest.slice(k + 1);
     out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
     if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
