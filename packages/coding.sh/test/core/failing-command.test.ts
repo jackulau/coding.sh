@@ -34,6 +34,22 @@ describe("shellParts", () => {
     assert.deepEqual(progs('echo "$(date; whoami)" && make test'), ["echo", "make"]);
     assert.deepEqual(progs("cat > notes.md <<'EOF'\n--session x\nexport FOO=1 && rm -rf /\nEOF\ngit add notes.md"), ["cat", "git"]);
   });
+
+  it("a redirect's target is not an argument; `away` marks a part whose output goes to a file", () => {
+    const argv = (cmd: string) => shellParts(cmd)[0]?.argv;
+    assert.deepEqual(argv("cat a.ts >& out.txt"), ["cat", "a.ts"]);
+    assert.deepEqual(argv("cat a.ts 2>& 1"), ["cat", "a.ts"]);
+    assert.deepEqual(argv(">& out.txt cat a.ts"), ["cat", "a.ts"]);
+    const away = (cmd: string, shell: "sh" | "powershell" = "sh") => shellParts(cmd, shell).map((p) => p.away === true);
+    for (const cmd of ["cat a.ts > b.ts", "cat a.ts >> b.ts", "cat a.ts 1>b.ts", "cat a.ts &> /dev/null", "cat a.ts >& out.txt", "> out.txt cat a.ts"]) assert.deepEqual(away(cmd), [true], cmd);
+    // A copy to another stream, stderr alone, or an output stream still prints.
+    for (const cmd of ["cat a.ts >&2", "cat a.ts 1>&2", "cat a.ts 2>/dev/null", "cat a.ts > /dev/stderr", "cat a.ts 2>&1 | head"]) assert.ok(!away(cmd).some(Boolean), cmd);
+    assert.deepEqual(away("grep -rn x src; echo done > log.txt"), [false, true]);
+    assert.deepEqual(away("Get-Content a.ts > b.ts", "powershell"), [true]);
+    assert.deepEqual(away("Get-Content a.ts *> $null", "powershell"), [true]);
+    assert.deepEqual(away("Get-Content a.ts 2> $null", "powershell"), [false]);
+    assert.deepEqual(away("Get-Content a.ts 2>&1", "powershell"), [false]);
+  });
 });
 
 describe("launchedCommand", () => {

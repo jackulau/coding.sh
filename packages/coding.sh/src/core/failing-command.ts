@@ -47,6 +47,8 @@ export interface ShellPart {
   timed: boolean;
   /** Its error output goes to /dev/null (`2>/dev/null`, `&>/dev/null`): it can fail without naming itself. */
   quiet?: true;
+  /** Its standard output goes to a file or /dev/null (`> out.txt`, `>> log`, `&> /dev/null`, `*> $null`): what it prints does not reach the caller. */
+  away?: true;
   /** Parsed as PowerShell. */
   ps?: true;
 }
@@ -205,17 +207,48 @@ function splitParts(cmd: string): { text: string; last: boolean }[] {
 const words = (text: string): string[] => text.match(/(?:[^\s"'`]+|"(?:\\.|[^"\\])*"?|'[^']*'?|`[^`]*`?)+/g) ?? [];
 const unquote = (w: string): string => w.replace(/^(["'])(.*)\1$/s, "$2");
 
+/**
+ * A redirect word's operator and target, and whether the target is the next word: `> f`, `>f`,
+ * `2>&1`, and `>& f` (REDIRECT reads `>` and `&`, so its target is `&f`).
+ */
+function redirectOf(x: string, next: string | undefined): { op: string; target: string; skip: boolean } | undefined {
+  const op = REDIRECT.exec(x)?.[0];
+  if (op === undefined) return undefined;
+  const rest = x.slice(op.length);
+  if (!rest) return { op, target: next ?? "", skip: true };
+  if (rest === "&" && /^\d*>$/.test(op)) return { op, target: `&${next ?? ""}`, skip: true };
+  return { op, target: rest, skip: false };
+}
+
+/**
+ * A redirect that sends standard output to a file: `>`, `>>`, `1>`, `&>`, `&>>`, and `>&` with a
+ * file. Not a copy to another stream (`>&2`, which REDIRECT reads as `>` and `&2`), and not the
+ * terminal or an output stream (`> /dev/stderr`).
+ */
+function sendsAway(op: string, target: string): boolean {
+  let t = unquote(target);
+  if (/^1?>$/.test(op) && t.startsWith("&")) {
+    t = t.slice(1);
+    if (!t || /^(?:\d+|-)$/.test(t)) return false;
+  } else if (!/^(?:1?>>?|1?>\||&>>?)$/.test(op)) return false;
+  return !/^\/dev\/(?:stdout|stderr|tty|fd\/[12])$/.test(t);
+}
+
 /** One part's program and arguments, or undefined for a header or a part with no program. */
 function partOf(text: string, last: boolean): ShellPart | undefined {
   let w = words(text);
   if (HEADERS.has(w[0] ?? "")) return undefined;
   let timed = false;
+  let away = false;
   for (;;) {
     const x = w[0];
     if (x === undefined) return undefined;
     if (KEYWORDS.has(x) || ASSIGNMENT.test(x)) w = w.slice(1);
-    else if (REDIRECT.test(x)) w = w.slice(REDIRECT.exec(x)![0].length === x.length ? 2 : 1);
-    else if (WRAPPERS.has(unquote(x))) {
+    else if (REDIRECT.test(x)) {
+      const r = redirectOf(x, w[1])!;
+      if (sendsAway(r.op, r.target)) away = true;
+      w = w.slice(r.skip ? 2 : 1);
+    } else if (WRAPPERS.has(unquote(x))) {
       const name = unquote(x);
       if (name === "timeout" || name === "gtimeout") timed = true;
       w = w.slice(1);
@@ -229,11 +262,11 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
   let quiet = false;
   for (let i = 0; i < w.length; i++) {
     const x = w[i]!;
-    if (REDIRECT.test(x)) {
-      const op = REDIRECT.exec(x)![0];
-      const target = op.length === x.length ? (w[i + 1] ?? "") : x.slice(op.length);
-      if (/^(?:2>>?|&>>?)$/.test(op) && /^(?:\/dev\/null|nul)$/i.test(unquote(target))) quiet = true;
-      if (op.length === x.length) i++;
+    const r = redirectOf(x, w[i + 1]);
+    if (r) {
+      if (/^(?:2>>?|&>>?)$/.test(r.op) && /^(?:\/dev\/null|nul)$/i.test(unquote(r.target))) quiet = true;
+      if (sendsAway(r.op, r.target)) away = true;
+      if (r.skip) i++;
       continue;
     }
     argv.push(x);
@@ -244,6 +277,7 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
   const prog = raw === "[" || raw === "[[" ? raw : !raw.startsWith("-") && !raw.startsWith("$") && PROG.test(base) ? base : undefined;
   const part: ShellPart = { argv, prog, last, timed };
   if (quiet) part.quiet = true;
+  if (away) part.away = true;
   return part;
 }
 
@@ -430,10 +464,13 @@ function psPartOf(text: string): ShellPart | undefined {
     } else break;
   }
   const argv: string[] = [];
+  let away = false;
   for (let i = 0; i < w.length; i++) {
     const x = w[i]!;
     const r = PS_REDIRECT.exec(x);
     if (r) {
+      // `> out.txt`, `>> log`, `1> x`, `*> $null`: the success stream goes to a file.
+      if (/^[1*]?>>?$/.test(r[0])) away = true;
       if (r[0].length === x.length && !x.includes("&")) i++;
       continue;
     }
@@ -446,7 +483,9 @@ function psPartOf(text: string): ShellPart | undefined {
   const base = raw.split(/[\\/]/).filter(Boolean).pop() ?? raw;
   // A variable, a string, a number or a sub-expression is a value, not a program.
   const prog = /^[$(@[-]|^\d/.test(raw) || !PROG.test(base) ? undefined : base;
-  return { argv, prog, last: false, timed: false, ps: true };
+  const part: ShellPart = { argv, prog, last: false, timed: false, ps: true };
+  if (away) part.away = true;
+  return part;
 }
 
 /** The statements of a PowerShell script that run a program. The last of a pipeline is its last part that is not a pipeline cmdlet. */
