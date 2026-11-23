@@ -291,9 +291,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      # The script is saved first: `bash <(curl ...)` runs an empty script when the download
+      # fails, which exits 0 and leaves the gate to fail later with "actionlint is not on PATH".
       - name: actionlint
         run: |
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7 "$RUNNER_TEMP"
+          script="$RUNNER_TEMP/download-actionlint.bash"
+          curl -fsSL --retry 5 --retry-all-errors -o "$script" https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash
+          for try in 1 2 3; do bash "$script" 1.7.7 "$RUNNER_TEMP" && break; [ "$try" = 3 ] && exit 1; sleep $((try * 10)); done
+          rm -f "$script"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       # The commits whose authors the gate checks: the pushed ones, or the pull request's own
