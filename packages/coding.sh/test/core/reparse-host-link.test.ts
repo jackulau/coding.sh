@@ -13,6 +13,8 @@ import { defaultConfig } from "../../src/core/config.ts";
 import { backfill } from "../../src/core/ingest.ts";
 import { REPARSE_CURSOR, parseStamp, relinkCursor, reparse, reparseDue } from "../../src/core/reparse.ts";
 import type { Adapter } from "../../src/core/types.ts";
+import { HOST_AGENT_PROMPT } from "../../src/core/waiting.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
 import { T3_AGENT } from "../../src/spool/host.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { FIXTURES, tmpEnv, type TmpEnv, writeFile } from "../adapters/_helpers.ts";
@@ -162,5 +164,128 @@ describe("a Claude Code session T3 Code ran, stored before its host link", () =>
     const rp = await reparse({ ...o, adapters, all: true, runLock: false, ingestLock: false });
     assert.deepEqual(rp.errors, []);
     await assertLinked(o);
+  });
+});
+
+const GROK_ID = "grok-flaky";
+
+/**
+ * The store of t3Store, with who made each prompt: the person started the Claude thread, and another thread sent
+ * its "Thanks!". A Grok thread T3 keeps no transcript of (its rows come from the store): the person's prompt, then
+ * another thread's, then the person's again, which a turn still runs.
+ */
+function t3StoreWithPrompts(home: string): void {
+  t3Store(home);
+  const db = new DatabaseSync(join(home, ".t3", "userdata", "statev2.sqlite"));
+  const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', ?, 0, ?, ?, ?)");
+  const at = (min: number, sec = 0) => `2026-11-01T10:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.000Z`;
+  msg.run("mc1", "thr-claude", "user", at(0), at(0), J({ text: "Add a sum function in sum.js and run the tests", createdBy: "user" }));
+  msg.run("mc2", "thr-claude", "user", at(0, 30), at(0, 30), J({ text: "Thanks!", senderThreadId: "thr-other" }));
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES ('thr-grok', 'proj-1', 'Fix the flaky test', 'grok', 'full-access', 'default', NULL, ?, ?, NULL, NULL, ?, NULL)").run(
+    at(1), at(1), J({ id: "thr-grok", projectId: "proj-1", title: "Fix the flaky test", lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thr-grok" }, historyOrigin: "native" }),
+  );
+  db.prepare("INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt-grok', 'thr-grok', 'node-1', 'grok', NULL, 'idle', 1, 1, ?, ?, 'grok', NULL)").run(
+    T(30), J({ driver: "grok", appThreadId: "thr-grok", nativeThreadRef: { driver: "grok", nativeId: GROK_ID, strength: "strong" } }),
+  );
+  msg.run("mg1", "thr-grok", "user", at(1), at(1), J({ text: "Fix the flaky test", createdBy: "user" }));
+  msg.run("mg2", "thr-grok", "assistant", at(2), at(2), J({ text: "Fixed: the test waited on a timer." }));
+  msg.run("mg3", "thr-grok", "user", at(3), at(3), J({ text: "Review the diff on the other branch", senderThreadId: "thr-other" }));
+  msg.run("mg4", "thr-grok", "assistant", at(4), at(4), J({ text: "The diff looks right." }));
+  msg.run("mg5", "thr-grok", "user", at(6), at(6), J({ text: "Now run the whole suite", createdBy: "user" }));
+  const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, 'thr-grok', 'pt-grok', 'node-1', NULL, ?, 'completed', ?, ?, ?)");
+  turn.run("tg1", 1, at(1), at(2), J({ status: "completed" }));
+  turn.run("tg2", 2, at(3), at(4), J({ status: "completed" }));
+  db.close();
+}
+
+/** The t3code parse before 17: no host-link launch, no from on a store prompt, no marker before a transcript prompt. */
+const beforeFrom: Adapter = {
+  ...t3code,
+  parseVersion: t3code.parseVersion! - 1,
+  async *backfill(ctx, opts) {
+    for await (const e of t3code.backfill!(ctx, opts)) {
+      if (e.agent !== T3_AGENT) yield e;
+      else if (e.payload.type !== HOST_AGENT_PROMPT) {
+        const { launch: _launch, from: _from, ...payload } = e.payload;
+        yield { ...e, payload };
+      }
+    }
+  },
+};
+
+/** Rows as stored, compared whatever their key order or undefined fields. */
+const plain = (rows: AgentEvent[]) => rows.map((e) => JSON.parse(J(e)) as AgentEvent).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+describe("sessions T3 Code ran, stored by its parse before prompts said who made them", () => {
+  // Parse 17 gives a thread a person started an interactive launch (its host link's launch) and an agent's prompt
+  // from: "agent", in rows with the ids parse 16 gave them. A Claude Code or Grok session T3 ran is not stale for a
+  // t3code bump: the re-parse reaches it only through the host's pass over its links.
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    for (const k of T3_ENV) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of T3_ENV) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  });
+  beforeEach(() => {
+    env = tmpEnv();
+    const src = join(FIXTURES, "claude-code", "config", "projects", "-work-demo", `${CLAUDE_ID}.jsonl`);
+    writeFile(join(env.home, ".claude", "projects", "-work-demo", `${CLAUDE_ID}.jsonl`), readFileSync(src, "utf8"));
+    t3StoreWithPrompts(env.home);
+  });
+  afterEach(() => env.restore());
+
+  it("the re-parse after the bump replaces the host's rows they stored: the launch, the agent's prompts, the waits", async () => {
+    const cenv = { ...process.env };
+    const o = { config: defaultConfig(cenv), index: new MemoryIndexStore(), blobs: new MemoryBlobStore(), env: cenv };
+    assert.deepEqual((await backfill({ ...o, adapters: [claudeCode, beforeFrom] })).errors, []);
+    assert.equal(await reparseDue(o.index, new Map<string, Adapter>([[claudeCode.id, claudeCode], [t3code.id, beforeFrom]])), false);
+    const link = async (id: string) => (await o.index.listEvents(id)).find((e) => e.payload.type === "host-link");
+    const prompts = async () => (await o.index.listEvents(GROK_ID, { kinds: ["user.message"] })).map((e) => [e.payload.text, e.payload.from]);
+    // The older parse's rows: hosted by T3, no launch from the host, no prompt an agent's.
+    assert.equal((await o.index.getSession(CLAUDE_ID))?.host, "t3code");
+    assert.equal((await link(CLAUDE_ID))?.payload.launch, undefined);
+    const stored = await o.index.getSession(GROK_ID);
+    assert.equal(stored?.agent, "grok");
+    assert.equal(stored?.host, "t3code");
+    assert.equal(stored?.stats.launch, undefined);
+    assert.equal(stored?.stats.waits, undefined);
+    assert.deepEqual((await prompts()).map(([, from]) => from), [undefined, undefined, undefined]);
+
+    // The upgrade: the threads are unchanged, so the import reads nothing; the host's pass over its links is due.
+    const adapters = new Map<string, Adapter>([[claudeCode.id, claudeCode], [t3code.id, t3code]]);
+    assert.equal((await backfill({ ...o, adapters: [claudeCode, t3code] })).events, 0);
+    assert.equal(await reparseDue(o.index, adapters), true);
+    const rp = await reparse({ ...o, adapters, runLock: false, ingestLock: false });
+    assert.deepEqual(rp.errors, []);
+
+    assert.equal((await link(CLAUDE_ID))?.payload.launch, "interactive");
+    assert.deepEqual(await prompts(), [
+      ["Fix the flaky test", undefined],
+      ["Review the diff on the other branch", "agent"],
+      ["Now run the whole suite", undefined],
+    ]);
+    const s = await o.index.getSession(GROK_ID);
+    assert.equal(s?.stats.launch, "interactive");
+    // 10:02 to 10:03: the other thread's prompt ended it. 10:04 to 10:06: the person's.
+    assert.deepEqual(s?.stats.waits, { count: 1, ms: 120_000, byKind: { turn: { count: 1, ms: 120_000 } }, agent: { count: 1, ms: 60_000 } });
+    // The rows and stats a fresh import of both stores gives (the Claude thread's marker before its "Thanks!" too).
+    const cenvFresh = { ...process.env };
+    const fresh = new MemoryIndexStore();
+    await backfill({ config: defaultConfig(cenvFresh), index: fresh, blobs: new MemoryBlobStore(), env: cenvFresh, adapters: [claudeCode, t3code] });
+    assert.ok((await fresh.listEvents(CLAUDE_ID)).some((e) => e.payload.type === HOST_AGENT_PROMPT), "the fresh import marks the agent's prompt");
+    for (const id of [CLAUDE_ID, GROK_ID]) {
+      assert.deepEqual(plain(await o.index.listEvents(id)), plain(await fresh.listEvents(id)), id);
+      assert.deepEqual(JSON.parse(J((await o.index.getSession(id))?.stats)), JSON.parse(J((await fresh.getSession(id))?.stats)), id);
+    }
+    assert.equal(rp.relinked, 2);
+
+    // The host's pass again (its cursor set back): nothing left to replace.
+    await o.index.setCursor(relinkCursor(T3_AGENT), beforeFrom.parseVersion!);
+    const again = await reparse({ ...o, adapters, runLock: false, ingestLock: false });
+    assert.deepEqual(again.errors, []);
+    assert.deepEqual([again.relinked, again.removed, again.inserted], [0, 0, 0]);
   });
 });

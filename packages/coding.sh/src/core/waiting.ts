@@ -19,6 +19,16 @@ export const PLAN_TOOL = /^(?:ExitPlanMode|exit_plan_mode)$/i;
  * replay, so these count in a backfill too.
  */
 export const HOST_RESOLVED = "request_resolved";
+/**
+ * A host app's store (T3 Code) says an agent made a prompt that a Codex or Claude transcript holds,
+ * where the transcript does not say who made it: a notification of this type, stamped before the
+ * prompt, with the prompt's event id (`promptId`) and time (`at`). core/wait-stats.ts reads it.
+ */
+export const HOST_AGENT_PROMPT = "agent_prompt";
+/** A host's marker (HOST_AGENT_PROMPT): no activity of its own, and its time is made up, so timelines leave it out. */
+export const isAgentPromptMark = (e: Pick<AgentEvent, "kind" | "payload">): boolean => e.kind === "notification" && e.payload.type === HOST_AGENT_PROMPT;
+/** A live copy of a marked prompt (a hook's, with its own id) is this close to `at` at most. The marker is stamped earlier than that. */
+export const HOST_MARK_SLACK_MS = 5_000;
 /** Open calls kept per session; the oldest go first. */
 const MAX_OPEN = 64;
 const TEXT_MAX = 300;

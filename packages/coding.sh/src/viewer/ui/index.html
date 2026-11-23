@@ -4373,6 +4373,8 @@ function buildTimeline(events) {
     if (copies.folded.has(raw.id)) continue;
     const ev = copies.merged.get(raw.id) || raw;
     const p = ev.payload || {};
+    // A host's marker that an agent sent the next prompt (T3 Code): no step, at a time it made up.
+    if (ev.kind === "notification" && p.type === "agent_prompt") continue;
     if (ev.kind === "tool.start") {
       const item = { type: "tool", id: ev.id, ts: ev.ts, start: ev, end: null };
       items.push(item);
