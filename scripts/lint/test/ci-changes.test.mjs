@@ -171,6 +171,9 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff:
   // only a pull request reads its diff, whatever FULL says.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
+  // pipefail (`shell: bash`): a failing scripts/ci-changes.mjs fails the step. On the default
+  // shell the step took tee's status and passed, with no output or part of it.
+  assert.match(job("changes"), /\n      - name: Docs or code\n        id: diff\n        shell: bash\n/, "the step runs with pipefail");
 });
 
 test("ci.yml starts Chrome before the tests in every job that runs them", () => {

@@ -52,8 +52,12 @@ jobs:
         with:
           fetch-depth: 2
 
+      # `shell: bash` adds pipefail, so a failing scripts/ci-changes.mjs fails this step: on the
+      # default shell the step took tee's status and passed. The gated jobs still run unless it
+      # printed code=false.
       - name: Docs or code
         id: diff
+        shell: bash
         env:
           EVENT: ${{ github.event_name }}
         run: |
