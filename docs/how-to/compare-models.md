@@ -70,7 +70,7 @@ that row.
 | Pushback: undo | Take the work out: "undo that", "revert your changes", "put it back". |
 | Pushback: redo | Do it again: "try again", "start over", "I don't like it". |
 | Pushback: broken | The work does not work: "still failing", "that didn't work", "you broke the build". |
-| Cancelled turns | The turns you stopped, out of the turns of agents that record it ([below](#what-each-row-reads)). |
+| Cancelled turns | The turns you stopped, out of the turns whose capture records a stopped turn ([below](#what-each-row-reads)). |
 | Median turn | How long a turn ran, from your prompt to the end of its last work, with the quartiles. It has an interval from 6 turns on. |
 | Failed file edits | File edit calls that failed, out of all of them. |
 | Failed shell commands | Shell commands that failed, out of all of them. |
