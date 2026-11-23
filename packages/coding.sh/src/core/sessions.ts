@@ -24,7 +24,7 @@ import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, mode
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
 import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
-import { normalizeTracePath } from "./shell-diff.ts";
+import { traceRoot, underTraceRoot } from "./shell-diff.ts";
 import { shellCallFiles } from "./shell-files.ts";
 import { foldRetrieval, markRetrievalEdit, retrievalOf, retrievalState, type RetrievalState } from "./retrieval.ts";
 
@@ -1251,13 +1251,22 @@ export function addLlmError(prev: LlmErrors | undefined, payload: Record<string,
  * stays absolute.
  */
 export function changeKey(path: string, eventCwd: string | undefined, sessionCwd: string | undefined): string {
-  const k = normalizeTracePath(path, eventCwd ?? sessionCwd);
-  if (!eventCwd || !sessionCwd) return k;
-  // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
-  // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
-  if (/^(?:[A-Za-z]:)?\//.test(k)) return normalizeTracePath(k, sessionCwd);
+  return changeKeyer(eventCwd, sessionCwd)(path);
+}
+
+/** changeKey for the paths of one event: the two folders are read once, not once per path. */
+export function changeKeyer(eventCwd: string | undefined, sessionCwd: string | undefined): (path: string) => string {
+  const root = traceRoot(eventCwd ?? sessionCwd);
+  if (!eventCwd || !sessionCwd) return (path) => underTraceRoot(path, root);
+  const sessionRoot = traceRoot(sessionCwd);
   const base = eventCwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalizeTracePath(`${base}/${k}`, sessionCwd);
+  return (path) => {
+    const k = underTraceRoot(path, root);
+    // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
+    // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
+    if (/^(?:[A-Za-z]:)?\//.test(k)) return underTraceRoot(k, sessionRoot);
+    return underTraceRoot(`${base}/${k}`, sessionRoot);
+  };
 }
 
 /**

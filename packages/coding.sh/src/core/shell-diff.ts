@@ -5,13 +5,26 @@
 import { posix } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
 
+// The checks before each replace skip it when it would change nothing: a session's fold keys every path it reads.
+const unprivate = (x: string) => (x.startsWith("/private/") ? x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "") : x);
+/** Forward slashes. */
+export const slashed = (x: string): string => (x.includes("\\") ? x.replace(/\\/g, "/") : x);
+
+/** A cwd as normalizeTracePath compares a path with it: forward slashes, no trailing slash, no macOS `/private`. */
+export function traceRoot(cwd: string | undefined): string | undefined {
+  return cwd ? unprivate(slashed(cwd).replace(/\/+$/, "")) : undefined;
+}
+
+/** normalizeTracePath against a root from traceRoot: for many paths under one cwd, the cwd read once. */
+export function underTraceRoot(p: string, root: string | undefined): string {
+  let s = unprivate(slashed(p));
+  if (root && (s === root || (s.startsWith(root) && s.charCodeAt(root.length) === 47))) s = s.slice(root.length + 1);
+  return s.startsWith("./") ? s.replace(/^(?:\.\/)+/, "") : s;
+}
+
 /** Repo-relative, forward slashes, no leading "./". macOS `/private/var/…` and `/var/…` are one root. */
 export function normalizeTracePath(p: string, cwd?: string): string {
-  const unprivate = (x: string) => x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "");
-  let s = unprivate(p.replace(/\\/g, "/"));
-  const root = cwd ? unprivate(cwd.replace(/\\/g, "/").replace(/\/+$/, "")) : undefined;
-  if (root && (s === root || s.startsWith(`${root}/`))) s = s.slice(root.length + 1);
-  return s.replace(/^(?:\.\/)+/, "");
+  return underTraceRoot(p, traceRoot(cwd));
 }
 
 /** The shell command of a tool call's input, unless it is a patch passed as `command` (Codex apply_patch). */

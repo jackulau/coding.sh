@@ -1,8 +1,9 @@
-// core/shell-diff.ts: the simple commands of a shell line and the folder each runs in. Long lines
-// built to be slow check that a line is read in linear time.
+// core/shell-diff.ts: the simple commands of a shell line and the folder each runs in, and the
+// repo-relative paths the session fold keys files by. Long lines built to be slow check that a
+// line is read in linear time.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { shellWrites, simpleCommands } from "../../src/core/shell-diff.ts";
+import { normalizeTracePath, shellWrites, simpleCommands, traceRoot, underTraceRoot } from "../../src/core/shell-diff.ts";
 import { assertCpuUnder } from "../helpers-timing.ts";
 
 /** The folder the last simple command of `cmd` runs in. */
@@ -66,5 +67,28 @@ describe("simpleCommands", () => {
     assertCpuUnder("assignments", () => simpleCommands(cmd));
     assert.deepEqual(argv(cmd), [["cat", "x"]]);
     assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
+  });
+});
+
+describe("normalizeTracePath", () => {
+  it("makes a path relative to the cwd, with forward slashes, no leading ./ and no macOS /private", () => {
+    const cases: [string, string | undefined, string][] = [
+      ["/work/demo/src/a.ts", "/work/demo", "src/a.ts"],
+      ["/work/demo/src/a.ts", "/work/demo/", "src/a.ts"],
+      ["/work/demo", "/work/demo", ""],
+      ["/work/demox/a.ts", "/work/demo", "/work/demox/a.ts"],
+      ["C:\\w\\src\\a.ts", "C:\\w\\", "src/a.ts"],
+      ["/private/var/x/a.ts", "/var/x", "a.ts"],
+      ["/var/x/a.ts", "/private/var/x", "a.ts"],
+      ["/private/a.ts", "/", "/private/a.ts"],
+      ["././a.ts", undefined, "a.ts"],
+      ["/work/demo/./a.ts", "/work/demo", "a.ts"],
+      ["a\\b.ts", "", "a/b.ts"],
+    ];
+    for (const [p, cwd, key] of cases) {
+      assert.equal(normalizeTracePath(p, cwd), key, `${p} in ${cwd}`);
+      // traceRoot reads the cwd once for many paths; underTraceRoot gives the same key.
+      assert.equal(underTraceRoot(p, traceRoot(cwd)), key, `${p} under ${cwd}`);
+    }
   });
 });

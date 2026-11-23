@@ -23,8 +23,8 @@ import { shellCommandOf } from "../adapters/_shared/tools.ts";
 import type { AgentEvent, RetrievalStats, Session } from "../schema/index.ts";
 import { exitCodeOf, isPowerShellTool, shellParts, type ShellPart } from "./failing-command.ts";
 import type { ToolFailure } from "./failures.ts";
-import { changeKey } from "./sessions.ts";
-import { normalizeTracePath, operandsOf } from "./shell-diff.ts";
+import { changeKeyer } from "./sessions.ts";
+import { normalizeTracePath, operandsOf, slashed } from "./shell-diff.ts";
 import { ABSOLUTE, PS_COMMON } from "./shell-files.ts";
 // waste.ts imports sessions.ts, which imports this file: its sets are read inside functions only.
 import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
@@ -835,23 +835,28 @@ const MAX_QUEUES = 64;
 const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|cannot (?:open|read|access)|does not exist|is a directory|permission denied|access (?:is )?denied/i;
 
 /**
- * A read path as a filesChanged key (sessions.ts changeKey): relative to the session's cwd when
+ * Read paths as filesChanged keys (sessions.ts changeKey): relative to the session's cwd when
  * inside it, else absolute. A relative path is joined to the event's cwd first; Git Bash's `/c/x`
- * is `C:/x`, with the drive letter in the cwd's case.
+ * is `C:/x`, with the drive letter in the cwd's case. The cwds are read once for all of a call's paths.
  */
-function keyOf(path: string, eventCwd: string | undefined, cwd: string | undefined): string | undefined {
-  let p = path.replace(/\\/g, "/");
+function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
   const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (base && /^[A-Za-z]:/.test(base)) {
-    p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-    if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === base[0]!.toLowerCase()) p = base[0] + p.slice(1);
-  }
-  if (base && /^(?:\/|[A-Za-z]:\/)/.test(base) && !ABSOLUTE.test(p)) p = posix.join(base, p);
-  const k = posix.normalize(changeKey(p, eventCwd, cwd));
-  return k === "" || k === "." ? undefined : k;
+  const drive = base && /^[A-Za-z]:/.test(base) ? base[0]! : undefined;
+  const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
+  const change = changeKeyer(eventCwd, cwd);
+  return (path) => {
+    let p = slashed(path);
+    if (drive) {
+      if (p[0] === "/") p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+      if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === drive.toLowerCase()) p = drive + p.slice(1);
+    }
+    if (rooted && !ABSOLUTE.test(p)) p = posix.join(base!, p);
+    const k = posix.normalize(change(p));
+    return k === "" || k === "." ? undefined : k;
+  };
 }
 
-/** An edit's filesChanged key in keyOf's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
+/** An edit's filesChanged key in keyer's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
   const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -871,7 +876,7 @@ function begin(s: RetrievalState, e: AgentEvent, cwd: string | undefined): Pendi
   if (c.read) s.reads++;
   if (c.search) s.searches++;
   s.calls++;
-  const keys = [...new Set(c.paths.map((p) => keyOf(p, e.cwd, cwd)).filter((k): k is string => k !== undefined))];
+  const keys = [...new Set(c.paths.map(keyer(e.cwd, cwd)).filter((k): k is string => k !== undefined))];
   for (const k of keys) s.files.set(k, (s.files.get(k) ?? 0) + 1);
   const pending: Pending = { keys };
   if (c.shell) pending.shell = true;
