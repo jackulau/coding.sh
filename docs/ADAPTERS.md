@@ -61,6 +61,14 @@ over and the transcripts are not re-read on every read (an explicit `ingest --ba
 Imports key on the session id, so running `init` later never doubles a session. Codex does the same,
 but only for the narrow window after `init` while its hooks are untrusted or disabled (see below).
 
+**After a `--since` import.** `ingest --backfill --since 30d` imports each Claude Code transcript,
+Codex rollout and T3 Code session with activity inside the window whole. A later import skips each
+transcript, rollout or T3 Code thread read whole while it is unchanged. One with no window
+(`ingest --backfill`) also reads what the window left out. A T3 Code thread is read whole when the
+window cut none of its sessions. The import a read runs has no window for T3 Code, or for Claude Code
+until its hooks are installed; for Codex, while its hooks are untrusted or disabled, it starts at the
+install time.
+
 ## Test results
 
 A shell call whose output holds a test runner's summary also becomes a `test.result`: the runner,

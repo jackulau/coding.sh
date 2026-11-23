@@ -8,7 +8,8 @@ import { agentTraceRecords, AGENT_TRACE_VERSION } from "../../attribution/export
 import type { Context } from "../../core/context.ts";
 import { version } from "../meta.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, readIngest, shortSessionId, str, withContext } from "../common.ts";
+import { printedRefs } from "../../core/session-ref.ts";
+import { autoIngest, oneLine, readIngest, str, withContext } from "../common.ts";
 import { nextStepBin } from "../next-steps.ts";
 import { CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -84,13 +85,15 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
     return 0;
   }
   out.print();
+  // A session prints the shortest reference that opens it alone: every stored id is read once.
+  const refs = await printedRefs(ctx.index, { short: shown.slice(0, limit).flatMap((x) => x.attributions.map((a) => a.sessionId)) });
   out.table(
     ["COMMIT", "DATE", "AGENT LINES", "SESSIONS", "SUBJECT"],
     shown.slice(0, limit).map((x) => [
       short(x.commit),
       localTime(x.committedAt),
       `${x.attributed}/${x.added}`,
-      [...new Set(x.attributions.map((a) => `${shortSessionId(a.sessionId)} ${a.agent}`))].join(", ") || "-",
+      [...new Set(x.attributions.map((a) => `${refs.short(a.sessionId)} ${a.agent}`))].join(", ") || "-",
       oneLine(x.subject, 60),
     ]),
   );
