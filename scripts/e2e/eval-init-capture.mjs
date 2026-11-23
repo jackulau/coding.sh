@@ -134,7 +134,8 @@ function scenario(body) {
     return skill ? { tool: { name: "Skill", args: { skill } } } : { text: "done" };
   }
   if (!all.includes(INSTRUCTION) || !names.includes("Write") || !names.includes("Bash")) return { text: "ok" };
-  const cwd = /[Ww]orking directory: ([^\s"\\]+)/.exec(all)?.[1];
+  // `all` is JSON: a Windows path's backslashes arrive doubled, and the line ends at a `\n`.
+  const cwd = /[Ww]orking directory: ((?:[^\s"\\]|\\\\)+)/.exec(all)?.[1]?.replace(/\\\\/g, "\\");
   if (!cwd) return { text: "ok" };
   const file = `${cwd}/sum.js`;
   const step = results(body);

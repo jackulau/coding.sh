@@ -6,14 +6,17 @@ import { existsSync, readdirSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
+import { startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SINCE_MS, initSuite, InitError, type InitOpts, type InitResult, type InitSource } from "../../eval/init.ts";
 import { DraftError } from "../../eval/draft.ts";
 import { toPosix } from "../../runner/fsutil.ts";
 import type { SuitePurpose } from "../../eval/report.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, resolveSession, str, whereFlag, withContext } from "../common.ts";
+import { nextStepBin, quoteArg } from "../next-steps.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { commandsForShell } from "./eval.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
@@ -146,7 +149,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
   const source = sourceFromFlags(c);
   if (source) o.source = source;
   else if (out.interactive) o = await askSource(c, root, o);
-  else throw new UsageError(`Say what to build the suite from:\n  ${SOURCES_HELP.join("\n  ")}`, { reason: "missing_argument", suggestion: "coding.sh eval init --sessions" });
+  else throw new UsageError(`Say what to build the suite from:\n  ${commandsForShell(SOURCES_HELP.join("\n  "), c.env)}`, { reason: "missing_argument", suggestion: "coding.sh eval init --sessions" });
   const provider = await draftProvider(c);
   if (provider) {
     o.draft = true;
@@ -170,10 +173,10 @@ export async function evalInit(c: CommandContext): Promise<number> {
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);
     const spin = workRoot ? out.spin("Drafting and validating tasks…") : undefined;
     try {
-      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs });
+      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env), quoteArg: (s) => quoteArg(s, c.env) });
     } catch (e) {
       if (e instanceof InitError || e instanceof DraftError) {
-        throw new CliError(e.message, {
+        throw new CliError(commandsForShell(e.message, c.env), {
           reason: "init_failed",
           ...(e instanceof InitError && e.askUser ? { askUser: true } : {}),
           ...(o.source === "sessions" && !o.sessionIds ? { next: ["List failed sessions:", `coding.sh sessions --where is:flagged --since ${Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000) * 2}d`] } : {}),
@@ -192,7 +195,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
 function render(c: CommandContext, r: InitResult, root: string): void {
   const { out } = c;
   if (out.json) {
-    out.data({ outcome: "created", ...r, dir: toPosix(relative(root, r.dir)) || "." });
+    out.data({ outcome: "created", ...r, notes: r.notes.map((n) => commandsForShell(n, c.env)), run: commandsForShell(r.run, c.env), dir: toPosix(relative(root, r.dir)) || "." });
     return;
   }
   const what = r.kind === "tasks" ? plural(r.tasks?.length ?? 0, "task") : r.kind === "triggers" ? "skill trigger prompts" : "cases";
@@ -202,7 +205,7 @@ function render(c: CommandContext, r: InitResult, root: string): void {
   if (resolve(root) !== resolve(c.cwd)) out.note(`Suites live at the repo root, ${fromCwd(root)}`);
   for (const f of r.files) out.note(fromCwd(f) + (f.endsWith("/") ? "/" : ""));
   for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${t.sessionId.slice(0, 8)}`);
-  for (const n of r.notes) out.warn(n);
+  for (const n of r.notes) out.warn(commandsForShell(n, c.env));
   out.note("");
   out.note(
     r.purpose === "capability"
@@ -218,6 +221,6 @@ function render(c: CommandContext, r: InitResult, root: string): void {
   } else {
     out.note("");
     out.note("These tasks start from snapshots of this machine's repo, so they run here, not in CI. Gate a change to your setup with:");
-    out.note(`  coding.sh compare <before> <after> --tag suite:${r.name} --k 3`);
+    out.note(`  ${nextStepBin(c.env)} compare <before> <after> --tag suite:${r.name} --k 3`);
   }
 }

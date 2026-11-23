@@ -153,7 +153,9 @@ paid.
 | `coding.sh run -- <cmd>` | None, except Aider's token and cost lines in eval runs |
 :::
 
-When prices change, estimates refresh on their own. To recompute them now:
+When prices change, estimates
+[refresh on their own](https://coding.sh/docs/troubleshooting#the-first-command-after-an-upgrade-is-slow).
+To recompute them now:
 
 ```sh
 coding.sh usage --since 7d --reprice

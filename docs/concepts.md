@@ -26,7 +26,7 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
 - [`stats.retrieval`](https://coding.sh/docs/api/read#get-apisessionsid) counts reads and searches.
-- `<id>` may be a prefix or `latest`; coding.sh prints the shortest id that works.
+- `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
 ### Turn
@@ -70,7 +70,7 @@ session, linked to its parent.
 
 - In the viewer: subagents fold under their parent in the list, and its page shows the run
   as a tree.
-- In the CLI: `coding.sh tree <id>` shows the run with what each part cost, and
+- In the CLI: `coding.sh tree <id>` shows a session's subagents with each part's cost, and
   `coding.sh sessions --subagents` lists them.
 - Agents of one workflow run share `parent.workflowId`;
   [`coding.sh work`](reference/cli.md#codingsh-work) shows the run as one item with its phases.

@@ -1638,6 +1638,16 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .work-stage[data-stage="done"] { color: var(--pass-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pass) 35%, transparent); }
 .seg[hidden], .meta[hidden] { display: none; }
 .work-stage-seg { flex-wrap: wrap; max-width: 100%; }
+/* One item's page (#/w/<id>): a long title stops at three lines; the facts read as prose, not code. */
+.work-page h1 { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.work-detail { padding: 0.8rem 1rem; min-width: 0; }
+.work-kv { grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.45rem 1rem; }
+.work-kv dt { font-family: var(--font-sans); font-size: 12.5px; padding-top: 0; }
+.work-kv dd { font-family: var(--font-sans); font-size: 13px; overflow-wrap: anywhere; }
+.work-members, .work-files { list-style: none; margin: 0; }
+.work-members li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.6rem; min-width: 0; }
+.work-files { gap: 0.2rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.work-files li { overflow-wrap: anywhere; }
 
 /* ---------- review queues ---------- */
 .review-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
@@ -1668,8 +1678,12 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 @media (max-width: 640px) {
   .work-filters { flex: 1 1 100%; }
   .work-filters .field { flex: 1 1 8rem; width: auto; min-width: 0; }
-  .work-item { padding: 0.75rem 0.85rem; }
-  .work-sessions li a { display: inline-block; padding: 0.5rem 0; }
+  .work-item, .work-detail { padding: 0.75rem 0.85rem; }
+  .work-sessions li a, .work-members li a { display: inline-block; padding: 0.5rem 0; }
+  .work-kv { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; }
+  /* The item id on a card is its page's link: a 44px target, as the buttons are. */
+  .work-id { position: relative; }
+  .work-id::before { content: ""; position: absolute; left: 0; right: 0; top: min(0px, calc((100% - 44px) / 2)); bottom: min(0px, calc((100% - 44px) / 2)); }
 }
 
 /* ---------- phones: touch targets, filter sheet, safe areas ---------- */
@@ -2349,7 +2363,7 @@ function route() {
   const seq = ++navSeq;
   openSession = null;
   clearAnnouncement();
-  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" || parts[0] === "review" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
+  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" || parts[0] === "review" ? parts[0] : parts[0] === "w" ? "work" : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -2364,7 +2378,8 @@ function route() {
   if (parts[0] === "workflows" && parts[1]) return showWorkflow(seq, parts[1]);
   if (parts[0] === "workflows") return showWorkflows(seq);
   if (parts[0] === "explore" || parts[0] === "metrics") return showExplore(seq, query);
-  if (parts[0] === "work") return showWork(seq, query);
+  if (parts[0] === "w" && parts[1]) return showWorkItem(seq, parts[1], query);
+  if (parts[0] === "work" || parts[0] === "w") return showWork(seq, query);
   if (parts[0] === "review" && parts[1]) return showReviewQueue(seq, parts[1]);
   if (parts[0] === "review") return showReviews(seq);
   if (parts[0] === "playground" && parts[1]) return showPlayground(seq, parts[1], (query.get("session") || "").slice(0, 200));
@@ -2457,6 +2472,11 @@ const KEYMAP = [
   { scope: "work", id: "open", keys: ["Enter"], label: "Open the item's session" },
   { scope: "work", id: "ack", keys: ["a"], label: "Acknowledge the item" },
   { scope: "work", id: "snooze", keys: ["z"], label: "Snooze the item for an hour" },
+  { scope: "work", id: "item", keys: ["i"], label: "Open the item's page" },
+  { scope: "workitem", id: "session", keys: ["o"], label: "Open the item's session" },
+  { scope: "workitem", id: "ack", keys: ["a"], label: "Acknowledge the item" },
+  { scope: "workitem", id: "snooze", keys: ["z"], label: "Snooze the item for an hour" },
+  { scope: "workitem", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to Work" },
   { scope: "review", id: "done", keys: ["Enter"], label: "Done: save the score, then the next item" },
   { scope: "review", id: "skip", keys: ["s"], label: "Skip the item" },
   { scope: "review", id: "session", keys: ["o"], label: "Open the item's session" },
@@ -2464,7 +2484,7 @@ const KEYMAP = [
   { scope: "review", id: "no", keys: ["n"], label: "No (a yes or no score)" },
   { scope: "review", id: "pick", keys: ["1–9"], alt: ["1", "2", "3", "4", "5", "6", "7", "8", "9"], label: "Pick a category" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark", work: "Work", review: "Review queue" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark", work: "Work", workitem: "Work item", review: "Review queue" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -8092,15 +8112,29 @@ const WORK_SINCE = ["1d", "7d", "30d"];
 // core/work.ts STAGES, in order: where each item stands, apart from what needs you.
 const WORK_STAGES = ["planning", "executing", "review", "approval", "done"];
 const WORK_LIMIT = 200;
+// The most items one answer lists (viewer/work.ts MAX_LIMIT): "Show all" asks for up to this many.
+const WORK_MAX = 1000;
 const WORK_POLL_MS = 10_000;
 function workState(q) {
   const clip = (v, n) => (v || "").trim().slice(0, n);
   const stage = q.get("stage") || "";
-  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1", stage: WORK_STAGES.includes(stage) ? stage : "" };
+  const limit = Number(q.get("limit") || WORK_LIMIT);
+  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1", stage: WORK_STAGES.includes(stage) ? stage : "",
+    limit: Number.isInteger(limit) && limit > 0 && limit <= WORK_MAX ? limit : WORK_LIMIT };
 }
 function workHref(st) {
-  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage });
+  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage, limit: st.limit === WORK_LIMIT ? "" : st.limit });
 }
+function workPath(st) {
+  return "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", stage: st.stage, limit: st.limit });
+}
+/** An item's page, read with the list's window and filters (the stage and hidden toggle do not hide an item). */
+function workItemHref(id, st) {
+  return "#/w/" + encodeURIComponent(id) + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since });
+}
+// The Work list as it was when another page opened from it: { href, doc, scrollY, item, seq }. Back on
+// that href, the list draws this answer at once, where it was, then reloads. `item` is the item to focus.
+let workBack = null;
 /** "1 planning · 2 review", as the CLI's stages line says it (stagesLine in core/work.ts). */
 function workStages(stages) {
   const parts = WORK_STAGES.filter((st) => stages[st]).map((st) => stages[st] + " " + st);
@@ -8139,7 +8173,8 @@ function workHiddenReasons(by) {
 
 async function showWork(seq, query) {
   const st = workState(query);
-  const go = (patch) => { location.hash = workHref({ ...st, ...patch }); };
+  // Another filter is another list: it starts at the default limit again.
+  const go = (patch) => { location.hash = workHref({ ...st, limit: WORK_LIMIT, ...patch }); };
   const view = h("section", { class: "wrap view work", "aria-labelledby": "work-h" });
   const keys = { scope: "work", actions: {}, palette: [] };
   const meta = h("p", { class: "meta" }, "Loading…");
@@ -8167,27 +8202,34 @@ async function showWork(seq, query) {
   view.append(slot);
   setView(view, false, keys);
   keys.actions.search = () => { agentIn.focus(); agentIn.select(); };
-  const skel = setTimeout(() => swap(slot, h("div", { class: "panel work-item", "aria-busy": "true", "aria-label": "Loading work items" }, [46, 70, 32].map((w) => {
-    const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"));
-    row.lastChild.style.width = w + "%";
-    return row;
-  }))), 250);
+  // Back from an item's page (or this list drawn again): the answer it had, at once, then a reload.
+  const back = workBack && workBack.href === workHref(st) ? workBack : null;
+  workBack = null;
 
-  const path = "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", stage: st.stage, limit: WORK_LIMIT });
-  let d;
-  try { d = await api(path); } catch (e) {
-    clearTimeout(skel);
+  let path = workPath(st);
+  let d = back ? back.doc : undefined;
+  if (!d) {
+    const skel = setTimeout(() => swap(slot, h("div", { class: "panel work-item", "aria-busy": "true", "aria-label": "Loading work items" }, [46, 70, 32].map((w) => {
+      const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"));
+      row.lastChild.style.width = w + "%";
+      return row;
+    }))), 250);
+    try { d = await api(path); } catch (e) {
+      clearTimeout(skel);
+      if (!current(seq)) return;
+      meta.textContent = "";
+      swap(slot, workError(e, go));
+      announce("Work did not load");
+      return;
+    } finally { clearTimeout(skel); }
     if (!current(seq)) return;
-    meta.textContent = "";
-    swap(slot, workError(e, go));
-    announce("Work did not load");
-    return;
-  } finally { clearTimeout(skel); }
-  if (!current(seq)) return;
+  }
 
   let last = JSON.stringify(d);
+  let shown = d;
   let acting = false;
   const draw = (doc, quiet) => {
+    shown = doc;
     const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
     // How old the index is, in the CLI's words (an older server sends no `index`): in the line while fresh, a warning while old.
     const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
@@ -8200,7 +8242,7 @@ async function showWork(seq, query) {
     if (doc.noPromptSignal && doc.noPromptSignal.length) lines.push(h("p", { class: "meta" }, "No prompt signal from " + doc.noPromptSignal.join(", ") + ": their waits show as stalled."));
     if (doc.truncated) lines.push(h("p", { class: "meta" }, "Read the newest sessions only: pick a shorter window."));
     swap(notes, lines);
-    swap(slot, workBody(doc, st, go, act));
+    swap(slot, workBody(doc, st, go, act, showAll));
     if (!quiet) announce(doc.items.length ? workCounts(doc.counts) + (doc.hidden ? ", " + plural(doc.hidden, "hidden item") : "") : "Nothing needs you");
   };
   const reload = async () => {
@@ -8215,23 +8257,42 @@ async function showWork(seq, query) {
   async function act(item, kind, button) {
     if (acting) return;
     acting = true;
-    if (button) button.disabled = true;
     try {
-      const r = await fetchJson("/api/work/" + kind + qs({ since: st.since }), {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kind === "snooze" ? { id: item.id, duration: "1h" } : { id: item.id }),
-      });
-      const msg = kind === "ack"
-        ? (r.acked ? "Acknowledged " + item.id : item.id + " has nothing to acknowledge")
-        : "Snoozed " + item.id + " until " + new Date(Date.parse(r.snoozedUntil)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-      toast(msg);
-      announce(msg);
-      await reload();
-    } catch (e) {
-      toast(e.message || "That did not work");
-      if (button && button.isConnected) button.disabled = false;
+      if (await workAct(item, kind, button, st.since)) await reload();
     } finally { acting = false; }
   }
-  draw(d, false);
+  // The same list with a bigger limit, drawn in place. The hash keeps the limit, so back and a reload return to it.
+  async function showAll(n, button) {
+    if (acting) return;
+    acting = true;
+    button.disabled = true;
+    const had = new Set([...slot.querySelectorAll(".work-item")].map((el) => el.dataset.item));
+    const want = { ...st, limit: Math.min(n, WORK_MAX) };
+    let next;
+    try { next = await api(workPath(want), undefined, true); } catch (e) {
+      toast(e.message || "That did not load");
+      if (button.isConnected) button.disabled = false;
+      return;
+    } finally { acting = false; }
+    if (!current(seq)) return;
+    st.limit = want.limit;
+    path = workPath(st);
+    history.replaceState(null, "", workHref(st));
+    last = JSON.stringify(next);
+    draw(next, true);
+    announce("Showing " + plural(next.items.length, "item"));
+    // Focus goes to the first card that was not on the page.
+    const fresh = [...slot.querySelectorAll(".work-item")].find((el) => !had.has(el.dataset.item));
+    const t = fresh && fresh.querySelector(".work-title");
+    if (t) { t.focus({ preventScroll: true }); t.scrollIntoView({ block: "nearest" }); }
+  }
+  draw(d, !!back);
+  if (back) {
+    window.scrollTo(0, back.scrollY);
+    const t = back.item ? slot.querySelector(".work-item[data-item=\"" + CSS.escape(back.item) + "\"] .work-title") : null;
+    if (t) t.focus({ preventScroll: true });
+    void reload();
+  }
 
   // Each item's title is a link: j and k move between them, Enter opens one, a and z act on the one in focus.
   const focused = () => { const a = document.activeElement; const el = a && a.closest ? a.closest(".work-item") : null; return el && slot.contains(el) ? el : null; };
@@ -8248,12 +8309,38 @@ async function showWork(seq, query) {
   keys.actions.down = () => move(1);
   keys.actions.up = () => move(-1);
   keys.actions.open = () => { const t = (focused() || slot).querySelector(".work-title"); if (t) location.hash = t.getAttribute("href"); };
+  keys.actions.item = () => { const a = (focused() || slot).querySelector(".work-id"); if (a) location.hash = a.getAttribute("href"); };
   keys.actions.ack = () => press("[data-act=ack]");
   keys.actions.snooze = () => press("[data-act=snooze]");
 
   // The viewer's refresh: poll while the tab is in view, and redraw only when the queue changed.
   const timer = setInterval(() => { if (!document.hidden) void reload(); }, WORK_POLL_MS);
-  cleanup = () => clearInterval(timer);
+  // Leaving: keep the answer on screen, the scroll and the item in focus, for the way back. The next
+  // page's route has already counted it, so `seq` is that page's.
+  cleanup = () => {
+    clearInterval(timer);
+    const f = focused();
+    workBack = { href: workHref(st), doc: shown, scrollY: window.scrollY, item: f ? f.dataset.item : "", seq: navSeq };
+  };
+}
+/** Ack or snooze one item, as `coding.sh work ack <id>` and `work snooze <id> 1h` do. True when it took; the toast says what happened. */
+async function workAct(item, kind, button, since) {
+  if (button) button.disabled = true;
+  try {
+    const r = await fetchJson("/api/work/" + kind + qs({ since }), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kind === "snooze" ? { id: item.id, duration: "1h" } : { id: item.id }),
+    });
+    const msg = kind === "ack"
+      ? (r.acked ? "Acknowledged " + item.id : item.id + " has nothing to acknowledge")
+      : "Snoozed " + item.id + " until " + new Date(Date.parse(r.snoozedUntil)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    toast(msg);
+    announce(msg);
+    return true;
+  } catch (e) {
+    toast(e.message || "That did not work");
+    if (button && button.isConnected) button.disabled = false;
+    return false;
+  }
 }
 function workError(e, go) {
   if (e.status === 404) {
@@ -8269,7 +8356,7 @@ function workError(e, go) {
   }
   return errorPanel(e, () => route());
 }
-function workBody(doc, st, go, act) {
+function workBody(doc, st, go, act, showAll) {
   const items = doc.items || [];
   if (!items.length) {
     const filtered = !!(st.agent || st.repo || st.stage);
@@ -8289,15 +8376,27 @@ function workBody(doc, st, go, act) {
   const members = doc.members || {};
   // The moment the server wrote the reasons ("ended 2h ago"); ages on the cards count from it too.
   const now = Number.isFinite(Date.parse(doc.now)) ? Date.parse(doc.now) : Date.now();
-  const groups = WORK_BUCKETS.map(([b, label]) => [label, items.filter((i) => i.bucket === b)]).concat([["Hidden", items.filter((i) => !i.bucket)]]);
-  const out = groups.filter(([, list]) => list.length).map(([label, list], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
-    h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, fmtNum(list.length))),
-    h("ul", { class: "work-list" }, list.map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now, doc)))));
+  // One pass over the items: each bucket's list in the CLI's order, the hidden ones last.
+  const groups = WORK_BUCKETS.concat([["hidden", "Hidden"]]);
+  const by = new Map(groups.map(([b]) => [b, []]));
+  for (const i of items) { const list = by.get(i.bucket || "hidden"); if (list) list.push(i); }
+  // The answer lists up to its limit; `totals` counts each bucket in the whole queue (an older server sends none).
+  const totals = doc.totals || {};
+  const count = (b, n) => (typeof totals[b] === "number" && totals[b] > n ? fmtNum(n) + " of " + fmtNum(totals[b]) : fmtNum(n));
+  const out = groups.filter(([b]) => by.get(b).length).map(([b, label], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
+    h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, count(b, by.get(b).length))),
+    h("ul", { class: "work-list" }, by.get(b).map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now, doc, st)))));
   if (doc.groups && doc.groups.length) out.push(h("p", { class: "meta" }, doc.groups.map((gr) => gr.cause + " x" + gr.count + ": " + gr.items.join(", ")).join(" · ")));
   if (doc.more) {
+    const total = items.length + doc.more;
+    // Up to WORK_MAX, the page can list them all itself; past it, the CLI can.
+    const more = showAll && items.length < WORK_MAX
+      ? h("button", { class: "btn btn-sm", type: "button", "data-act": "all", onclick: (e) => showAll(total, e.currentTarget) }, total <= WORK_MAX ? "Show all " + fmtNum(total) : "Show " + fmtNum(WORK_MAX))
+      : null;
     out.push(h("div", { class: "work-more" },
-      h("p", { class: "meta" }, plural(doc.more, "more item") + " than this page shows. The CLI lists them all:"),
-      cmdBlock(shCmd("coding.sh work --limit", items.length + doc.more, ...(st.all ? ["--all"] : [])), "Copy work command")));
+      h("p", { class: "meta" }, plural(doc.more, "more item") + " than this page shows."), more,
+      h("p", { class: "meta" }, (total > WORK_MAX ? "The page lists up to " + fmtNum(WORK_MAX) + ". " : "") + "The CLI lists them all:"),
+      cmdBlock(shCmd("coding.sh work --limit", total, ...(st.all ? ["--all"] : [])), "Copy work command")));
   }
   return out;
 }
@@ -8318,20 +8417,21 @@ function workPhasesEl(i, agents) {
         h("a", { class: "work-link", href: sessionHref(a.sessionId) }, oneLine(a.label || a.title) || a.sessionId), h("span", { class: "meta" }, " " + a.state))))) : null;
   });
 }
-/** The item's pull requests (work --json prs): each links to its URL, with the state its sessions saw last. */
-function workPrsEl(prs) {
-  return h("span", { class: "work-prs" }, prs.length === 1 ? "PR " : "PRs ", prs.map((p, n) => {
+/** The item's pull requests (work --json prs): each links to its URL, with the state its sessions saw last. `bare` leaves out the "PR" word, for a row that names it. */
+function workPrsEl(prs, bare) {
+  return h("span", { class: "work-prs" }, bare ? null : prs.length === 1 ? "PR " : "PRs ", prs.map((p, n) => {
     const label = "#" + p.number + " " + (p.state === "opened" ? "open" : p.state);
     const url = typeof p.url === "string" && PR_HREF.test(p.url) ? p.url : "";
     return [n ? ", " : null, url ? h("a", { class: "work-link work-pr", href: url, target: "_blank", rel: "noopener noreferrer", title: (p.repo ? p.repo + " " : "") + label }, label) : h("span", { class: "work-pr" }, label)];
   }));
 }
-function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
-  const tone = i.bucket === "blocked" || i.bucket === "failed" ? "tone-fail" : i.bucket === "stalled" ? "tone-warn" : "tone-muted";
+function workItemEl(i, ids, act, now = Date.now(), doc = {}, st = workState(new URLSearchParams())) {
+  const tone = workTone(i);
   const at = Date.parse(i.since || i.lastActivity);
   const where = i.repo || i.cwd;
   const facts = [
-    h("span", { class: "mono" }, i.id),
+    // The item's own page (#/w/<id>), read with the list's window and filters.
+    h("a", { class: "work-link mono work-id", href: workItemHref(i.id, st), title: "Open item " + i.id }, i.id),
     h("span", null, i.agents && i.agents.length > 1 ? i.agent + " +" + (i.agents.length - 1) : i.agent),
     // The reason's age and this one are worked out at the same moment, by the same rule, so they never disagree (neither ticks).
     at ? h("span", { title: new Date(at).toLocaleString() }, i.bucket ? "since " : "last active ", h("span", { class: "work-age" }, workAge(now - at) + " ago")) : null,
@@ -8345,8 +8445,6 @@ function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
   const others = ids.filter((id) => id !== i.sessionId);
   const agents = i.workflow && doc.workflowAgents && doc.workflowAgents[i.id];
   const by = i.supersededBy && doc.sessionOf ? doc.sessionOf[i.supersededBy] : "";
-  const ackCmd = shCmd("coding.sh work ack", i.id);
-  const snoozeCmd = shCmd("coding.sh work snooze", i.id, "1h");
   return h("li", { class: "panel work-item", "data-item": i.id, "data-bucket": i.bucket || "hidden" },
     h("div", { class: "work-head" },
       h("h3", null, h("a", { class: "work-title", href: sessionHref(i.sessionId) }, oneLine(i.title) || "(untitled)")),
@@ -8366,11 +8464,183 @@ function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
       workPhasesEl(i, agents)) : others.length ? h("details", { class: "work-sessions" },
       h("summary", { class: "meta" }, plural(others.length, "more session") + " in this item"),
       h("ul", null, others.map((id) => h("li", null, h("a", { class: "work-link mono", href: sessionHref(id) }, id)))),
-      i.sessions > ids.length ? h("p", { class: "meta" }, fmtNum(i.sessions - ids.length) + " more: coding.sh work show " + i.id) : null) : null,
-    h("div", { class: "work-actions" },
-      i.bucket ? h("button", { class: "btn btn-sm", type: "button", "data-act": "ack", "aria-label": "Acknowledge " + i.id, title: ackCmd, onclick: (e) => act(i, "ack", e.currentTarget) }, "Ack") : null,
-      h("button", { class: "btn btn-sm", type: "button", "data-act": "snooze", "aria-label": "Snooze " + i.id + " for an hour", title: snoozeCmd, onclick: (e) => act(i, "snooze", e.currentTarget) }, "Snooze 1h"),
-      copyBtn(i.bucket ? ackCmd : snoozeCmd, "Copy the CLI command for " + i.id, "command", "Copy CLI")));
+      i.sessions > ids.length ? h("p", { class: "meta" }, h("a", { class: "work-link", href: workItemHref(i.id, st) }, fmtNum(i.sessions - ids.length) + " more on the item's page")) : null) : null,
+    workActionsEl(i, act));
+}
+const workTone = (i) => (i.bucket === "blocked" || i.bucket === "failed" ? "tone-fail" : i.bucket === "stalled" ? "tone-warn" : "tone-muted");
+/** Ack (while the item needs you), snooze, and the CLI command that does the same. */
+function workActionsEl(i, act, ...more) {
+  const ackCmd = shCmd("coding.sh work ack", i.id);
+  const snoozeCmd = shCmd("coding.sh work snooze", i.id, "1h");
+  return h("div", { class: "work-actions" },
+    i.bucket ? h("button", { class: "btn btn-sm", type: "button", "data-act": "ack", "aria-label": "Acknowledge " + i.id, title: ackCmd, onclick: (e) => act(i, "ack", e.currentTarget) }, "Ack") : null,
+    h("button", { class: "btn btn-sm", type: "button", "data-act": "snooze", "aria-label": "Snooze " + i.id + " for an hour", title: snoozeCmd, onclick: (e) => act(i, "snooze", e.currentTarget) }, "Snooze 1h"),
+    copyBtn(i.bucket ? ackCmd : snoozeCmd, "Copy the CLI command for " + i.id, "command", "Copy CLI"), more);
+}
+
+// ---- one work item
+
+/**
+ * A work item's page (#/w/<id>?since=&agent=&repo=): what `coding.sh work show <id>` prints, from
+ * /api/work/<id>, which builds it with the CLI's functions. Opened from the list, back returns to
+ * that list where it was.
+ */
+async function showWorkItem(seq, id, query) {
+  const st = workState(query);
+  const view = h("section", { class: "wrap view work work-page", "aria-labelledby": "wi-h" });
+  const keys = { scope: "workitem", actions: {}, palette: [] };
+  const backEl = (href) => h("a", { class: "back", href }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Work");
+  let backHref = workHref(st);
+  const backLink = backEl(backHref);
+  const title = h("h1", { id: "wi-h" }, id);
+  const meta = h("p", { class: "meta" }, "Loading…");
+  view.append(h("div", { class: "page-head" }, h("div", null, backLink, title, meta)));
+  const slot = h("div", { class: "work-body" });
+  view.append(slot);
+  setView(view, true, keys);
+  window.scrollTo(0, 0);
+  // Opened from the list (its cleanup ran in setView): back goes to that list, with its filters and limit.
+  // Back here from one of the item's sessions, the list is still the way back.
+  if (workBack && (workBack.seq === seq || workBack.item === id)) {
+    workBack.seq = seq;
+    workBack.item = id;
+    if (workBack.href !== backHref) { backHref = workBack.href; backLink.replaceWith(backEl(backHref)); }
+  }
+  keys.actions.back = () => { location.hash = backHref; };
+  keys.palette = [
+    { group: "Work item", label: "Copy item id", run: () => copy(id, "item id") },
+    { group: "Work item", label: "Copy work show command", run: () => copy(shCmd("coding.sh work show", id), "command") },
+  ];
+
+  const path = "/api/work/" + encodeURIComponent(id) + qs({ since: st.since, agent: st.agent, repo: st.repo });
+  let d;
+  try { d = await api(path); } catch (e) {
+    if (!current(seq)) return;
+    meta.textContent = "";
+    swap(slot, workItemMissing(id, st, e, backHref));
+    announce(e.status === 404 ? "No such work item" : "The work item did not load");
+    return;
+  }
+  if (!current(seq)) return;
+
+  let last = JSON.stringify(d);
+  let acting = false;
+  const draw = (doc) => {
+    title.textContent = oneLine(doc.title) || "(untitled)";
+    // Three lines show; the whole title is the tooltip.
+    title.title = oneLine(doc.title);
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    swap(meta, doc.id + " · " + workStateText(doc) + " · since " + st.since, age ? [" · ", age] : null);
+    swap(slot, workItemPage(doc, st, act));
+  };
+  const reload = async (force) => {
+    let next;
+    try { next = await api(path, undefined, true); } catch { return; }
+    if (!current(seq)) return;
+    const s = JSON.stringify(next);
+    if (s === last && !force) return;
+    last = s;
+    d = next;
+    draw(next);
+  };
+  async function act(item, kind, button) {
+    if (acting) return;
+    acting = true;
+    try {
+      if (await workAct(item, kind, button, st.since)) {
+        // The list it came from changed: it loads again rather than draw what it had.
+        if (workBack) workBack.doc = null;
+        await reload(true);
+      }
+    } finally { acting = false; }
+  }
+  draw(d);
+  announce("Work item " + d.id + ": " + workStateText(d));
+  keys.actions.session = () => { location.hash = sessionHref(d.sessionId); };
+  const press = (sel) => { const b = slot.querySelector(sel); if (b && !b.disabled) b.click(); };
+  keys.actions.ack = () => press("[data-act=ack]");
+  keys.actions.snooze = () => press("[data-act=snooze]");
+  keys.palette.push({ group: "Work item", label: "Open the item's session", hint: "o", run: keys.actions.session });
+  const timer = setInterval(() => { if (!document.hidden) void reload(); }, WORK_POLL_MS);
+  cleanup = () => clearInterval(timer);
+}
+/** "Blocked on you", or why the item is hidden: "hidden (snoozed)", as `work show` says it. */
+function workStateText(i) {
+  const b = WORK_BUCKETS.find(([k]) => k === i.bucket);
+  return b ? b[1] : "hidden (" + (WORK_HIDDEN[i.hidden] || i.hidden || "no bucket") + ")";
+}
+function workItemMissing(id, st, e, backHref) {
+  if (e.status !== 404 && e.status !== 400) return errorPanel(e, () => route());
+  // A 404 is an id no item in the window has (or a server with no work queue); a 400, a link that does not parse.
+  const wider = e.status === 404 && st.since !== "30d" ? h("a", { class: "btn", href: workItemHref(id, { ...st, since: "30d" }) }, "Look back 30 days") : null;
+  return h("div", { class: "panel empty work-missing" },
+    h("h2", { text: e.status === 404 ? "No such work item" : "That link does not parse" }),
+    h("p", { text: e.message }),
+    h("div", { class: "work-actions" }, h("a", { class: "btn", href: backHref }, "Back to Work"), wider));
+}
+/** The item's page body: the reason and next step with the actions, its facts as `work show` lists them, then its agents, sessions and files. */
+function workItemPage(d, st, act) {
+  const now = Number.isFinite(Date.parse(d.now)) ? Date.parse(d.now) : Date.now();
+  const ago = (iso) => {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? h("span", { title: new Date(t).toLocaleString() }, workAge(now - t) + " ago") : null;
+  };
+  const row = (label, ...value) => value.some((v) => v !== null && v !== undefined && v !== "") ? [h("dt", null, label), h("dd", null, value)] : null;
+  const w = d.waiting;
+  const where = d.repo || d.cwd;
+  const cause = d.causeSessionId && d.causeSessionId !== d.sessionId ? d.causeSessionId : "";
+  const by = d.supersededBy && d.sessionOf ? d.sessionOf[d.supersededBy] : "";
+  const sessions = d.sessions || [];
+  const files = d.files || [];
+  const agents = d.workflow && d.workflow.phases && d.workflowAgents ? d.workflowAgents : [];
+  const filesText = (d.filesChanged ? plural(d.filesChanged, "file") + " changed" : "none changed")
+    + (d.sessionFilesChanged !== undefined ? " across " + plural(d.sessions, "session") + "; the main session changed " + fmtNum(d.sessionFilesChanged) : "");
+  const sum = h("div", { class: "panel work-item" },
+    h("div", { class: "work-head" },
+      d.stage ? h("span", { class: "badge work-stage", "data-stage": d.stage, title: d.stageWhy || null }, d.stage) : null,
+      d.kind ? h("span", { class: "badge work-kind", title: d.stageWhy || null }, d.kind) : null,
+      d.probablyClosed ? h("span", { class: "badge warn" }, "probably closed") : null,
+      d.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[d.hidden] || d.hidden) : null),
+    h("p", { class: "work-reason" }, h("span", { class: "dot " + workTone(d), "aria-hidden": "true" }), h("span", null, d.reason)),
+    h("p", { class: "work-next" }, h("span", { class: "meta" }, "Next "), workNext(d.next)),
+    workActionsEl(d, act, h("a", { class: "btn btn-sm", href: sessionHref(d.sessionId) }, "Open session")));
+  const facts = h("div", { class: "panel work-detail" }, h("dl", { class: "kv work-kv" },
+    row("State", workStateText(d)),
+    row("Stage", d.stage ? d.stage + (d.kind ? " · " + d.kind : "") + (d.stageWhy ? ": " + d.stageWhy : "") : ""),
+    w && w.text ? row("Prompt", oneLine(w.text)) : null,
+    w ? row("Waiting", w.kind + " since ", ago(w.at)) : null,
+    row("Agent", (d.agents && d.agents.length ? d.agents : [d.agent]).join(", ")),
+    row("Where", where ? where + (d.branch ? " (" + d.branch + ")" : "") : ""),
+    row("Started", ago(d.startedAt), ", last active ", ago(d.lastActivity), d.running ? " (running)" : null),
+    d.costUsd !== undefined ? row("Cost", fmtCost(d.costUsd)) : null,
+    row("Started by", d.startedBy || ""),
+    d.workflow ? row("Workflow", (d.workflow.name ? d.workflow.name + ", " : "") + "run " + d.workflow.id + ", " + plural(agents.length, "agent")) : null,
+    d.prs && d.prs.length ? row(d.prs.length === 1 ? "PR" : "PRs", workPrsEl(d.prs, true)) : null,
+    row("Files", filesText),
+    cause ? row("Cause in", h("a", { class: "work-link", href: sessionHref(cause) }, cause)) : null,
+    d.supersededBy ? row("Superseded by", by ? h("a", { class: "work-link", href: sessionHref(by) }, d.supersededBy) : d.supersededBy) : null,
+    row("Hint", d.hint || "")));
+  const out = [sum, facts];
+  if (agents.length) {
+    out.push(h("section", { class: "work-group", "aria-labelledby": "wi-agents" },
+      h("h2", { id: "wi-agents" }, "Agents by phase", " ", h("span", { class: "meta" }, fmtNum(agents.length))),
+      h("div", { class: "panel work-item work-sessions" }, workPhasesEl(d, agents))));
+  }
+  if (sessions.length) {
+    out.push(h("section", { class: "work-group", "aria-labelledby": "wi-sessions" },
+      h("h2", { id: "wi-sessions" }, "Sessions", " ", h("span", { class: "meta" }, fmtNum(sessions.length))),
+      h("ul", { class: "panel work-item work-members" }, sessions.map((s, n) => h("li", null,
+        h("a", { class: "work-link", href: sessionHref(s.id) }, oneLine(s.title) || s.id),
+        h("span", { class: "meta" }, [n === 0 && sessions.length > 1 ? "main" : "", s.agent, s.id].filter(Boolean).join(" · ")),
+        s.waiting ? h("span", { class: "badge warn" }, "waiting: " + s.waiting) : null)))));
+  }
+  if (files.length) {
+    out.push(h("section", { class: "work-group", "aria-labelledby": "wi-files" },
+      h("h2", { id: "wi-files" }, "Files", " ", h("span", { class: "meta" }, fmtNum(files.length))),
+      h("ul", { class: "panel work-item work-files" }, files.map((f) => h("li", null, f))),
+      files.length >= 200 ? h("p", { class: "meta" }, "The page lists up to 200 paths, as work show --json does.") : null));
+  }
+  return out;
 }
 
 // ------------------------------------------------------------ review
