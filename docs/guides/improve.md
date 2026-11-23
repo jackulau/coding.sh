@@ -156,7 +156,7 @@ and did each session take more work. Then it gives one verdict:
 | Regressed | More flagged sessions. `check` exits 1. |
 | No clear change | 5 or more sessions after, and the difference could be chance. |
 | Too early to tell | Fewer than 5 sessions after, and no clear result yet. |
-| No captured session ran with this change yet | No session ran with the change. The line has no verdict word. When only headless sessions ran with it, the line says so, counts them and names `--headless`. |
+| No captured session ran with this change yet | No session ran with the change. The line has no verdict word. When only headless sessions ran with it, the line says so, counts them and names `--headless` (`headless: true` in the MCP tools). |
 | No sessions before it | Nothing to compare with, often the commit that added the file. |
 
 For Followed and Costlier, `check` suggests `coding.sh refine test git:<previous>` to test the

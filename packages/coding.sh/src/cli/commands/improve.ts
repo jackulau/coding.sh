@@ -11,9 +11,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
-import { headlessReason, HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
+import { HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
-import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
+import { abCommand, findChanges, findIssues, headlessAfter, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, withHeadless, type ChangeOptions, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
@@ -209,7 +209,7 @@ async function report(c: CommandContext): Promise<number> {
     const issues = await findIssues(ctx.index, sessions, { ...(o.root ? { repoRoot: o.root } : {}), ...(testCommand ? { testCommand } : {}) });
     const changeOpts: ChangeOptions = { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless };
     const found = o.root ? await findChanges(ctx.index, o.root, changeOpts) : [];
-    const changes = o.root ? withHeadless(found, await headlessAfter(ctx, o.root, changeOpts, found)) : [];
+    const changes = o.root ? withHeadless(found, await headlessAfter(ctx.index, o.root, changeOpts, found)) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     const cmd: Cmd = (line) => out.command(line);
@@ -380,7 +380,7 @@ async function check(c: CommandContext): Promise<number> {
       const backlog = await autoIngest(ctx, readIngest(c));
       const opts = changeOptions(o, o.headless);
       const found = await findChanges(ctx.index, root, opts);
-      const leftOut = await headlessAfter(ctx, root, opts, found);
+      const leftOut = await headlessAfter(ctx.index, root, opts, found);
       return { changes: withHeadless(found, leftOut), leftOut, backlog };
     };
     const first = await read();
@@ -423,17 +423,18 @@ async function check(c: CommandContext): Promise<number> {
     if (!watch) {
       const after = regressed[0]?.after;
       const removal = first.changes.map(removalStep).find((s) => s !== undefined);
+      // The command as given plus one flag, so --repo, --since and --agent still pick the same sessions.
+      const given = c.argv ?? (o.repo ? ["improve", "check"] : ["improve", "check", "--repo", "all"]);
+      const givenPlus = (flag: string) => ["coding.sh", ...[...given, flag].map((a) => quoteArg(a, c.env))].join(" ");
       if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${after.flaggedSessions[0]?.id ?? after.examples[0] ?? "latest"}`);
       else if (removal) out.next(removal.label, removal.command);
-      else if (leftOut.size || windowLeftOut) out.next("Count the headless sessions too", `coding.sh improve check --headless${o.repo ? "" : " --repo all"}`);
-      else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", "coding.sh improve check --watch");
+      else if (leftOut.size || windowLeftOut) out.next("Count the headless sessions too", givenPlus("--headless"));
+      else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", givenPlus("--watch"));
       return regressed.length ? 1 : 0;
     }
     return watchLoop(c, first.changes, read, interval);
   });
 }
-
-type ChangeOptions = Parameters<typeof findChanges>[2];
 
 /** What improve check reads: the changes in the repo, with the headless sessions or without. */
 function changeOptions(o: Opts, headless: boolean): ChangeOptions {
@@ -441,32 +442,6 @@ function changeOptions(o: Opts, headless: boolean): ChangeOptions {
   if (o.agents.length) opts.agents = o.agents;
   return opts;
 }
-
-/**
- * For each change with no sessions after it, how many headless sessions ran after it: without
- * --headless they are left out, and "No captured session ran" would be false. Read again with
- * --headless only when such a change exists, so the count matches what --headless would show.
- */
-async function headlessAfter(ctx: Context, root: string, opts: ChangeOptions, changes: readonly ChangeEffect[]): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  if (opts.headless || !changes.some((e) => e.verdict === "no-sessions-after")) return counts;
-  const wide = await findChanges(ctx.index, root, { ...opts, headless: true });
-  const all = (e: ChangeEffect) => e.after.sessions + (e.after.idle ?? 0);
-  for (const e of changes) {
-    if (e.verdict !== "no-sessions-after") continue;
-    const w = wide.find((x) => x.change.commit === e.change.commit);
-    const n = w ? all(w) - all(e) : 0;
-    if (n > 0) counts.set(e.change.commit, n);
-  }
-  return counts;
-}
-
-/** The changes, each one only headless sessions ran with (counts: headlessAfter) with a reason that says so. */
-const withHeadless = (changes: readonly ChangeEffect[], counts: ReadonlyMap<string, number>): ChangeEffect[] =>
-  changes.map((e) => {
-    const n = counts.get(e.change.commit);
-    return n ? { ...e, reason: headlessReason(e, n) } : e;
-  });
 
 async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], read: () => Promise<{ changes: ChangeEffect[] }>, interval: number): Promise<number> {
   const { out } = c;

@@ -67,6 +67,7 @@ export interface ToolCtx {
 // Shared argument descriptions, kept short: every tool definition is sent on every
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
 const AGENT = { type: "string", description: "Only this agent." };
+const HEADLESS = { type: "boolean", description: "Also headless runs (claude -p, codex exec)." };
 const REPO = { type: "string", description: "Only sessions under this path or repo name." };
 const SINCE = (d: string) => ({ type: "string", description: `Start: 30m, 12h, 7d, today or a date. Default ${d}.` });
 const UNTIL = { type: "string", description: "End. Default now." };
@@ -826,7 +827,7 @@ function toolDefs(): PagedTool[] {
         repo: { type: "string", description: 'Repo path or folder name; "all" for every repo. Default: the server\'s repo.' },
         since: SINCE("14d"),
         agent: AGENT,
-        headless: { type: "boolean", description: "Also headless runs (claude -p, codex exec)." },
+        headless: HEADLESS,
         limit: LIMIT(5, 20),
       }),
       outputSchema: out({ scope: out({ sessions: I }), issues: arr(out({ rank: I, id: S, title: S, line: S, next: arr(S) }, ["rank", "id", "title", "next"])), changes: arr(out({ commit: S, verdict: S }, ["commit", "verdict"])) }, ["scope", "issues", "changes"]),
@@ -842,12 +843,13 @@ function toolDefs(): PagedTool[] {
       name: "harness_changes",
       title: "Did an AGENTS.md change help?",
       description:
-        "Did a committed AGENTS.md, CLAUDE.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
+        "Did a committed AGENTS.md, CLAUDE.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls.",
       inputSchema: input({
         repo: { type: "string", description: "Repo path or folder name. Default: the server's repo." },
         commit: { type: "string", description: "Only this change: a commit sha or prefix." },
         since: SINCE("30d"),
         agent: AGENT,
+        headless: HEADLESS,
         limit: LIMIT(5, 20),
       }),
       outputSchema: out({ repo: S, changes: arr(out({ commit: S, verdict: S, reason: S, before: out({ sessions: I, flagged: I }), after: out({ sessions: I, flagged: I, flaggedSessions: arr(out({ sessionId: S, flags: arr(S) }, ["sessionId", "flags"])), moreFlagged: I }) }, ["commit", "verdict", "reason"])) }, ["repo", "changes"]),
@@ -856,7 +858,7 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const { harnessChangesReport } = await import("./improve.ts");
         const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
-        return harnessChangesReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), commit: strArg(a, "commit"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+        return harnessChangesReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), commit: strArg(a, "commit"), ...(limit ? { limit } : {}), headless: a.headless === true }, { cwd: c.cwd, env: c.env, now: c.now() });
       },
     },
     {
