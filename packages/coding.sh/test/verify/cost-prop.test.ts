@@ -13,7 +13,9 @@
 //   rise, whether or not its prompt crosses a long-context threshold.
 // - A token count below 0 or not a finite number bills nothing: the call costs what it would without
 //   it, and a call with no other count gets no estimate. The count is kept as it was sent. An estimate
-//   that would not be a finite number is not made.
+//   that would not be a finite number is not made. estimateCost and costParts, which reports and evals
+//   price usage with, bill such a count as nothing too, and a tool eval (toolevals computeMetrics),
+//   which adds up a model's calls before it prices them, costs what it would without it.
 // - A session's token counts and cost are the sums over the calls it counts, plus its latest usage
 //   snapshot. A call that repeats an earlier call's responseId, or replays one, counts once. A wrapper
 //   span over a call with the same tokens counts once, with its own values, except that a cost the
@@ -26,15 +28,18 @@
 // service tiers, speeds and geographies adapters record. Gateway companions are left out: they carry
 // what a gateway billed minus the call's own cost, which can be negative.
 //
-// The last test shows each check fails on a mutant of the table, the pricer or the fold.
+// The last test shows each check fails on a mutant of the table, the pricer, the estimate or the fold.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200 per call, 100 per session);
 // CODING_SH_PROP_SEED=s replays one. The last test reads neither.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { priceEvent, pricesFor, PRICE_TIERS, resolvePrice, splitOf, TOKEN_TYPES, type Price, type Prices, type Rates } from "../../src/core/pricing.ts";
+import { costParts, estimateCost, priceEvent, pricesFor, PRICE_TIERS, resolvePrice, splitOf, TOKEN_TYPES, type Price, type Prices, type Rates } from "../../src/core/pricing.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import type { AgentRunOutput } from "../../src/core/types.ts";
 import type { AgentEvent, CostByTokenType, Session, Usage } from "../../src/schema/index.ts";
+import { computeMetrics } from "../../src/toolevals/metrics.ts";
 import { forAll, gen, PropertyFailure, type Gen } from "../_prop.ts";
+import { cliTarget, task } from "../toolevals/helpers.ts";
 
 const CALL_RUNS = 200;
 const SESSION_RUNS = 100;
@@ -267,14 +272,20 @@ function badGen(s: Subject): Gen<BadCase> {
   return gen.record<BadCase>({ call: callGen(s), bad: gen.array(gen.tuple(gen.pick(COUNT_FIELDS), gen.pick(BAD_COUNTS)), { minLength: 1, maxLength: 4 }) });
 }
 
-function checkBad(s: Subject, { call, bad }: BadCase): void {
+/** The call as sent, with its bad counts, and as it should bill: without them. */
+function sentAndClean({ call, bad }: BadCase): { sent: Call; clean: Call; what: string } {
   const clean: Call = { ...call };
   const sent: Call = { ...call };
   for (const [f, v] of bad) {
     delete clean[f];
     sent[f] = v;
   }
-  const what = bad.map(([f, v]) => `${f} ${v}`).join(", ");
+  return { sent, clean, what: bad.map(([f, v]) => `${f} ${v}`).join(", ") };
+}
+
+function checkBad(s: Subject, b: BadCase): void {
+  const { sent, clean, what } = sentAndClean(b);
+  const { bad } = b;
   const e = callEvent(sent);
   const got = s.price(e, s.prices);
   const want = s.price(callEvent(clean), s.prices);
@@ -287,6 +298,55 @@ function checkBad(s: Subject, { call, bad }: BadCase): void {
   assert.deepEqual(got.payload.costByTokenType, want.payload.costByTokenType, `${what} changed the parts by token type`);
   assert.equal(got.payload.priceTier, want.payload.priceTier, `${what} changed the rates`);
   for (const [f] of bad) assert.ok(Object.is(got.usage?.[USAGE_KEY[f]], sent[f]), `pricing changed the ${f} count it was sent`);
+}
+
+/** What reports and evals price a usage record with (estimateCost and costParts), or a mutant of it. */
+interface Estimator {
+  estimate: (u: Usage, model: string, prices: Prices) => number | undefined;
+  parts: (u: Usage, p: Rates, cacheWrite1h?: number) => CostByTokenType;
+}
+
+const ESTIMATOR: Estimator = { estimate: estimateCost, parts: costParts };
+
+function checkBadEstimate(x: Estimator, b: BadCase): void {
+  const { sent, clean, what } = sentAndClean(b);
+  const u = callEvent(sent).usage ?? {};
+  const want = callEvent(clean).usage ?? {};
+  const cost = x.estimate(u, b.call.model, REAL.prices);
+  const wantCost = x.estimate(want, b.call.model, REAL.prices);
+  assert.ok(cost === undefined || (Number.isFinite(cost) && cost >= 0), `estimateCost is ${cost} (${what})`);
+  assert.equal(cost, wantCost, `${what} changed estimateCost from ${wantCost} to ${cost}`);
+  const found = resolvePrice(b.call.model, REAL.prices);
+  if (found) assert.deepEqual(x.parts(u, found.price, b.call.cacheWrite1h), x.parts(want, found.price, b.call.cacheWrite1h), `${what} changed costParts`);
+}
+
+/** A tool eval's calls, all on one model, so their counts are added up before they are priced. Some have bad counts. */
+function evalGen(s: Subject): Gen<BadCase[]> {
+  const one = gen.record<BadCase>({ call: callGen(s), bad: gen.array(gen.tuple(gen.pick(COUNT_FIELDS), gen.pick(BAD_COUNTS)), { minLength: 0, maxLength: 3 }) });
+  return gen.chain(modelGen(s.keys), (model) => gen.array(gen.map(one, (b): BadCase => ({ ...b, call: { ...b.call, model } })), { minLength: 1, maxLength: 5 }));
+}
+
+const RUN: AgentRunOutput = { exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "" };
+
+interface EvalCost {
+  cost: number | null;
+  flat: number | null;
+}
+
+/** The cost a tool eval reports for these calls (toolevals computeMetrics), and at flat rates; null when it prices none. */
+function evalCost(calls: Call[]): EvalCost {
+  const events = calls.map((c, i) => callEvent(c, `c${i}`, i + 1));
+  const m = computeMetrics({ task: task(), target: cliTarget(), tap: [], events, sessions: [], run: RUN, checksPass: true, prices: REAL.prices });
+  return { cost: m.costUsd, flat: m.flatCostUsd ?? null };
+}
+
+function checkBadEval(cost: (calls: Call[]) => EvalCost, cases: BadCase[]): void {
+  const split = cases.map(sentAndClean);
+  const got = cost(split.map((x) => x.sent));
+  const want = cost(split.map((x) => x.clean));
+  const what = split.map((x) => x.what).filter(Boolean).join("; ") || "no bad count";
+  for (const v of [got.cost, got.flat]) assert.ok(v === null || (Number.isFinite(v) && v >= 0), `the eval's cost is ${v} (${what})`);
+  assert.deepEqual(got, want, `${what} changed the eval's cost from ${JSON.stringify(want)} to ${JSON.stringify(got)}`);
 }
 
 // ---------------------------------------------------------------- sessions
@@ -501,6 +561,23 @@ test("a token count below 0 or not a finite number bills nothing", async () => {
   await forAll(badGen(REAL), (b) => checkBad(REAL, b), { runs: CALL_RUNS, label: "bad counts" });
 });
 
+test("estimateCost and costParts, which reports and evals price usage with, bill a bad token count as nothing too", async () => {
+  await forAll(badGen(REAL), (b) => checkBadEstimate(ESTIMATOR, b), { runs: CALL_RUNS, label: "bad counts, estimateCost" });
+});
+
+test("a tool eval's cost bills a bad token count as nothing, and takes nothing off another call's", async (t) => {
+  let priced = 0;
+  await forAll(
+    evalGen(REAL),
+    (cases) => {
+      checkBadEval(evalCost, cases);
+      if (evalCost(cases.map((b) => b.call)).cost !== null) priced++;
+    },
+    { runs: SESSION_RUNS, label: "bad counts, tool eval" },
+  );
+  t.diagnostic(`${priced} evals priced`);
+});
+
 test("a call whose estimate would not be a finite number gets none", () => {
   const e = callEvent({ model: "claude-opus-5-5", input: Number.MAX_VALUE, output: Number.MAX_VALUE });
   assert.equal(REAL.price(e, REAL.prices), e);
@@ -523,7 +600,7 @@ test("a session's tokens and cost are the sums over the calls it counts, and wha
   t.diagnostic(`${seen.calls} calls: ${seen.estimated} estimated, ${seen.wrapped} under a wrapper, ${seen.leftOut} left out`);
 });
 
-test("each check fails on a mutant of the table, the pricer or the fold", async (t) => {
+test("each check fails on a mutant of the table, the pricer, the estimate or the fold", async (t) => {
   const withRow = (key: string, f: (p: Price) => Price): Prices => {
     const p = REAL.prices[key];
     assert.ok(p, `no ${key} row`);
@@ -572,6 +649,38 @@ test("each check fails on a mutant of the table, the pricer or the fold", async 
       return { ...out, usage };
     },
   };
+  // costFrom as it was before it dropped a bad count: a negative count takes off its size, NaN spreads.
+  const unclamped: Estimator = {
+    ...ESTIMATOR,
+    estimate: (u, model, prices) => {
+      const p = prices[model];
+      if (!p) return undefined;
+      return ((u.inputTokens ?? 0) * p.input + (u.outputTokens ?? 0) * p.output + (u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input) + (u.cacheWriteTokens ?? 0) * (p.cacheWrite ?? p.input)) / 1e6;
+    },
+  };
+  // costParts as it was before: the same.
+  const unclampedParts: Estimator = {
+    ...ESTIMATOR,
+    parts: (u, p) => ({
+      cacheRead: ((u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input)) / 1e6,
+      cacheWrite: ((u.cacheWriteTokens ?? 0) * (p.cacheWrite ?? p.input)) / 1e6,
+      input: ((u.inputTokens ?? 0) * p.input) / 1e6,
+      output: ((u.outputTokens ?? 0) * p.output) / 1e6,
+    }),
+  };
+  // A tool eval as it was before: each model's finite counts added up as sent, then priced.
+  const rawSums = (calls: Call[]): EvalCost => {
+    const sums = new Map<string, Call>();
+    for (const c of calls) {
+      const sum = sums.get(c.model) ?? { model: c.model };
+      for (const f of COUNT_FIELDS) {
+        const v = c[f];
+        if (v !== undefined && Number.isFinite(v)) sum[f] = (sum[f] ?? 0) + v;
+      }
+      sums.set(c.model, sum);
+    }
+    return evalCost([...sums.values()]);
+  };
   const lastCallDropped: Subject = {
     ...REAL,
     fold: (events) => {
@@ -605,6 +714,9 @@ test("each check fails on a mutant of the table, the pricer or the fold", async 
     ["cost, gpt-6-luna output at -0.5", () => failure(callGen(only("gpt-6-luna", negative)), (c) => checkCall(only("gpt-6-luna", negative), c), "negative"), /the cost is negative/],
     ["parts, a pricer with no output part", () => failure(callGen(noOutputPart), (c) => checkCall(noOutputPart, c), "no output part"), /do not add up to the cost/],
     ["bad counts, a pricer that bills a negative count by its size", () => failure(badGen(sizeOfNegative), (b) => checkBad(sizeOfNegative, b), "size of negative"), /changed the cost|with no other count was priced/],
+    ["bad counts, estimateCost that bills them as sent", () => failure(badGen(REAL), (b) => checkBadEstimate(unclamped, b), "unclamped estimate"), /estimateCost is|changed estimateCost/],
+    ["bad counts, costParts that bills them as sent", () => failure(badGen(REAL), (b) => checkBadEstimate(unclampedParts, b), "unclamped parts"), /changed costParts/],
+    ["bad counts, a tool eval that adds them up before it prices", () => failure(evalGen(REAL), (cases) => checkBadEval(rawSums, cases), "raw sums"), /changed the eval's cost/],
     ["raise, claude-haiku-5-5 long-context rates below the short ones", () => failure(raiseGen(only("claude-haiku-5-5", cheapLong)), (r) => checkRaise(only("claude-haiku-5-5", cheapLong), r), "cheap long context"), /the cost fell .* when (input|cacheRead|cacheWrite) rose/],
     ["raise, claude-opus-5-5 1-hour writes at half the 5-minute rate", () => failure(raiseGen(only("claude-opus-5-5", halfHour)), (r) => checkRaise(only("claude-opus-5-5", halfHour), r), "cheap 1-hour writes"), /the cost fell .* when cacheWrite1h rose/],
     ["session, a fold that drops the last call", () => failure(sessionGen(lastCallDropped), (c) => checkSession(lastCallDropped, c), "last call dropped"), /add up to|left out/],
