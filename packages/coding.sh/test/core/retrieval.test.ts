@@ -336,6 +336,10 @@ describe("Session.stats.retrieval", () => {
     // A search tool that reports "No files found" as a failure.
     assert.equal(empty(call("Glob", { pattern: "*.x" }, { ok: false, output: "No files found" })), 1);
     assert.equal(empty(bash("ls src", { output: "\n<shellId: 0 completed with exit code 0>" })), 1);
+    // grep's warnings on stderr are not output: a stray `\` in the pattern, egrep's notice that it is obsolescent.
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 1\ngrep: warning: stray \\ before -" })), 1);
+    assert.equal(empty(bash("egrep -rn 'a|b' src", { ok: false, output: "Exit code 1\negrep: warning: egrep is obsolescent; using grep -E" })), 1);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src | head", { output: '{"stdout":"","stderr":"grep: warning: stray \\\\ before -\\n","interrupted":false,"isImage":false}' })), 1);
   });
 
   it("a search that found something, printed nothing by design, or was cut is not empty", () => {
@@ -349,6 +353,10 @@ describe("Session.stats.retrieval", () => {
     // Any other failure, a cut output, a stopped call, and a call that also read are not "found nothing".
     assert.equal(empty(bash("grep -rn foo src", { ok: false, output: "Exit code 2\ngrep: src: No such file or directory" })), 0);
     assert.equal(empty(bash("findstr /s /n foo *.ts", { ok: false, output: "Exit code 1\nFINDSTR: Cannot open x.ts" })), 0);
+    // A grep warning beside matches or beside an error.
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { output: "grep: warning: stray \\ before -\nsrc/a.ts:3: a-b" })), 0);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 2\ngrep: warning: stray \\ before -\ngrep: src: No such file or directory" })), 0);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src | head", { output: '{"stdout":"src/a.ts:3: a-b\\n","stderr":"grep: warning: stray \\\\ before -\\n","interrupted":false,"isImage":false}' })), 0);
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { cut: { bytes: 1_000_000 } } })), 0);
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { interrupted: true } })), 0);
     assert.equal(empty(bash("cat a.ts && grep foo b.ts", { output: "(Bash completed with no output)" })), 0);

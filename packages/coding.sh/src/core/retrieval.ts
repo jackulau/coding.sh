@@ -688,6 +688,13 @@ const NO_RESULTS = /^\s*(?:No (?:files|matches|results)(?: were)? found|Found 0 
 const NO_RESULTS_ONLY = /^(?:No (?:files|matches|results)(?: were)? found|Found 0 (?:files|matches|results))[.!]?$/i;
 /** What a harness prints for a command that printed nothing. */
 const NO_OUTPUT = /^\((?:[\w -]+ completed with no output|no output|no content|empty|none)\)$/i;
+/**
+ * GNU grep's warnings on stderr (`grep: warning: stray \ before -`, `egrep: warning: egrep is
+ * obsolescent; using grep -E`): they say nothing about what matched.
+ */
+const GREP_WARNING = /^(?:\S*\/)?[efz]?grep: warning: [^\n]*(?:\n|$)/gm;
+/** A command's output without grep's warning lines. */
+const unwarned = (t: string): string => (t.includes("grep: warning: ") ? t.replace(GREP_WARNING, "").trim() : t);
 /** Header lines a harness puts before a command's own output (Claude Code, Codex), as in core/failures.ts. */
 const HEADER_LINE = /^(?:Error: )?Exit code:? -?\d+[^\n]*$|^Process exited with code -?\d+[^\n]*$|^Wall time:[^\n]*$|^Original token count:[^\n]*$|^Chunk ID:[^\n]*$|^Output:\s*$/;
 const EXIT_LINE = /^(?:(?:Error: )?Exit code:?|Process exited with code) (-?\d+)/m;
@@ -751,7 +758,7 @@ function shapeEmpty(output: unknown): boolean | undefined {
   if (r.mode === "count" && typeof r.numMatches === "number") return r.numMatches === 0;
   if (typeof r.numFiles === "number") return r.numFiles === 0;
   if (Array.isArray(r.filenames)) return r.filenames.length === 0;
-  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout) && blank(r.stderr);
+  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout) && blank(typeof r.stderr === "string" ? unwarned(r.stderr) : r.stderr);
   return undefined;
 }
 
@@ -769,8 +776,8 @@ function exitStatus(p: Record<string, unknown>): number | undefined {
 /**
  * A search that found nothing: it printed nothing, its tool said "No matches found" or "No files
  * found" (a shell command: that line and nothing else), or it exited 1 (grep's and rg's "no
- * match") with nothing printed. A search whose output was cut, that was stopped, or whose matches
- * went elsewhere (`quiet`) did not find nothing.
+ * match") with nothing printed. grep's warnings are not printed output. A search whose output was
+ * cut, that was stopped, or whose matches went elsewhere (`quiet`) did not find nothing.
  */
 function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: boolean, shell: boolean): boolean {
   const p = e.payload;
@@ -780,7 +787,8 @@ function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: bo
   if (shape === false) return false;
   // A quiet search prints nothing by design: only its exit status says it found nothing.
   if (shape && !quiet) return true;
-  const printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
+  let printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
+  if (shell) printed = unwarned(printed);
   const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
   if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
   if (p.ok === false) return !printed && exitStatus(p) === 1;
