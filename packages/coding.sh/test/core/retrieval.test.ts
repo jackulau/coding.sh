@@ -388,6 +388,14 @@ describe("Session.stats.retrieval", () => {
     assert.equal(buildSession(odd).stats.retrieval?.filesRead, 2500);
   });
 
+  it("a failed shell line is folded in linear time when its error holds the file names only inside longer names", () => {
+    // `:b`, `:b:b`, `:b:b:b`, ...: each name ends the longer ones, and the error line holds each one many times, never whole.
+    const names = Array.from({ length: 300 }, (_, j) => ":b".repeat(j + 1));
+    const crafted = bash(`cat ${names.join(" ")}`, { ok: false, output: `Exit code 1\ncat: x${":b".repeat(20_000)}: No such file or directory` });
+    assertCpuUnder("names held only inside longer names", () => buildSession(crafted));
+    assert.equal(buildSession(crafted).stats.retrieval?.filesRead, 300);
+  });
+
   it("an empty search: no output, No matches found, No files found, or exit 1 with nothing printed", () => {
     const empty = (...events: AgentEvent[][]) => retrieval(...events)?.emptySearches ?? 0;
     // Claude Code's transcript and hook results for a command that printed nothing.

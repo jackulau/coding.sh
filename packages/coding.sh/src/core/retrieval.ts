@@ -1001,33 +1001,53 @@ const NAME_BEFORE = /[\p{L}\p{M}\p{N}_.-]$/u;
  * is part of a longer name, as `a.ts` is in `a.tsx` and `a.ts.orig`. A dot alone ends a sentence.
  */
 const NAME_AFTER = /^\.?[\p{L}\p{M}\p{N}_-]/u;
+/** NAME_BEFORE's file name characters among the first 128 code units: ASCII letters and digits, `_`, `.` and `-`. */
+const ASCII_NAME = new Uint8Array(128);
+for (const c of "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") ASCII_NAME[c.charCodeAt(0)] = 1;
+/** Whether a name can start at code unit `j` of `text`: at its start, or after a character that is not a file name character. */
+function atEdge(text: string, j: number): boolean {
+  if (!j) return true;
+  const c = text.charCodeAt(j - 1);
+  return c < 128 ? !ASCII_NAME[c] : !NAME_BEFORE.test(text.slice(Math.max(0, j - 2), j));
+}
+/** The trie's mark for an edge, where a name can start: no UTF-16 code unit is -1. */
+const EDGE = -1;
 
 /**
  * The needles that some line names whole, with no file name character just before or after the
  * match: `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
  * pass over the lines (Aho–Corasick) finds every match: a failed `cat` of many files is not a scan
- * of the output per file.
+ * of the output per file. The needles and the lines carry an EDGE mark wherever a name can start,
+ * and each needle starts with one, so every match starts at an edge. A needle is walked only when
+ * a line names it whole, and then once, however often the lines hold it inside longer names.
  */
 function namedIn(needles: readonly string[], lines: readonly string[]): Set<string> {
   const held = new Set<string>();
   if (!lines.length) return held;
-  // A trie of the needles by UTF-16 code unit; ends[s]: the needles that end at state s.
+  // A trie of the needles by UTF-16 code unit, with EDGE first and wherever a name can start inside
+  // one; ends[s]: the needles that end at state s.
   const next: Map<number, number>[] = [new Map()];
   const ends: string[][] = [[]];
+  const child = (s: number, c: number): number => {
+    let t = next[s]!.get(c);
+    if (t === undefined) {
+      t = next.length;
+      next[s]!.set(c, t);
+      next.push(new Map());
+      ends.push([]);
+    }
+    return t;
+  };
   for (const n of needles) {
     // Every line holds "".
-    if (!n) held.add(n);
-    let s = 0;
+    if (!n) {
+      held.add(n);
+      continue;
+    }
+    let s = child(0, EDGE);
     for (let i = 0; i < n.length; i++) {
-      const c = n.charCodeAt(i);
-      let t = next[s]!.get(c);
-      if (t === undefined) {
-        t = next.length;
-        next[s]!.set(c, t);
-        next.push(new Map());
-        ends.push([]);
-      }
-      s = t;
+      if (i && atEdge(n, i)) s = child(s, EDGE);
+      s = child(s, n.charCodeAt(i));
     }
     ends[s]!.push(n);
   }
@@ -1062,20 +1082,19 @@ function namedIn(needles: readonly string[], lines: readonly string[]): Set<stri
     }
     return r;
   };
+  const step = (s: number, c: number): number => {
+    while (s && !next[s]!.has(c)) s = fail[s]!;
+    return next[s]!.get(c) ?? 0;
+  };
   for (const line of lines) {
     let s = 0;
     for (let i = 0; i < line.length; i++) {
-      const c = line.charCodeAt(i);
-      while (s && !next[s]!.has(c)) s = fail[s]!;
-      s = next[s]!.get(c) ?? 0;
-      // The needles that end here share the text after them: one check for all of them.
+      if (atEdge(line, i)) s = step(s, EDGE);
+      s = step(s, line.charCodeAt(i));
+      // The needles that end here start at an edge and share the text after them: one check for all of them.
       if (!out[s] || NAME_AFTER.test(line.slice(i + 1, i + 4))) continue;
-      for (let o = open(out[s]!); o; o = open(below[o]!)) {
-        // A state's needles are one text, repeated when two paths share a base name.
-        const n = ends[o]![0]!;
-        const start = i + 1 - n.length;
-        if (!NAME_BEFORE.test(line.slice(Math.max(0, start - 2), start))) held.add(n);
-      }
+      // A state's needles are one text, repeated when two paths share a base name.
+      for (let o = open(out[s]!); o; o = open(below[o]!)) held.add(ends[o]![0]!);
     }
   }
   return held;
