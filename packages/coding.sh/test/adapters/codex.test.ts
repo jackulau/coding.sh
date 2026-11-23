@@ -5,8 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, convertRollout, parseAgentMail, untrustedHooks } from "../../src/adapters/codex.ts";
+import { defaultConfig } from "../../src/core/config.ts";
+import { backfill } from "../../src/core/ingest.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import type { Adapter } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
@@ -120,7 +124,6 @@ describe("codex backfill (rollouts)", () => {
     assert.equal(child[0]!.turnId, "turn-sub-01");
     assert.ok(buildSession(events.filter((e) => e.sessionId === SUB)).title);
     // eval: a task drafted from the child gets past the instruction (it fails later, on the fixture's missing repo state).
-    const { MemoryBlobStore, MemoryIndexStore } = await import("../../src/store/memory.ts");
     const { draftTaskFromSession } = await import("../../src/eval/task.ts");
     const index = new MemoryIndexStore();
     const mine = events.filter((e) => e.sessionId === SUB);
@@ -194,6 +197,31 @@ describe("codex backfill (rollouts)", () => {
     assert.equal(buildSession(some.filter((e) => e.sessionId === SID)).title, buildSession(all.filter((e) => e.sessionId === SID)).title);
     // A window that opens after the file was last written leaves the file out.
     assert.equal((await collect(codex.backfill!(testCtx().ctx, { since: Date.now() + 86_400_000 }))).length, 0);
+  });
+
+  // Dogfood: after `ingest --backfill --since`, each read's tail import (no window) read every rollout the
+  // window had imported whole again.
+  it("a rollout imported whole under a window is not read again without one", async () => {
+    const reads: string[] = [];
+    const spy: Adapter = {
+      ...codex,
+      backfill: (ctx, o = {}) =>
+        codex.backfill!(ctx, {
+          ...o,
+          changed: async (f) => {
+            const r = await o.changed!(f);
+            if (r) reads.push(f.path);
+            return r;
+          },
+        }),
+    };
+    const base = { config: defaultConfig(), index: new MemoryIndexStore(), blobs: new MemoryBlobStore(), adapters: [spy], env: process.env };
+    const first = await backfill({ ...base, since: T0 + 5000 });
+    assert.deepEqual(first.errors, []);
+    assert.ok(first.events > 0 && reads.length > 0);
+    reads.splice(0);
+    const again = await backfill(base);
+    assert.deepEqual([again.events, reads], [0, []]);
   });
 });
 

@@ -40,7 +40,7 @@ export const INPUT_PATH_KEYS = ["file_path", "filePath", "path", "absolute_path"
 /** Where a Skill call names its skill. */
 export const SKILL_INPUT_KEYS = ["skill", "name", "command"] as const;
 /** Where a tool input holds a shell command, or a REPL cell's code (core/sessions.ts commandOf reads these). */
-export const COMMAND_INPUT_KEYS = ["command", "cmd", "script", "commandLine", "code"] as const;
+export const COMMAND_INPUT_KEYS = ["command", "cmd", "script", "commandLine", "CommandLine", "code"] as const;
 /** Fields of a tool.start's `payload.input` the audit reads. An input that is a string (a bare command) is kept whole. */
 export const MEMORY_INPUT_KEYS: readonly string[] = [...new Set<string>([...SKILL_INPUT_KEYS, ...INPUT_PATH_KEYS, ...COMMAND_INPUT_KEYS])];
 

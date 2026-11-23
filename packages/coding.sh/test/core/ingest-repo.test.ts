@@ -174,25 +174,35 @@ describe("hook-captured sessions get repo state (QA P0: eval new on hook session
   });
 });
 
-/** File-based backfill adapter over <dir>/*.jsonl; each line { session, kind, ts, cwd?, ...payload }. */
-function fileAdapter(dir: string, reads: string[], opts: { gate?: boolean } = {}): Adapter {
+/**
+ * File-based backfill adapter over <dir>/*.jsonl; each line { session, kind, ts, cwd?, ...payload }.
+ * `whole`: a file with an event inside the window is imported with all of its events and reported
+ * read whole, as the transcript adapters do; otherwise the window cuts each file's events.
+ */
+function fileAdapter(dir: string, reads: string[], opts: { gate?: boolean; whole?: boolean } = {}): Adapter {
   return {
     ...stub,
     id: "fb",
     tier: "B",
     normalize: async () => [],
     async *backfill(ctx, o: BackfillOpts = {}) {
+      const since = o.since ?? 0;
       for (const name of readdirSync(dir).sort()) {
         const path = join(dir, name);
         const st = statSync(path);
-        if (opts.gate !== false && o.changed && !(await o.changed({ path, size: st.size, mtimeMs: st.mtimeMs }))) continue;
+        const file = { path, size: st.size, mtimeMs: st.mtimeMs };
+        if (opts.gate !== false && o.changed && !(await o.changed(file))) continue;
         reads.push(name);
-        const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-        for (const [i, l] of lines.entries()) {
+        const events = readFileSync(path, "utf8").split("\n").filter(Boolean).map((l, i) => {
           const { session, kind, ts, cwd, ...payload } = JSON.parse(l) as Record<string, unknown>;
           const e: AgentEvent = { id: ctx.id("fb", String(session), i), v: 0, sessionId: String(session), ts: Number(ts), agent: "fb", kind: kind as EventKind, payload };
           if (typeof cwd === "string") e.cwd = cwd;
-          if (o.since === undefined || e.ts >= o.since) yield e;
+          return e;
+        });
+        if (!opts.whole) yield* events.filter((e) => e.ts >= since);
+        else if (events.some((e) => e.ts >= since)) {
+          yield* events;
+          o.whole?.(file);
         }
       }
     },
@@ -252,6 +262,35 @@ describe("backfill (QA real-traces)", () => {
     r = await run();
     assert.deepEqual(reads.splice(0), ["a.jsonl", "b.jsonl"], "a wider window than the last read re-reads");
     assert.equal(r.sessions, 0, "no new events: no session recomputed");
+  });
+
+  // Dogfood: after `ingest --backfill --since 30d`, every read's tail import (no window) read each source
+  // the window had let through again, though it had been imported whole. With a deadline each file commits
+  // as it ends; without one they commit at the end of the walk: both record a whole read with no window.
+  it("a file read whole under a window is not read again by a wider one", async () => {
+    for (const deadline of [undefined, Date.now() + 600_000]) {
+      const dir = tmp("csh-transcripts-");
+      const a = join(dir, "a.jsonl");
+      const b = join(dir, "b.jsonl");
+      writeFileSync(a, jl({ session: "A", kind: "user.message", ts: 1000, text: "one" }, { session: "A", kind: "turn.end", ts: 2000 }));
+      writeFileSync(b, jl({ session: "B", kind: "user.message", ts: 1000, text: "two" }));
+      const { env: e, config } = env();
+      const index = new MemoryIndexStore();
+      const reads: string[] = [];
+      const base = { config, index, blobs: new MemoryBlobStore(), adapters: [fileAdapter(dir, reads, { whole: true })], env: e };
+      const opts = deadline === undefined ? base : { ...base, deadline };
+
+      let r = await backfill({ ...opts, since: 1500 });
+      assert.deepEqual([r.events, reads.splice(0)], [2, ["a.jsonl", "b.jsonl"]], "A has an event in the window, B has none");
+      assert.equal(await index.getCursor(backfillCursorKey("fb", a, "since")), 0, "read whole: no window recorded");
+      assert.equal(await index.getCursor(backfillCursorKey("fb", b, "since")), 1500, "left out by the window: the window recorded");
+
+      r = await backfill(opts);
+      assert.deepEqual([r.events, r.sessions, reads.splice(0)], [1, 1, ["b.jsonl"]], "only the file the window left out is read again");
+      assert.deepEqual((await index.listSessions({})).map((s) => s.id).sort(), ["A", "B"]);
+      r = await backfill(opts);
+      assert.deepEqual(reads.splice(0), [], "nothing read twice");
+    }
   });
 
   it("stops reading files at the deadline and leaves them for the next backfill", async () => {

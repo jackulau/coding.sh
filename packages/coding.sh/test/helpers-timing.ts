@@ -114,6 +114,23 @@ export function pairedRatio(a: () => number, b: () => number, pairs: number): { 
 }
 
 /**
+ * Asserts `fn` takes under `ms` of this thread's CPU: the median of 5 calls after a warm-up. A
+ * busy machine can stretch CPU time too (cores that share caches with other jobs, a VM whose host
+ * deschedules it), so on a miss `fn` is timed again in 9 pairs with referenceWork, and passes when
+ * the median of the pairs' ratios is under `ratio`. Work that grows with the square of its input
+ * misses both.
+ */
+export function assertCpuUnder(label: string, fn: () => unknown, ms = 50, ratio = 5): void {
+  fn(); // warm up
+  const runs = Array.from({ length: 5 }, () => cpuMs(fn));
+  if (median(runs) < ms) return;
+  referenceWork(); // warm up
+  const vs = pairedRatio(() => timeMs(fn), () => timeMs(referenceWork), 9);
+  const pairs = vs.a.map((x, i) => `${x.toFixed(1)}/${vs.b[i]!.toFixed(1)}`).join(", ");
+  assert.ok(vs.ratio < ratio, `${label} took ${runs.map((x) => x.toFixed(1)).join(", ")} ms of CPU; ${vs.ratio.toFixed(2)}x the fixed loop (ms, ${label}/loop: ${pairs})`);
+}
+
+/**
  * A CLI start (`run`) against a bare `node -e ''` spawned right after it, over 7
  * interleaved pairs after one warm-up run. Passes when the median extra time is
  * under `extraMs` (idle machine) or the median ratio to bare node is under

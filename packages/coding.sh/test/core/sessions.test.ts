@@ -360,6 +360,21 @@ describe("failure detectors", () => {
     assert.equal(files([ev("tool.start", { tool: "Bash", input: { command: "echo x > a.txt" } }, at)]), 1);
   });
 
+  it("filesChanged counts a file named the Git Bash way (/c/x) and the Windows way once", () => {
+    const at = { cwd: "C:\\work\\demo" };
+    const sh = (id: string, command: string) => [ev("tool.start", { tool: "Bash", toolUseId: id, input: { command } }, at), ev("tool.end", { tool: "Bash", toolUseId: id, ok: true }, at)];
+    const files = (events: AgentEvent[]) => buildSession(events).stats.filesChanged;
+    const both = [
+      ev("file.change", { path: "C:\\work\\demo\\src\\a.ts", op: "modify" }, at),
+      ...sh("g1", "sed -i 's/x/y/' /c/work/demo/src/a.ts && echo z > /c/work/demo/src/b.ts"),
+      ev("file.change", { path: "/c/work/demo/src/a.ts", op: "modify" }, at),
+      ev("file.change", { path: "c:/work/demo/src/a.ts", op: "modify" }, at),
+    ];
+    assert.equal(files(both), 2, "src/a.ts three ways, and src/b.ts the shell call wrote");
+    assert.equal(files(sh("g2", "echo x > /c/other/a.txt; echo y > /c")), 0, "outside the working directory, and a drive");
+    assert.equal(files([ev("file.change", { path: "/c/work/demo/a.ts", op: "modify" }, { cwd: "/work/demo" }), ev("file.change", { path: "a.ts", op: "modify" }, { cwd: "/work/demo" })]), 2, "in a POSIX folder, /c is a folder, not a drive");
+  });
+
   it("text-tool-call: a tool call written out as text, not markup quoted in a code block or in prose", () => {
     const say = (text: string) => detectFlags([ev("assistant.message", { text }, { agent: "claude-code" })]);
     // What a Claude Code subagent with a map-form `tools:` wrote, its calls never run.

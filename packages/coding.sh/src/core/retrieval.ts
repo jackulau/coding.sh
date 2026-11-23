@@ -9,9 +9,9 @@
 // wrappers, redirects and heredoc bodies, and splits on `&&`, `||`, `;`, `|` and
 // newlines. A pipeline's first command decides what the pipeline is: `grep x |
 // head` and `cat f | grep x` are searches, and a pipeline that ends in a
-// removal (`find . | xargs rm`) is neither. A line may read and search. `cd`,
-// `pushd` and Set-Location move the directory the later parts' paths resolve
-// against.
+// removal (`find . | xargs rm`, `cat list | xargs rm`) is neither. A line may
+// read and search. `cd`, `pushd` and Set-Location move the directory the later
+// parts' paths resolve against.
 //
 // Read paths are keyed the way Session.stats.filesChanged keys an edit
 // (sessions.ts changeKey): relative to the session's working directory when
@@ -23,9 +23,9 @@ import { shellCommandOf } from "../adapters/_shared/tools.ts";
 import type { AgentEvent, RetrievalStats, Session } from "../schema/index.ts";
 import { exitCodeOf, isPowerShellTool, shellParts, type ShellPart } from "./failing-command.ts";
 import type { ToolFailure } from "./failures.ts";
-import { changeKey } from "./sessions.ts";
-import { normalizeTracePath, operandsOf } from "./shell-diff.ts";
-import { ABSOLUTE, PS_COMMON } from "./shell-files.ts";
+import { changeKeyer } from "./sessions.ts";
+import { normalizeTracePath, operandsOf, slashed } from "./shell-diff.ts";
+import { ABSOLUTE, PS_COMMON, shellWorkdir } from "./shell-files.ts";
 // waste.ts imports sessions.ts, which imports this file: its sets are read inside functions only.
 import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
 
@@ -33,12 +33,12 @@ import { SEARCH_TOOLS, SHELL_SEARCHERS } from "./waste.ts";
 const WEB = new Set(["websearch", "webfetch", "web_search", "web_fetch", "google_web_search", "fetchurl", "read_web_page", "read_url_content", "search_web"]);
 /** Search and listing tools beyond waste.ts's SEARCH_TOOLS (lower case). */
 const SEARCHES = new Set(["codebase_search", "glob_file_search", "find", "find_by_name", "list", "list_files", "search_files", "grep_files"]);
-/** Tools that read a file's content (lower case). */
-const READS = new Set(["read", "view", "read_file", "read_many_files", "view_file", "notebookread", "read_notebook"]);
+/** Tools that read a file's content (lower case): Antigravity's `view_file_outline` and `view_code_item` read a file's outline or one of its classes or functions. */
+const READS = new Set(["read", "view", "read_file", "read_many_files", "view_file", "view_file_outline", "view_code_item", "notebookread", "read_notebook"]);
 /** Editor tools that read a file with `command: "view"`. */
 const EDITOR = /^(?:str_replace_editor|str_replace_based_edit_tool|.*text_editor)$/;
-/** Input fields that name the file a read tool reads: the first that holds a string. */
-const PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "absolutePath", "AbsolutePath", "target_file", "targetFile", "notebook_path", "file"];
+/** Input fields that name the file a read tool reads: the first that holds a string. Antigravity's `view_code_item` names it `File`. */
+const PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "absolutePath", "AbsolutePath", "target_file", "targetFile", "notebook_path", "file", "File"];
 
 /** One tool call, as retrieval sees it. */
 export interface RetrievalCall {
@@ -52,6 +52,10 @@ export interface RetrievalCall {
   paths: string[];
   /** Its searches print no matches by design (`grep -q`, `Select-String -Quiet`) or send them elsewhere (`> out.txt`). */
   quiet?: true;
+  /** Its searches print counts, not matches (`grep -c`, `grep x | wc -l`): a count of zero is no match. */
+  count?: true;
+  /** The lines its literal `echo`s print (`grep x f || echo 'no matches'`): not what its searches found. */
+  echoed?: string[];
   /** A shell command. */
   shell?: true;
 }
@@ -61,7 +65,7 @@ export function classifyRetrieval(tool: unknown, input: unknown): RetrievalCall 
   if (typeof tool !== "string" || !tool) return undefined;
   const t = tool.toLowerCase();
   if (t.startsWith("mcp__")) return undefined;
-  const command = shellCommandOf(tool, input) ?? otherShellCommand(t, input);
+  const command = shellCommandOf(tool, input);
   if (command !== undefined) return shellRetrieval(command, isPowerShellTool(tool) || /powershell/i.test(tool), startDir(input));
   if (WEB.has(t)) return { read: false, search: false, web: true, paths: [] };
   if (SEARCH_TOOLS.has(t) || SEARCHES.has(t)) return { read: false, search: true, web: false, paths: [] };
@@ -84,29 +88,15 @@ function readPaths(i: Record<string, unknown>): string[] {
   return [...out];
 }
 
-/** Shell tools beyond the shared list (lower case): Antigravity's `run_command` ({CommandLine, Cwd}) and Droid's `Execute` ({command}). */
-const OTHER_SHELLS = new Set(["run_command", "execute"]);
-
-/** The command line of an OTHER_SHELLS call, or undefined when it has none. */
-function otherShellCommand(t: string, input: unknown): string | undefined {
-  if (!OTHER_SHELLS.has(t) || !input || typeof input !== "object") return undefined;
-  const i = input as Record<string, unknown>;
-  const c = i.CommandLine ?? i.command ?? i.commandLine ?? i.cmd;
-  return typeof c === "string" ? c : undefined;
-}
-
-/** The directory a shell call starts in, relative to the event's cwd: its `workdir`, `cwd` or `Cwd` input, else "" (the cwd itself). */
+/** The directory a shell call starts in, relative to the event's cwd: the folder its input names (shellWorkdir), else "" (the cwd itself). */
 function startDir(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const i = input as Record<string, unknown>;
-  const d = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : typeof i.Cwd === "string" ? i.Cwd : "";
-  return d.replace(/\\/g, "/");
+  return (shellWorkdir(input) ?? "").replace(/\\/g, "/");
 }
 
 // ---------------------------------------------------------------- shell lines
 
-/** A pipeline's finding: a read of these paths (resolved against the directory it ran in), or a search. */
-type Found = { kind: "read"; paths: string[] } | { kind: "search"; quiet: boolean };
+/** A pipeline's finding: a read of these paths (resolved against the directory it ran in), or a search that may print counts. */
+type Found = { kind: "read"; paths: string[] } | { kind: "search"; quiet: boolean; count?: boolean };
 
 /** A word that is not a literal path (a variable, a glob, a substitution): it counts as an operand with no file. */
 const MARK = "\u0000";
@@ -151,7 +141,8 @@ const PS_PIPE = new Set([
 /**
  * What a shell line retrieves: each pipeline decided by its first command, `cd` followed. A
  * pipeline whose output goes to a file (`> out.txt`, `| Out-File`) reads nothing the agent sees,
- * and its search is quiet.
+ * and its search is quiet. The lines a literal `echo` prints are kept, so that they are not taken
+ * for what a search found.
  */
 function shellRetrieval(command: string, ps: boolean, start: string | undefined): RetrievalCall | undefined {
   const parts = shellParts(command, ps ? "powershell" : "sh");
@@ -160,6 +151,7 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
   /** By pipeline start: its output goes to a file or nowhere. */
   const gone: boolean[] = [];
   const stack: (string | undefined)[] = [];
+  const echoed: string[] = [];
   let dir = start;
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!;
@@ -169,6 +161,11 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     if (p.away || (pps && prog !== undefined && PS_AWAY.has(prog))) gone[starts[i]!] = true;
     if (!prog) continue;
     const raw = words.slice(1);
+    // An `echo` alone in its pipeline prints its words to the agent; one piped on feeds the next command (`echo x | grep x`).
+    if (starts[i] === i && starts[i + 1] !== i && !p.away && (prog === "echo" || (pps && PS_ECHO.has(prog))) && echoed.length < MAX_ECHOED) {
+      const t = echoText(raw, pps);
+      if (t !== undefined && !echoed.includes(t)) echoed.push(t);
+    }
     const args = raw.map((w) => unq(w, pps));
     if (pps ? PS_CD.has(prog) : SH_CD.has(prog)) {
       dir = pps ? psCd(prog, raw, dir, stack) : shCd(prog, args, dir, stack);
@@ -184,15 +181,30 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
     const h = found[head];
     if (!h) continue;
     if (GREPS.has(prog) || (pps && (prog === "where-object" || prog === "where" || prog === "?" || prog === "select-string" || prog === "sls"))) {
-      // A filter: what reaches the agent is what matched.
+      // A filter: what reaches the agent is what matched, counts only when this filter counts (`grep x | grep -c y`).
       const quiet = prog === "select-string" || prog === "sls" ? raw.some((w) => /^-quiet$/i.test(w)) : GREPS.has(prog) && prog !== "findstr" && grepQuiet(args, prog);
-      if (h.kind === "read") found[head] = { kind: "search", quiet };
-      else h.quiet ||= quiet;
-    } else if (h.kind === "search" && (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args))) found[head] = undefined;
+      const count = GREPS.has(prog) && prog !== "findstr" && grepCount(args, prog);
+      if (h.kind === "read") found[head] = { kind: "search", quiet, count };
+      else {
+        h.quiet ||= quiet;
+        h.count = count;
+      }
+    } else if (prog === "wc" && !pps) {
+      // `grep x | wc -l`: what reaches the agent is a count of what the search found.
+      if (h.kind === "search") h.count = true;
+    } else if (DESTRUCTIVE.has(prog) || (pps && PS_DESTRUCTIVE.has(prog)) || inPlace(prog, args)) {
+      // A removal or an in-place edit: what the head printed went into it (`find . | xargs rm`, `cat list | xargs rm`), not to the agent.
+      found[head] = undefined;
+    } else if (h.kind === "search") {
+      // Any other command reshapes the counts (`grep -c x a b | tail -1` prints one file's), so a zero no longer says the search found nothing.
+      h.count = false;
+    }
   }
   let read = false;
   let search = false;
   let quiet = true;
+  /** Every search whose output reaches the agent prints counts. */
+  let count = true;
   const paths = new Set<string>();
   for (let i = 0; i < found.length; i++) {
     const f = found[i];
@@ -204,12 +216,17 @@ function shellRetrieval(command: string, ps: boolean, start: string | undefined)
       for (const x of f.paths) paths.add(x);
     } else {
       search = true;
-      if (!f.quiet && !gone[i]) quiet = false;
+      if (!f.quiet && !gone[i]) {
+        quiet = false;
+        if (!f.count) count = false;
+      }
     }
   }
   if (!read && !search) return undefined;
   const out: RetrievalCall = { read, search, web: false, paths: [...paths], shell: true };
   if (search && quiet) out.quiet = true;
+  else if (search && count) out.count = true;
+  if (search && echoed.length) out.echoed = echoed;
   return out;
 }
 
@@ -339,11 +356,42 @@ function psWord(w: string): { text: string; literal: boolean } {
   return { text, literal };
 }
 
+/** Words with no quote, escape, variable, glob or backslash: each is its own text (sh, PowerShell). */
+const SH_PLAIN = /^[^'"\\$`*?[\]{}]*$/;
+const PS_PLAIN = /^[^'"`$*?[\](){}@\\]*$/;
+
 /** A word as an operand: its literal text with `/` separators, or MARK and the word when it is not literal. A flag stays as written. */
 function unq(raw: string, ps: boolean): string {
-  if (raw.startsWith("-")) return raw;
+  if (raw.startsWith("-") || (ps ? PS_PLAIN : SH_PLAIN).test(raw)) return raw;
   const { text, literal } = ps ? psWord(raw) : shWord(raw);
   return literal ? text.replace(/\\/g, "/") : MARK + raw;
+}
+
+/** PowerShell's cmdlets and aliases that print their words (lower case), beside `echo`. */
+const PS_ECHO = new Set(["write-output", "write", "write-host"]);
+/** The most `echo` lines kept for one call, and the longest. */
+const MAX_ECHOED = 16;
+const MAX_ECHO_LENGTH = 200;
+
+/**
+ * The line a literal `echo` prints (`echo 'no matches'`, `Write-Host "--- a ---"`), or undefined
+ * when a word is not literal (a variable, a glob), holds a backslash (zsh's and dash's `echo` read
+ * escapes), or, in PowerShell, is a parameter or one of several words (`Write-Output` prints each
+ * on its own line).
+ */
+function echoText(raw: readonly string[], ps: boolean): string | undefined {
+  if (ps && (raw.length !== 1 || raw[0]!.startsWith("-"))) return undefined;
+  let k = 0;
+  // bash's `-n` (no newline) and `-e` (read escapes): a word with a backslash is refused anyway.
+  if (!ps) while (k < raw.length && /^-[neE]+$/.test(raw[k]!)) k++;
+  const words: string[] = [];
+  for (; k < raw.length; k++) {
+    const { text, literal } = ps ? psWord(raw[k]!) : shWord(raw[k]!);
+    if (!literal || text.includes("\\")) return undefined;
+    words.push(text);
+  }
+  const t = words.join(" ").trim();
+  return t && t.length <= MAX_ECHO_LENGTH && !/[\r\n]/.test(t) ? t : undefined;
 }
 
 /** The longest path a `cd` or `git -C` chain builds before its directory counts as unknown. */
@@ -414,7 +462,7 @@ function shFound(prog: string, args: readonly string[], dir: string | undefined)
     return ops ? readOf(ops, dir) : undefined;
   }
   if (prog === "git") return gitFound(args, dir);
-  if (GREPS.has(prog)) return { kind: "search", quiet: prog !== "findstr" && grepQuiet(args, prog) };
+  if (GREPS.has(prog)) return prog === "findstr" ? { kind: "search", quiet: false } : { kind: "search", quiet: grepQuiet(args, prog), count: grepCount(args, prog) };
   if (prog === "find") return findDestroys(args) ? undefined : { kind: "search", quiet: false };
   if (SHELL_SEARCHERS.has(prog) || LISTERS.has(prog)) return { kind: "search", quiet: false };
   return undefined;
@@ -462,21 +510,32 @@ function sedRead(args: readonly string[]): string[] | undefined {
   return script ? ops : ops.slice(1);
 }
 
-/** grep's short flags that take a value (`-e`, `-m`, `-A`, …), and ripgrep's and the other searchers' (`-g`, `-t`, `-T`, …). */
+/** grep's short flags that take a value (`-e`, `-m`, `-A`, …), ripgrep's (`-g`, `-t`, `-r`, …) and the other searchers'. ag's and ack's `-r` recurses. */
 const GREP_VALUED = "efmABCdD";
+const RG_VALUED = "ABCdEefgjMmrTt";
 const SEARCHER_VALUED = "efmABCgtTMj";
 
 /** `grep -q`, `--quiet`, `--silent`: the exit status is the answer and nothing prints. */
 function grepQuiet(args: readonly string[], prog: string): boolean {
-  const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : SEARCHER_VALUED;
+  return grepFlag(args, prog, "q", ["--quiet", "--silent"]);
+}
+
+/** `grep -c`, `--count`, ripgrep's `--count-matches`: a count for each file, not the lines that match. */
+function grepCount(args: readonly string[], prog: string): boolean {
+  return grepFlag(args, prog, "c", ["--count", "--count-matches"]);
+}
+
+/** Whether a grep-like command sets a flag: its letter alone or in a cluster (`-rq`), or one of its long names. */
+function grepFlag(args: readonly string[], prog: string, letter: string, long: readonly string[]): boolean {
+  const valued = /^[efz]?grep$/.test(prog) ? GREP_VALUED : prog === "rg" ? RG_VALUED : SEARCHER_VALUED;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") break;
-    if (a === "--quiet" || a === "--silent") return true;
+    if (long.includes(a)) return true;
     if (!/^-[^-]/.test(a)) continue;
     for (let j = 1; j < a.length; j++) {
       const c = a[j]!;
-      if (c === "q") return true;
+      if (c === letter) return true;
       // A flag that takes a value: the rest of the word is the value, or the next word when it ends the word (`grep -e -q`).
       if (valued.includes(c)) {
         if (j === a.length - 1) i++;
@@ -585,7 +644,14 @@ function psArgs(raw: readonly string[], valued: readonly string[]): PsArgs {
   // `a, b` is three words and `a,b` one: a comma list goes on while a word ends or starts with a comma.
   const take = (i: number): [string[], number] => {
     let text = raw[i] ?? "";
-    while (i + 1 < raw.length && (text.endsWith(",") || raw[i + 1]!.startsWith(","))) text += raw[++i];
+    // `tail`, the last word that is not empty, ends as `text` does. `text.endsWith` would copy all
+    // of `text`, built by `+=`, on every step.
+    let tail = text;
+    while (i + 1 < raw.length && (tail.endsWith(",") || raw[i + 1]!.startsWith(","))) {
+      const w = raw[++i]!;
+      text += w;
+      if (w) tail = w;
+    }
     return [items(text), i];
   };
   for (let i = 0; i < raw.length; i++) {
@@ -688,6 +754,13 @@ const NO_RESULTS = /^\s*(?:No (?:files|matches|results)(?: were)? found|Found 0 
 const NO_RESULTS_ONLY = /^(?:No (?:files|matches|results)(?: were)? found|Found 0 (?:files|matches|results))[.!]?$/i;
 /** What a harness prints for a command that printed nothing. */
 const NO_OUTPUT = /^\((?:[\w -]+ completed with no output|no output|no content|empty|none)\)$/i;
+/**
+ * GNU grep's warnings on stderr (`grep: warning: stray \ before -`, `egrep: warning: egrep is
+ * obsolescent; using grep -E`): they say nothing about what matched.
+ */
+const GREP_WARNING = /^(?:\S*\/)?[efz]?grep: warning: [^\n]*(?:\n|$)/gm;
+/** A command's output without grep's warning lines. */
+const unwarned = (t: string): string => (t.includes("grep: warning: ") ? t.replace(GREP_WARNING, "").trim() : t);
 /** Header lines a harness puts before a command's own output (Claude Code, Codex), as in core/failures.ts. */
 const HEADER_LINE = /^(?:Error: )?Exit code:? -?\d+[^\n]*$|^Process exited with code -?\d+[^\n]*$|^Wall time:[^\n]*$|^Original token count:[^\n]*$|^Chunk ID:[^\n]*$|^Output:\s*$/;
 const EXIT_LINE = /^(?:(?:Error: )?Exit code:?|Process exited with code) (-?\d+)/m;
@@ -720,16 +793,22 @@ function bodyText(v: unknown): string {
     t = keep.filter((l) => !NO_OUTPUT.test(l.trim())).join("\n");
   }
   // Copilot CLI ends a shell result with `<shellId: 3 completed with exit code 1>`.
-  t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
-  const lines = t.split("\n");
-  let i = 0;
-  while (i < lines.length && (HEADER_LINE.test(lines[i]!.trim()) || (i === 0 && !lines[i]!.trim()))) i++;
-  const body = lines.slice(i).join("\n").trim();
+  if (t.includes("<shellId: ")) t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
+  // Header lines, and a blank first line, come off the top; the body is the text from the first other line.
+  let start = 0;
+  for (let first = true; ; first = false) {
+    const nl = t.indexOf("\n", start);
+    const line = t.slice(start, nl < 0 ? t.length : nl).trim();
+    if (!HEADER_LINE.test(line) && (!first || line)) break;
+    if (nl < 0) return "";
+    start = nl + 1;
+  }
+  const body = t.slice(start).trim();
   return NO_OUTPUT.test(body) ? "" : body;
 }
 
 /** A search's structured result (Claude Code's Grep and Glob, a shell's stdout and stderr): whether it found nothing, or undefined when it is not one. */
-function shapeEmpty(output: unknown): boolean | undefined {
+function shapeEmpty(output: unknown, pending: Pending): boolean | undefined {
   let o = output;
   if (typeof o === "string") {
     if (!o.trimStart().startsWith("{")) return undefined;
@@ -745,8 +824,33 @@ function shapeEmpty(output: unknown): boolean | undefined {
   if (r.mode === "count" && typeof r.numMatches === "number") return r.numMatches === 0;
   if (typeof r.numFiles === "number") return r.numFiles === 0;
   if (Array.isArray(r.filenames)) return r.filenames.length === 0;
-  if (typeof r.stdout === "string" || typeof r.stderr === "string") return !`${typeof r.stdout === "string" ? r.stdout : ""}${typeof r.stderr === "string" ? r.stderr : ""}`.trim();
+  if (typeof r.stdout === "string" || typeof r.stderr === "string") return blank(r.stdout, pending) && blank(typeof r.stderr === "string" ? unwarned(r.stderr) : r.stderr, pending);
   return undefined;
+}
+
+/** Not a string, only white space, or output that shows no match (showsNoMatch). */
+const blank = (v: unknown, pending: Pending): boolean => typeof v !== "string" || !v.trim() || showsNoMatch(v, pending);
+
+/** A count of zero: `0`, or wc's `0 0 0`. */
+const ZERO_COUNT = /^0(?:\s+0)*$/;
+
+/**
+ * Output that shows no match: each line blank, a line a literal `echo` in the command prints
+ * (`|| echo 'no matches'`), or, from a search that counts (`grep -c`, `| wc -l`), a count of zero
+ * (`0`, `a.ts:0`).
+ */
+function showsNoMatch(t: string, pending: Pending): boolean {
+  const { count, echoed } = pending;
+  if (!count && !echoed) return false;
+  for (let at = 0; at <= t.length; ) {
+    let nl = t.indexOf("\n", at);
+    if (nl < 0) nl = t.length;
+    const line = t.slice(at, nl).trim();
+    at = nl + 1;
+    if (!line || echoed?.includes(line)) continue;
+    if (!count || !ZERO_COUNT.test(line.slice(line.lastIndexOf(":") + 1).trim())) return false;
+  }
+  return true;
 }
 
 const num = (m: RegExpExecArray | null): number | undefined => (m ? Number(m[1]) : undefined);
@@ -760,21 +864,27 @@ function exitStatus(p: Record<string, unknown>): number | undefined {
 /**
  * A search that found nothing: it printed nothing, its tool said "No matches found" or "No files
  * found" (a shell command: that line and nothing else), or it exited 1 (grep's and rg's "no
- * match") with nothing printed. A search whose output was cut, that was stopped, or whose matches
- * went elsewhere (`quiet`) did not find nothing.
+ * match") with nothing printed. grep's warnings are not printed output, nor are counts of zero
+ * from a search that counts (`grep -c`) or the lines a literal `echo` prints (`|| echo 'none'`). A
+ * search whose output was cut, that was stopped, or whose matches went elsewhere (`quiet`) did not
+ * find nothing.
  */
-function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, quiet: boolean, shell: boolean): boolean {
+function foundNothing(e: AgentEvent, failure: ToolFailure | undefined, pending: Pending): boolean {
   const p = e.payload;
+  const quiet = !!pending.quiet;
+  const shell = !!pending.shell;
   if (failure?.cls === "interrupted" || p.interrupted === true) return false;
   if (p.cut && typeof p.cut === "object") return false;
-  const shape = shapeEmpty(p.output);
+  const shape = shapeEmpty(p.output, pending);
   if (shape === false) return false;
   // A quiet search prints nothing by design: only its exit status says it found nothing.
   if (shape && !quiet) return true;
-  const printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
+  let printed = `${shape ? "" : bodyText(p.output)}\n${bodyText(p.error)}`.trim();
+  if (shell) printed = unwarned(printed);
+  if (printed && showsNoMatch(printed, pending)) printed = "";
   const none = shell ? NO_RESULTS_ONLY : NO_RESULTS;
   if (failure?.cls === "benign" && failure.reason === "no-match") return !printed || none.test(printed);
-  if (p.ok === false) return exitStatus(p) === 1 && !printed;
+  if (p.ok === false) return !printed && exitStatus(p) === 1;
   if (none.test(printed)) return true;
   if (quiet || ((p.output === undefined || p.output === null) && (p.error === undefined || p.error === null))) return false;
   return !printed;
@@ -790,6 +900,10 @@ interface Pending {
   /** It searches and reads nothing: its result may be empty. */
   search?: true;
   quiet?: true;
+  /** Its searches print counts (RetrievalCall.count). */
+  count?: true;
+  /** The lines its literal `echo`s print (RetrievalCall.echoed). */
+  echoed?: string[];
 }
 
 /** The fold state behind Session.stats.retrieval. Plain data (Maps, Sets, arrays), saved with the session's fold. */
@@ -822,28 +936,26 @@ const MAX_QUEUES = 64;
 const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|cannot (?:open|read|access)|does not exist|is a directory|permission denied|access (?:is )?denied/i;
 
 /**
- * A read path as a filesChanged key (sessions.ts changeKey): relative to the session's cwd when
- * inside it, else absolute. A relative path is joined to the event's cwd first; Git Bash's `/c/x`
- * is `C:/x`, with the drive letter in the cwd's case.
+ * Read paths as filesChanged keys (sessions.ts changeKey): relative to the session's cwd when
+ * inside it, else absolute. A relative path is joined to the event's cwd first; changeKey reads Git
+ * Bash's `/c/x` as `C:/x`. The cwds are read once for all of a call's paths.
  */
-function keyOf(path: string, eventCwd: string | undefined, cwd: string | undefined): string | undefined {
-  let p = path.replace(/\\/g, "/");
+function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
   const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (base && /^[A-Za-z]:/.test(base)) {
-    p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-    if (/^[A-Za-z]:/.test(p) && p[0]!.toLowerCase() === base[0]!.toLowerCase()) p = base[0] + p.slice(1);
-  }
-  if (base && /^(?:\/|[A-Za-z]:\/)/.test(base) && !ABSOLUTE.test(p)) p = posix.join(base, p);
-  const k = posix.normalize(changeKey(p, eventCwd, cwd));
-  return k === "" || k === "." ? undefined : k;
+  const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
+  const change = changeKeyer(eventCwd, cwd);
+  return (path) => {
+    let p = slashed(path);
+    if (rooted && !ABSOLUTE.test(p)) p = posix.join(base!, p);
+    const k = posix.normalize(change(p));
+    return k === "" || k === "." ? undefined : k;
+  };
 }
 
-/** An edit's filesChanged key in keyOf's form: `.` and `..` resolved, Git Bash's `/c/x` as `C:/x`, the drive letter in the cwd's case. */
+/** An edit's filesChanged key (changeKey: Git Bash's `/c/x` already `C:/x`) in keyer's form: `.` and `..` resolved. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
   const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (c && /^[A-Za-z]:/.test(c)) k = k.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
-  if (c && /^[A-Za-z]:/.test(c) && /^[A-Za-z]:/.test(k) && k[0]!.toLowerCase() === c[0]!.toLowerCase()) k = c[0] + k.slice(1);
   k = normalizeTracePath(k, c);
   if (c && ABSOLUTE.test(c) && k.startsWith("../")) k = normalizeTracePath(posix.join(c, k), c);
   return k;
@@ -858,12 +970,14 @@ function begin(s: RetrievalState, e: AgentEvent, cwd: string | undefined): Pendi
   if (c.read) s.reads++;
   if (c.search) s.searches++;
   s.calls++;
-  const keys = [...new Set(c.paths.map((p) => keyOf(p, e.cwd, cwd)).filter((k): k is string => k !== undefined))];
+  const keys = [...new Set(c.paths.map(keyer(e.cwd, cwd)).filter((k): k is string => k !== undefined))];
   for (const k of keys) s.files.set(k, (s.files.get(k) ?? 0) + 1);
   const pending: Pending = { keys };
   if (c.shell) pending.shell = true;
   if (c.search && !c.read) pending.search = true;
   if (c.quiet) pending.quiet = true;
+  if (c.count) pending.count = true;
+  if (c.echoed && pending.search) pending.echoed = c.echoed;
   return pending;
 }
 
@@ -876,6 +990,62 @@ function drop(s: RetrievalState, key: string): void {
   }
 }
 
+/**
+ * The needles that some line holds, as `lines.some((l) => l.includes(n))` finds each, in one pass
+ * over the lines (Aho–Corasick): a failed `cat` of many files is not a scan of the output per file.
+ */
+function heldBy(needles: readonly string[], lines: readonly string[]): Set<string> {
+  const held = new Set<string>();
+  if (!lines.length) return held;
+  // A trie of the needles by UTF-16 code unit, the unit `includes` compares; ends[s]: the needles that end at state s.
+  const next: Map<number, number>[] = [new Map()];
+  const ends: string[][] = [[]];
+  for (const n of needles) {
+    // Every line holds "".
+    if (!n) held.add(n);
+    let s = 0;
+    for (let i = 0; i < n.length; i++) {
+      const c = n.charCodeAt(i);
+      let t = next[s]!.get(c);
+      if (t === undefined) {
+        t = next.length;
+        next[s]!.set(c, t);
+        next.push(new Map());
+        ends.push([]);
+      }
+      s = t;
+    }
+    ends[s]!.push(n);
+  }
+  // fail[s]: the state of the longest proper suffix of s's text that starts a needle, breadth first.
+  const fail: number[] = new Array<number>(next.length).fill(0);
+  const order = [...next[0]!.values()];
+  for (let q = 0; q < order.length; q++) {
+    const s = order[q]!;
+    for (const [c, t] of next[s]!) {
+      let f = fail[s]!;
+      while (f && !next[f]!.has(c)) f = fail[f]!;
+      fail[t] = next[f]!.get(c) ?? 0;
+      order.push(t);
+    }
+  }
+  /** States whose needles, and their suffixes' needles, are in `held`. */
+  const done = new Uint8Array(next.length);
+  for (const line of lines) {
+    let s = 0;
+    for (let i = 0; i < line.length; i++) {
+      const c = line.charCodeAt(i);
+      while (s && !next[s]!.has(c)) s = fail[s]!;
+      s = next[s]!.get(c) ?? 0;
+      for (let o = s; o && !done[o]; o = fail[o]!) {
+        done[o] = 1;
+        for (const n of ends[o]!) held.add(n);
+      }
+    }
+  }
+  return held;
+}
+
 /** Settles a call at its end: a read that failed reads no file, a search may have found nothing. */
 function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: ToolFailure | undefined): void {
   const p = e.payload;
@@ -883,10 +1053,15 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   else if (p.ok === false && pending.keys.length) {
     // A shell line fails as a whole: a file counts as not read when an error line names it.
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
-    for (const k of pending.keys) if (lines.some((l) => l.includes(posix.basename(k)))) drop(s, k);
+    const names = pending.keys.map((k) => posix.basename(k));
+    const named = heldBy(names, lines);
+    for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
-  if (pending.search && foundNothing(e, failure, !!pending.quiet, !!pending.shell)) s.empty++;
+  if (pending.search && foundNothing(e, failure, pending)) s.empty++;
 }
+
+/** The queue a call without a tool-use id waits in: by subagent and tool. Built only for such calls. */
+const queueOf = (e: AgentEvent): string => `${e.subagentId ?? ""}\u0000${typeof e.payload.tool === "string" ? e.payload.tool.toLowerCase() : ""}`;
 
 /**
  * Folds the next event. `cwd`: the session's working directory. `seen`: the tool-use ids the
@@ -898,7 +1073,6 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
   const p = e.payload;
   if (p.wrapper === true) return;
   const id = typeof p.toolUseId === "string" && p.toolUseId ? p.toolUseId : undefined;
-  const queue = `${e.subagentId ?? ""}\u0000${typeof p.tool === "string" ? p.tool.toLowerCase() : ""}`;
   if (e.kind === "tool.start") {
     if (id) {
       if (o.seen.has(id)) return;
@@ -908,6 +1082,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
       if (s.open.size > MAX_OPEN) s.open.delete(s.open.keys().next().value!);
       return;
     }
+    const queue = queueOf(e);
     let q = s.idless.get(queue);
     if (!q) {
       if (s.idless.size >= MAX_QUEUES) s.idless.delete(s.idless.keys().next().value!);
@@ -926,6 +1101,7 @@ export function foldRetrieval(s: RetrievalState, e: AgentEvent, o: { cwd?: strin
     }
     if (o.seen.has(id)) return;
   } else {
+    const queue = queueOf(e);
     const q = s.idless.get(queue);
     if (q) {
       const pending = q.shift();

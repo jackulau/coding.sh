@@ -7,13 +7,19 @@
 //     `npx @google/gemini-cli -p …`, `/usr/local/bin/claude -p …`);
 //   - the session started while the call ran: at or after its start, and no
 //     later than its end (a call with no end yet counts for MAX_OPEN_MS);
-//   - the session's cwd is the call's cwd or a directory under it.
+//   - the session's cwd is the call's cwd or a directory under it (the folder
+//     the call's input names when it is absolute: Antigravity's `Cwd`, Codex's
+//     `workdir`).
 // The nearest such call (latest start) wins. Ingest runs this once, when the
 // session first reaches the index, so its cost is a session lookup per new
 // session, not per event.
 import type { Session } from "../schema/index.ts";
 import type { IndexStore } from "../core/types.ts";
 import { shellCommandOf } from "../adapters/_shared/tools.ts";
+import { shellWorkdir } from "../core/shell-files.ts";
+
+/** A folder named from the root: `/x`, `C:\x` or `C:/x`. */
+const ABSOLUTE_DIR = /^(?:[\\/]|[A-Za-z]:[\\/])/;
 
 /** The command-line words that start each agent's CLI (an npm package name counts: `npx @google/gemini-cli`). */
 export const AGENT_CLI: Readonly<Record<string, readonly string[]>> = {
@@ -83,7 +89,8 @@ export async function matchSpawnedParent(index: Pick<IndexStore, "listSessions" 
       if (!command || !runsAgentCli(command, child.agent)) continue;
       const end = typeof e.payload.toolUseId === "string" ? ends.get(e.payload.toolUseId) : undefined;
       if (start > (end ?? e.ts + MAX_OPEN_MS)) continue;
-      if (!within(child.cwd, e.cwd ?? s.cwd)) continue;
+      const dir = shellWorkdir(e.payload.input);
+      if (!within(child.cwd, dir !== undefined && ABSOLUTE_DIR.test(dir) ? dir : (e.cwd ?? s.cwd))) continue;
       best = { link: { sessionId: s.id, eventId: e.id, type: "harness" }, ts: e.ts };
     }
   }
