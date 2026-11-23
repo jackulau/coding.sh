@@ -69,6 +69,16 @@ output = 0
     assert.deepEqual(config.capture.exclude, base.capture.exclude);
   });
 
+  it("can turn snapshots off or lower their limits, but cannot turn them on or raise them", () => {
+    // A snapshot keeps the working tree's files as they are, not redacted.
+    const user = `[snapshot]\nenabled = false\nmaxFiles = 500\ntimeoutMs = 1000\n`;
+    const up = cloned(`[snapshot]\nenabled = true\nmaxFiles = 1000000\ntimeoutMs = 600000\n`, user);
+    assert.deepEqual(up.config.snapshot, { enabled: false, maxFiles: 500, timeoutMs: 1000 });
+    const down = cloned(`[snapshot]\nenabled = false\nmaxFiles = 10\ntimeoutMs = 50\n`);
+    assert.deepEqual(down.config.snapshot, { enabled: false, maxFiles: 10, timeoutMs: 50 });
+    assert.equal(down.base.snapshot.enabled, true);
+  });
+
   it("adds redaction patterns as literal text, so a pattern that backtracks runs fast", () => {
     const { config } = cloned(`[capture]\nredactPatterns = ["(a+)+$", "ticket-[0-9]+"]\n`);
     const r = createRedactor({ redact: config.capture.redact, patterns: config.capture.redactPatterns });

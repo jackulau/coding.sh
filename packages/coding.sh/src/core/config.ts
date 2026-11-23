@@ -2,7 +2,8 @@
 //
 // A repo-level file is untrusted (it arrives with `git clone`), so it may only
 // touch capture/snapshot settings, and only in ways that keep or add privacy:
-// redactors and patterns are unioned, never removed, and its patterns are literal text. It can never add sinks or
+// redactors and patterns are unioned, never removed, and its patterns are literal text;
+// snapshots can be turned off and their limits lowered, never the reverse. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
@@ -250,7 +251,7 @@ function applyUserConfig(base: Config, root: TomlTable, file: string, env: NodeJ
   }
 
   applyCapture(out, r, "replace", file);
-  applySnapshot(out, r);
+  applySnapshot(out, r, "replace");
 
   const retention = r.table("retention");
   if (retention) {
@@ -445,19 +446,30 @@ function literalPattern(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
-function applySnapshot(out: Config, r: Reader): void {
+function applySnapshot(out: Config, r: Reader, how: "replace" | "tighten"): void {
   const snapshot = r.table("snapshot");
   if (!snapshot) return;
-  out.snapshot.enabled = r.bool(snapshot, "enabled", "snapshot.enabled") ?? out.snapshot.enabled;
-  out.snapshot.maxFiles = r.int(snapshot, "maxFiles", "snapshot.maxFiles", 1) ?? out.snapshot.maxFiles;
-  out.snapshot.timeoutMs = r.int(snapshot, "timeoutMs", "snapshot.timeoutMs", 1) ?? out.snapshot.timeoutMs;
+  const enabled = r.bool(snapshot, "enabled", "snapshot.enabled");
+  const maxFiles = r.int(snapshot, "maxFiles", "snapshot.maxFiles", 1);
+  const timeoutMs = r.int(snapshot, "timeoutMs", "snapshot.timeoutMs", 1);
+  if (how === "replace") {
+    if (enabled !== undefined) out.snapshot.enabled = enabled;
+    if (maxFiles !== undefined) out.snapshot.maxFiles = maxFiles;
+    if (timeoutMs !== undefined) out.snapshot.timeoutMs = timeoutMs;
+  } else {
+    // A snapshot keeps the working tree's files as they are, not redacted, so a repo may turn
+    // snapshots off or lower their limits, never turn them on or raise them.
+    if (enabled === false) out.snapshot.enabled = false;
+    if (maxFiles !== undefined) out.snapshot.maxFiles = Math.min(out.snapshot.maxFiles, maxFiles);
+    if (timeoutMs !== undefined) out.snapshot.timeoutMs = Math.min(out.snapshot.timeoutMs, timeoutMs);
+  }
 }
 
 function applyRepoConfig(base: Config, root: TomlTable, file: string): Config {
   const r = reader(root, file);
   const out: Config = structuredClone(base);
   applyCapture(out, r, "union", file);
-  applySnapshot(out, r);
+  applySnapshot(out, r, "tighten");
   return out;
 }
 

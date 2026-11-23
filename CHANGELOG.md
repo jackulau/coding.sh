@@ -385,6 +385,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** Redaction covers more secret formats: keys from more than twenty other services and tools with a fixed prefix, private keys in base64, Azure storage account keys, `Authorization` headers with any scheme, cookies, URL signatures, `.netrc` passwords, passwords in URLs with no user name, and values set after names like `client_secret` or `aws_secret_access_key` in config files. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **Capture.** The node hook redacts a JSON document inside a string as that document also when a rule has changed the text around it, so a value that only its key marks as secret is replaced before it reaches the spool, and each value is counted once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Capture.** Matching a `capture.exclude` glob takes time in proportion to the glob and the path, so a glob with many stars, such as one a repo's `.coding.sh/config.toml` sets, no longer stalls ingest. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#capture))
+- **Capture.** A repo's `.coding.sh/config.toml` can turn snapshots off or lower `snapshot.maxFiles` and `snapshot.timeoutMs`, but no longer turn snapshots on or raise their limits over your own config. A snapshot keeps files as they are, not redacted. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#snapshot))
 
 ## [0.1.7] - 2026-11-16
 
