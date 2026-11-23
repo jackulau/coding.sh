@@ -93,16 +93,28 @@ export function addAck(o: WorkOverlay, sessionId: string, fingerprint: string): 
   o.acks[sessionId] = [...prev, fingerprint].slice(-ACKS_PER_SESSION);
 }
 
-/**
- * Snoozes an item: stored on each of the given member session ids. It replaces the item's earlier
- * snooze. One call stores the same snooze on each id, so the entries equal to one it overwrites are
- * that snooze's copies on the item's other sessions, and they go too: a copy left on the session
- * behind an earlier cause could end later than the new snooze and win in snoozeOf.
- */
+/** Stores a snooze on each of the given session ids. snoozeItem snoozes a work item. */
 export function addSnooze(o: WorkOverlay, sessionIds: readonly string[], snooze: WorkSnooze): void {
-  const old = sessionIds.flatMap((id) => o.snoozes[id] ?? []);
-  for (const [id, z] of Object.entries(o.snoozes)) if (old.some((x) => x.until === z.until && x.bucket === z.bucket)) delete o.snoozes[id];
   for (const id of sessionIds) o.snoozes[id] = { ...snooze };
+}
+
+/** What snoozeItem needs of a work item (core/work.ts WorkItem). */
+export interface SnoozeTarget {
+  primaryId: string;
+  /** Every session of the item: the ones snoozeOf reads. */
+  sessionIds: readonly string[];
+  cause?: { sessionId: string };
+}
+
+/**
+ * Snoozes a work item, as `coding.sh work snooze` and POST /api/work/snooze do: stored on its main
+ * session and on the session behind its cause. It replaces the item's earlier snooze, which goes from
+ * every session of the item first: a copy left on the session behind an earlier cause could end later
+ * than the new snooze and win in snoozeOf. Other items' snoozes stay, even one that ends at the same time.
+ */
+export function snoozeItem(o: WorkOverlay, item: SnoozeTarget, snooze: WorkSnooze): void {
+  for (const id of item.sessionIds) delete o.snoozes[id];
+  addSnooze(o, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], snooze);
 }
 
 /** The active snooze on any of these sessions (the latest ending one), or undefined. */

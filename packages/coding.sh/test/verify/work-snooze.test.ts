@@ -1,14 +1,14 @@
-// A new snooze of a work item replaces its earlier one (src/core/work-overlay.ts, addSnooze). The
+// A new snooze of a work item replaces its earlier one (src/core/work-overlay.ts, snoozeItem). The
 // work queue model (test/verify/work-model.test.ts) found the case this covers: a snooze is stored
 // on the item's main session and on the session behind its cause, and snoozeOf takes the latest
 // ending snooze on any of the item's sessions. So after an item moved to a more urgent bucket, a
 // shorter snooze left it in the queue (the earlier snooze, still on the earlier cause's session,
 // ended later and named the old bucket), and when the shorter one ended, the earlier one hid the
-// item again. The snoozes here are written the way `coding.sh work snooze` writes them.
+// item again. The snoozes here are written by snoozeItem, which `coding.sh work snooze` calls.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildWorkQueue, type WorkItem } from "../../src/core/work.ts";
-import { addSnooze, emptyOverlay, pruneOverlay, type WorkOverlay } from "../../src/core/work-overlay.ts";
+import { addSnooze, emptyOverlay, pruneOverlay, snoozeItem, type WorkOverlay } from "../../src/core/work-overlay.ts";
 import type { Session, Waiting } from "../../src/schema/index.ts";
 
 const T0 = Date.parse("2026-11-20T12:00:00Z");
@@ -46,7 +46,7 @@ function itemAt(sessions: Session[], now: number, overlay: WorkOverlay): WorkIte
 /** What `coding.sh work snooze <id> <duration>` and POST /api/work/snooze write (src/cli/commands/work.ts and src/viewer/work.ts, snooze). */
 function snooze(overlay: WorkOverlay, item: WorkItem, now: number, ms: number): void {
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
-  addSnooze(overlay, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], { until: now + ms, bucket });
+  snoozeItem(overlay, item, { until: now + ms, bucket });
   // writeOverlay prunes before it writes.
   pruneOverlay(overlay, now);
 }
@@ -76,12 +76,16 @@ test("a shorter snooze after a move to a more urgent bucket hides the item, and 
   assert.equal(back.bucket, "stalled", "the earlier snooze was replaced");
 });
 
-test("a snooze of another item is kept", () => {
+test("a snooze of another item is kept, even one that ends at the same time and names the same bucket", () => {
   const overlay = emptyOverlay();
   addSnooze(overlay, ["other"], { until: T0 + HOUR, bucket: "review" });
+  // Another item, snoozed at the same moment as the first snooze below, for as long, from the same bucket.
+  addSnooze(overlay, ["twin"], { until: T0 + 2 * HOUR, bucket: "stalled" });
   const turn = main({ kind: "turn", at: T0 - 5 * MIN });
   snooze(overlay, itemAt([turn, sub], T0, overlay), T0, 2 * HOUR);
+  assert.deepEqual(overlay.snoozes.p, overlay.snoozes.twin, "the first snooze equals the other item's");
   snooze(overlay, itemAt([turn, sub], T0, overlay), T0 + MIN, 3 * HOUR);
   assert.deepEqual(overlay.snoozes.other, { until: T0 + HOUR, bucket: "review" });
-  assert.deepEqual(Object.keys(overlay.snoozes).sort(), ["other", "p", "p:sub:a1"]);
+  assert.deepEqual(overlay.snoozes.twin, { until: T0 + 2 * HOUR, bucket: "stalled" });
+  assert.deepEqual(Object.keys(overlay.snoozes).sort(), ["other", "p", "p:sub:a1", "twin"]);
 });

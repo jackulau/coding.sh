@@ -1,5 +1,5 @@
 // A model of one work item's acks and snoozes, checked with test/_model.ts against the real code.
-// groupWorkItems and workItem (src/core/work.ts) build the item. addAck, addSnooze and pruneOverlay
+// groupWorkItems and workItem (src/core/work.ts) build the item. addAck, snoozeItem and pruneOverlay
 // (src/core/work-overlay.ts) change the overlay as `coding.sh work ack` and `coding.sh work snooze`
 // do (ack and snooze in src/cli/commands/work.ts; workSnooze in src/viewer/work.ts does the same).
 //
@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, stableKey, update, type Action, type CheckResult, type Model } from "../_model.ts";
 import { BUCKETS, groupWorkItems, workItem, type Bucket, type WorkItem } from "../../src/core/work.ts";
-import { addAck, addSnooze, pruneOverlay, emptyOverlay, type WorkOverlay, type WorkSnooze } from "../../src/core/work-overlay.ts";
+import { addAck, addSnooze, pruneOverlay, emptyOverlay, snoozeItem, type SnoozeTarget, type WorkOverlay, type WorkSnooze } from "../../src/core/work-overlay.ts";
 import type { Session } from "../../src/schema/index.ts";
 
 const SEC = 1e3;
@@ -141,7 +141,7 @@ function realView(item: WorkItem): View | string {
   return who ? { bucket: item.bucket, who } : `a cause on ${item.cause?.sessionId ?? "no session"}`;
 }
 
-type SnoozeWriter =(o: WorkOverlay, sessionIds: readonly string[], snooze: WorkSnooze) => void;
+type SnoozeWriter = (o: WorkOverlay, item: SnoozeTarget, snooze: WorkSnooze) => void;
 
 function workModel(snoozeWith: SnoozeWriter, bounds: Bounds): Model<WorkState> {
   // The checker hands the same state object to the invariants and to every action, so the item is built once per state.
@@ -194,10 +194,9 @@ function workModel(snoozeWith: SnoozeWriter, bounds: Bounds): Model<WorkState> {
         const item = real(s);
         const now = nowOf(s);
         const snooze: WorkSnooze = { until: now + ms, bucket: item.bucket ?? item.cause?.bucket ?? "review" };
-        const ids = [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])];
         const top = specTop(s) ?? specCauses(s)[0];
         return update(s, (d) => {
-          snoozeWith(d.overlay, ids, snooze);
+          snoozeWith(d.overlay, item, snooze);
           pruneOverlay(d.overlay, now);
           d.snooze = { until: now + ms, bucket: top?.bucket ?? "review" };
           d.users++;
@@ -243,7 +242,7 @@ const explain = (r: CheckResult<WorkState>): string => (r.violation ? `${r.viola
 
 test("the item is where the rules put it after any activity, acks, snoozes and time", (t) => {
   const bounds = boundsFrom(process.env);
-  const r = check(workModel(addSnooze, bounds));
+  const r = check(workModel(snoozeItem, bounds));
   assert.equal(r.ok, true, explain(r));
   assert.equal(r.complete, true);
   assert.ok(r.states >= 16_000, `explored ${r.states} states`);
@@ -251,10 +250,9 @@ test("the item is where the rules put it after any activity, acks, snoozes and t
 });
 
 test("the model finds the snooze that lost to an older one, with the code before the fix", () => {
-  // addSnooze as it was: each id gets the new snooze, and a copy of the old one on the earlier cause's session stays.
-  const before: SnoozeWriter = (o, ids, z) => {
-    for (const id of ids) o.snoozes[id] = { ...z };
-  };
+  // Snoozing as it was: the main session and the cause's session get the new snooze, and a copy of the old one on
+  // the earlier cause's session stays.
+  const before: SnoozeWriter = (o, item, z) => addSnooze(o, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], z);
   const r = check(workModel(before, { ticks: 2, steps: 2, users: 2 }));
   const v = r.violation;
   assert.ok(v, "the old addSnooze breaks an invariant");

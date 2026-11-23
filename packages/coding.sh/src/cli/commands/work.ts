@@ -5,7 +5,7 @@ import { parsePlace } from "../../mcp/data.ts";
 import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
-import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
+import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
 import { BUCKET_LABELS, BUCKETS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
@@ -416,8 +416,7 @@ async function snooze(c: CommandContext): Promise<number> {
     const now = Date.now();
     const until = now + ms;
     const bucket = item.bucket ?? item.cause?.bucket ?? "review";
-    const ids = [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])];
-    addSnooze(overlay, ids, { until, bucket });
+    snoozeItem(overlay, item, { until, bucket });
     writeOverlay(ctx.paths.work, overlay, now);
     if (out.json) {
       out.data({ id: item.id, snoozedUntil: new Date(until).toISOString(), bucket });
