@@ -29,7 +29,7 @@ export function buildPrompts(): PromptDef[] {
       render: (a) =>
         [
           `Call the coding.sh harness_audit tool${a.since ? ` with since ${JSON.stringify(a.since)}` : ""}.`,
-          "List the unused files (never-read, write-only, loaded-not-read) with their load tokens, and the load tokens per session.",
+          "List the unused files (never-read, write-only, loaded-not-read) with their load tokens, and the load tokens per session. A file flagged deleted is already gone from disk.",
           "Propose what to delete or shorten, and change nothing until I say yes.",
           "After the edits, call harness_audit with check: true and tell me if a protected safety line was removed.",
           "If it returned a refine run command in next, give it to me to run: it tests a shorter AGENTS.md or CLAUDE.md on an eval suite and takes minutes.",
