@@ -36,6 +36,9 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4320
 export OPENAI_BASE_URL=http://127.0.0.1:4320/v1
 ```
 
+In PowerShell, `codingsh proxy env` prints them as `$env:` lines, and
+`codingsh proxy env | Invoke-Expression` sets them.
+
 Run your app as usual. This script labels a GitHub issue. The `x-coding-sh-session` header puts
 every call it makes in one session:
 
@@ -179,14 +182,19 @@ coding.sh proxy --enforce-budget
 With `--enforce-budget`, a model call that a [budget](https://coding.sh/docs/cost#set-a-budget)
 over its limit applies to gets a 429 and never goes upstream. The body uses the vendor's error
 shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
-its limit, its estimated spend and when it resets. `Retry-After` gives the seconds until the
-reset.
+its limit, its estimated spend and when it resets.
+
+The body also names the command that shows the budgets, as the shell the proxy started in runs it
+(`codingsh budget status` in PowerShell or cmd). `Retry-After` gives the seconds until the reset,
+and `x-should-retry: false` makes the Anthropic and OpenAI SDKs raise the 429 at once instead of
+retrying.
 
 Which budgets the proxy can match:
 
 - A budget with no `--agent`, `--repo` or `--where` applies to every call.
 - A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
-  their headers. Every other client's calls count as agent `proxy`.
+  their headers. Every other call, including a Codex call that sends no session id, is stored and
+  counted as agent `proxy`.
 - A budget with `--repo` or `--where` never blocks a call, and the proxy does not read its spend:
   the proxy does not know a call's repo or session.
 
