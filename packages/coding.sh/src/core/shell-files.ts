@@ -6,7 +6,7 @@
 // count. Pure: rules over strings, no I/O.
 import { posix } from "node:path";
 import { isShellCall, shellCommandOf } from "../adapters/_shared/tools.ts";
-import { normalizeTracePath, shellWrites, simpleCommands } from "./shell-diff.ts";
+import { driveOf, normalizeTracePath, onDrive, shellWrites, simpleCommands } from "./shell-diff.ts";
 
 /** An absolute path (POSIX, a Windows drive) or one under the home directory. */
 export const ABSOLUTE = /^(?:\/|[A-Za-z]:\/|~)/;
@@ -85,14 +85,31 @@ export function shellWrittenPaths(command: string, powershell = false): string[]
  * A written path as a filesChanged key: relative to `cwd` (after `workdir`, the
  * directory the call ran in, when it names one), or undefined when it falls
  * outside the working directory (a scratch file under /tmp, a dotfile in ~).
+ * On a Windows cwd, Git Bash's `/c/x` is `C:/x` (onDrive).
  */
 export function writtenFileKey(path: string, cwd?: string, workdir?: string): string | undefined {
   let p = path.replace(/\\/g, "/");
   if (workdir && !ABSOLUTE.test(p)) p = posix.join(workdir.replace(/\\/g, "/"), p);
-  p = normalizeTracePath(p, cwd);
-  if (ABSOLUTE.test(p)) return undefined;
+  p = normalizeTracePath(onDrive(p, driveOf(cwd)), cwd);
+  // `C:` alone is Git Bash's `/c`, a drive, not a file.
+  if (ABSOLUTE.test(p) || /^[A-Za-z]:$/.test(p)) return undefined;
   p = posix.normalize(p);
   return p === "." || p === ".." || p.startsWith("../") ? undefined : p;
+}
+
+/**
+ * Shell tool inputs that name the folder the call ran in: the first that holds a string. Antigravity's
+ * run_command names it `Cwd`; Gemini's run_shell_command `dir_path` (`directory` in older versions),
+ * relative to the project folder.
+ */
+const WORKDIR_KEYS = ["workdir", "cwd", "Cwd", "dir_path", "directory"] as const;
+
+/** The folder a shell call ran in, as its input names it (WORKDIR_KEYS), or undefined. */
+export function shellWorkdir(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const i = input as Record<string, unknown>;
+  for (const k of WORKDIR_KEYS) if (typeof i[k] === "string") return i[k] as string;
+  return undefined;
 }
 
 /**
@@ -103,8 +120,7 @@ export function shellCallFiles(tool: unknown, input: unknown, cwd?: string): str
   if (typeof tool !== "string" || !isShellCall(tool, input)) return [];
   const command = shellCommandOf(tool, input);
   if (!command) return [];
-  const i = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const workdir = typeof i.workdir === "string" ? i.workdir : typeof i.cwd === "string" ? i.cwd : undefined;
+  const workdir = shellWorkdir(input);
   const keys = new Set<string>();
   for (const p of shellWrittenPaths(command, /powershell/i.test(tool))) {
     const k = writtenFileKey(p, cwd, workdir);

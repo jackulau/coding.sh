@@ -27,6 +27,24 @@ export function normalizeTracePath(p: string, cwd?: string): string {
   return underTraceRoot(p, traceRoot(cwd));
 }
 
+/** The drive letter of a Windows folder (`C:\x`, `c:/x`), or undefined. */
+export function driveOf(dir: string | undefined): string | undefined {
+  return dir && /^[A-Za-z]:/.test(dir) ? dir[0] : undefined;
+}
+
+/**
+ * A path as a folder on `drive` (driveOf) names it: Git Bash's `/c/x` as `c:/x`, then the folder's
+ * own drive letter in the folder's case and any other in upper case, so `/c/x`, `c:\x` and `C:\x`
+ * are one path. Unchanged without a drive, where `/c/x` is a POSIX path.
+ */
+export function onDrive(p: string, drive: string | undefined): string {
+  if (!drive) return p;
+  if (p[0] === "/") p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+  if (!/^[A-Za-z]:/.test(p)) return p;
+  const d = p[0]!.toLowerCase() === drive.toLowerCase() ? drive : p[0]!.toUpperCase();
+  return d === p[0] ? p : d + p.slice(1);
+}
+
 /** The shell command of a tool call's input, unless it is a patch passed as `command` (Codex apply_patch). */
 export function shellCommand(tool: string | undefined, input: unknown): string | undefined {
   if (tool && /patch/i.test(tool)) return undefined;

@@ -30,12 +30,12 @@ const edit = (path: string, o: Partial<AgentEvent> = {}) => ev("file.change", { 
 /** Session.stats.retrieval of the events, folded as one session. */
 const retrieval = (...events: (AgentEvent | AgentEvent[])[]): RetrievalStats | undefined => buildSession(events.flat()).stats.retrieval;
 
-/** A call as a short string: what it does, whether its searches are quiet, and the files it reads. */
+/** A call as a short string: what it does, whether its searches are quiet or print counts, and the files it reads. */
 const kind = (tool: string, input: unknown): string => {
   const c = classifyRetrieval(tool, input);
   if (!c) return "none";
   const what = [c.read && "read", c.search && "search", c.web && "web"].filter(Boolean).join("+");
-  return [what + (c.quiet ? " (quiet)" : ""), ...c.paths].join(" ");
+  return [what + (c.quiet ? " (quiet)" : "") + (c.count ? " (count)" : ""), ...c.paths].join(" ");
 };
 const bashKinds = (rows: [string, string][]) => {
   for (const [command, want] of rows) assert.equal(kind("Bash", { command }), want, command);
@@ -93,6 +93,55 @@ describe("classifyRetrieval", () => {
     ]);
   });
 
+  it("a search whose pipeline ends in a count (`grep -c`, `| wc -l`) is marked so; a read piped into `wc` stays a read", () => {
+    bashKinds([
+      ["grep -c foo a.ts", "search (count)"],
+      ["grep -rc foo src", "search (count)"],
+      ["rg --count foo", "search (count)"],
+      ["rg --count-matches foo", "search (count)"],
+      ["grep -rn foo src | wc -l", "search (count)"],
+      ["find . -name '*.ts' | wc -l", "search (count)"],
+      ["cat a.ts | grep -c foo", "search (count)"],
+      ["grep -q foo a.ts && grep -c bar b.ts", "search (count)"],
+      // `-e -c` searches for "-c"; `-C` is context, not a count.
+      ["grep -e -c foo a.ts", "search"],
+      ["grep -C 3 foo a.ts", "search"],
+      ["grep -c foo a.ts; ls", "search"],
+      ["findstr /c:foo a.ts", "search"],
+      ["cat a.ts | wc -l", "read a.ts"],
+      // The pipeline's last command decides: a later grep counts only with `-c`, and any other command reshapes the counts.
+      ["grep -rn foo src | grep -c bar", "search (count)"],
+      ["grep -rn foo src | head -5 | wc -l", "search (count)"],
+      ["grep -c foo a.ts b.ts | tail -1", "search"],
+      ["grep -c foo a.ts b.ts | grep ':0$'", "search"],
+      // ripgrep's `-r` takes a value (`-rc` replaces each match with "c"); ag's `-r` recurses.
+      ["rg -rc foo src", "search"],
+      ["ag -rc foo src", "search (count)"],
+    ]);
+  });
+
+  it("a search keeps the lines that a literal `echo` alone in its pipeline prints", () => {
+    const rows: [string, string, string[] | undefined][] = [
+      ["Bash", "grep -rn foo src || echo 'no matches'", ["no matches"]],
+      ["Bash", 'echo "--- a.ts ---"; grep -n foo a.ts; echo -n done; echo "--- a.ts ---"', ["--- a.ts ---", "done"]],
+      ["Bash", "grep -rn foo src && echo found || echo not found", ["found", "not found"]],
+      ["Bash", 'grep -rn foo src || echo "none" >&2', ["none"]],
+      // A word that is not literal, a backslash (zsh's echo reads escapes), output to a file or into a pipe, and no search.
+      ["Bash", 'grep -rn foo src; echo "exit $?"', undefined],
+      ["Bash", "grep -rn foo src || echo 'a\\tb'", undefined],
+      ["Bash", "grep -rn foo src; echo none > log.txt", undefined],
+      ["Bash", "grep -rn foo src; echo foo | grep foo", undefined],
+      ["Bash", "cat a.ts; echo done", undefined],
+      ["PowerShell", 'Write-Host "=== a ==="; Select-String foo a.ts', ["=== a ==="]],
+      ["PowerShell", "Select-String foo a.ts; if (-not $?) { echo 'no matches' }", ["no matches"]],
+      // Write-Output prints each word on its own line; a parameter; a pipe into a cmdlet.
+      ["PowerShell", 'Select-String foo a.ts; Write-Output "a" "b"', undefined],
+      ["PowerShell", 'Select-String foo a.ts; Write-Host "x" -ForegroundColor Red', undefined],
+      ["PowerShell", 'Select-String foo a.ts; Write-Output "none" | Out-Null', undefined],
+    ];
+    for (const [tool, command, want] of rows) assert.deepEqual(classifyRetrieval(tool, { command })?.echoed, want, command);
+  });
+
   it("a read whose output goes to a file reads nothing", () => {
     bashKinds([
       ["cat a.ts > b.ts", "none"],
@@ -133,15 +182,24 @@ describe("classifyRetrieval", () => {
     }
   });
 
-  it("a pipeline that removes or edits what it found is not a search", () => {
+  it("a pipeline that removes or edits what it found, or the files a list names, is neither a search nor a read", () => {
     bashKinds([
       ["find . -name '*.tmp' -delete", "none"],
       ["find . -name '*.ts' | xargs rm", "none"],
       ["find . -name '*.ts' -exec sed -i s/a/b/ {} +", "none"],
       ["grep -rl foo src | xargs sed -i 's/foo/bar/g'", "none"],
       ["rg -l foo | xargs perl -pi -e 's/foo/bar/g'", "none"],
+      // The list's lines go to rm or sed, not to the agent.
+      ["cat list.txt | xargs rm", "none"],
+      ["cat list.txt | xargs -I {} rm {}", "none"],
+      ["head -n 5 files.txt | xargs sed -i 's/a/b/'", "none"],
+      ["cat list.txt | xargs rm && cat a.ts", "read a.ts"],
+      ["cat a.ts | sed -n 1,10p", "read a.ts"],
     ]);
-    psKinds([["Get-ChildItem *.tmp | Remove-Item", "none"]]);
+    psKinds([
+      ["Get-ChildItem *.tmp | Remove-Item", "none"],
+      ["Get-Content list.txt | Remove-Item", "none"],
+    ]);
   });
 
   it("a quoted `cd` into a folder with spaces, and Windows paths", () => {
@@ -199,10 +257,16 @@ describe("classifyRetrieval", () => {
       ["web_search", { query: "x" }, "web"],
       ["mcp__fs__read_file", { path: "a.ts" }, "none"],
       ["Edit", { file_path: "a.ts" }, "none"],
+      // Antigravity's views of a file's outline and of one of its classes or functions.
+      ["view_file_outline", { AbsolutePath: "/work/demo/src/a.ts", ItemOffset: 0 }, "read /work/demo/src/a.ts"],
+      ["view_code_item", { File: "/work/demo/src/a.ts", NodePaths: ["Parser.parse"] }, "read /work/demo/src/a.ts"],
       // Antigravity's and Droid's shell tools.
       ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo/sub" }, "read /work/demo/sub/a.ts"],
       ["Execute", { command: "grep -rn x src" }, "search"],
       ["shell", { command: ["bash", "-lc", "sed -n '1,80p' SKILL.md && cat README.md"] }, "read SKILL.md README.md"],
+      // Gemini's shell tool runs in `dir_path` (`directory` in older versions), relative to the project folder.
+      ["run_shell_command", { command: "cat a.ts", dir_path: "src" }, "read src/a.ts"],
+      ["run_shell_command", { command: "cat a.ts", directory: "src" }, "read src/a.ts"],
     ];
     for (const [tool, input, want] of rows) assert.equal(kind(tool, input), want, `${tool} ${JSON.stringify(input)}`);
   });
@@ -226,6 +290,27 @@ describe("Session.stats.retrieval", () => {
   it("precision: a file read and later edited, by an edit tool or a shell write", () => {
     const r = retrieval(read("a.ts"), read("/work/demo/b.ts"), read("c.ts"), edit("/work/demo/a.ts"), bash("sed -i 's/x/y/' b.ts"), edit("d.ts"));
     assert.deepEqual(r, { reads: 3, filesRead: 3, editedAfterRead: 2, searches: 0, beforeFirstEdit: 3 });
+  });
+
+  it("a shell write through Droid's Execute or Antigravity's run_command edits the file it names", () => {
+    for (const [tool, input] of [["Execute", { command: "sed -i 's/x/y/' a.ts" }], ["run_command", { CommandLine: "sed -i 's/x/y/' a.ts", Cwd: "/work/demo" }]] as const) {
+      const s = buildSession([...read("a.ts"), ...call(tool, input)]);
+      assert.equal(s.stats.filesChanged, 1, tool);
+      assert.deepEqual(s.stats.retrieval, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 }, tool);
+    }
+  });
+
+  it("a shell write through run_command resolves against its Cwd, as its reads do", () => {
+    const s = buildSession([...call("view_file", { AbsolutePath: "/work/demo/src/a.ts" }), ...call("run_command", { CommandLine: "sed -i 's/x/y/' a.ts", Cwd: "/work/demo/src" }), ...call("run_command", { CommandLine: "cat b.ts", Cwd: "/work/demo/src" }), edit("src/b.ts")]);
+    assert.equal(s.stats.filesChanged, 2);
+    // The sed's a.ts is the src/a.ts read before it.
+    assert.deepEqual(s.stats.retrieval, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 1 });
+  });
+
+  it("a Gemini shell call in a subfolder (dir_path, directory) reads and writes the files under it", () => {
+    const s = buildSession([...read("src/b.ts"), ...call("run_shell_command", { command: "cat a.ts", dir_path: "src" }), ...call("run_shell_command", { command: "sed -i 's/x/y/' b.ts", directory: "src" }), edit("src/a.ts")]);
+    assert.equal(s.stats.filesChanged, 2);
+    assert.deepEqual(s.stats.retrieval, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
   });
 
   it("a relative read from an event with no cwd resolves against the session's", () => {
@@ -300,6 +385,21 @@ describe("Session.stats.retrieval", () => {
     // A search tool that reports "No files found" as a failure.
     assert.equal(empty(call("Glob", { pattern: "*.x" }, { ok: false, output: "No files found" })), 1);
     assert.equal(empty(bash("ls src", { output: "\n<shellId: 0 completed with exit code 0>" })), 1);
+    // grep's warnings on stderr are not output: a stray `\` in the pattern, egrep's notice that it is obsolescent.
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 1\ngrep: warning: stray \\ before -" })), 1);
+    assert.equal(empty(bash("egrep -rn 'a|b' src", { ok: false, output: "Exit code 1\negrep: warning: egrep is obsolescent; using grep -E" })), 1);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src | head", { output: '{"stdout":"","stderr":"grep: warning: stray \\\\ before -\\n","interrupted":false,"isImage":false}' })), 1);
+    // A search that prints counts and counted nothing: `grep -c` prints 0 for each file and exits 1, `| wc -l` prints 0.
+    assert.equal(empty(bash("grep -c foo a.ts", { ok: false, output: "Exit code 1\n0" })), 1);
+    assert.equal(empty(bash("grep -rc foo src", { ok: false, output: "Exit code 1\nsrc/a.ts:0\nsrc/b.ts:0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | wc -l", { output: '{"stdout":"0\\n","stderr":"","interrupted":false,"isImage":false}' })), 1);
+    assert.equal(empty(bash("ls src | wc -l", { output: "       0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | wc", { output: "      0       0       0" })), 1);
+    assert.equal(empty(bash("grep -rn foo src | grep -c bar", { ok: false, output: "Exit code 1\n0" })), 1);
+    // The lines a literal `echo` in the command prints are not what the search found.
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "no matches" })), 1);
+    assert.equal(empty(bash('echo "--- src ---"; grep -rn foo src', { ok: false, output: "Exit code 1\n--- src ---" })), 1);
+    assert.equal(empty(bash('grep -rn foo src || echo "none" >&2', { output: '{"stdout":"","stderr":"none\\n","interrupted":false,"isImage":false}' })), 1);
   });
 
   it("a search that found something, printed nothing by design, or was cut is not empty", () => {
@@ -313,12 +413,28 @@ describe("Session.stats.retrieval", () => {
     // Any other failure, a cut output, a stopped call, and a call that also read are not "found nothing".
     assert.equal(empty(bash("grep -rn foo src", { ok: false, output: "Exit code 2\ngrep: src: No such file or directory" })), 0);
     assert.equal(empty(bash("findstr /s /n foo *.ts", { ok: false, output: "Exit code 1\nFINDSTR: Cannot open x.ts" })), 0);
+    // A grep warning beside matches or beside an error.
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { output: "grep: warning: stray \\ before -\nsrc/a.ts:3: a-b" })), 0);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 2\ngrep: warning: stray \\ before -\ngrep: src: No such file or directory" })), 0);
+    assert.equal(empty(bash("grep -rn 'a\\-b' src | head", { output: '{"stdout":"src/a.ts:3: a-b\\n","stderr":"grep: warning: stray \\\\ before -\\n","interrupted":false,"isImage":false}' })), 0);
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { cut: { bytes: 1_000_000 } } })), 0);
     assert.equal(empty(bash("grep -rn foo src", { output: "", end: { interrupted: true } })), 0);
     assert.equal(empty(bash("cat a.ts && grep foo b.ts", { output: "(Bash completed with no output)" })), 0);
     // A shell search's matches that start like "No files found" are matches.
     assert.equal(empty(bash('grep "No files found" msgs.txt', { output: "No files found in src\nNo files found in lib" })), 0);
     assert.equal(empty(bash('grep -h "No matches found" a.log', { output: "No matches found for x" })), 0);
+    // A count that is not zero, a 0 that grep matched, and a count beside an error.
+    assert.equal(empty(bash("grep -rc foo src", { output: "src/a.ts:0\nsrc/b.ts:2" })), 0);
+    assert.equal(empty(bash("grep -rn foo src | wc -l", { output: "3" })), 0);
+    assert.equal(empty(bash("grep 0 nums.txt", { output: "0" })), 0);
+    assert.equal(empty(bash("grep -c foo a.ts b.ts", { ok: false, output: "Exit code 2\na.ts:0\ngrep: b.ts: No such file or directory" })), 0);
+    // Counts a later command reshaped: one file's (`| tail -1`), or the files that counted none.
+    assert.equal(empty(bash("grep -c foo a.ts b.ts | tail -1", { output: "b.ts:0" })), 0);
+    assert.equal(empty(bash("grep -c foo a.ts b.ts | grep ':0$'", { output: "b.ts:0" })), 0);
+    // A match or an error beside what an `echo` printed, and a quiet search, whose status says nothing here.
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "src/a.ts:3: foo" })), 0);
+    assert.equal(empty(bash("grep -rn foo src || echo 'no matches'", { output: "grep: src: No such file or directory\nno matches" })), 0);
+    assert.equal(empty(bash("grep -q foo a.ts && echo yes", { output: "yes" })), 0);
   });
 
   it("a read after `cd` into a Windows folder with spaces keys like the edit of the same file", () => {
@@ -331,6 +447,13 @@ describe("Session.stats.retrieval", () => {
     const at = { cwd: "C:\\work\\demo" };
     const r = retrieval(read("C:\\work\\demo\\a.ts", { at }), bash("cat /c/other/b.ts", { at }), edit("/c/work/demo/a.ts", at), edit("/c/other/b.ts", at));
     assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
+  });
+
+  it("a file a shell call reads and then writes the Git Bash way (`/c/x`) is a file changed after it was read", () => {
+    const at = { cwd: "C:\\proj" };
+    const s = buildSession([...bash("cat /c/proj/b.ts", { at }), ...bash("sed -i 's/x/y/' /c/proj/b.ts", { at })]);
+    assert.equal(s.stats.filesChanged, 1);
+    assert.deepEqual(s.stats.retrieval, { reads: 1, filesRead: 1, editedAfterRead: 1, searches: 0, beforeFirstEdit: 1 });
   });
 
   it("the fold saved between events (as ingest does) ends where one pass does", () => {
