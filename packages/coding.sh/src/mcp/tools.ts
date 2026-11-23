@@ -836,7 +836,8 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const { improveReport } = await import("./improve.ts");
         const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
-        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}), ...(a.headless === true ? { headless: true } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+        // `next` names each example session by a reference that opens it, as the other tools list them.
+        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}), ...(a.headless === true ? { headless: true } : {}) }, { cwd: c.cwd, env: c.env, now: c.now(), ref: await shortIds(ctx) });
       },
     },
     {

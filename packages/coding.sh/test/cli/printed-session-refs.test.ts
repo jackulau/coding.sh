@@ -8,9 +8,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import * as evalCmd from "../../src/cli/commands/eval.ts";
+import * as improve from "../../src/cli/commands/improve.ts";
 import * as show from "../../src/cli/commands/show.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
 import { createCodingShMcp } from "../../src/mcp/server.ts";
+import { improveWorld } from "../helpers-improve.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
 /** The id of the session `ref` opens with `coding.sh show`, or the error it gets. */
@@ -19,16 +21,61 @@ async function opens(sb: Sandbox, ref: string): Promise<string> {
   return r.error ? `error: ${r.error.message}` : r.json.session.id;
 }
 
-/** One MCP tool call against the sandbox's store, from `cwd`: its text and whether it failed. */
-async function mcpCall(sb: Sandbox, cwd: string, name: string, args: Record<string, unknown>): Promise<{ isError?: boolean; text: string }> {
+/**
+ * The words a POSIX shell passes for a printed command line: split on blanks, grouped by quotes, a
+ * backslash keeping the next character, and an unquoted or double-quoted `$name` expanded to nothing.
+ */
+function shellWords(line: string): string[] {
+  const words: string[] = [];
+  let word: string | undefined;
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (quote === "'") {
+      if (ch === "'") quote = undefined;
+      else word += ch;
+      continue;
+    }
+    if (ch === quote) {
+      quote = undefined;
+      continue;
+    }
+    if (!quote && (ch === " " || ch === "\t")) {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+      continue;
+    }
+    word ??= "";
+    const variable = ch === "$" ? /^\$(\{[^}]*\}|[A-Za-z_]\w*|[0-9?#@*!$-])/.exec(line.slice(i)) : null;
+    if (variable) i += variable[0].length - 1;
+    else if (!quote && (ch === "'" || ch === '"')) quote = ch;
+    else if (ch === "\\") word += line[++i] ?? "";
+    else word += ch;
+  }
+  if (word !== undefined) words.push(word);
+  return words;
+}
+
+/** The session reference in a printed `coding.sh <cmd...> <ref> [--flag ...]`, as a shell passes it: one word, or the test fails. */
+function refIn(line: string, ...cmd: string[]): string {
+  const [bin, ...args] = shellWords(line.trim());
+  assert.match(bin ?? "", /^coding\.?sh$/, line);
+  assert.deepEqual(args.slice(0, cmd.length), cmd, line);
+  const [ref, next] = args.slice(cmd.length);
+  assert.ok(ref !== undefined && (next === undefined || next.startsWith("-")), `${line}: the shell passes ${JSON.stringify(args.slice(cmd.length))}`);
+  return ref;
+}
+
+/** One MCP tool call against the sandbox's store, from `cwd`: its text, its structured result and whether it failed. */
+async function mcpCall(sb: Sandbox, cwd: string, name: string, args: Record<string, unknown>): Promise<{ isError?: boolean; text: string; data?: any }> {
   // In-process MCP reads resolve agent homes through process.env: point them at the sandbox.
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   Object.assign(process.env, { HOME: sb.env.HOME, USERPROFILE: sb.env.HOME });
   const mcp = createCodingShMcp({ env: sb.env as Record<string, string>, cwd, log: () => {}, autoIngest: async () => ({ pendingFiles: 0, indexing: false }) });
   try {
     const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
-    const res = r!.result as { isError?: boolean; content: { text: string }[] };
-    return { isError: res.isError, text: res.content[0]!.text };
+    const res = r!.result as { isError?: boolean; content: { text: string }[]; structuredContent?: unknown };
+    return { isError: res.isError, text: res.content[0]!.text, data: res.structuredContent };
   } finally {
     await mcp.close();
     for (const [k, v] of Object.entries(saved)) {
@@ -131,5 +178,67 @@ describe("eval new names a session whose id is latest by its alias when the ledg
     assert.ok(named && again, `${r.error.message}\n${r.error.next}`);
     assert.equal(await opens(sb, named), "latest");
     assert.equal(await opens(sb, again), "latest");
+  });
+});
+
+describe("improve names each session by a reference that opens it", () => {
+  let sb: Sandbox;
+  /** improveWorld stores: every session lost prompt cache; and every session went wrong after the CLAUDE.md change. */
+  let cost: Sandbox & { repo: string };
+  let regressed: Sandbox & { repo: string };
+  before(async () => {
+    sb = sandbox();
+    // The two newest sessions after the change: one whose id holds a space, one whose id is `latest`.
+    const ids = { "after-5": SPACED, "after-4": "latest" };
+    const on = async (name: string, o: Parameters<typeof improveWorld>[2]) => {
+      const w = await improveWorld(sb.root, name, { ...o, ids });
+      return { ...sb, env: { ...sb.env, ...w.env, SHELL: "/bin/sh" }, repo: w.repo };
+    };
+    cost = await on("cost", { afterFlagged: 0, cacheBreaks: true });
+    regressed = await on("regressed", { afterFlagged: 6, beforeTested: true });
+  });
+  after(() => sb.cleanup());
+
+  test("the See it happen steps, in text and --json, and the first next step open each issue's example", async () => {
+    const j = await runCmd(improve, cost, { json: true, cwd: cost.repo });
+    const issues = j.json.issues as { examples: { sessionId: string }[]; next: { label: string; command: string }[] }[];
+    const examples = issues.map((i) => i.examples[0]!.sessionId);
+    assert.equal(examples[0], SPACED, "the top issue's example is a session the old text got wrong");
+    const inJson = issues.map((i) => refIn(i.next.find((s) => s.label === "See it happen")!.command, "show"));
+    const t = await runCmd(improve, cost, { cwd: cost.repo });
+    const inText = [...t.stdout.matchAll(/See it happen: (.+)$/gm)].map((m) => refIn(m[1]!, "show"));
+    for (const refs of [inJson, inText]) assert.deepEqual(await Promise.all(refs.map((ref) => opens(cost, ref))), examples);
+    const first = /Start with the first one:\n(.+)$/m.exec(t.stderr)?.[1];
+    assert.ok(first, t.stderr);
+    assert.equal(await opens(cost, refIn(first, "show")), SPACED);
+  });
+
+  test("improve fix on an issue with no line to add names the session to see by a reference that opens it", async () => {
+    const r = await runCmd(improve, cost, { action: "fix", positionals: ["1"], cwd: cost.repo });
+    assert.equal(r.error?.reason, "no_rule", String(r.error?.message));
+    assert.equal(await opens(cost, refIn(r.error.next[1], "show")), SPACED);
+  });
+
+  test("improve check lists the sessions still flagged, and names the one to see, by references that open them", async () => {
+    const j = await runCmd(improve, regressed, { action: "check", json: true, cwd: regressed.repo });
+    const flagged = (j.json.changes[0].after.flaggedSessions as { id: string }[]).map((s) => s.id).slice(0, 5);
+    assert.deepEqual(flagged.slice(0, 2), [SPACED, "latest"], "the newest flagged sessions are the ones the old text got wrong");
+    const t = await runCmd(improve, regressed, { action: "check", cwd: regressed.repo });
+    assert.equal(t.code, 1, t.stderr);
+    const list = /Still flagged after it[^\n]*\n((?: {4}.*\n)+)/.exec(t.stdout)?.[1] ?? "";
+    const rows = [...list.matchAll(/^ {4}(\S+) {2}/gm)].map((m) => m[1]!);
+    assert.deepEqual(await Promise.all(rows.map((ref) => opens(regressed, ref))), flagged, t.stdout);
+    const see = /See the sessions that went wrong after it:\n(.+)$/m.exec(t.stderr)?.[1];
+    assert.ok(see, t.stderr);
+    assert.equal(await opens(regressed, refIn(see, "show")), SPACED);
+  });
+
+  test("the improve tool over MCP names each example in its next commands by a reference that opens it", async () => {
+    const r = await mcpCall(cost, cost.repo, "improve", {});
+    assert.notEqual(r.isError, true, r.text);
+    const issues = r.data.issues as { example: { sessionId: string }; next: string[] }[];
+    assert.equal(issues[0]!.example.sessionId, SPACED);
+    const refs = issues.map((i) => refIn(i.next.find((n) => / show /.test(n))!, "show"));
+    assert.deepEqual(await Promise.all(refs.map((ref) => opens(cost, ref))), issues.map((i) => i.example.sessionId));
   });
 });
