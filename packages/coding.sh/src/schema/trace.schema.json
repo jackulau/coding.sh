@@ -887,6 +887,47 @@
       ],
       "additionalProperties": false
     },
+    "RetrievalStats": {
+      "description": "Session.stats.retrieval: how a session found what it worked on. A read shows a file's content\n(Read, `cat`, `sed`, `head`, Get-Content, `git show <rev>:<path>`); a search looks for or lists\nfiles (Grep, Glob, `grep`, `rg`, `find`, `ls`, Select-String, Get-ChildItem). A shell line that\nreads and searches counts as both.",
+      "type": "object",
+      "properties": {
+        "reads": {
+          "description": "Tool calls that read a file, failed ones included.",
+          "type": "number"
+        },
+        "filesRead": {
+          "description": "Distinct files those reads named. A read that failed, or whose path is a variable or a glob, names none.",
+          "type": "number"
+        },
+        "editedAfterRead": {
+          "description": "Of the files read, those the session edited after reading them (an edit tool or a shell write).",
+          "type": "number"
+        },
+        "searches": {
+          "description": "Tool calls that searched for or listed files.",
+          "type": "number"
+        },
+        "emptySearches": {
+          "description": "Searches that found nothing: no output, \"No matches found\" or \"No files found\", or exit status 1 with nothing printed. Unset when none.",
+          "type": "number"
+        },
+        "web": {
+          "description": "Web searches and page fetches (WebSearch, WebFetch). Unset when none.",
+          "type": "number"
+        },
+        "beforeFirstEdit": {
+          "description": "Tool calls that read or searched before the session's first edit (a call that does both counts once). Unset when the session edited nothing.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "reads",
+        "filesRead",
+        "editedAfterRead",
+        "searches"
+      ],
+      "additionalProperties": false
+    },
     "Session": {
       "type": "object",
       "properties": {
@@ -1012,6 +1053,10 @@
             "compactionRefetches": {
               "description": "Read-only calls that fetched again what a compaction dropped (core/waste.ts). Unset when none did.",
               "$ref": "#/$defs/CompactionRefetchStats"
+            },
+            "retrieval": {
+              "description": "Reads, searches and web calls, and the files read and then edited (core/retrieval.ts). Unset when the session read and searched nothing.",
+              "$ref": "#/$defs/RetrievalStats"
             },
             "cacheBreaks": {
               "description": "Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did.",
