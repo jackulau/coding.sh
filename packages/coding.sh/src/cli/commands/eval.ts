@@ -29,12 +29,30 @@ import { git } from "../../runner/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, notFoundWithBacklog, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
+import { nextStepBin, runCommand } from "../next-steps.ts";
 import { ago, CliError, clean } from "../output.ts";
+import { findCommand } from "../registry.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
 
 /** By id or unique name. */
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
+
+/**
+ * A note or message that names coding.sh commands mid-sentence ("…, then coding.sh eval validate
+ * <task>"), with each command named as the user's shell runs it: nextStepBin (`codingsh` in
+ * PowerShell or cmd, the npx form under npx), and `run "--"` where PowerShell would drop a bare
+ * `--`. out.next and out.command rewrite only a leading `coding.sh`. A `coding.sh` that is not
+ * followed by one of the CLI's commands (a path, the product's name) stays as it is.
+ */
+export function commandsForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  const bin = nextStepBin(env, platform);
+  if (bin === "coding.sh") return text;
+  return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)( --(?= |$))?/g, (m, name: string, dashes: string | undefined) => {
+    if (!findCommand(name)) return m;
+    return name === "run" && dashes ? runCommand(env, "", platform).trimEnd() : `${bin} ${name}${dashes ?? ""}`;
+  });
+}
 
 /**
  * One task dir: an exported task (task.json with a start snapshot), a
@@ -161,10 +179,10 @@ export async function run(c: CommandContext): Promise<number> {
           if (e instanceof StatementError) {
             throw new CliError(`Couldn't write a requirement ledger for ${s.id}: ${e.message}`, { reason: "draft_failed", next: ["Retry, use another model, or take one obligation per user turn:", `coding.sh eval new ${s.id} --statement ledger`] });
           }
-          throw new CliError(`Couldn't draft a task from ${s.id}: ${e instanceof Error ? e.message : String(e)}`, { reason: "draft_failed" });
+          throw new CliError(`Couldn't draft a task from ${s.id}: ${commandsForShell(e instanceof Error ? e.message : String(e), c.env)}`, { reason: "draft_failed" });
         }
         await ctx.index.putTask(task);
-        const notes = task.meta.notes;
+        const notes = task.meta.notes.map((n) => commandsForShell(n, c.env));
         if (out.json) {
           out.data({ outcome: "created", task: taskJson(task), notes });
           return 0;
@@ -220,14 +238,17 @@ export async function run(c: CommandContext): Promise<number> {
               spin.stop();
             }
             if (!o.report.ok) failed++;
-            docs.push({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors: o.errors, notes: o.notes, steps: o.steps });
+            // The commands they name, in text and --json, as the user's shell runs them.
+            const errors = o.errors.map((e) => commandsForShell(e, c.env));
+            const notes = o.notes.map((n) => commandsForShell(n, c.env));
+            docs.push({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors, notes, steps: o.steps });
             if (out.json) continue;
             if (!many) {
-              out.print(formatValidation(o));
+              out.print(formatValidation({ ...o, errors, notes }));
               if (o.report.ok) out.ok(`${task.id} validated`);
               else out.fail(`${task.id} did not validate`);
             } else if (o.report.ok) out.ok(`${task.name} validated`);
-            else out.fail(`${task.name} did not validate${o.errors[0] ? `: ${oneLine(o.errors[0]).slice(0, 160)}` : ""}`);
+            else out.fail(`${task.name} did not validate${errors[0] ? `: ${oneLine(errors[0]).slice(0, 160)}` : ""}`);
           }
           if (out.json) out.data(many ? { tasks: docs, validated: unique.length - failed, rejected: failed } : docs[0]!);
           else if (many) {
@@ -411,7 +432,7 @@ export async function run(c: CommandContext): Promise<number> {
           try {
             task = await importDir(dir, ctx, c.env);
           } catch (e) {
-            throw new CliError(`Couldn't import ${arg}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_file" });
+            throw new CliError(`Couldn't import ${arg}: ${commandsForShell(e instanceof Error ? e.message : String(e), c.env)}`, { reason: "invalid_file" });
           }
           await ctx.index.putTask(task);
           imported.push(task);

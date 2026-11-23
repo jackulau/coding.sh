@@ -7,14 +7,15 @@
 //     usage and file-change heuristics shared across agents (test summaries come from
 //     _shared/heuristics.ts, the parser every adapter uses)
 //   - processes: binary lookup, version probe, headless spawn with a group-kill timeout
-//   - transcripts: JSONL readers, directory walks, read-only SQLite copies
+//   - transcripts: JSONL readers, directory walks, read-only SQLite (in place or a copy)
 import { spawn, execFile } from "../../core/spawn.ts";
 import { randomBytes } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statfsSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { splitLines } from "../_shared/jsonl.ts";
+import { spawnFailure } from "../_shared/run.ts";
 import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -745,6 +746,8 @@ export interface SpawnResult {
   durationMs: number;
   stdoutTail: string;
   stderrTail: string;
+  /** The program never started: the spawn's error message (AgentRunOutput.spawnError). */
+  spawnError?: string;
 }
 
 /**
@@ -769,7 +772,8 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
       windowsHide: true,
     });
   } catch (e) {
-    return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: (e as Error).message });
+    const message = (e as Error).message;
+    return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: message, spawnError: message });
   }
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
@@ -793,13 +797,16 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
     if (o.onLine && partial.trim()) safeCall(o.onLine, partial);
     await tee.close();
     const extraErr = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
-    return {
+    const res: SpawnResult = {
       exitCode: r.error ? (r.error.code === "ENOENT" ? 127 : 126) : r.code,
       timedOut: r.timedOut,
       durationMs: Date.now() - started,
       stdoutTail: out.text(),
       stderrTail: extraErr ? `${err.text()}\n${extraErr}` : err.text(),
     };
+    const spawnError = spawnFailure(r.error);
+    if (spawnError) res.spawnError = spawnError;
+    return res;
   });
 }
 
@@ -832,6 +839,7 @@ export function jsonLines(onJson: (o: Json) => void): (line: string) => void {
 
 export function toRunOutput(r: SpawnResult, sessionId: string | undefined, usage: Usage | undefined): AgentRunOutput {
   const o: AgentRunOutput = { exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, stdoutTail: r.stdoutTail, stderrTail: r.stderrTail };
+  if (r.spawnError) o.spawnError = r.spawnError;
   if (sessionId) o.sessionId = sessionId;
   if (usage) o.usage = usage;
   return o;
@@ -1015,19 +1023,60 @@ export async function loadSqlite(): Promise<SqliteModule | undefined> {
   }
 }
 
+/** Bytes free for this user on a folder's volume; undefined when the platform can't tell. */
+export type FreeSpace = (dir: string) => number | undefined;
+
+const statfsFree: FreeSpace = (dir) => {
+  try {
+    const s = statfsSync(dir);
+    return s.bavail * s.bsize;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * What a copy of `need` bytes must leave free in the temp directory: as much as it takes, up to 2 GB. A
+ * big copy that only just fits leaves the volume nearly full while it is read, and the temp directory is
+ * often on the volume the agent writes its own database to; a copy of a few MB on a nearly full disk is
+ * still made. The cap keeps a copy of several GB from needing twice its size free.
+ */
+export const copyMargin = (need: number): number => Math.min(need, 2e9);
+
+/** Decimal units, as cli/output.ts bytes writes them. */
+function bytes(n: number): string {
+  if (n < 1000) return `${n} B`;
+  if (n < 1e6) return `${(n / 1e3).toFixed(1)} kB`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(1)} MB`;
+  return `${(n / 1e9).toFixed(1)} GB`;
+}
+
+const sizeOf = (path: string): number => statSync(path, { throwIfNoEntry: false })?.size ?? 0;
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+
 /**
  * Open a COPY of a SQLite database read-only (WAL/SHM included) so the agent's
  * live writer never sees our lock. Caller must call close(). The copy lives in
  * tmpdir() until close() or this process's exit; copies left by a killed
  * process are removed by the next open (_shared/sqlite-copies.ts).
- * A copy that fails (no room in tmpdir()) resolves undefined, or throws with
- * `throwOnError`: a caller for which the database is its only source says so.
+ * No copy is made when it would leave less than copyMargin free in tmpdir()
+ * (`room` measures it; replaced in tests). A copy that is refused or fails
+ * resolves undefined, or throws with `throwOnError`: a caller for which the
+ * database is its only source says so.
  */
-export async function openSqliteCopy(dbPath: string, o: { throwOnError?: boolean } = {}): Promise<{ db: import("node:sqlite").DatabaseSync; close: () => void } | undefined> {
+export async function openSqliteCopy(dbPath: string, o: { throwOnError?: boolean; room?: FreeSpace } = {}): Promise<{ db: import("node:sqlite").DatabaseSync; close: () => void } | undefined> {
   if (!existsSync(dbPath)) return undefined;
   const sqlite = await loadSqlite();
   if (!sqlite) return undefined;
   reapSqliteCopies();
+  const into = tmpdir();
+  const need = sizeOf(dbPath) + sizeOf(`${dbPath}-wal`) + sizeOf(`${dbPath}-shm`);
+  const free = (o.room ?? statfsFree)(into);
+  const margin = copyMargin(need);
+  if (free !== undefined && free - need < margin) {
+    if (o.throwOnError) throw new Error(`could not copy ${dbPath} to ${into}: that needs ${bytes(need + margin)} free (${bytes(need)} for the copy and ${bytes(margin)} left over), and ${bytes(free)} is free`);
+    return undefined;
+  }
   const dir = makeSqliteCopyDir();
   const dst = join(dir, basename(dbPath));
   try {
@@ -1040,9 +1089,109 @@ export async function openSqliteCopy(dbPath: string, o: { throwOnError?: boolean
     return { db, close: () => releaseSqliteCopyDir(dir) };
   } catch (e) {
     releaseSqliteCopyDir(dir);
-    if (o.throwOnError) throw new Error(`could not copy ${dbPath} to ${tmpdir()}: ${(e as Error).message}`, { cause: e });
+    if (o.throwOnError) throw new Error(`could not copy ${dbPath} to ${into}: ${(e as Error).message}`, { cause: e });
     return undefined;
   }
+}
+
+/** How long a read of a database opened in place waits for a lock before it fails (SQLITE_BUSY). */
+const IN_PLACE_BUSY_MS = 100;
+
+/** A WAL-mode database (header bytes 18 and 19 are 2) whose -wal and -shm files exist: its writer has it open. */
+function walOpen(dbPath: string): boolean {
+  const head = Buffer.alloc(100);
+  let fd: number | undefined;
+  try {
+    fd = openSync(dbPath, "r");
+    if (readSync(fd, head, 0, 100, 0) < 100) return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  return head.toString("latin1", 0, 16) === "SQLite format 3\0" && head[18] === 2 && head[19] === 2 && isFile(`${dbPath}-wal`) && isFile(`${dbPath}-shm`);
+}
+
+/**
+ * Open a big, live SQLite database read-only where it is, with no copy, when that can't get in its
+ * writer's way: the database is in WAL mode and its -wal and -shm files exist (walOpen). A WAL reader
+ * never blocks the writer; a long read transaction only holds checkpoints back, so read in short ones
+ * (readSnapshot). The connection is read-only, with query_only set and a short busy timeout; the
+ * database and its WAL are never written (a WAL reader takes its read locks in -shm, as every reader does).
+ * Anything else is opened as a copy (openSqliteCopy, with the same options): a database in
+ * rollback-journal mode, whose readers would block its writer; a WAL database without -wal or -shm,
+ * which opening it in place would create next to it; and one whose open or first read fails (locked,
+ * or held in exclusive locking mode). `inPlace` says which it got.
+ */
+export async function openSqliteInPlace(dbPath: string, o: { throwOnError?: boolean; room?: FreeSpace } = {}): Promise<{ db: import("node:sqlite").DatabaseSync; close: () => void; inPlace: boolean } | undefined> {
+  if (!existsSync(dbPath)) return undefined;
+  const sqlite = await loadSqlite();
+  if (!sqlite) return undefined;
+  if (walOpen(dbPath)) {
+    let db: import("node:sqlite").DatabaseSync | undefined;
+    try {
+      db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      db.exec(`PRAGMA busy_timeout = ${IN_PLACE_BUSY_MS}; PRAGMA query_only = 1`);
+      db.prepare("SELECT count(*) FROM sqlite_master").get();
+      reapSqliteCopies(); // what openSqliteCopy does on every open: copies a killed read left
+      const live = db;
+      let open = true;
+      return {
+        db: live,
+        close: () => {
+          if (open) live.close();
+          open = false;
+        },
+        inPlace: true,
+      };
+    } catch {
+      try {
+        db?.close();
+      } catch {
+        // never opened
+      }
+    }
+  }
+  const copy = await openSqliteCopy(dbPath, o);
+  return copy && { ...copy, inPlace: false };
+}
+
+/**
+ * Run `read` in one read transaction, so all it reads comes from one snapshot of the database. Keep
+ * it short on a database read in place: until it ends, the writer's checkpoints can't pass it.
+ */
+export function readSnapshot<T>(db: import("node:sqlite").DatabaseSync, read: () => T): T {
+  db.exec("BEGIN");
+  try {
+    const out = read();
+    db.exec("COMMIT");
+    return out;
+  } catch (e) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // no transaction left to end
+    }
+    throw e;
+  }
+}
+
+/** SQLITE_BUSY or SQLITE_LOCKED ("database is locked"): another connection holds a lock this read needs. */
+export function sqliteBusy(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const { errcode, message } = e as { errcode?: unknown; message?: unknown };
+  if (typeof errcode === "number") return (errcode & 0xff) === 5 || (errcode & 0xff) === 6;
+  return /database (table )?is locked/i.test(String(message));
+}
+
+/**
+ * A read error about the rows' shape, not the database's state: SQLITE_ERROR (`no such column`) or an
+ * error SQLite did not raise. Busy, I/O errors, a corrupt page, a full disk and the rest are state.
+ */
+export function sqliteShapeError(e: unknown): boolean {
+  if (sqliteBusy(e)) return false;
+  const errcode = typeof e === "object" && e !== null ? (e as { errcode?: unknown }).errcode : undefined;
+  return typeof errcode !== "number" || (errcode & 0xff) === 1;
 }
 
 /** Column names of a table (empty when it doesn't exist). */

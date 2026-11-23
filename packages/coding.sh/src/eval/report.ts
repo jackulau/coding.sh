@@ -230,9 +230,10 @@ function verdict(r: SuiteReport): string {
 /**
  * The `eval run` report as GitHub-flavored Markdown, for a CI step summary or a
  * pull request comment: one row per suite, then each suite's tasks in a
- * <details> block, open when the suite failed.
+ * <details> block, open when the suite failed. `bin` names the CLI in the
+ * commands it prints, as the user's shell runs it (default `coding.sh`).
  */
-export function renderSuitesMarkdown(suites: readonly MarkdownSuite[], o: { transcript?: (sessionId: string) => string; limit?: number } = {}): string {
+export function renderSuitesMarkdown(suites: readonly MarkdownSuite[], o: { transcript?: (sessionId: string) => string; limit?: number; bin?: string } = {}): string {
   const failed = suites.filter((s) => (s.report ? !s.report.ok : (s.exitCode ?? 1) !== 0)).length;
   const n = suites.length;
   const out: string[] = [];
@@ -263,7 +264,7 @@ export function renderSuitesMarkdown(suites: readonly MarkdownSuite[], o: { tran
       const first = t.failedSession ? `\`${(o.transcript ? o.transcript(t.failedSession) : t.failedSession).replace(/`/g, "")}\`` : t.passed < t.n && t.reason ? cell(t.reason, 80) : t.passed === t.n && t.unknownReason ? cell(t.unknownReason, 80) : "";
       out.push(`| ${cell(t.name, 80)} | ${t.n ? `${t.passed}/${t.n}` : "—"} | ${status} | ${first} |`);
     }
-    if (r.rows.length > limit) out.push("", `${r.rows.length - limit} more ${u}s: \`coding.sh eval run ${s.suite.replace(/`/g, "")} --json\` lists them all.`);
+    if (r.rows.length > limit) out.push("", `${r.rows.length - limit} more ${u}s: \`${o.bin ?? "coding.sh"} eval run ${s.suite.replace(/`/g, "")} --json\` lists them all.`);
     const lines = [
       ...(r.neverPassed.length ? [`Never passed: ${r.neverPassed.join(", ")}. A ${u} no trial passes is most often a broken ${u} or grader; read its transcript or output first.`] : []),
       ...(r.flaky.length ? [`Flaky: ${r.flaky.join(", ")}. These pass some trials and fail others.`] : []),

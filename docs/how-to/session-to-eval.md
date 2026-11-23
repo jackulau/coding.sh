@@ -225,6 +225,11 @@ so after `eval run` it is still your own session.
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.
 
+A session recorded with `coding.sh run -- <agent command>` has no typed prompt, so its command's
+prompt argument is used: the value of `-p`, `--prompt`, `--print`, `--message`, `--instruction`,
+`--task` or `--query` if it has a space, or else the last argument with a space that is not code
+(`sh -c "npm run build"`), a `NAME=value` setting or a path.
+
 ## What marks a session as failed
 
 Flags are found on every ingest. Some of them:

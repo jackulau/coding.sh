@@ -225,22 +225,35 @@ const PROMPT_FLAG_EQ = /^--(prompt|message|instruction|task|query)=([\s\S]+)$/;
 
 const reads = (s: string | undefined): s is string => typeof s === "string" && s.trim() !== "" && !s.startsWith("-");
 
+/** Flags whose value is code or a path, never a prompt: `sh -c`, `node -e`, `cmd /c`, `pwsh -Command`, `--config`. */
+const CODE_OR_PATH_FLAG = /^(?:-[ce]|\/[ck]|--?(?:command|encodedcommand|eval|config|cwd|dir|directory|workdir|file|settings|output|env-file|log-file))$/i;
+/** A `NAME=value` setting, as `env` takes them. */
+const SETTING = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** A path from the root, home, the current folder or a drive. `/review the diff`, with no second slash, is a slash command. */
+const PATH_START = /^(?:~[\\/]|\.\.?[\\/]|[A-Za-z]:[\\/]|\\\\|\/[^/]*\/)/;
+
 /**
  * The prompt in a wrapped command line, e.g. `claude -p "fix the tests"` or
  * `./agent.sh "make sum add"` (the wrapper adapter's own `run` passes the
- * instruction as the last argument). Positional arguments must contain
- * whitespace so file names and subcommands are never taken for a prompt.
+ * instruction as the last argument). A prompt must contain whitespace, in
+ * every form, so file names, subcommands and one-word values such as
+ * `--task=lint` are never taken for one. Without a prompt flag, the last
+ * argument with whitespace is the prompt unless it is code
+ * (`sh -c "npm run build"`), a `NAME=value` setting or a path
+ * (`--config "/srv/my configs/agent.toml"`).
  */
 export function instructionFromArgs(args: readonly string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
     const eq = PROMPT_FLAG_EQ.exec(a);
-    if (eq && (eq[2] as string).trim()) return (eq[2] as string).trim();
+    if (eq && /\s/.test((eq[2] as string).trim())) return (eq[2] as string).trim();
     if (PROMPT_FLAGS.has(a) && reads(args[i + 1]) && /\s/.test((args[i + 1] as string).trim())) return (args[i + 1] as string).trim();
   }
   for (let i = args.length - 1; i >= 0; i--) {
     const a = args[i] as string;
-    if (reads(a) && /\s/.test(a.trim())) return a.trim();
+    if (!reads(a) || !/\s/.test(a.trim())) continue;
+    if (SETTING.test(a) || PATH_START.test(a.trim()) || CODE_OR_PATH_FLAG.test(args[i - 1] ?? "")) continue;
+    return a.trim();
   }
   return undefined;
 }

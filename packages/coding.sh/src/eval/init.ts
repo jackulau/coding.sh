@@ -25,7 +25,7 @@ import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
 import { snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { insideDir } from "./decision.ts";
-import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
+import { CANDIDATE_POOL, rankSessions, rejectSummary, type RankOpts } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
@@ -111,6 +111,10 @@ export interface InitDeps {
   /** Snapshot reads (default: the git-backed store). */
   git?: SnapshotOps;
   now?: number;
+  /** Whether a session's start state can be read on this machine (tests with made-up roots; default eval/candidates.ts startReadable). */
+  startReadable?: (root: string) => boolean | Promise<boolean>;
+  /** One argument of a command a note names, quoted for the user's shell (the CLI's quoteArg; default sh quoting). */
+  quoteArg?: (s: string) => string;
 }
 
 export interface InitResult {
@@ -281,7 +285,7 @@ export async function recentSessions(o: Pick<InitOpts, "root" | "since" | "sessi
     .slice(0, CANDIDATE_POOL);
 }
 
-async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promise<{ sessions: Session[]; notes: string[] }> {
+async function pickSessions(o: InitOpts, index: IndexStore, now: number, startReadable?: InitDeps["startReadable"]): Promise<{ sessions: Session[]; notes: string[] }> {
   if (o.sessionIds?.length) {
     const out: Session[] = [];
     for (const id of o.sessionIds) {
@@ -293,7 +297,9 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
   }
   // Ranked (eval/candidates.ts): sessions that can't become a task are left out, the rest go best first.
   const pool = await recentSessions(o, index, now, !o.where, o.where);
-  const ranked = await rankSessions(index, pool, { now });
+  const rankOpts: RankOpts = { now };
+  if (startReadable) rankOpts.startReadable = startReadable;
+  const ranked = await rankSessions(index, pool, rankOpts);
   const byId = new Map(pool.map((s) => [s.id, s]));
   const sessions = ranked.filter((c) => c.eligible).slice(0, o.limit ?? DEFAULT_SESSION_LIMIT).map((c) => byId.get(c.sessionId)!);
   const rejected = rejectSummary(ranked);
@@ -302,7 +308,7 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
 
 async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: string): Promise<Built> {
   const now = deps.now ?? Date.now();
-  const picked = await pickSessions(o, deps.index, now);
+  const picked = await pickSessions(o, deps.index, now, deps.startReadable);
   const sessions = picked.sessions;
   if (!sessions.length) {
     const days = Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000);
@@ -332,7 +338,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     } catch (e) {
       // eval init takes no --instruction: name the command that does.
       const why = e instanceof NoInstructionError
-        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${shellWord(o.verifier)}` : ""}`
+        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${(deps.quoteArg ?? shellWord)(o.verifier)}` : ""}`
         : e instanceof Error ? e.message : String(e);
       notes.push(`skipped session ${s.id}: ${why}`);
       continue;

@@ -2,7 +2,7 @@
 // best eval tasks (eval/candidates.ts). Read-only.
 import { resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
-import { formatCandidates, rankSessions, rejectSummary } from "../../eval/candidates.ts";
+import { formatCandidates, rankSessions, rejectSummary, startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SESSION_LIMIT, DEFAULT_SINCE_MS, recentSessions } from "../../eval/init.ts";
 import { parseAge, positiveInt } from "../args.ts";
 import { autoIngest, str, withContext } from "../common.ts";
@@ -19,7 +19,7 @@ export async function evalCandidates(c: CommandContext): Promise<number> {
     await autoIngest(ctx);
     const now = Date.now();
     const pool = await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, flags.flagged === true);
-    const ranked = await rankSessions(ctx.index, pool, { now });
+    const ranked = await rankSessions(ctx.index, pool, { now, startReadable: (dir) => startReadable(dir, c.env) });
     const eligible = ranked.filter((x) => x.eligible);
     const shown = showAll ? [...eligible.slice(0, limit), ...ranked.filter((x) => !x.eligible)] : eligible.slice(0, limit);
     if (out.json) {
