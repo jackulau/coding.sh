@@ -18,6 +18,7 @@ import { startServe } from "../../src/server/serve.ts";
 import { openIndexStore, registerIndexStore } from "../../src/store/factory.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { AGENT_HOME_KEYS } from "../_agent-env.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -568,11 +569,15 @@ describe("opening the index reprices it", () => {
     mkdirSync(join(home, "bin"));
     const lockPath = join(home, "spool", ".ingest.lock");
     const report = join(root, "ingest.json");
+    const pidFile = join(root, "ingest.pid");
     // Stands in for the CLI: takes the ingest lock without waiting and clears the marker, as `ingest --background` does, then says how it ran.
+    // It writes its pid first, so the test can stop it, and exits within 20 s whatever happens.
     const cli = join(root, "cli.mjs");
     writeFileSync(cli, [
       `import { rmSync, writeFileSync } from "node:fs";`,
-      `const out = { pid: process.pid, args: process.argv.slice(2), home: process.env.CODING_SH_HOME };`,
+      `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+      `setTimeout(() => process.exit(2), 20_000).unref();`,
+      `const out = { args: process.argv.slice(2), home: process.env.CODING_SH_HOME };`,
       `try {`,
       `  const { acquireLock, wakeMarker } = await import(${JSON.stringify(new URL("../../src/core/lock.ts", import.meta.url).href)});`,
       `  const lock = await acquireLock(${JSON.stringify(lockPath)}, { waitMs: 0 });`,
@@ -587,37 +592,47 @@ describe("opening the index reprices it", () => {
     writeFileSync(join(home, "bin", "cli-path"), cli);
     const store = await withCalls(new MemoryIndexStore(), 100);
     slowReads(store, () => !existsSync(report));
-    registerIndexStore("reprice-kick", () => store);
+    let live = true;
+    registerIndexStore("reprice-kick", () => {
+      if (!live) throw new Error("reprice-kick:// was a test's store");
+      return store;
+    });
+    // The ingest inherits this env: no store or run of the caller's, and none of their agent homes.
     const env: NodeJS.ProcessEnv = { ...process.env, CODING_SH_HOME: home, HOME: root, USERPROFILE: root };
-    for (const k of ["CODING_SH_NO_AUTO_INGEST", "CODING_SH_RUN_ID", "CODING_SH_STORE_URL", "CODING_SH_BLOB_URL"]) delete env[k];
+    for (const k of ["CODING_SH_NO_AUTO_INGEST", "CODING_SH_RUN_ID", "CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", ...AGENT_HOME_KEYS]) delete env[k];
     const hook = setTimeout(() => writeFileSync(wakeMarker(lockPath), ""), 100);
     try {
-      assert.equal(await openIndexStore("reprice-kick://", defaultConfig({ CODING_SH_HOME: home, HOME: root }), { env }), store);
+      try {
+        assert.equal(await openIndexStore("reprice-kick://", defaultConfig({ CODING_SH_HOME: home, HOME: root }), { env }), store);
+      } finally {
+        clearTimeout(hook);
+      }
+      const ran = await poll(() => {
+        try {
+          return JSON.parse(readFileSync(report, "utf8")) as { args: string[]; home: string; error?: string };
+        } catch {
+          return undefined; // not written yet
+        }
+      }, 10_000);
+      assert.deepEqual(ran && { args: ran.args, home: ran.home, error: ran.error }, { args: ["ingest", "--background"], home, error: undefined });
+      assert.equal(existsSync(wakeMarker(lockPath)), false);
+      assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
+      assert.ok((await store.getCursor(REPRICE_CURSOR)) > 0, "the pass finished");
     } finally {
-      clearTimeout(hook);
+      live = false;
+      // The ingest exits once it has reported: wait for that (or stop it) before the test's folder goes.
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : NaN;
+      const gone = () => {
+        try {
+          process.kill(pid, 0);
+          return undefined;
+        } catch {
+          return true;
+        }
+      };
+      if (pid > 0 && !(await poll(gone, 5_000))) process.kill(pid);
+      await store.close();
     }
-    const ran = await poll(() => {
-      try {
-        return JSON.parse(readFileSync(report, "utf8")) as { pid: number; args: string[]; home: string; error?: string };
-      } catch {
-        return undefined; // not written yet
-      }
-    }, 10_000);
-    // The ingest exits once it has reported: wait for that (or stop it) before the test's folder goes.
-    const gone = (pid: number) => {
-      try {
-        process.kill(pid, 0);
-        return undefined;
-      } catch {
-        return true;
-      }
-    };
-    if (ran && !(await poll(() => gone(ran.pid), 5_000))) process.kill(ran.pid);
-    assert.deepEqual(ran && { args: ran.args, home: ran.home, error: ran.error }, { args: ["ingest", "--background"], home, error: undefined });
-    assert.equal(existsSync(wakeMarker(lockPath)), false);
-    assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
-    assert.ok((await store.getCursor(REPRICE_CURSOR)) > 0, "the pass finished");
-    await store.close();
   });
 
   it("serve with a store of its own (`--store`): the open's pass starts no ingest of the home's spool", async () => {
