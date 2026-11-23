@@ -132,8 +132,8 @@ describe("a 12-hour session", () => {
     for (const s of sessions) {
       const bytes = Buffer.byteLength(JSON.stringify(s));
       // Was 2 KB. stats.retrieval, seven counts of fixed size (about 115 bytes), took the 12-hour
-      // session's row from 1,974 to 2,089 bytes, and stats.waits, five kinds at most, adds about
-      // 100 more. Phases and derail events, which grow with the session, stay out.
+      // session's row from 1,974 to 2,089 bytes, and stats.waits (one kind here, five at most) to
+      // 2,205. Phases and derail events, which grow with the session, stay out.
       assert.ok(bytes < 2304, `the row of ${s.id} is ${bytes} bytes`);
       assert.equal(s.stats.phases, undefined);
     }
