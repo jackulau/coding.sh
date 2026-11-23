@@ -377,7 +377,7 @@ coding.sh proxy [action] [options]
 | Action | What it does |
 |---|---|
 | [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
-| [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
+| [`stop`](#codingsh-proxy-stop) | Stop the running proxy: it finishes the calls in flight first, for up to 10 s |
 | [`env`](#codingsh-proxy-env) | Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy |
 
 | Option | Default | Description |
@@ -418,7 +418,7 @@ coding.sh proxy status
 
 ### `coding.sh proxy stop`
 
-Stop the background proxy.
+Stop the running proxy: it finishes the calls in flight first, for up to 10 s.
 
 ```text
 coding.sh proxy stop
@@ -2436,7 +2436,7 @@ coding.sh review create <QUEUE> [options]
 | `--where <QUERY>` |  | The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
 | `--config <NAME>` |  | The score config every item is scored with (coding.sh score configs); it must exist. |
 | `--sample <N>` |  | Pick N of the matching sessions at random (default: all of them) |
-| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it. |
+| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only the key with that name sees it, while the CLI sees every item. |
 
 ```sh
 coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20

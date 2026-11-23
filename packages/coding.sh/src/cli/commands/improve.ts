@@ -11,14 +11,14 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
-import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
+import { headlessReason, HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
 import { quoteArg, windowsShell } from "../next-steps.ts";
-import { ago, CliError, localTime, plural } from "../output.ts";
+import { ago, clean, CliError, localTime, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
 import { matchesPlace, parsePlace, pathPlace, type Place } from "../../mcp/data.ts";
@@ -144,44 +144,48 @@ export function changeJson(e: ChangeEffect, cmd: Cmd = asIs) {
 const workJson = (w: NonNullable<ChangeEffect["work"]>) =>
   Object.fromEntries(Object.entries(w).map(([k, m]) => [k, { before: m.before, after: m.after, p: Math.round(m.p * 1000) / 1000 }]));
 
-const VERDICT_WORD: Record<Verdict, string> = {
+// No word for no-sessions-after: its reason says it whole ("No captured session ran with this change yet."), so the line is the reason alone.
+const VERDICT_WORD: Record<Exclude<Verdict, "no-sessions-after">, string> = {
   helped: "Helped",
   "followed-no-effect": "Followed, no effect yet",
   costlier: "Costlier",
   regressed: "Regressed",
   "no-clear-change": "No clear change",
   "too-early": "Too early to tell",
-  "no-sessions-after": "No sessions yet",
   "no-baseline": "No sessions before it",
 };
 
 const verdictTone = (v: Verdict) => (v === "helped" ? "green" : v === "regressed" ? "red" : v === "costlier" || v === "followed-no-effect" ? "yellow" : "faint");
+
+/** The verdict line: "Word: reason", or the reason alone for a change no counted session ran with. */
+const verdictText = (out: Output, e: ChangeEffect): string => (e.verdict === "no-sessions-after" ? e.reason : `${out.style(VERDICT_WORD[e.verdict], verdictTone(e.verdict))}: ${e.reason}`);
+
+/** A commit subject on one line, cut as the sessions table cuts a title (60 characters on a terminal, 100 off one); --json keeps it whole. */
+const shownSubject = (out: Output, subject: string): string => JSON.stringify(oneLine(clean(subject), out.stdoutTTY ? 60 : 100));
 
 /** Flagged sessions listed under each change by improve check, unless --sessions. */
 const FLAGGED_SHOWN = 5;
 
 /**
  * `flagged`: how many of the sessions still flagged after the change to list (0, the default: none).
- * `headlessLeftOut`: headless sessions that ran after a change with no sessions after it, left out without --headless.
  * `headlessInWindow`: headless sessions in the window were left out, though none counted after this change
- * (with --headless they may still be left out for another reason, such as no git HEAD).
+ * (with --headless they may still be left out for another reason, such as no git HEAD). One that did
+ * count after it is in the change's reason (withHeadless).
  */
-function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number; headlessLeftOut?: number; headlessInWindow?: boolean } = {}): void {
+function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number; headlessInWindow?: boolean } = {}): void {
   const { out } = c;
   const indent = o.indent ?? "  ";
   const ch = e.change;
   const files = ch.files.map((f) => `${f.path} +${f.added} -${f.removed}`).join(", ");
-  const tone = verdictTone(e.verdict);
-  out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${JSON.stringify(ch.subject)}`);
+  out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${shownSubject(out, ch.subject)}`);
   // A change with no sessions before it (often the commit that added the file) has nothing to compare: one line is enough.
-  if (e.verdict === "no-baseline") out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.after.sessions} session(s) after it.`);
+  if (e.verdict === "no-baseline") out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], verdictTone(e.verdict))}: ${e.after.sessions} session(s) after it.`);
   else {
     for (const l of ch.added.slice(0, 3)) out.print(`${indent}    + ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
     for (const l of ch.removed.slice(0, 2)) out.print(`${indent}    - ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
-    out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.reason}`);
+    out.print(`${indent}  ${verdictText(out, e)}`);
   }
-  if (o.headlessLeftOut) out.print(`${indent}  ${out.style(`Left out: ${plural(o.headlessLeftOut, "headless session")} after it (claude -p, an Agent SDK, codex exec); --headless counts them`, "faint")}`);
-  else if (o.headlessInWindow && e.verdict === "no-sessions-after") out.print(`${indent}  ${out.style("Headless sessions (claude -p, an Agent SDK, codex exec) are left out; --headless counts them", "faint")}`);
+  if (o.headlessInWindow && e.verdict === "no-sessions-after") out.print(`${indent}  ${out.style(`Headless sessions (${HEADLESS_KINDS}) are left out; --headless counts them`, "faint")}`);
   // Sessions that never got to work (a chat, a refused login) are no evidence either way: say how many were left out.
   const idle = (e.before.idle ?? 0) + (e.after.idle ?? 0);
   if (idle) out.print(`${indent}  ${out.style(`Left out: ${plural(idle, "session")} with no tool call (${e.before.idle ?? 0} before, ${e.after.idle ?? 0} after), such as a chat or an agent that was not logged in`, "faint")}`);
@@ -203,7 +207,9 @@ async function report(c: CommandContext): Promise<number> {
     const children = sessions.filter((s) => s.parent).length;
     const testCommand = await testCommandOf(o.root);
     const issues = await findIssues(ctx.index, sessions, { ...(o.root ? { repoRoot: o.root } : {}), ...(testCommand ? { testCommand } : {}) });
-    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless }) : [];
+    const changeOpts: ChangeOptions = { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), headless: o.headless };
+    const found = o.root ? await findChanges(ctx.index, o.root, changeOpts) : [];
+    const changes = o.root ? withHeadless(found, await headlessAfter(ctx, o.root, changeOpts, found)) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     const cmd: Cmd = (line) => out.command(line);
@@ -372,18 +378,23 @@ async function check(c: CommandContext): Promise<number> {
     const root = o.root!;
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
-      return { changes: await findChanges(ctx.index, root, changeOptions(o, o.headless)), backlog };
+      const opts = changeOptions(o, o.headless);
+      const found = await findChanges(ctx.index, root, opts);
+      const leftOut = await headlessAfter(ctx, root, opts, found);
+      return { changes: withHeadless(found, leftOut), leftOut, backlog };
     };
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");
-    const leftOut = await headlessAfter(ctx, root, o, first.changes);
-    // Headless sessions in the window, left out without --headless: plain improve says so, and so does check.
+    const leftOut = first.leftOut;
+    // Headless sessions in the window, left out without --headless: plain improve says so, and so does
+    // check. Counted in the folders the changes read (o.repo and under it, or every repo), as
+    // findChanges reads them: not every worktree of the repo, which plain improve counts (sessionsOf).
     let windowLeftOut = 0;
     if (!o.headless) {
       const scope: ImproveScope = { since: o.since, headless: false };
       if (o.repo) scope.repo = o.repo;
       if (o.agents.length) scope.agents = o.agents;
-      windowLeftOut = (await sessionsOf(ctx.index, o, scope)).headlessLeftOut;
+      windowLeftOut = (await readScope(ctx.index, scope)).headlessLeftOut;
     }
     if (out.json) {
       const changes = first.changes.map((e) => {
@@ -404,10 +415,11 @@ async function check(c: CommandContext): Promise<number> {
     }
     const shown = c.flags.sessions === true ? Number.POSITIVE_INFINITY : FLAGGED_SHOWN;
     for (const e of first.changes) {
-      printChange(c, e, { indent: "", flagged: shown, headlessLeftOut: leftOut.get(e.change.commit), headlessInWindow: windowLeftOut > 0 });
+      printChange(c, e, { indent: "", flagged: shown, headlessInWindow: windowLeftOut > 0 && !leftOut.has(e.change.commit) });
       out.print("");
     }
-    if (windowLeftOut) out.note(`${plural(windowLeftOut, "headless session")} left out (--headless)`);
+    // Where it counted: a folder and the folders under it, which is not what sessions --where repo:<name> counts (every checkout named so).
+    if (windowLeftOut) out.note(`${plural(windowLeftOut, "headless session")} ${o.repo ? `under ${o.repo}` : "in every repo"} since ${o.sinceText} left out (--headless)`);
     if (!watch) {
       const after = regressed[0]?.after;
       const removal = first.changes.map(removalStep).find((s) => s !== undefined);
@@ -421,22 +433,24 @@ async function check(c: CommandContext): Promise<number> {
   });
 }
 
+type ChangeOptions = Parameters<typeof findChanges>[2];
+
 /** What improve check reads: the changes in the repo, with the headless sessions or without. */
-function changeOptions(o: Opts, headless: boolean): Parameters<typeof findChanges>[2] {
-  const opts: Parameters<typeof findChanges>[2] = { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", headless };
+function changeOptions(o: Opts, headless: boolean): ChangeOptions {
+  const opts: ChangeOptions = { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", headless };
   if (o.agents.length) opts.agents = o.agents;
   return opts;
 }
 
 /**
  * For each change with no sessions after it, how many headless sessions ran after it: without
- * --headless they are left out, and "No sessions yet" alone would hide them. Read again with
+ * --headless they are left out, and "No captured session ran" would be false. Read again with
  * --headless only when such a change exists, so the count matches what --headless would show.
  */
-async function headlessAfter(ctx: Context, root: string, o: Opts, changes: readonly ChangeEffect[]): Promise<Map<string, number>> {
+async function headlessAfter(ctx: Context, root: string, opts: ChangeOptions, changes: readonly ChangeEffect[]): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
-  if (o.headless || !changes.some((e) => e.verdict === "no-sessions-after")) return counts;
-  const wide = await findChanges(ctx.index, root, changeOptions(o, true));
+  if (opts.headless || !changes.some((e) => e.verdict === "no-sessions-after")) return counts;
+  const wide = await findChanges(ctx.index, root, { ...opts, headless: true });
   const all = (e: ChangeEffect) => e.after.sessions + (e.after.idle ?? 0);
   for (const e of changes) {
     if (e.verdict !== "no-sessions-after") continue;
@@ -446,6 +460,13 @@ async function headlessAfter(ctx: Context, root: string, o: Opts, changes: reado
   }
   return counts;
 }
+
+/** The changes, each one only headless sessions ran with (counts: headlessAfter) with a reason that says so. */
+const withHeadless = (changes: readonly ChangeEffect[], counts: ReadonlyMap<string, number>): ChangeEffect[] =>
+  changes.map((e) => {
+    const n = counts.get(e.change.commit);
+    return n ? { ...e, reason: headlessReason(e, n) } : e;
+  });
 
 async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], read: () => Promise<{ changes: ChangeEffect[] }>, interval: number): Promise<number> {
   const { out } = c;
@@ -466,8 +487,7 @@ async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], re
         const k = key(e);
         if (seen.get(e.change.commit) === k) continue;
         seen.set(e.change.commit, k);
-        const word = VERDICT_WORD[e.verdict];
-        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${JSON.stringify(e.change.subject)}  ${out.style(word, verdictTone(e.verdict))}: ${e.reason}`);
+        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${shownSubject(out, e.change.subject)}  ${verdictText(out, e)}`);
       }
     } catch (e) {
       out.warn(e instanceof Error ? e.message : String(e));

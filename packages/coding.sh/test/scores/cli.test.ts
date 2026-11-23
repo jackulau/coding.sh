@@ -136,10 +136,27 @@ describe("coding.sh score", () => {
     ok(["score", "add", "sess-bbbb2222", "outcome", "true"]);
     assert.match(ok(["export", "labels"]).stdout, /"sessionId":"sess-bbbb2222","criterion":"outcome","value":"pass"/);
   });
+
+  test("add: --id again on another target or name replaces the score it held, and says which", () => {
+    ok(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
+    const moved = ok(["score", "add", "sess-bbbb2222", "tone", "neutral", "--id", "pick-1"]);
+    assert.equal(moved.stdout, "pick-1\n");
+    assert.match(moved.stderr, /Scored tone = neutral \(categorical\) on session sess-bbbb2222/);
+    assert.match(moved.stderr, /--id pick-1 held helpfulness = 2 on session sess-aaaa1111; that score is replaced/);
+    assert.deepEqual((json(["score", "list", "--name", "helpfulness"]).items as Score[]).map((s) => s.value), [4], "the score left its old target");
+    const back = json(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
+    assert.deepEqual([back.replaced?.name, back.replaced?.target, back.replaced?.targetId, back.replaced?.value], ["tone", "session", "sess-bbbb2222", "neutral"]);
+    // The same target and name again is an update: nothing else is replaced.
+    const update = json(["score", "add", "sess-aaaa1111", "helpfulness", "3", "--id", "pick-1"]);
+    assert.deepEqual([update.created, update.changed, update.replaced], [false, true, undefined]);
+    const again = ok(["score", "add", "sess-aaaa1111", "helpfulness", "1", "--id", "pick-1"]);
+    assert.match(again.stderr, /Updated helpfulness = 1/);
+    assert.doesNotMatch(again.stderr, /replaced/);
+  });
 });
 
 describe("MCP score tools", () => {
-  const [list, add] = scoreTools();
+  const [list, add, batch] = scoreTools();
   const ctx = { env: process.env, cwd: process.cwd(), now: () => Date.now(), store: () => openContext({ env: process.env, cwd: process.cwd() }) };
   // Each call opens the store; close it after.
   const run = async (tool: typeof list, args: Record<string, unknown>) => {
@@ -164,5 +181,24 @@ describe("MCP score tools", () => {
     assert.equal(((await run(list!, { limit: 1 })) as { items: Score[] }).items.length, 1);
     // The agent passes since, not the CLI's --since.
     await assert.rejects(run(list!, { since: "yesterday-ish" }), (e) => e instanceof ToolError && /^Invalid since "yesterday-ish"/.test(e.message) && !e.message.includes("--since"));
+  });
+
+  test("a session id reads as in the CLI: a short id, and latest skips a newer empty session", async () => {
+    const r = (await run(add!, { targetId: "sess-aaaa", name: "mcp-prefix", value: true })) as { score: Score };
+    assert.equal(r.score.targetId, "sess-aaaa1111");
+    const items = ((await run(list!, { sessionId: "sess-aaaa", name: "mcp-prefix" })) as { items: Score[] }).items;
+    assert.deepEqual(items.map((s) => s.targetId), ["sess-aaaa1111"]);
+    assert.equal(((await run(list!, { target: "session", targetId: "sess-aaaa", name: "mcp-prefix" })) as { items: Score[] }).items.length, 1);
+    const cs = (await run(add!, { target: "case", targetId: "c-1", sessionId: "sess-bbbb", name: "mcp-case", value: true })) as { score: Score };
+    assert.equal(cs.score.sessionId, "sess-bbbb2222");
+    const b = (await run(batch!, { scores: [{ targetId: "sess-bbbb", name: "mcp-prefix", value: false }] })) as { items: { score: Score }[] };
+    assert.equal(b.items[0]!.score.targetId, "sess-bbbb2222");
+    await assert.rejects(
+      run(add!, { targetId: "sess-", name: "mcp-prefix", value: true }),
+      (e) => e instanceof ToolError && /^Session id prefix "sess-" matches more than one session: /.test(e.message) && e.error?.reason === "ambiguous" && (e.error.candidates as unknown[]).length === 2,
+    );
+    // A hook with no work behind it is newer; latest is still the session the CLI's latest names.
+    await seed(env.dataHome, { sessions: [session("hook-cccc3333", { startedAt: T0 + 7200_000, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } })] });
+    assert.equal(((await run(add!, { targetId: "latest", name: "mcp-latest", value: true })) as { score: Score }).score.targetId, "sess-bbbb2222");
   });
 });

@@ -9,6 +9,8 @@
 // --refresh-bin leaves the bin alone when another install that is still there
 // owns the store (bin/cli-path names it): moving the hooks to this one is
 // upgrade-store's job, which asks first (core/store-guard.ts).
+// --refresh-bin and an update also name `statusline install` when, on Windows, Claude Code's
+// status line still runs `coding.sh statusline` (0.1.7 wrote it), which PowerShell can't run.
 // Exit codes: 0 ok (updated, up to date, or reported), 1 check or install
 // failed, 130 interrupted.
 import { existsSync } from "node:fs";
@@ -21,8 +23,10 @@ import { shellQuote } from "../common.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
 import { cliCommand, nextStepBin, windowsShell } from "../next-steps.ts";
-import { CliError, clean } from "../output.ts";
+import { CliError, clean, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+// Static: after npm replaced the install, a dynamic import() could name a chunk that is gone.
+import { staleStatusLine, statuslineCommand } from "./statusline.ts";
 import { checkForUpdate, RELEASES_URL, type CheckOptions, type UpdateCache } from "../../update/index.ts";
 import { isNewer } from "../../update/semver.ts";
 
@@ -52,11 +56,37 @@ export interface UpdateDeps {
   current?: string;
   /** The running CLI (default: runningCli()). */
   cli?: string;
+  /** The platform the status line check is for (default: process.platform). */
+  platform?: NodeJS.Platform;
 }
 
 /** "the coding.sh 0.1.6 at <path>": the install bin/cli-path names. */
 function installAt(cli: string, ver: string | undefined): string {
   return `the coding.sh${ver ? ` ${ver}` : ""} at ${cli}`;
+}
+
+interface StatusLineFix {
+  command: string;
+  file: string;
+  next: string;
+}
+
+/** Claude Code's status line when PowerShell can't run it (staleStatusLine), with the command that reinstalls it. */
+function statusLineToFix(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): StatusLineFix | undefined {
+  const line = staleStatusLine(env, platform);
+  return line && { ...line, next: cliCommand(env, ["statusline", "install"], platform) };
+}
+
+/** Only for a line statusLineToFix found, so only on Windows. */
+function printStatusLineFix(out: Output, line: StatusLineFix): void {
+  out.warn(`Claude Code's status line runs ${line.command}, which PowerShell and cmd can't run`);
+  out.next(`Reinstall it to run ${statuslineCommand("win32")} instead`, line.next);
+}
+
+/** `doc` with the status line to fix as `statusline`, when there is one. */
+function withStatusLine(doc: Record<string, unknown>, line: StatusLineFix | undefined): Record<string, unknown> {
+  if (line) doc.statusline = line;
+  return doc;
 }
 
 function execText(cmd: string, args: string[], env: NodeJS.ProcessEnv, signal: AbortSignal, timeout: number): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -171,18 +201,23 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
     // Another install owns the store and is still there: rewriting the bin would have hooks start
     // this one, whose next command can migrate the store past what the owner opens.
     const owner = self !== undefined && existsSync(p.hook) ? storeOwner(p.root) : undefined;
+    const line = statusLineToFix(c.env, deps.platform);
     if (owner && owner.cli !== self) {
-      if (out.json) out.data({ bin: "other_install", hook: p.hook, owner: owner.cli, ownerVersion: owner.version ?? null });
+      if (out.json) out.data(withStatusLine({ bin: "other_install", hook: p.hook, owner: owner.cli, ownerVersion: owner.version ?? null }, line));
       else {
         out.warn(`Hooks run ${installAt(owner.cli, owner.version)}, another install: ${p.bin} is left as it is`);
         out.next(`To have them run this coding.sh ${version()} instead (it asks first)`, cliCommand(c.env, ["upgrade-store"]));
+        if (line) printStatusLineFix(out, line);
       }
       return 0;
     }
     const bin = await refreshHookBin(c.env, self);
-    if (out.json) out.data({ bin, hook: p.hook });
-    else if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style(`${cli} init`, "cyan", "err")} to set up capture`);
-    else out.ok(bin === "refreshed" ? `Refreshed ${p.bin}` : `${p.bin} is current`);
+    if (out.json) out.data(withStatusLine({ bin, hook: p.hook }, line));
+    else {
+      if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style(`${cli} init`, "cyan", "err")} to set up capture`);
+      else out.ok(bin === "refreshed" ? `Refreshed ${p.bin}` : `${p.bin} is current`);
+      if (line) printStatusLineFix(out, line);
+    }
     return 0;
   }
   const dryRun = c.flags["dry-run"] === true;
@@ -266,13 +301,15 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
 
   // The hook and launcher in ~/.coding.sh/bin are copies: refresh them from the new install.
   const refreshed = await (deps.refresh ?? refreshAfterUpdate)(c.env, c.signal);
+  // Checked here, not taken from --refresh-bin: that runs only when init set up the bin.
+  const line = statusLineToFix(c.env, deps.platform);
   if (out.json) {
     const doc: Record<string, unknown> = { status: "updated", ...base, bin: refreshed.status, ...(refreshed.error ? { binError: refreshed.error } : {}) };
     if (refreshed.owner) {
       doc.owner = refreshed.owner;
       doc.ownerVersion = refreshed.ownerVersion ?? null;
     }
-    out.data(doc);
+    out.data(withStatusLine(doc, line));
   } else {
     out.ok(`Updated coding.sh ${current} → ${latest}`);
     if (refreshed.status === "failed") {
@@ -282,6 +319,7 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
       out.warn(`Hooks still run ${refreshed.owner ? `${installAt(refreshed.owner, refreshed.ownerVersion)}, another install` : "another install"}, not the coding.sh ${latest} just installed`);
       out.next(`To have them run coding.sh ${latest} (it asks first)`, cliCommand(c.env, ["upgrade-store"]));
     }
+    if (line) printStatusLineFix(out, line);
   }
   return 0;
 }

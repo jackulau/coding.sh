@@ -2,7 +2,7 @@
 // commands to run next that keep every flag the user gave.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -57,6 +57,7 @@ describe("init's commands to run next keep every flag", () => {
   let env: TmpEnv;
   let server: Server;
   let url = "";
+  let config = "";
   // The CLI as Git Bash starts it (MSYSTEM and SHELL set), and as PowerShell does (neither).
   const shellEnv = (shell: "Git Bash" | "PowerShell"): NodeJS.ProcessEnv => {
     const e: NodeJS.ProcessEnv = { ...process.env, CODING_SH_HOOK_SOURCE: join(env.root, "dist", "hook.mjs"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
@@ -90,6 +91,13 @@ describe("init's commands to run next keep every flag", () => {
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    // --proxy plans a route only to a port the proxy can hold: a free one, not whatever holds 4320 here.
+    // Found while the server above holds its port, so the two can't be the same.
+    const free = createServer();
+    await new Promise<void>((r) => free.listen(0, "127.0.0.1", r));
+    config = `[proxy]\nport = ${(free.address() as AddressInfo).port}\n`;
+    await new Promise<void>((r) => free.close(() => r()));
+    writeFile(join(env.dataHome, "config.toml"), config);
   });
   after(async () => {
     await new Promise<void>((r) => server.close(() => r()));
@@ -103,13 +111,10 @@ describe("init's commands to run next keep every flag", () => {
       const equals = ["init", "--agent=antigravity", "--scope=user", "--no-mcp", "--no-import", `--remote=${url}`, `--key=${KEY}`, "--remote-mode=full", "--no-color"];
       // The commands as given: no argument here needs quoting in either shell.
       const cmd = (args: string[]) => [nextStepBin(e), ...args].join(" ");
-      // None of these runs has consent, so they write nothing and can run at once.
-      const [consent, json, dry, dryEquals] = await Promise.all([
-        run(flags, e),
-        run([...flags, "--json"], e),
-        run(["init", "--dry-run", ...flags.slice(1), "--diff"], e),
-        run([...equals, "--dry-run"], e),
-      ]);
+      // None of these runs has consent, so they write nothing. The --proxy runs take turns: each checks
+      // the proxy's port by listening on it for a moment, and a check at the same time finds it in use.
+      const proxyRuns = async () => [await run(flags, e), await run([...flags, "--json"], e), await run(["init", "--dry-run", ...flags.slice(1), "--diff"], e)] as const;
+      const [[consent, json, dry], dryEquals] = await Promise.all([proxyRuns(), run([...equals, "--dry-run"], e)]);
       assert.equal(consent.status, 2, consent.stderr);
       assert.ok(consent.stderr.includes(`\n    With their approval: ${cmd([...flags, "--yes"])}\n`), consent.stderr);
       assert.equal(json.status, 2, json.stderr);
@@ -118,7 +123,7 @@ describe("init's commands to run next keep every flag", () => {
       assert.ok(dry.stderr.includes(`\n  Apply the plan:\n    ${cmd(flags)}\n`), dry.stderr);
       assert.equal(dryEquals.status, 0, dryEquals.stderr);
       assert.ok(dryEquals.stderr.includes(`\n  Apply the plan:\n    ${cmd(equals)}\n`), dryEquals.stderr);
-      assert.equal(existsSync(join(env.dataHome, "config.toml")), false);
+      assert.equal(readFileSync(join(env.dataHome, "config.toml"), "utf8"), config, "nothing written");
     });
   }
 });
