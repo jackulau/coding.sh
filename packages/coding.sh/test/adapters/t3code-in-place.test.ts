@@ -355,7 +355,7 @@ describe("T3 Code's store, read while T3 Code writes it", () => {
     }
   });
 
-  it("fails the pass when a thread's read finds the store locked, and skips a thread whose rows it can't read", async () => {
+  it("fails the pass when a thread's read finds the store locked or failing, and skips a thread whose rows it can't read", async () => {
     buildStore(store);
     const db = openAsT3(store);
     const proto = StatementSync.prototype;
@@ -370,6 +370,8 @@ describe("T3 Code's store, read while T3 Code writes it", () => {
     try {
       fail = { thread: "thr-b", errcode: 5, message: "database is locked" };
       await assert.rejects(read(), { message: "T3 Code's store was not read: database is locked" });
+      fail = { thread: "thr-b", errcode: 11, message: "database disk image is malformed" };
+      await assert.rejects(read(), { message: "T3 Code's store was not read: database disk image is malformed" });
       fail = { thread: "thr-b", errcode: 1, message: "no such column: streaming" };
       const events = await read();
       assert.deepEqual(texts(events, "grok-thr-a"), ["First prompt in thr-a"]);

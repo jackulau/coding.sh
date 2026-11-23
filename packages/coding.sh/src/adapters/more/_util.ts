@@ -1176,6 +1176,16 @@ export function sqliteBusy(e: unknown): boolean {
   return /database (table )?is locked/i.test(String(message));
 }
 
+/**
+ * A read error about the rows' shape, not the database's state: SQLITE_ERROR (`no such column`) or an
+ * error SQLite did not raise. Busy, I/O errors, a corrupt page, a full disk and the rest are state.
+ */
+export function sqliteShapeError(e: unknown): boolean {
+  if (sqliteBusy(e)) return false;
+  const errcode = typeof e === "object" && e !== null ? (e as { errcode?: unknown }).errcode : undefined;
+  return typeof errcode !== "number" || (errcode & 0xff) === 1;
+}
+
 /** Column names of a table (empty when it doesn't exist). */
 export function columns(db: import("node:sqlite").DatabaseSync, table: string): string[] {
   try {

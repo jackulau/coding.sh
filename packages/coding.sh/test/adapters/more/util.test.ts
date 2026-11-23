@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, sqliteShapeError, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv, testCtx } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
@@ -477,6 +477,16 @@ describe("sqliteBusy", () => {
     assert.equal(sqliteBusy(new Error("database is locked")), true);
     assert.equal(sqliteBusy(new Error("database table is locked")), true);
     for (const e of [new Error("no such table: t"), null, undefined, "database is locked"]) assert.equal(sqliteBusy(e), false, String(e));
+  });
+});
+
+describe("sqliteShapeError", () => {
+  it("is SQLITE_ERROR or an error SQLite did not raise, never busy, an I/O error, a corrupt page or a full disk", () => {
+    const err = (errcode: number) => Object.assign(new Error("x"), { errcode });
+    for (const code of [1, 257]) assert.equal(sqliteShapeError(err(code)), true, String(code));
+    for (const code of [5, 6, 261, 10, 266, 11, 13, 26]) assert.equal(sqliteShapeError(err(code)), false, String(code));
+    assert.equal(sqliteShapeError(new TypeError("Cannot read properties of undefined (reading 'id')")), true);
+    assert.equal(sqliteShapeError(new Error("database is locked")), false);
   });
 });
 

@@ -44,7 +44,7 @@ import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText,
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
 import { ROLLOUT_IDLE_MS, codeModeCellOk, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
-import { openSqliteCopy, openSqliteInPlace, readSnapshot, sqliteBusy, type FreeSpace } from "./more/_util.ts";
+import { openSqliteCopy, openSqliteInPlace, readSnapshot, sqliteShapeError, type FreeSpace } from "./more/_util.ts";
 import { reapSqliteCopies } from "./_shared/sqlite-copies.ts";
 import { piSessionsDir } from "./more/pi.ts";
 import { opencodeDataDir } from "./opencode.ts";
@@ -992,9 +992,10 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         // One short read transaction a thread: its rows come from one snapshot, never half of a write.
         rows = readSnapshot(db, () => (old ? readV1Rows(db, thread.id) : readV2Rows(db, thread.id, runPt)));
       } catch (e) {
-        // Locked for longer than the busy timeout (another connection recovering the WAL after a crash, say):
-        // fail the pass, so this thread and the rest are read next time instead of skipped.
-        if (sqliteBusy(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
+        // Locked for longer than the busy timeout (another connection recovering the WAL after a crash, say),
+        // or failing (an I/O error, a corrupt page): fail the pass, so this thread and the rest are not marked
+        // read. A pass with a deadline has saved the store's fingerprint already, so they wait for its next write.
+        if (!sqliteShapeError(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
         continue; // schema drift in one thread's rows: skip it, keep the rest
       }
       yield* threadEvents(ctx, thread, rows, native, primary, starts, opts.since);
