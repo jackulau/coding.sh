@@ -18,9 +18,12 @@
 // once the import has folded them (see "backfill → sinks" below).
 //
 // One ingest at a time: a lockfile in the spool dir (core/lock.ts, with stale
-// detection) keeps two processes from reading the same range and sending it
-// to the sinks twice. The holder checks it still owns the lock before every
-// cursor write and sink send, and stops with LockLostError otherwise.
+// detection). The holder checks it still owns the lock before every cursor
+// write and sink send, and stops with LockLostError otherwise. That keeps two
+// processes from reading the same range unless one stalls past the stale
+// limit (core/lock.ts names the windows); then both can send it to a sink, and
+// the index still keeps one copy of each event: event ids are deterministic
+// and puts are idempotent.
 //
 // No lost wakeups: the hook touches `spool/.ingest.pending` after appending an
 // end event and before looking at the lock (spool/kick.ts). The holder clears

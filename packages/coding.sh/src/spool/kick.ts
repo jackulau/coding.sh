@@ -5,7 +5,8 @@
 // write, a look at the ingest lock, one small file read, and a detached `node
 // cli.mjs ingest --background` that the hook never waits for. The child takes
 // the ingest lock without waiting (exits quietly when another ingest holds
-// it), so concurrent sessions never ingest the same spool range twice.
+// it), so concurrent sessions do not ingest the same spool range twice, short
+// of the stalls core/lock.ts names.
 //
 // No lost wakeups: the marker (`spool/.ingest.pending`) is touched AFTER the
 // spool line is appended and BEFORE the lock is checked. A live holder clears
