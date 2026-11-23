@@ -2,6 +2,8 @@
 // --json` names it) and rejectedBy, a count per reject reason over every considered session, not
 // just the page includeRejected lists.
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { evalCandidates } from "../../src/cli/commands/eval-candidates.ts";
 import { buildSession } from "../../src/core/sessions.ts";
@@ -11,28 +13,29 @@ import { runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
 const HOUR = 3_600e3;
 const now = Date.now();
-const CWD = "/work/demo";
-const REPO = { root: CWD, head: "abc1234" };
+/** The sessions' repository, made in before(): a folder on this machine, so only a session given another root is repo-gone. */
+let CWD = "";
 
 let sb: Sandbox;
 let mcp: CodingShMcp;
 const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 
 let n = 0;
-function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown>, git: boolean): AgentEvent {
-  const e: AgentEvent = { id: `${sessionId}-${n++}`, v: 0, sessionId, agent: "claude-code", ts, kind, payload, cwd: CWD };
-  if (git) e.repo = REPO;
+function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown>, git: boolean, root: string): AgentEvent {
+  const e: AgentEvent = { id: `${sessionId}-${n++}`, v: 0, sessionId, agent: "claude-code", ts, kind, payload, cwd: root };
+  if (git) e.repo = { root, head: "abc1234" };
   return e;
 }
 
-/** A session that started `ago` before now: in a git repo unless git is false, with a prompt unless prompt is false, and an edit when edits is true. */
-function events(id: string, ago: number, o: { git?: boolean; prompt?: boolean; edits?: boolean }): AgentEvent[] {
+/** A session that started `ago` before now in `root` (CWD unless given): in a git repo unless git is false, with a prompt unless prompt is false, and an edit when edits is true. */
+function events(id: string, ago: number, o: { git?: boolean; prompt?: boolean; edits?: boolean; root?: string }): AgentEvent[] {
   const t0 = now - ago;
   const git = o.git !== false;
-  const out = [ev(id, t0, "session.start", {}, git)];
-  if (o.prompt !== false) out.push(ev(id, t0 + 1000, "user.message", { text: `Fix the parser for ${id}` }, git));
-  if (o.edits) out.push(ev(id, t0 + 2000, "file.change", { path: "src/parser.ts", op: "modify" }, git));
-  out.push(ev(id, t0 + 60_000, "session.end", { reason: "exit" }, git));
+  const root = o.root ?? CWD;
+  const out = [ev(id, t0, "session.start", {}, git, root)];
+  if (o.prompt !== false) out.push(ev(id, t0 + 1000, "user.message", { text: `Fix the parser for ${id}` }, git, root));
+  if (o.edits) out.push(ev(id, t0 + 2000, "file.change", { path: "src/parser.ts", op: "modify" }, git, root));
+  out.push(ev(id, t0 + 60_000, "session.end", { reason: "exit" }, git, root));
   return out;
 }
 
@@ -45,6 +48,8 @@ async function ok(args: Record<string, unknown>): Promise<any> {
 
 before(async () => {
   sb = sandbox();
+  CWD = join(sb.root, "demo");
+  mkdirSync(CWD);
   // In-process MCP reads resolve agent homes through process.env: point them at the sandbox.
   Object.assign(process.env, { HOME: sb.env.HOME, USERPROFILE: sb.env.HOME });
   const all = [
@@ -55,6 +60,8 @@ before(async () => {
     events("noprompt", 5 * HOUR, { prompt: false, edits: true }),
     events("noedit-a", 6 * HOUR, {}),
     events("noedit-b", 7 * HOUR, {}),
+    // Its repository was moved or deleted since: the folder is not on this machine.
+    events("moved", 8 * HOUR, { edits: true, root: join(sb.root, "moved") }),
   ];
   await sb.seed(
     all.map((evs) => buildSession(evs)),
@@ -72,11 +79,12 @@ after(async () => {
 describe("eval_candidates' rejected counts", () => {
   test("count every rejected session by reason, in eval candidates' order, past the page includeRejected lists", async () => {
     const r = await ok({ repo: "all", limit: 1, includeRejected: true });
-    assert.equal(r.considered, 7);
+    assert.equal(r.considered, 8);
     assert.equal(r.eligible, 1);
-    assert.equal(r.rejected, 6);
+    assert.equal(r.rejected, 7);
     assert.deepEqual(Object.entries(r.rejectedBy), [
       ["no-git-start", 3],
+      ["repo-gone", 1],
       ["no-user-prompt", 1],
       ["no-edits", 2],
     ]);
@@ -87,7 +95,7 @@ describe("eval_candidates' rejected counts", () => {
     // Without includeRejected the page has no rejected rows, and the counts are the same.
     const plain = await ok({ repo: "all" });
     assert.ok((plain.candidates as { eligible: boolean }[]).every((x) => x.eligible));
-    assert.equal(plain.rejected, 6);
+    assert.equal(plain.rejected, 7);
     assert.deepEqual(plain.rejectedBy, r.rejectedBy);
   });
 
