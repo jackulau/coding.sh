@@ -518,7 +518,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
-    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or <session>#<n>)", required: true }],
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'; or a model call (its id, or <session>#<n>)", required: true }],
     flags: [
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "List the first N events (default 200; a longer session shows as phases)" },
       { name: "all", type: "boolean", desc: "List every event, with phase and day lines and derail markers" },
@@ -538,7 +538,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "tree",
     group: "Explore",
     summary: "Show a whole multi-agent run as one tree, with rolled-up totals",
-    args: [{ name: "session|run", desc: "A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out)", required: true }],
+    args: [{ name: "session|run", desc: "A session id, prefix or x_ alias (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out)", required: true }],
     flags: [
       { name: "run", type: "boolean", desc: "Read the argument as a run id (CODING_SH_RUN_ID), not a session" },
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "With --json: most nodes in one page", default: "50" },
@@ -557,7 +557,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "replay",
     group: "Explore",
     summary: "Step through a session and see what it did to each file it touched",
-    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'", required: true }],
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'", required: true }],
     flags: [
       { name: "step", type: "number", value: "<N>", desc: "Show step N: its command and output, the diff it made, and the files touched so far" },
       { name: "to", type: "number", value: "<M>", desc: "Show what steps --step (default 1) through M changed together" },
@@ -1837,7 +1837,7 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "show",
         summary: "What one item is doing, what it waits on, its files and child sessions, and the next step",
-        args: [{ name: "id", desc: "Work item id (w + 6 hex characters), or a session id in the item", required: true }],
+        args: [{ name: "id", desc: "Work item id (w + 6 hex characters), or a session in the item: its id, a prefix or its x_ alias", required: true }],
         flags: [{ ...SINCE, desc: "Look the id up among sessions started at or after this time", default: "7d" }, FRESH],
         examples: ["coding.sh work show w3f9a1c", "coding.sh work show w3f9a1c --json"],
       },

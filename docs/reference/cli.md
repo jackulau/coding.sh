@@ -661,7 +661,7 @@ coding.sh show <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -693,7 +693,7 @@ coding.sh tree <SESSION|RUN> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session|run` | yes | A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out) |
+| `session|run` | yes | A session id, prefix or x_ alias (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -723,7 +723,7 @@ coding.sh replay <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'. |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
 
 | Option | Default | Description |
 |---|---|---|
@@ -1398,7 +1398,7 @@ coding.sh work show <ID> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `id` | yes | Work item id (w + 6 hex characters), or a session id in the item. |
+| `id` | yes | Work item id (w + 6 hex characters), or a session in the item: its id, a prefix or its x_ alias. |
 
 | Option | Default | Description |
 |---|---|---|

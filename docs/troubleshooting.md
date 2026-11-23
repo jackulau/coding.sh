@@ -359,7 +359,7 @@ The command ran and something failed.
 | `fetch_failed` | (compare --parity) `Couldn't fetch https://example.com/: …` (exit 2) | Check the URL and that the site is reachable from this machine. A fetch that takes over 30 s fails too. |
 | `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` (exit 2) | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
 | `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` (exit 2) | Run the command yourself; it must print the page's HTML on stdout. |
-| `not_found` | `Can't find session "nope"` (a session id or a unique prefix of one, 4+ characters), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
+| `not_found` | `Can't find session "nope"` (a session id, a unique prefix of 4+ characters, or the `x_` alias coding.sh prints for one), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
 | `target_exists` | `traces/ is not empty` (export --evidence) | Pass `--force` to write into it anyway, or pick an empty directory. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |
