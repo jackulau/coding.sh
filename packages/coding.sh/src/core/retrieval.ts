@@ -1018,8 +1018,9 @@ const EDGE = -1;
  * match: `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
  * pass over the lines (Aho–Corasick) finds every match: a failed `cat` of many files is not a scan
  * of the output per file. The needles and the lines carry an EDGE mark wherever a name can start,
- * and each needle starts with one, so every match starts at an edge. A needle is walked only when
- * a line names it whole, and then once, however often the lines hold it inside longer names.
+ * and each needle starts with one, so every match starts at an edge. The needles that end at a
+ * match are walked only when the line names them whole, and a walk stops at the first one already
+ * held: the pass stays linear however often the lines name a file or hold it inside longer names.
  */
 function namedIn(needles: readonly string[], lines: readonly string[]): Set<string> {
   const held = new Set<string>();
@@ -1039,7 +1040,7 @@ function namedIn(needles: readonly string[], lines: readonly string[]): Set<stri
     return t;
   };
   for (const n of needles) {
-    // Every line holds "".
+    // The path `/` has no base name, and a read of it always fails: any error line counts as naming it.
     if (!n) {
       held.add(n);
       continue;
@@ -1064,24 +1065,13 @@ function namedIn(needles: readonly string[], lines: readonly string[]): Set<stri
     }
   }
   // out[s]: the nearest state on s's fail chain, s included, where a needle ends; 0 for none.
-  // below[o]: the next such state down o's chain; once o's needle is held, any state further down.
+  // below[o]: the next such state down o's chain.
   const out = new Int32Array(next.length);
   const below = new Int32Array(next.length);
   for (const s of order) {
     out[s] = ends[s]!.length ? s : out[fail[s]!]!;
     below[s] = out[fail[s]!]!;
   }
-  /** The first state from o down its chain whose needle is not held yet; 0 for none. Walks skip held ones from then on. */
-  const open = (o: number): number => {
-    let r = o;
-    while (r && held.has(ends[r]![0]!)) r = below[r]!;
-    while (o !== r) {
-      const b = below[o]!;
-      below[o] = r;
-      o = b;
-    }
-    return r;
-  };
   const step = (s: number, c: number): number => {
     while (s && !next[s]!.has(c)) s = fail[s]!;
     return next[s]!.get(c) ?? 0;
@@ -1093,8 +1083,10 @@ function namedIn(needles: readonly string[], lines: readonly string[]): Set<stri
       s = step(s, line.charCodeAt(i));
       // The needles that end here start at an edge and share the text after them: one check for all of them.
       if (!out[s] || NAME_AFTER.test(line.slice(i + 1, i + 4))) continue;
-      // A state's needles are one text, repeated when two paths share a base name.
-      for (let o = open(out[s]!); o; o = open(below[o]!)) held.add(ends[o]![0]!);
+      // So a line that names a needle whole names every needle down its chain whole: a held needle's
+      // chain is held, and the walk stops at it. A state's needles are one text, repeated when two
+      // paths share a base name.
+      for (let o = out[s]!; o && !held.has(ends[o]![0]!); o = below[o]!) held.add(ends[o]![0]!);
     }
   }
   return held;
