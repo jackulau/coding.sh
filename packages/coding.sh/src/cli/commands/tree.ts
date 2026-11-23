@@ -6,6 +6,7 @@
 // agent processes that share a run id (CODING_SH_RUN_ID) groups into one run;
 // pass that id (or --run).
 import { costNote } from "../../core/pricing.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { buildRunTree, buildSessionTree, buildSubtree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -153,6 +154,10 @@ export async function run(c: CommandContext): Promise<number> {
     if (tree.ancestors?.length) out.print(out.style(ancestorsLine(tree.ancestors), "faint"));
     for (const r of tree.roots) printNode(out, r, true, r.depth);
 
+    // The next steps name a session by a reference that opens it when pasted (core/session-ref.ts): an
+    // id can hold a space or be `latest`. The Fix first line names it as the id column does, to find its row.
+    let short: ((id: string) => string) | undefined;
+    const ref = async (id: string) => (short ??= await shortener(ctx.index))(id);
     const worst = worstNode(tree.roots);
     if (worst) {
       out.print();
@@ -160,9 +165,9 @@ export async function run(c: CommandContext): Promise<number> {
       const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
       out.print(`  ${which} ${wholeRef(w.id)}: ${worstFirst(w.flags).join(", ")}`);
-      out.next("Open it", `coding.sh show ${wholeRef(w.id)}`);
+      out.next("Open it", `coding.sh show ${await ref(w.id)}`);
     }
-    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${wholeRef(tree.roots[0]!.session.id)} --all`);
+    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${await ref(tree.roots[0]!.session.id)} --all`);
     return 0;
   }, { create: false });
 }

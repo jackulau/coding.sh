@@ -17,6 +17,7 @@ import * as improve from "../../src/cli/commands/improve.ts";
 import * as replay from "../../src/cli/commands/replay.ts";
 import * as review from "../../src/cli/commands/review.ts";
 import * as show from "../../src/cli/commands/show.ts";
+import * as tree from "../../src/cli/commands/tree.ts";
 import { wholeRef } from "../../src/core/session-ref.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
@@ -489,6 +490,44 @@ describe("doctor and replay name the session by a reference that opens it", () =
     const own = /^\s*(coding\.?sh replay .*)$/m.exec(sub.stderr)?.[1];
     assert.ok(own, sub.stdout + sub.stderr + String(sub.error?.message));
     assert.equal(await opens(sb, refIn(own, "replay")), child, own);
+  });
+});
+
+describe("show and tree name the session by a reference that opens it in their next steps", () => {
+  // A flagged session whose id holds a space, with more subagents than show lists (50 in --json, 500
+  // in text): pasted whole, `coding.sh tree team chat 1` runs `tree team`.
+  const kid = (i: number) => `${SPACED}:sub:k${String(i).padStart(3, "0")}`;
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const now = Date.now();
+    await sb.seed([
+      mkSession(SPACED, now - 3000, { flags: ["premature-completion"] }),
+      ...Array.from({ length: 501 }, (_, i) => mkSession(kid(i), now - 2000 + i, { parent: { sessionId: SPACED, type: "Explore" } } as never)),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("show's command for the subagents it leaves out, in --json and in text", async () => {
+    const doc = await runCmd(show, sb, { positionals: [SPACED], json: true });
+    assert.equal(doc.json?.subagentsTruncated, true, doc.stdout + String(doc.error?.message));
+    assert.equal(await opens(sb, refIn(doc.json.subagentsRest, "tree")), SPACED, doc.json.subagentsRest);
+    const text = await runCmd(show, sb, { positionals: [SPACED] });
+    const rest = /; (coding\.?sh tree .*) lists them all/.exec(text.stderr)?.[1];
+    assert.ok(rest, text.stderr + String(text.error?.message));
+    assert.equal(await opens(sb, refIn(rest, "tree")), SPACED, rest);
+  });
+
+  test("tree's commands for the session to fix first and for the whole run", async () => {
+    const top = await runCmd(tree, sb, { positionals: [SPACED] });
+    const open = /^\s*(coding\.?sh show .*)$/m.exec(top.stderr)?.[1];
+    assert.ok(open, top.stdout + top.stderr + String(top.error?.message));
+    assert.equal(await opens(sb, refIn(open, "show")), SPACED, open);
+    // From a subagent: the command for the whole run names the subagent, which --all walks up from.
+    const sub = await runCmd(tree, sb, { positionals: [kid(0)] });
+    const whole = /^\s*(coding\.?sh tree .* --all)$/m.exec(sub.stderr)?.[1];
+    assert.ok(whole, sub.stdout + sub.stderr + String(sub.error?.message));
+    assert.equal(await opens(sb, refIn(whole, "tree")), kid(0), whole);
   });
 });
 

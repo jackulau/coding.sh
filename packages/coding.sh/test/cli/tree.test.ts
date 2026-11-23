@@ -60,10 +60,13 @@ describe("coding.sh tree", () => {
     // Rollup headline and the union of flags across the loop.
     assert.match(r.stdout, /1 subagent/);
     assert.match(r.stdout, /flags across the loop:.*premature-completion/);
-    // Points at the worst-flagged node to fix first (the "Open it" hint is on stderr).
+    // Points at the worst-flagged node to fix first, by the id its row shows. The "Open it" hint, on
+    // stderr, names it by a reference that opens it.
     assert.match(r.stdout, /Fix first/);
     assert.match(r.stdout, new RegExp(`the top-level agent ${SID}\\b`));
-    assert.match(r.stderr, new RegExp(`coding\\.sh show ${SID}\\b`));
+    const open = /^\s*coding\.?sh show (\S+)$/m.exec(r.stderr)?.[1];
+    assert.ok(open, r.stderr);
+    assert.equal((json("show", open, "--fields", "session.id").session as Record<string, unknown>).id, SID);
   });
 
   // `tree <subagent>` printed the whole run of its top-level agent: 688 lines for one subagent.
@@ -74,7 +77,10 @@ describe("coding.sh tree", () => {
     assert.match(r.stdout, new RegExp(`^${SUB}  `, "m"), "the subagent is the tree's root line");
     assert.doesNotMatch(r.stdout, new RegExp(`^${SID}  `, "m"), "the top-level agent is not a node");
     assert.match(r.stdout, /0 subagents/);
-    assert.match(r.stderr, new RegExp(`coding\\.sh tree ${SUB} --all`));
+    // The hint for the whole run names the subagent by a reference that opens it.
+    const whole = /^\s*coding\.?sh tree (\S+) --all$/m.exec(r.stderr)?.[1];
+    assert.ok(whole, r.stderr);
+    assert.equal((json("show", whole, "--fields", "session.id").session as Record<string, unknown>).id, SUB);
 
     const doc = json("tree", SUB);
     assert.deepEqual(doc.ancestors, [{ id: SID, agent: "claude-code", role: "root" }]);
