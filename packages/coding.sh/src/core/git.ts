@@ -102,6 +102,16 @@ function spawnGit(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   return spawn("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 }
 
+/** Why git did not start, for a spawn error. ENOENT names a missing git or a folder git can't start in. */
+function startFailure(e: NodeJS.ErrnoException, cwd: string): string {
+  if (e.code !== "ENOENT") return e.message;
+  if (!existsSync(cwd)) return `no folder ${cwd}`;
+  // Windows can't start a process in a folder whose path is 259 characters or longer.
+  const full = resolve(cwd);
+  if (process.platform === "win32" && full.length >= 259) return `can't start git in a folder whose path is ${full.length} characters long (in ${cwd})`;
+  return "git not found on PATH";
+}
+
 /** Run `git <args>`. Throws GitError on non-zero exit (unless allowFail), timeout, or spawn failure. */
 export function run(args: string[], opts: GitRunOptions = {}): Promise<GitResult> {
   const cwd = opts.cwd ?? process.cwd();
@@ -161,12 +171,15 @@ export function run(args: string[], opts: GitRunOptions = {}): Promise<GitResult
       errBytes += c.length;
     });
     child.stdin.on("error", () => {}); // EPIPE when git exits before reading input
+    // When git can't start, the child's own error below says why; on Windows its output pipes
+    // also report an error, which would end the process with no listener.
+    child.stdout.on("error", () => {});
+    child.stderr.on("error", () => {});
     child.on("error", (e: NodeJS.ErrnoException) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      const msg = e.code === "ENOENT" ? "git not found on PATH" : e.message;
-      reject(new GitError(`git ${describe(args)}: ${msg}`, { args, cwd, code: null, stderr: "", timedOut: false }));
+      reject(new GitError(`git ${describe(args)}: ${startFailure(e, cwd)}`, { args, cwd, code: null, stderr: "", timedOut: false }));
     });
     child.on("close", (code, signal) => {
       if (settled) return;

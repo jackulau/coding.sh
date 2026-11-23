@@ -10,7 +10,10 @@
 // - Crash: the store throws at a chosen call and at every call after it, as a process that died there
 //   writes nothing more. SQLite (store/sqlite.ts) rolls back the open transaction, and the test closes
 //   and opens the file again. The memory store (store/memory.ts) has no transactions, like Postgres or
-//   ClickHouse here: it keeps every write made before the crash.
+//   ClickHouse here: it keeps every write made before the crash. In the crash tests a case's first run
+//   reads lines with no stop and crashes at one of the store calls such a run always makes, so every
+//   case crashes. A later run crashes at a call from 1 to 200, or not at all, and a short run can end
+//   before its call comes.
 //
 // A final ingest then runs with no stop. The invariants are the model's, checked on the real store:
 //
@@ -226,6 +229,27 @@ const runGen = (stop: Gen<Stop>, crash: Gen<number>): Gen<Run> =>
 const casesGen = (stop: Gen<Stop>, crash: Gen<number>): Gen<Run[]> => gen.array(runGen(stop, crash), { minLength: 1, maxLength: 5 });
 const STOPS = gen.pick<Stop>(["none", "signal", "deadline"]);
 const CRASHES = gen.frequency<number>([1, gen.constant(0)], [3, gen.int(1, 200)]);
+/**
+ * Store calls a case's first run always makes when it reads at least one line with no stop. The fewest is 19,
+ * on the memory store reading one line (22 on SQLite, 28 with a sink). A later run can make as few as 2.
+ */
+const FIRST_RUN_CALLS = 19;
+/**
+ * Crash cases: the first run reads 1-16 lines with no stop and crashes at one of its first FIRST_RUN_CALLS store
+ * calls, so every case crashes. Up to 4 runs follow, as casesGen makes them.
+ */
+const crashCasesGen: Gen<Run[]> = gen.map(
+  gen.tuple(
+    gen.record<Run>({ append: gen.int(1, 16), every: gen.int(1, 3), stop: gen.constant<Stop>("none"), at: gen.constant(0), crash: gen.int(1, FIRST_RUN_CALLS) }),
+    gen.array(runGen(STOPS, CRASHES), { minLength: 0, maxLength: 4 }),
+  ),
+  ([first, rest]) => [first, ...rest],
+);
+
+/** A crash case crashed: its first run's crash came within the store calls that run always makes. */
+function assertCrashed(o: Outcome, runs: readonly Run[]): void {
+  assert.ok(o.crashes > 0, `no run crashed, though the first run crashes at store call ${runs[0]!.crash}: a first run that reads lines makes fewer than ${FIRST_RUN_CALLS} store calls now, so lower FIRST_RUN_CALLS`);
+}
 
 before(async () => {
   te = tmpEnv();
@@ -282,33 +306,33 @@ test("runs stopped by a signal or a deadline store every line once and send ever
 test("runs that crash at any store call lose nothing on SQLite, and the sink gets every event", async (t) => {
   const seen = { crashes: 0, runs: 0 };
   await forAll(
-    casesGen(STOPS, CRASHES),
+    crashCasesGen,
     async (runs) => {
       const o = await runCase("sqlite", runs, true);
       seen.crashes += o.crashes;
       seen.runs += runs.length;
+      assertCrashed(o, runs);
       assert.deepEqual(allIds.filter((id) => !must(o.got).has(id)), [], "events the sink never got");
     },
     { runs: 4, label: "crashes on sqlite", maxShrinks: 100 },
   );
   t.diagnostic(`${seen.runs} runs, ${seen.crashes} crashed`);
-  assert.ok(seen.crashes > 0, "no run crashed");
 });
 
 test("runs that crash at any store call lose nothing on a store without transactions, and the sink gets every event", async (t) => {
   const seen = { crashes: 0, runs: 0 };
   await forAll(
-    casesGen(STOPS, CRASHES),
+    crashCasesGen,
     async (runs) => {
       const o = await runCase("memory", runs, true);
       seen.crashes += o.crashes;
       seen.runs += runs.length;
+      assertCrashed(o, runs);
       assert.deepEqual(allIds.filter((id) => !must(o.got).has(id)), [], "events the sink never got");
     },
     { runs: 3, label: "crashes on memory", maxShrinks: 100 },
   );
   t.diagnostic(`${seen.runs} runs, ${seen.crashes} crashed`);
-  assert.ok(seen.crashes > 0, "no run crashed");
 });
 
 test("a run that dies between storing a line's events and moving its cursor, on a store without transactions: the next run sends them", async () => {

@@ -6,6 +6,8 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
@@ -17,8 +19,11 @@ import { repoResolver } from "../../src/core/repo-state.ts";
 import { reparse } from "../../src/core/reparse.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Adapter } from "../../src/core/types.ts";
-import { usage } from "../../src/mcp/data.ts";
-import type { AgentEvent } from "../../src/schema/index.ts";
+import { timeline, usage } from "../../src/mcp/data.ts";
+import type { AgentEvent, Session } from "../../src/schema/index.ts";
+import { buildModel, layoutRows, readRows, type Row } from "../../src/viewer/model.ts";
+import * as show from "../../src/cli/commands/show.ts";
+import { runCmd, sandbox } from "../cli/_cmd.ts";
 import { hostOf } from "../../src/spool/host.ts";
 import { CLI } from "../_cli.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -1009,5 +1014,332 @@ describe("T3 provider instances", () => {
     assert.equal(s?.host, "t3code");
     assert.equal(s?.provider, "claude-code");
     assert.equal((await index.listEvents("hub-session-not-on-disk", { kinds: ["user.message"] })).length, 1);
+  });
+});
+
+describe("T3 prompts an agent made, and threads a person started", () => {
+  // A v2 message says who made it: createdBy "user" for the person; createdBy "agent", a
+  // creationSource (provider, mcp, server) or a field only an agent's message carries
+  // (senderThreadId, notification, delegatedCompletion, workflowScript) for an agent.
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  let events: AgentEvent[];
+  before(async () => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', ?, 0, ?, ?, ?)");
+    const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, ?, 'node-1', NULL, ?, 'completed', ?, ?, ?)");
+    // A thread a person started: their prompts (one sent while a turn ran), prompts agents made, and a secret request.
+    thread(db, "thr-person", { provider: "grok", title: "Fix the flaky test", created: T(1) });
+    providerThread(db, "pt-person", "thr-person", "grok", "grok-person", 1);
+    const said = (id: string, at: string, role: string, payload: Record<string, unknown>) => msg.run(id, "thr-person", role, at, at, J(payload));
+    said("m1", T(1), "user", { text: "Fix the flaky test", createdBy: "user" });
+    said("m2", T(1, 20), "assistant", { text: "Fixed: the test waited on a timer." });
+    said("m3", T(3), "user", { text: "Review the diff on the other branch", senderThreadId: "thr-other" });
+    said("m4", T(3, 10), "assistant", { text: "The diff looks right." });
+    said("m5", T(6), "user", { text: "Now run the whole suite", createdBy: "user" });
+    said("m10", T(6, 10), "user", { text: "and the linter", createdBy: "user" });
+    said("m6", T(7), "user", { text: "Background task finished", notification: { kind: "task" } });
+    said("m7", T(7, 30), "user", { text: "The other thread finished the review.", delegatedCompletion: { taskId: "t1" } });
+    said("m8", T(8), "user", { text: "Opened the pull request", creationSource: "mcp" });
+    said("m9", T(9), "user", { text: "Continue with the next step", createdBy: "agent" });
+    turn.run("tu1", "thr-person", "pt-person", 1, T(1), T(1, 30), J({ status: "completed" }));
+    turn.run("tu2", "thr-person", "pt-person", 2, T(3), T(3, 30), J({ status: "completed" }));
+    turn.run("tu3", "thr-person", "pt-person", 3, T(6), T(6, 30), J({ status: "completed" }));
+    db.prepare("INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('req-secret', 'thr-person', 'node-1', 'tu2', 'secret', 'resolved', ?, ?, ?)").run(T(3, 5), T(3, 25), J({ id: "req-secret", kind: "secret", status: "resolved" }));
+    // A subagent's thread, even one whose first prompt says the person made it, and a thread that does not say.
+    thread(db, "thr-person-sub", { provider: "grok", title: "Find the flaky test", created: T(4), payload: { lineage: { parentThreadId: "thr-person", relationshipToParent: "subagent", rootThreadId: "thr-person" } } });
+    providerThread(db, "pt-person-sub", "thr-person-sub", "grok", "grok-person-sub", 1);
+    msg.run("ms1", "thr-person-sub", "user", T(4), T(4), J({ text: "Find the flaky test", createdBy: "user" }));
+    thread(db, "thr-unknown", { provider: "grok", title: "List files", created: T(2) });
+    providerThread(db, "pt-unknown", "thr-unknown", "grok", "grok-unknown", 1);
+    msg.run("mu1", "thr-unknown", "user", T(2), T(2), J({ text: "List the files" }));
+    // A thread with the other ways a message says an agent made it: a provider's own prompt, T3's server, a
+    // workflow step. A field set to null (as a store writes one it leaves empty) says nothing.
+    thread(db, "thr-sources", { provider: "grok", title: "Ship the release", created: T(10) });
+    providerThread(db, "pt-sources", "thr-sources", "grok", "grok-sources", 1);
+    const sent = (id: string, at: string, payload: Record<string, unknown>) => msg.run(id, "thr-sources", "user", at, at, J(payload));
+    sent("src1", T(10), { text: "Ship the release", createdBy: "user" });
+    sent("src2", T(11), { text: "Check the release notes", creationSource: "provider" });
+    sent("src3", T(12), { text: "The release job started", creationSource: "server" });
+    sent("src4", T(13), { text: "Tag the release", workflowScript: { name: "release" } });
+    sent("src5", T(14), { text: "Publish it", createdBy: "user", workflowScript: null, senderThreadId: null });
+    db.close();
+    events = await collect(backfillT3(testCtx().ctx));
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("marks a prompt an agent made from: agent, and none of the person's", () => {
+    assertWellFormed(events);
+    const prompts = events.filter((e) => e.sessionId === "grok-person" && e.kind === "user.message").sort((a, b) => a.ts - b.ts);
+    assert.deepEqual(
+      prompts.map((e) => [e.payload.text, e.payload.from]),
+      [
+        ["Fix the flaky test", undefined],
+        ["Review the diff on the other branch", "agent"],
+        ["Now run the whole suite", undefined],
+        ["and the linter", undefined],
+        ["Background task finished", "agent"],
+        ["The other thread finished the review.", "agent"],
+        ["Opened the pull request", "agent"],
+        ["Continue with the next step", "agent"],
+      ],
+    );
+  });
+
+  it("a provider's prompt, T3's server prompt and a workflow step are an agent's; a field set to null is not", () => {
+    const prompts = events.filter((e) => e.sessionId === "grok-sources" && e.kind === "user.message").sort((a, b) => a.ts - b.ts);
+    assert.deepEqual(
+      prompts.map((e) => [e.payload.text, e.payload.from]),
+      [
+        ["Ship the release", undefined],
+        ["Check the release notes", "agent"],
+        ["The release job started", "agent"],
+        ["Tag the release", "agent"],
+        ["Publish it", undefined],
+      ],
+    );
+  });
+
+  it("a thread a person started is launched interactively; a subagent's thread and one that does not say have no launch", () => {
+    const link = (id: string) => events.find((e) => e.sessionId === id && e.payload.type === "host-link");
+    const launch = (id: string) => buildSession(events.filter((e) => e.sessionId === id)).stats.launch;
+    assert.equal(link("grok-person")?.payload.launch, "interactive");
+    assert.equal(launch("grok-person"), "interactive");
+    for (const id of ["grok-person-sub", "grok-unknown"]) {
+      assert.ok(link(id), id);
+      assert.equal(link(id)?.payload.launch, undefined, id);
+      assert.equal(launch(id), undefined, id);
+    }
+  });
+
+  it("stats.waits counts the turn waits the person ended apart from the ones an agent's prompt ended, the steer and the secret request", async () => {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    const s = await index.getSession("grok-person");
+    assert.equal(s?.stats.launch, "interactive");
+    // Turn waits: 10:01:30 to 10:03 (another thread's message ended it), 10:03:30 to 10:06 (the person),
+    // 10:06:30 to 10:07 (a notification). The secret request: 10:03:05 to 10:03:25. The median of
+    // the two waits is the lower one, by nearest rank.
+    assert.deepEqual(s?.stats.waits, {
+      count: 2,
+      ms: 170_000,
+      medianMs: 20_000,
+      byKind: { request: { count: 1, ms: 20_000 }, turn: { count: 1, ms: 150_000 } },
+      agent: { count: 2, ms: 120_000 },
+      steers: 1,
+    });
+    // A thread that does not say who started it counts no turn waits.
+    assert.equal((await index.getSession("grok-unknown"))?.stats.waits, undefined);
+  });
+});
+
+describe("T3 prompts an agent made, in a thread read from its Codex or Claude transcript", () => {
+  // The transcript does not say who made a prompt; T3's store does. Each thread: the person's
+  // prompt and a turn, another thread's message after the turn ended, a notification while the
+  // next turn ran, then the person's prompt again.
+  const CX = "0193cccc-1111-7222-8333-444455556666";
+  const CL = "22222222-3333-4444-8555-666666666666";
+  const OC = "ses_0a1b2c3d4e5f60718293a4b5c6";
+  const base = Date.parse(T(0));
+  const at = (ms: number) => new Date(base + ms).toISOString();
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+
+  /** A Codex rollout as T3 Code's app-server writes it: item_completed prompts and replies. */
+  function rollout(): string {
+    const lines: [number, string, Record<string, unknown>][] = [];
+    const item = (ms: number, turn: string, id: string, type: "UserMessage" | "AgentMessage", text: string) =>
+      lines.push([ms, "event_msg", { type: "item_completed", thread_id: CX, turn_id: turn, item: type === "UserMessage" ? { type, id, content: [{ type: "text", text, text_elements: [] }] } : { type, id, content: [{ type: "Text", text }], phase: "final_answer" }, started_at_ms: base + ms, completed_at_ms: base + ms }]);
+    const turn = (id: string, start: number, end: number, body: () => void) => {
+      lines.push([start - 1, "turn_context", { turn_id: id, cwd: "/work/demo", model: "gpt-5.5" }]);
+      lines.push([start, "event_msg", { type: "task_started", turn_id: id }]);
+      body();
+      lines.push([end, "event_msg", { type: "task_complete", turn_id: id, last_agent_message: "Done", duration_ms: end - start }]);
+    };
+    lines.push([0, "session_meta", { id: CX, session_id: CX, timestamp: at(0), cwd: "/work/demo", originator: "T3 Code", cli_version: "0.166.0", model_provider: "openai" }]);
+    turn("t1", 100, 60_000, () => {
+      item(500, "t1", "um-1", "UserMessage", "Fix the tests");
+      item(30_000, "t1", "am-1", "AgentMessage", "Fixed: the test waited on a timer.");
+    });
+    turn("t2", 180_100, 300_000, () => {
+      item(180_200, "t2", "um-2", "UserMessage", "Review the diff on the other branch");
+      item(200_000, "t2", "am-2", "AgentMessage", "The diff looks right.");
+      item(240_100, "t2", "um-3", "UserMessage", "Background task finished");
+      item(250_000, "t2", "am-3", "AgentMessage", "Noted.");
+    });
+    turn("t3", 480_200, 540_000, () => {
+      item(480_300, "t3", "um-4", "UserMessage", "Now run the whole suite");
+      item(500_000, "t3", "am-4", "AgentMessage", "All 6 tests pass.");
+    });
+    return lines.map(([ms, type, payload], ordinal) => J({ timestamp: at(ms), type, payload, ordinal })).join("\n") + "\n";
+  }
+
+  /** A Claude transcript as T3 Code's Agent SDK run writes it (entrypoint sdk-ts). */
+  function transcript(): string {
+    const head = { sessionId: CL, cwd: "/work/demo", version: "2.1.300", gitBranch: "main", userType: "external", entrypoint: "sdk-ts" };
+    const lines: Record<string, unknown>[] = [];
+    let n = 0;
+    const user = (ms: number, text: string) => {
+      n++;
+      lines.push({ ...head, type: "user", uuid: `u${n}`, parentUuid: null, timestamp: at(ms), message: { role: "user", content: text }, promptId: `p${n}` });
+    };
+    const reply = (ms: number, text: string) => {
+      n++;
+      lines.push({ ...head, type: "assistant", uuid: `a${n}`, parentUuid: null, timestamp: at(ms), requestId: `req_${n}`, message: { id: `msg_${n}`, type: "message", role: "assistant", model: "claude-opus-4-5", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } });
+    };
+    const ended = (ms: number, durationMs: number) => {
+      n++;
+      lines.push({ ...head, type: "system", subtype: "turn_duration", uuid: `s${n}`, timestamp: at(ms), durationMs, isMeta: true });
+    };
+    user(500, "Fix the tests");
+    reply(30_000, "Fixed: the test waited on a timer.");
+    ended(60_000, 59_500);
+    user(180_200, "Review the diff on the other branch");
+    reply(200_000, "The diff looks right.");
+    user(240_100, "Background task finished");
+    reply(250_000, "Noted.");
+    ended(300_000, 59_900);
+    user(480_300, "Now run the whole suite");
+    reply(500_000, "All 6 tests pass.");
+    ended(540_000, 59_700);
+    return lines.map((l) => J(l)).join("\n") + "\n";
+  }
+
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', 'user', 0, ?, ?, ?)");
+    for (const [th, driver, nativeId] of [["thr-cx", "codex", CX], ["thr-cl", "claudeAgent", CL]] as const) {
+      thread(db, th, { provider: driver, title: "Fix the tests", created: T(0) });
+      providerThread(db, `pt-${th}`, th, driver, nativeId, 1);
+      const said = (id: string, when: string, payload: Record<string, unknown>) => msg.run(`${th}-${id}`, th, when, when, J(payload));
+      said("m1", T(0), { text: "Fix the tests", createdBy: "user" });
+      said("m2", T(3), { text: "Review the diff on the other branch", senderThreadId: "thr-other" });
+      said("m3", T(4), { text: "Background task finished", notification: { kind: "task" } });
+      said("m4", T(8), { text: "Now run the whole suite", createdBy: "user" });
+    }
+    // A thread a person started whose session OpenCode's own adapter imports: its prompts are not read here.
+    thread(db, "thr-oc", { provider: "opencode", title: "create hello.txt", created: T(0) });
+    providerThread(db, "pt-oc", "thr-oc", "opencode", OC, 1);
+    msg.run("thr-oc-m1", "thr-oc", T(0), T(0), J({ text: "create hello.txt", createdBy: "user" }));
+    db.close();
+    writeFile(join(env.home, ".codex", `sessions/2026/11/01/rollout-2026-11-01T10-00-00-${CX}.jsonl`), rollout());
+    writeFile(join(env.home, ".claude", "projects", "-work-demo", `${CL}.jsonl`), transcript());
+    const ocDir = join(env.home, ".local", "share", "opencode");
+    mkdirSync(ocDir, { recursive: true });
+    const oc = new DatabaseSync(join(ocDir, "opencode.db"));
+    oc.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, time_created INTEGER, time_updated INTEGER)");
+    oc.prepare("INSERT INTO session VALUES (?, '/work/demo', 0, 0)").run(OC);
+    oc.close();
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  async function run(adapters: Adapter[]) {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters, env: cenv });
+    assert.deepEqual(r.errors, []);
+    return index;
+  }
+
+  for (const adapters of [[t3code], [codex, claudeCode, t3code]]) {
+    const names = adapters.map((a) => a.id).join(", ");
+    it(`${names}: an agent's prompt after a turn ended or while one ran ends no wait of the person's and is no steer; the person's next prompt ends one`, async () => {
+      const index = await run(adapters);
+      // Codex: a turn wait from 10:01:00 to the other thread's message at 10:03:00.2 (an agent's), the
+      // notification inside the next turn (no steer), then 10:05:00 to the person's prompt at 10:08:00.3.
+      assert.deepEqual((await index.getSession(CX))?.stats.waits, { count: 1, ms: 180_300, byKind: { turn: { count: 1, ms: 180_300 } }, agent: { count: 1, ms: 120_200 } });
+      // Claude: the transcript writes no end for the turn the notification came in; the end it gets is
+      // stamped at the notification's prompt, so no wait comes between them, and the numbers are Codex's.
+      assert.deepEqual((await index.getSession(CL))?.stats.waits, { count: 1, ms: 180_300, byKind: { turn: { count: 1, ms: 180_300 } }, agent: { count: 1, ms: 120_200 } });
+      for (const id of [CX, CL]) {
+        const events = await index.listEvents(id);
+        const prompts = events.filter((e) => e.kind === "user.message");
+        const marks = events.filter((e) => e.kind === "notification" && e.payload.type === "agent_prompt");
+        assert.deepEqual(marks.map((m) => prompts.find((p) => p.id === m.payload.promptId)?.payload.text), ["Review the diff on the other branch", "Background task finished"], id);
+        assert.equal((await index.getSession(id))?.stats.launch, "interactive", id);
+      }
+    });
+  }
+
+  it("the host's markers show in no timeline: show, the MCP timeline, the viewer's rows and turns, and the session page's steps", async () => {
+    const index = await run([t3code]);
+    const html = readFileSync(fileURLToPath(new URL("../../src/viewer/ui/index.html", import.meta.url)), "utf8");
+    // The session page's step builder, with the call-copy fold it runs, as the page runs it.
+    const buildTimeline: (events: AgentEvent[]) => { id: string }[] = runInNewContext(`${html.slice(html.indexOf("function callCopies("), html.indexOf("function itemView("))}\nbuildTimeline`, {});
+    const said = "Review the diff on the other branch";
+    const sessions: Session[] = [];
+    const all: AgentEvent[] = [];
+    for (const id of [CX, CL]) {
+      const s = (await index.getSession(id))!;
+      const events = await index.listEvents(id);
+      sessions.push(s);
+      all.push(...events);
+      const marks = new Set(events.filter((e) => e.kind === "notification" && e.payload.type === "agent_prompt").map((e) => e.id));
+      assert.equal(marks.size, 2, id);
+      const bare = events.filter((e) => !marks.has(e.id));
+      const prompt = events.find((e) => e.kind === "user.message" && e.payload.text === said)!;
+      // MCP: the timeline is the one the events make without the markers.
+      const lines = timeline(events, s.startedAt);
+      assert.ok(lines.some((l) => l.text.includes(said)), id);
+      assert.deepEqual(lines, timeline(bare, s.startedAt), id);
+      // The viewer's rows (unfolded, every turn): no marker's row, the prompt's row kept.
+      const m = buildModel(events);
+      const rows: Row[] = [];
+      for (const t of m.turns) rows.push(...(await readRows(index, id, m, layoutRows(m, t, t.start, 1000, false).slots)));
+      const ids = rows.flatMap((r) => ("id" in r ? [r.id] : []));
+      assert.ok(ids.includes(prompt.id), id);
+      assert.deepEqual(ids.filter((x) => marks.has(x)), [], id);
+      assert.equal(ids.length, bare.length, id);
+      // A turn ends at its own last event, not at the marker stamped before the next turn's prompt.
+      assert.deepEqual(m.turns.map((t) => t.endTs), buildModel(bare).turns.map((t) => t.endTs), id);
+      // The session page's steps.
+      const steps = Array.from(buildTimeline(events), (it) => it.id);
+      assert.ok(steps.includes(prompt.id), id);
+      assert.deepEqual(steps.filter((x) => marks.has(x)), [], id);
+      assert.deepEqual(steps, Array.from(buildTimeline(bare), (it) => it.id), id);
+    }
+    // `coding.sh show`: the prompt's line, no marker's.
+    const sb = sandbox();
+    try {
+      await sb.seed(sessions, all);
+      for (const id of [CX, CL]) {
+        const r = await runCmd(show, sb, { positionals: [id] });
+        assert.equal(r.error, undefined, id);
+        assert.match(r.stdout, /Review the diff on the other branch/, id);
+        assert.doesNotMatch(r.stdout, /an agent sent the next prompt/, id);
+      }
+    } finally {
+      sb.cleanup();
+    }
+  });
+
+  it("a thread a person started whose session another adapter imports (OpenCode) has no launch: its agents' prompts are not told apart", async () => {
+    const index = await run([t3code]);
+    const link = (await index.listEvents(OC, { kinds: ["notification"] })).find((e) => e.payload.type === "host-link");
+    assert.ok(link);
+    assert.equal(link.payload.launch, undefined);
+    assert.equal((await index.getSession(OC))?.stats.launch, undefined);
   });
 });

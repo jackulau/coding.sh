@@ -6,7 +6,7 @@ import type { AgentEvent, Usage } from "../schema/index.ts";
 import { matchAny } from "../runner/glob.ts";
 import { classifyToolStart, shellUse } from "./classify.ts";
 import type { Budget, Prices, TapRecord, Target, ToolMetrics, ToolTask } from "./types.ts";
-import { costFrom, estimateCost } from "../core/pricing.ts";
+import { billableUsage, costFrom, estimateCost } from "../core/pricing.ts";
 import type { OutputCut } from "./model/cap.ts";
 
 export { estimateCost };
@@ -277,7 +277,8 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
     for (const e of source) {
       const m = e.model ?? root?.model ?? "";
       const u = byModel.get(m) ?? {};
-      addUsage(u, e.usage);
+      // Each call's billable counts: a bad count bills nothing, and takes nothing off another call's.
+      addUsage(u, billableUsage(e.usage));
       byModel.set(m, u);
     }
     if (!byModel.size && root?.model) byModel.set(root.model, usage);

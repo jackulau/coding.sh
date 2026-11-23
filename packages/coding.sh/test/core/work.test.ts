@@ -296,14 +296,15 @@ describe("acks and snoozes", () => {
     assert.deepEqual(readOverlay(path), emptyOverlay());
     writeFileSync(path, "{not json");
     assert.deepEqual(readOverlay(path), emptyOverlay());
-    writeFileSync(path, JSON.stringify({ v: 1, acks: { a: ["x", 3], b: "no" }, snoozes: { a: { until: "soon", bucket: "review" }, b: { until: NOW + 1, bucket: "nope" }, c: { until: NOW + 1, bucket: "turn" } } }));
-    assert.deepEqual(readOverlay(path), { v: 1, acks: { a: ["x"] }, snoozes: { c: { until: NOW + 1, bucket: "turn" } } });
+    writeFileSync(path, JSON.stringify({ v: 1, acks: { a: ["x", 3], b: "no" }, snoozes: { a: { until: "soon", bucket: "review" }, b: { until: NOW + 1, bucket: "nope" }, c: { until: NOW + 1, bucket: "turn" }, d: { until: NOW + 1, bucket: "turn", item: 7 } } }));
+    assert.deepEqual(readOverlay(path), { v: 1, acks: { a: ["x"] }, snoozes: { c: { until: NOW + 1, bucket: "turn" }, d: { until: NOW + 1, bucket: "turn" } } });
     const o = emptyOverlay();
     addAck(o, "s", "review:s:1");
     addSnooze(o, ["s"], { until: NOW + MIN, bucket: "review" });
+    addSnooze(o, ["t"], { until: NOW + MIN, bucket: "stalled", item: "w1a2b3c" });
     addSnooze(o, ["gone"], { until: NOW - MIN, bucket: "review" });
     writeOverlay(path, o, NOW);
-    assert.deepEqual(readOverlay(path), { v: 1, acks: { s: ["review:s:1"] }, snoozes: { s: { until: NOW + MIN, bucket: "review" } } });
+    assert.deepEqual(readOverlay(path), { v: 1, acks: { s: ["review:s:1"] }, snoozes: { s: { until: NOW + MIN, bucket: "review" }, t: { until: NOW + MIN, bucket: "stalled", item: "w1a2b3c" } } });
     assert.match(readFileSync(path, "utf8"), /\n$/);
   });
 });

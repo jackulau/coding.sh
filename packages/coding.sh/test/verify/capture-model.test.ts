@@ -2,9 +2,9 @@
 // background ingest. Ingest processes take the lock, clear the wake-up marker, list the files, read
 // each one from its cursors, commit the events with the cursors past them, send them to a sink,
 // release the lock, and run again while the marker is back. A process whose last pass ends with the
-// marker back starts another ingest. Any ingest process can crash between two steps, or stall past
-// the lock's stale limit, so that another process takes the lock over while the first one keeps
-// running.
+// marker back starts another ingest. Any ingest process can crash between two steps while it holds
+// the lock (a crash before it takes the lock leaves nothing behind), or stall past the lock's stale
+// limit, so that another process takes the lock over while the first one keeps running.
 //
 // Each step is one in the code (paths under packages/coding.sh/src):
 // - Hook: spool/hook.ts appends the line, then kicks. spool/write.ts spoolFile picks the first file

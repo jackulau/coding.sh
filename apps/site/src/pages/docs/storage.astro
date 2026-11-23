@@ -110,7 +110,7 @@ interface Sink {
   <Code title="config.toml" code={config} />
   <p>
     A repository can carry its own <code>.coding.sh/config.toml</code>, but because it arrives with <code>git clone</code> it is untrusted: it
-    may only tighten capture (add redaction, exclusions or metadata mode) and adjust snapshot settings. It can never add a sink or move a store, which would let a repository send your
+    may only tighten capture (add redaction, exclusions or metadata mode) and turn snapshots off or lower their limits. It can never add a sink or move a store, which would let a repository send your
     sessions somewhere.
   </p>
 

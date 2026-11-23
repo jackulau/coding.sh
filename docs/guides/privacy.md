@@ -61,13 +61,13 @@ Redaction runs at ingest, before anything is written to the index, the blobs or 
 match becomes `[redacted:<kind>]`.
 
 - A value nested more than 64 levels deep is redacted with the same rules. A value too deep to
-  copy is stored as `[redacted:too-deep]`.
+  copy is stored as `[redacted:too-deep]`, also in the spool.
 - A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
   of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
-| `secrets` | Private keys; API keys and tokens from Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm, Vercel and coding.sh; JWTs; bearer and basic auth headers; passwords in URLs; values next to names like `password`, `token` or `api_key` | yes |
+| `secrets` | Private keys, also in base64; API keys and tokens from over thirty services and tools, such as Anthropic, OpenAI, GitHub and AWS; JWTs; `Authorization` headers; cookies; passwords and signatures in URLs; `.netrc` passwords; values next to names like `password` or `client_secret` | yes |
 | `env` | The values of your environment variables whose names hold `KEY`, `TOKEN`, `SECRET`, `PASSW`, `PWD`, `CREDENTIAL`, `AUTH`, `COOKIE` or `SESSION` | no |
 | `pii` | Email addresses, phone numbers, card numbers, IBANs and national ids | no |
 | `email`, `phone`, `card`, `iban`, `national-id` | One kind of personal data | no |
@@ -147,9 +147,9 @@ what agents run on Windows) redacts the payload first, with `capture.redact` and
 `capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
 spool.
 
-To stay fast, the node hook loads those rules only for a payload whose text may hold a secret, or
-when your `config.toml` sets other rules; the rules would leave any other payload as it is. If it
-can't load them, it writes no line for that payload and logs the error to `spool/errors.log`.
+To stay fast, the node hook loads those rules only for a payload that may hold a secret, the only
+kind they would change, or when your `config.toml` sets other rules. If it can't load them, it
+writes no line for that payload and logs the error to `spool/errors.log`.
 
 The line records how many values the node hook replaced, by rule, and ingest adds those counts to the
 stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies them. The POSIX sh hook

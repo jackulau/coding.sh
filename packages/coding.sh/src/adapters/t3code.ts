@@ -25,6 +25,15 @@
 // every session, open until T3 resolves them (core/waiting.ts host requests).
 // Every session also gets a "host-link" notification with payload.via =
 // "t3code"; buildSession then sets agent "t3code" and provider = the agent T3 ran.
+// A user-role message an agent made (a provider's prompt, an MCP tool, a notification,
+// another thread) is not the person's prompt. In a session built from the store it is a
+// user.message with from: "agent". A Codex or Claude transcript does not say who made a
+// prompt, and the codex and claude-code adapters may store its events first: a transcript
+// prompt that is such a message gets a marker notification before it (agentPromptMarks,
+// core/waiting.ts HOST_AGENT_PROMPT). The host link of a thread a person started (its first
+// prompt is the person's) says launch "interactive", except in a session another adapter
+// imports (OpenCode, Cursor, Pi): its prompts are not read here, so an agent's would count as
+// the person's.
 // A thread's first provider thread is top level; later ones (provider switch)
 // and T3 subagent threads are child sessions. Threads that never reached a
 // provider are `t3code-<threadId>`.
@@ -38,7 +47,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { userHome } from "../core/paths.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
-import { HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
+import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS, HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
 import { T3_AGENT } from "../spool/host.ts";
 import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
@@ -137,6 +146,8 @@ interface StoreMessage {
   ts: number;
   /** Provider thread it belongs to, when known. */
   pt?: string;
+  /** Who made it, when the store says (v2: createdBy, creationSource and the fields an agent's message carries). */
+  by?: "user" | "agent";
 }
 
 interface StoreTurn {
@@ -427,7 +438,9 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
   for (const m of rows.messages) {
     if (m.role !== "user" && m.role !== "assistant") continue;
     const c = await clipText(ctx, m.text);
-    em.emit(m.role === "user" ? "user.message" : "assistant.message", { text: c.value, truncated: c.truncated || undefined }, { key: [m.id], ts: m.ts, blobs: blobList(c.blob) });
+    // A user-role message an agent made is not the person's prompt (core/wait-stats.ts).
+    const from = m.role === "user" && m.by === "agent" ? "agent" : undefined;
+    em.emit(m.role === "user" ? "user.message" : "assistant.message", { text: c.value, truncated: c.truncated || undefined, from }, { key: [m.id], ts: m.ts, blobs: blobList(c.blob) });
     last = Math.max(last, m.ts);
   }
   for (const tu of rows.turns) {
@@ -502,14 +515,19 @@ function requestEvents(ctx: NormalizeContext, p: SessionPlan, requests: StoreReq
   return em.events;
 }
 
-/** The notification that attributes a session to T3 Code, plus the edge to its parent. */
-function linkEvents(ctx: NormalizeContext, p: SessionPlan): AgentEvent[] {
+/**
+ * The notification that attributes a session to T3 Code, plus the edge to its parent. `launch` is
+ * "interactive" for a thread a person started (personStarted) whose prompts are read here, from the
+ * store or a Codex or Claude transcript; the session's launch is then the host's, not the one its
+ * agent's start names (T3 drives Claude Code through the Agent SDK).
+ */
+function linkEvents(ctx: NormalizeContext, p: SessionPlan, launch?: "interactive"): AgentEvent[] {
   const t = p.thread;
   const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: t.cwd, model: p.pt?.model ?? t.model }, ["t3", p.sessionId, "link"]);
   // The thread title titles the session (core/sessions.ts) and names the thread in show.
   const title = t.title?.slice(0, 280);
   const message = title ? `T3 Code thread: ${title}` : "T3 Code thread";
-  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message }, { key: ["host-link"] });
+  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message, launch }, { key: ["host-link"] });
   // T3's cost is a running total: reported, never summed into usage.
   if (p.pt?.costUsd !== undefined) em.emit("notification", { type: "usage-report", via: T3_AGENT, reportedUsage: { costUsd: p.pt.costUsd } }, { key: ["usage-report", p.pt.updated], ts: Math.max(p.start, p.pt.updated) });
   if (p.parent) em.emit("subagent.start", { subagentId: p.sessionId, type: p.parent.type, childSessionId: p.sessionId }, { sessionId: p.parent.sessionId, key: [p.sessionId], model: undefined });
@@ -532,18 +550,72 @@ function plansFor(t: Thread, primary: Map<string, string>, starts: Map<string, n
   }));
 }
 
+/**
+ * A thread a person started: its first user-role message is the person's (v2 createdBy "user"), and it is
+ * not a subagent's thread. A v1 store, or a v2 message that does not say who made it, does not tell.
+ */
+function personStarted(t: Thread, rows: StoreRows): boolean {
+  return t.relation !== "subagent" && rows.messages.find((m) => m.role === "user")?.by === "user";
+}
+
+/** Whitespace-folded text: a store message and the transcript prompt it became compare in this form. */
+const foldText = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Markers (HOST_AGENT_PROMPT) for the prompts of a Codex or Claude transcript that T3's store says an agent made:
+ * the transcript does not say who made a prompt. Each main-thread prompt, in time order, is the store message with
+ * its text (a clipped prompt: a text that starts with the kept part) that was sent at or before it, the latest such
+ * (T3 sends a queued message when the turn before ends), else the first sent up to HOST_MARK_SLACK_MS after it. A
+ * message is matched once. A marker is stamped more than HOST_MARK_SLACK_MS before its prompt, so it comes before a
+ * live copy of the prompt too, and only after the session's start (its host link): a first prompt ends no wait.
+ */
+function agentPromptMarks(ctx: NormalizeContext, p: SessionPlan, events: AgentEvent[], messages: StoreMessage[]): AgentEvent[] {
+  if (!messages.some((m) => m.role === "user" && m.by === "agent")) return [];
+  const pool = messages.filter((m) => m.role === "user").map((m) => ({ m, text: foldText(m.text) }));
+  const prompts = events.filter((e) => e.kind === "user.message" && e.sessionId === p.sessionId && !e.subagentId && typeof e.payload.text === "string").sort((a, b) => a.ts - b.ts);
+  const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: p.thread.cwd }, ["t3", p.sessionId, "by"]);
+  for (const e of prompts) {
+    const raw = e.payload.text as string;
+    const clipped = e.payload.truncated === true;
+    const text = foldText(clipped && raw.endsWith("…") ? raw.slice(0, -1) : raw);
+    if (!text) continue;
+    const same = (c: { text: string }) => (clipped ? c.text.startsWith(text) : c.text === text);
+    let pick: number | undefined;
+    for (let i = 0; i < pool.length; i++) {
+      const c = pool[i]!;
+      if (c.m.ts <= e.ts && same(c) && (pick === undefined || c.m.ts >= pool[pick]!.m.ts)) pick = i;
+    }
+    for (let i = 0; pick === undefined && i < pool.length; i++) {
+      const c = pool[i]!;
+      if (c.m.ts > e.ts && c.m.ts <= e.ts + HOST_MARK_SLACK_MS && same(c)) pick = i;
+    }
+    if (pick === undefined) continue;
+    const { m } = pool.splice(pick, 1)[0]!;
+    const ts = e.ts - HOST_MARK_SLACK_MS - 1;
+    if (m.by !== "agent" || ts <= p.start) continue;
+    em.emit("notification", { type: HOST_AGENT_PROMPT, via: T3_AGENT, promptId: e.id, at: e.ts, message: "T3 Code: an agent sent the next prompt" }, { key: ["by", m.id], ts });
+  }
+  return em.events;
+}
+
 async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, native: NativeIndex, primary: Map<string, string>, starts: Map<string, number>, since?: number): AsyncIterable<AgentEvent> {
   const plans = plansFor(t, primary, starts);
+  const person = personStarted(t, rows);
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
     const path = agent && p.pt?.nativeId ? await native.find(agent, unscope(p.pt.nativeId), t.cwd) : undefined;
     const mine = (x: { pt?: string }) => (p.pt ? x.pt === p.pt.id || (x.pt === undefined && p === plans[0]) : true);
-    if (path && (agent === "codex" || agent === CLAUDE_AGENT)) events = await convertNative(ctx, agent, path, p.sessionId);
-    else if (!path) {
+    // Whether an agent's prompts are told from the person's here: in a session another adapter imports they are not.
+    let told = true;
+    if (path && (agent === "codex" || agent === CLAUDE_AGENT)) {
+      events = await convertNative(ctx, agent, path, p.sessionId);
+      // Every message of the thread: a transcript can hold prompts sent under an earlier provider thread (a fork).
+      events.push(...agentPromptMarks(ctx, p, events, rows.messages));
+    } else if (!path) {
       events = await storeEvents(ctx, p, { messages: rows.messages.filter(mine), turns: rows.turns.filter(mine), items: rows.items.filter(mine), totals: p === plans[0] ? rows.totals : undefined }, primary);
-    }
-    events.push(...linkEvents(ctx, p), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
+    } else told = false;
+    events.push(...linkEvents(ctx, p, person && told ? "interactive" : undefined), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
     // A session with activity inside the window is imported whole, as the codex and claude-code backfills do:
     // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
     // cutoff lost its T3 attribution and thread title.
@@ -640,13 +712,24 @@ function readV2Workflows(db: DatabaseSync): Map<string, { runId: string; agentId
   return out;
 }
 
+/** creationSource values of a message an agent made: a provider's own prompt (a subagent's task), an MCP tool, T3's server. */
+const AGENT_SOURCES = new Set(["provider", "mcp", "server"]);
+/** Payload fields only an agent's message carries: another thread sent it, a notification, a delegated result, a workflow step. */
+const AGENT_FIELDS = ["senderThreadId", "notification", "delegatedCompletion", "workflowScript"];
+
+/** Who made a v2 message, from its payload: "agent" when any field says an agent did, "user" when createdBy says so, else unknown. */
+function messageBy(pl: Row): "user" | "agent" | undefined {
+  if (pl.createdBy === "agent" || AGENT_SOURCES.has(str(pl.creationSource) ?? "") || AGENT_FIELDS.some((k) => pl[k] !== undefined && pl[k] !== null)) return "agent";
+  return pl.createdBy === "user" ? "user" : undefined;
+}
+
 function readV2Rows(db: DatabaseSync, threadId: string, runPt: Map<string, string>): StoreRows {
   const messages: StoreMessage[] = [];
   for (const r of db.prepare("SELECT * FROM orchestration_v2_projection_messages WHERE thread_id = ? AND streaming = 0 ORDER BY created_at, message_id").all(threadId) as Row[]) {
     const pl = parse(r.payload_json);
     const text = str(pl.text);
     if (!text) continue;
-    messages.push({ id: String(r.message_id), role: String(r.role), text, ts: ms(r.created_at) ?? 0, pt: r.run_id ? runPt.get(String(r.run_id)) : undefined });
+    messages.push({ id: String(r.message_id), role: String(r.role), text, ts: ms(r.created_at) ?? 0, pt: r.run_id ? runPt.get(String(r.run_id)) : undefined, by: messageBy(pl) });
   }
   const turns: StoreTurn[] = [];
   if (hasTable(db, "orchestration_v2_projection_provider_turns")) {
@@ -1043,7 +1126,8 @@ export const t3code: Adapter = {
   //    request with "no active turn" ends interrupted, not failed.
   // 15 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A provider instance id (claudeHub, codex-work) maps to the agent its driver kind names.
   // 16 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  parseVersion: 16,
+  // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a notification (HOST_AGENT_PROMPT) names it before its prompt in a Codex or Claude transcript. A thread a person started has an interactive launch (host-link launch), except one another adapter imports (OpenCode, Cursor, Pi).
+  parseVersion: 17,
 
   async detect() {
     const env = process.env;
