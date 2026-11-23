@@ -270,7 +270,8 @@ async function show(c: CommandContext): Promise<number> {
     const overlay = readOverlay(ctx.paths.work);
     const { item, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
-    const files = new Set(await workFiles(ctx.index, item, sessions));
+    // As of the last ingest when the index is old, as the list judges the item: a review item's reason counts from then.
+    const files = new Set(await workFiles(ctx.index, item, sessions, stale?.at));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.

@@ -396,6 +396,7 @@ grouped by area, with links to the docs for the details.
 - **Doctor.** `doctor` and `doctor --conformance` print their rows to stdout, not stderr, as `status` does, so `coding.sh doctor | less` and `coding.sh doctor > doctor.txt` keep the whole report and not only its last line. The next steps stay on stderr. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Viewer.** The session list names the app that drove an agent after its name, `claude-code via T3 Code`, so a row that `agent:t3code` lists says why it matched. The page drawn before its script runs reads the same. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
 - **Viewer.** Work headings count the whole bucket ("119 of 671") instead of only the cards the page loaded, and Show all lists up to 1,000 items in place, beside the CLI command that lists them all. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
+- **Work.** When the index is old, `work show` counts a review item's age from the last ingest, as `work` and the Work page do, so all three give the same reason. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
 
 ## [0.1.7] - 2026-11-16
 

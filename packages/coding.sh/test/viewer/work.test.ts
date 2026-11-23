@@ -14,7 +14,7 @@ import * as work from "../../src/cli/commands/work.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { FLAGS } from "../../src/core/sessions.ts";
-import type { Session } from "../../src/core/types.ts";
+import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { workItemId } from "../../src/core/work.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
@@ -311,6 +311,7 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
   const agent = (id: string, phase: string, startAgo: number, extra: Extra = {}): Session =>
     sess(`lead:sub:${id}`, startAgo, { ...extra, parent: { sessionId: "lead", subagentId: id, workflowId: "run-a", workflowName: "round", phase, label: `${phase}:${id}` } });
   const repo = { root: "/work/web", head: "", branch: "main" } as Extra["repo"];
+  const change: AgentEvent = { id: "c1", v: 0, sessionId: "change", ts: now - 75 * MIN, agent: "claude-code", kind: "file.change", payload: { path: "src/header.ts", op: "modify" } };
 
   before(async () => {
     sb = sandbox();
@@ -321,7 +322,9 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
       { ...agent("v1", "review", 120 * MIN), endedAt: undefined },
       sess("failed", 150 * MIN, { ...failing, cwd: "/work/web", repo, title: "deploy the site" }),
       sess("passed", 100 * MIN, { cwd: "/work/web", repo, title: "deploy the site again" }),
-    ]);
+      // A change to review that ended 70 minutes ago, 30 minutes before the last ingest.
+      sess("change", 80 * MIN, { title: "fix the header", endedAt: now - 70 * MIN, stats: { filesChanged: 1 } }),
+    ], [change]);
     const home = sb.env.CODING_SH_HOME!;
     index = await SqliteIndexStore.open(join(home, "index.db"));
     await index.migrate();
@@ -363,7 +366,8 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
     const items = (await req(v.port, "/api/work?all=1", { token: v.token })).json().items;
     const run = items.find((i: { workflow?: { id: string } }) => i.workflow?.id === "run-a");
     const failed = workItemId("failed");
-    for (const id of [run.id, failed]) {
+    const review = workItemId("change");
+    for (const id of [run.id, failed, review]) {
       const res = await req(v.port, `/api/work/${id}`, { token: v.token });
       assert.equal(res.status, 200, res.body);
       // The index is old, so both sides judge the item as of its last ingest: no clock to split them.
@@ -371,6 +375,7 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
       assert.deepEqual(got, await showJson(sb, id));
       assert.equal(at, age.updatedAt);
     }
+    assert.equal((await showJson(sb, review)).reason, "finished 30m ago with 1 file changed", "work show counts a review item's age from the last ingest, as the list does");
     const agents = (await req(v.port, `/api/work/${run.id}`, { token: v.token })).json().workflowAgents;
     assert.deepEqual(agents.map((a: Record<string, unknown>) => [a.sessionId, a.phase, a.state]), [["lead:sub:b1", "build", "done"], ["lead:sub:b2", "build", "failed"], ["lead:sub:v1", "review", "running"]]);
     assert.match(agents[0].startedAt, /^\d{4}-\d{2}-\d{2}T/);
