@@ -7,7 +7,8 @@
 // - a call a gateway companion billed (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice. A companion with no billed cost bills nothing, and
-//   its call is priced like any other;
+//   its call is priced like any other. A session's events are read again and
+//   written in one transaction, so a companion stored meanwhile is seen;
 // - each changed session gets its usage totals (and cache-break cost) refolded, nothing else.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
@@ -123,6 +124,33 @@ export async function repriceEvents(index: IndexStore, prev: Session, prices: Pr
 
 /** One session's pass: its events' new costs, then, with `totals`, its totals when they changed. */
 async function repriceSession(index: IndexStore, prev: Session, prices: Prices, totals: boolean): Promise<{ events: number; changed: boolean }> {
+  const unchanged = { events: 0, changed: false };
+  if (!owed(await newCosts(index, prev, prices), prev)) return unchanged;
+  // Read again and write in one transaction: a gateway companion stored since the read above
+  // (`coding.sh gateway enrich`, another process) is seen, so the call it bills gets no estimate
+  // on top of the companion's correction.
+  return inTransaction(index, async () => {
+    const plan = await newCosts(index, prev, prices);
+    if (!owed(plan, prev)) return unchanged;
+    const events = plan.costs.length ? await index.setEventCosts!(plan.costs) : 0;
+    if (totals) await refreshTotals(index, prev.id, prev);
+    return { events, changed: true };
+  });
+}
+
+const inTransaction = <T>(index: IndexStore, fn: () => Promise<T>): Promise<T> => (index.transaction ? index.transaction(fn) : fn());
+
+interface CostPlan {
+  costs: EventCost[];
+  /** Some stored event has a cost estimate under these prices. */
+  estimates: boolean;
+}
+
+/** A session owes a write when a cost changed, or once when it was folded before its totals said which part is estimated. */
+const owed = (p: CostPlan, prev: Session): boolean => p.costs.length > 0 || (p.estimates && prev.stats.usage?.estimatedCostUsd === undefined);
+
+/** The new costs of one session's stored events. */
+async function newCosts(index: IndexStore, prev: Session, prices: Prices): Promise<CostPlan> {
   const stored = await index.listEvents(prev.id, { kinds: KINDS });
   const enriched = new Set(stored.map(billedCallOf).filter((id) => id !== undefined));
   const costs: EventCost[] = [];
@@ -143,12 +171,7 @@ async function repriceSession(index: IndexStore, prev: Session, prices: Prices, 
       costs.push(c);
     }
   }
-  // Sessions folded before session totals said which part is estimated are refolded once.
-  const unmarked = estimates && prev.stats.usage?.estimatedCostUsd === undefined;
-  if (!costs.length && !unmarked) return { events: 0, changed: false };
-  const events = costs.length ? await index.setEventCosts!(costs) : 0;
-  if (totals) await refreshTotals(index, prev.id, prev);
-  return { events, changed: true };
+  return { costs, estimates };
 }
 
 /**
