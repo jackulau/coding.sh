@@ -196,7 +196,9 @@ coding.sh: index upgraded to schema v11. The index as it was is kept at ~/.codin
 A new coding.sh can also change the prices cost estimates come from, and so can a `[prices]` edit
 in config.toml. Stored estimates are then repriced once. On the home's own `index.db`, the
 background ingest that starts at the next session end, read or viewer start does it, so commands
-don't wait. Until it finishes, sessions show their old estimates, the viewer shows
+don't wait.
+
+Until that ingest finishes, sessions show their old estimates, the viewer shows
 `Rebuilding stats…`, and MCP answers carry `index.refolding: true`.
 
 With `CODING_SH_NO_AUTO_INGEST=1`, or on another store (a `[store]` setting, `--store` or
