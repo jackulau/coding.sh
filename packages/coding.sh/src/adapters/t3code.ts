@@ -632,18 +632,24 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
 const hasTable = (db: DatabaseSync, name: string): boolean => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
 
 /**
- * What a v2 thread's change check reads besides its row: each query gives a thread's row count `n` and, for rows
- * that change in place, their newest time `t`.
+ * What a v2 thread's change check reads besides its row: each query gives a thread a number `n` (a row count, or its
+ * newest event's sequence) and, for rows that change in place, their newest time `t`. The check adds up the numbers.
+ * T3 Code deletes no messages or turn items, and a thread's newest event sequence grows with each write to the
+ * thread, so each write changes the sum.
  */
 export const V2_ACTIVITY = {
   // Counts only, which an index on thread_id answers. T3 Code sets a thread's updated_at with each message or turn
-  // item it writes, so an edit in place changes the thread row. A row's own updated_at sits beside its payload:
-  // reading it read the whole turn items table on every pass.
+  // item it writes, so an edit in place changes the thread row, unless a command then writes back an updated_at it
+  // read before the edit: `events` catches that. A row's own updated_at sits beside its payload: reading it read the
+  // whole turn items table on every pass.
   messages: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_messages GROUP BY thread_id",
   turnItems: "SELECT thread_id, COUNT(*) n FROM orchestration_v2_projection_turn_items GROUP BY thread_id",
   providerTurns: "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id",
   // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
   runtimeRequests: "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id",
+  // A thread's newest event, one index seek a thread. T3 Code appends an event in the same transaction as each write
+  // to a thread's rows, and its pruning keeps each thread's newest event, so the sequence only grows.
+  events: "SELECT t.thread_id, (SELECT MAX(e.sequence) FROM orchestration_events e WHERE e.aggregate_kind = 'thread' AND e.stream_id = t.thread_id) n FROM orchestration_v2_projection_threads t",
 };
 
 /** Per-thread activity summary (row counts and latest timestamp) for change detection. */

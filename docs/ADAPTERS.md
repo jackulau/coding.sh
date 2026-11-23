@@ -214,13 +214,18 @@ order.
   prompts, so an agent's prompt there would count as the person's.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped. A thread is read again when one of two things differs from the last import:
-  a total of its provider threads, messages, turn items, turns and requests (an answered request counts
-  twice) plus the sizes of the Claude Code and Codex transcripts it links, or the newest of its times (the
-  `updated_at` of its row and its provider threads, when its turns start or end, when its requests arrive
-  or are answered, and when its transcripts were written). T3 Code moves a thread's `updated_at` with each
-  message or turn item it writes, so a message or turn item it finishes in place counts too. The store isn't
-  opened when nothing in it changed since an import that read every changed thread, so threads an import
-  left when it ran out of time are read by the next import.
+  a total, or the newest of its times. In the v2 store the total adds up its provider threads, messages,
+  turn items, turns and requests (an answered request counts twice), the sequence of its newest event in T3's
+  event log, and the sizes of the Claude Code and Codex transcripts it links. The times are the `updated_at`
+  of its row and its provider threads, when its turns start or end, when its requests arrive or are
+  answered, and when its transcripts were written. T3 Code moves a thread's `updated_at` with each message or
+  turn item it writes, and appends an event in the same transaction, so a message or turn item it finishes in
+  place counts too, even when a later command writes back an older `updated_at`. In the v1 store the total
+  adds up its provider threads, messages and activities and its transcripts' sizes, and the times are its
+  row's and provider threads' `updated_at`, its newest message's `updated_at`, its newest activity's
+  `created_at` and when its transcripts were written. The store isn't opened when nothing in it changed since
+  an import that read every changed thread, so threads an import left when it ran out of time are read by
+  the next import.
 - **Links lost by an older import:** a session another agent's adapter stored without its T3 link (an older
   `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
   The re-parse reads T3's store and adds the T3 rows such a session lacks. A T3 row it holds from an older
