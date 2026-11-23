@@ -30,7 +30,8 @@ Files
   M src/adapters/more/antigravity.ts  1 change, last touched at step 3
 ```
 
-A session id can be a unique prefix of 4 or more characters, or `latest`. To find a session by what
+A session id can be a unique prefix of 4 or more characters, the `x_` alias coding.sh prints for
+it, or `latest`. To find a session by what
 was said in it, use `coding.sh search "rate limit"`.
 
 ## Read one step

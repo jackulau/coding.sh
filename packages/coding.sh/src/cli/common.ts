@@ -449,9 +449,10 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
 /**
  * The session a reference names (core/session-ref.ts findSessionRef, which the MCP tools and
  * `work show` use too): the exact id, "latest" or "last" (the newest top-level session worth
- * opening), a unique prefix of at least MIN_ID_PREFIX characters like a git short hash, an SDK id
- * without its default project, a subagent's own id, or a short subagent id (shortSessionId). An
- * ambiguous prefix fails with the candidates listed (data.candidates in --json).
+ * opening), the x_ alias shortestRef prints, a unique prefix of at least MIN_ID_PREFIX characters
+ * like a git short hash, an SDK id without its default project, a subagent's own id, or a short
+ * subagent id (shortSessionId). An ambiguous prefix fails with the candidates listed
+ * (data.candidates in --json).
  */
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
   let s: Session | undefined;
