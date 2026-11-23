@@ -56,4 +56,10 @@ describe("shellCallFiles", () => {
     assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "/w/src" }, "/w"), ["src/a.ts"]);
     assert.deepEqual(shellCallFiles("run_command", { CommandLine: "sed -i s/x/y/ a.ts", Cwd: "C:\\w\\src" }, "C:\\w"), ["src/a.ts"]);
   });
+
+  it("resolves paths against Gemini's dir_path or directory, relative to the project folder or absolute", () => {
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "sed -i s/x/y/ a.ts", dir_path: "src" }, "/w"), ["src/a.ts"]);
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "echo x > a.txt", directory: "pkg" }, "/w"), ["pkg/a.txt"]);
+    assert.deepEqual(shellCallFiles("run_shell_command", { command: "sed -i s/x/y/ a.ts", dir_path: "/w/src" }, "/w"), ["src/a.ts"]);
+  });
 });

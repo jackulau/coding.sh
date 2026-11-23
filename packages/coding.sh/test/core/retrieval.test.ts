@@ -203,6 +203,9 @@ describe("classifyRetrieval", () => {
       ["run_command", { CommandLine: "cat a.ts", Cwd: "/work/demo/sub" }, "read /work/demo/sub/a.ts"],
       ["Execute", { command: "grep -rn x src" }, "search"],
       ["shell", { command: ["bash", "-lc", "sed -n '1,80p' SKILL.md && cat README.md"] }, "read SKILL.md README.md"],
+      // Gemini's shell tool runs in `dir_path` (`directory` in older versions), relative to the project folder.
+      ["run_shell_command", { command: "cat a.ts", dir_path: "src" }, "read src/a.ts"],
+      ["run_shell_command", { command: "cat a.ts", directory: "src" }, "read src/a.ts"],
     ];
     for (const [tool, input, want] of rows) assert.equal(kind(tool, input), want, `${tool} ${JSON.stringify(input)}`);
   });
@@ -241,6 +244,12 @@ describe("Session.stats.retrieval", () => {
     assert.equal(s.stats.filesChanged, 2);
     // The sed's a.ts is the src/a.ts read before it.
     assert.deepEqual(s.stats.retrieval, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 1 });
+  });
+
+  it("a Gemini shell call in a subfolder (dir_path, directory) reads and writes the files under it", () => {
+    const s = buildSession([...read("src/b.ts"), ...call("run_shell_command", { command: "cat a.ts", dir_path: "src" }), ...call("run_shell_command", { command: "sed -i 's/x/y/' b.ts", directory: "src" }), edit("src/a.ts")]);
+    assert.equal(s.stats.filesChanged, 2);
+    assert.deepEqual(s.stats.retrieval, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
   });
 
   it("a relative read from an event with no cwd resolves against the session's", () => {

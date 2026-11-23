@@ -783,7 +783,7 @@ read and then edited. It is absent when the session read, searched and fetched n
 |---|---|
 | Read | A read tool (Read, `read_file`, `view`), or `cat`, `bat`, `nl`, `head`, `tail`, `less`, `more`, `sed` without `-i`, `git show <rev>:<path>` or `Get-Content` |
 | Search | A search or list tool (Grep, Glob), or `grep`, `rg`, `ag`, `ack`, `findstr`, `find`, `fd`, `ls`, `tree`, `git grep`, `git ls-files`, `git show <rev>:<folder>/`, `Select-String` or `Get-ChildItem` |
-| Shell line | One shell tool call (Antigravity's `run_command` and Droid's `Execute` included), split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
+| Shell line | One shell tool call (Antigravity's `run_command` and Droid's `Execute` included), split on `&&`, `\|\|`, `;` and new lines, heredoc bodies skipped. A line starts in the folder its call names (`workdir`, `cwd`, Antigravity's `Cwd`, Gemini's `dir_path` or `directory`), else the working directory. `cd`, `pushd` and `Set-Location` move where later paths resolve. A line that reads and searches counts as both |
 | Pipeline | Counts as its first command, but `cat f \| grep x` is a search. A search that deletes or rewrites what it found (`find . -delete`) is neither. A pipeline whose output goes to a file (`cat a > b`, `| Out-File`) reads nothing, and its search is quiet |
 | Empty search | A search that printed nothing, said "No matches found" or "No files found" (from a shell command, only when that is all it printed), or exited 1 with no output. `grep -q` and a search whose output goes to a file are empty only on status 1. A line that also read is never empty |
 | File | Keyed as in `filesChanged`: relative to the working directory when inside it. `C:\x`, `C:/x` and `/c/x` are one file |
@@ -887,6 +887,7 @@ skills). It is what `coding.sh harness audit` counts.
 - The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
 - A shell call (any agent's shell tool, Antigravity's `run_command` and Droid's `Execute` included) writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
 - PowerShell's `Set-Content`, `Add-Content` and `Out-File` count too. A file written both by an edit tool and by a shell call counts once.
+- A relative path resolves from the folder the call names (`workdir`, `cwd`, Antigravity's `Cwd`, Gemini's `dir_path` or `directory`) and any `cd` before it.
 - Reads, deletes, `/dev/null`, paths with a variable or a glob, and paths outside the working directory (`/tmp`, `~`) do not count.
 - Neither does a call the user stopped or turned down, nor a script that writes files without naming them in the command (`python fix.py`).
 

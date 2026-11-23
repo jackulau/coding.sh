@@ -95,8 +95,12 @@ export function writtenFileKey(path: string, cwd?: string, workdir?: string): st
   return p === "." || p === ".." || p.startsWith("../") ? undefined : p;
 }
 
-/** Shell tool inputs that name the folder the call ran in: the first that holds a string. Antigravity's run_command names it `Cwd`. */
-const WORKDIR_KEYS = ["workdir", "cwd", "Cwd"] as const;
+/**
+ * Shell tool inputs that name the folder the call ran in: the first that holds a string. Antigravity's
+ * run_command names it `Cwd`; Gemini's run_shell_command `dir_path` (`directory` in older versions),
+ * relative to the project folder.
+ */
+const WORKDIR_KEYS = ["workdir", "cwd", "Cwd", "dir_path", "directory"] as const;
 
 /** The folder a shell call ran in, as its input names it (WORKDIR_KEYS), or undefined. */
 export function shellWorkdir(input: unknown): string | undefined {
