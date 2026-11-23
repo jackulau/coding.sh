@@ -842,7 +842,7 @@ function readV1Rows(db: DatabaseSync, threadId: string): StoreRows {
 
 // ---------------------------------------------------------------- backfill
 
-/** Size/mtime summary over the store files, for the whole-store unchanged check. */
+/** Size/mtime summary over the store files, for the whole-store unchanged check: saved once a walk has read every changed thread. */
 function storeFingerprint(dir: string, dbs: string[]): BackfillFile {
   let size = 0;
   let mtimeMs = 0;
@@ -853,7 +853,7 @@ function storeFingerprint(dir: string, dbs: string[]): BackfillFile {
       mtimeMs = Math.max(mtimeMs, s.mtimeMs);
     }
   }
-  return { path: join(dir, "#store"), size, mtimeMs };
+  return { path: join(dir, "#store"), size, mtimeMs, covers: true };
 }
 
 async function threadFile(native: NativeIndex, dbPath: string, t: Thread, act: { n: number; t: number }[]): Promise<BackfillFile> {
@@ -994,7 +994,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
       } catch (e) {
         // Locked for longer than the busy timeout (another connection recovering the WAL after a crash, say),
         // or failing (an I/O error, a corrupt page): fail the pass, so this thread and the rest are not marked
-        // read. A pass with a deadline has saved the store's fingerprint already, so they wait for its next write.
+        // read. The store's fingerprint is not saved either, so the next pass looks at them again.
         if (!sqliteShapeError(e)) throw new Error(`T3 Code's store was not read: ${(e as Error).message}`, { cause: e });
         continue; // schema drift in one thread's rows: skip it, keep the rest
       }
