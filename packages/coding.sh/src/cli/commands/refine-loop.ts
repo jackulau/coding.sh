@@ -56,6 +56,7 @@ import { sh } from "../../runner/exec.ts";
 import { gateFlags, list, num, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import { infraStopNote } from "../jobs.ts";
+import { cliCommand } from "../next-steps.ts";
 import { protectOptions, protectOverrides } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
 import { targetPath as targetPathOf } from "../../refine/target.ts";
@@ -197,7 +198,7 @@ export async function resolveCandidate(e: Pick<Env, "c" | "ctx" | "root" | "dir"
   const before = new Map(base.files.map((f) => [f.path, f.text]));
   const removed = base.files.filter((f) => !arm.files.some((x) => x.path === f.path)).map((f) => f.path);
   if (removed.length) {
-    throw new UsageError(`Candidate ${v} drops ${removed.join(", ")}: refine tests and applies added or edited files only`, { reason: "invalid_argument", suggestion: "pass the edited file itself, e.g. coding.sh refine test ./drafts/AGENTS.md" });
+    throw new UsageError(`Candidate ${v} drops ${removed.join(", ")}: refine tests and applies added or edited files only`, { reason: "invalid_argument", suggestion: `pass the edited file itself, e.g. ${cliCommand(e.c.env, ["refine", "test", "./drafts/AGENTS.md"])}` });
   }
   const changed = arm.files.filter((f) => before.get(f.path) !== f.text).map((f) => ({ path: f.path, text: f.text }));
   if (!changed.length) throw new UsageError(`Candidate ${v} has the same harness files as the repo: nothing to test`, { reason: "invalid_argument" });
@@ -528,11 +529,11 @@ function minedFor(e: Env): MinedFinding[] | undefined {
   try {
     doc = JSON.parse(readFileSync(resolve(e.c.cwd, file), "utf8"));
   } catch (err) {
-    throw new UsageError(`--mined ${file}: ${(err as NodeJS.ErrnoException).code ?? "not JSON"}; pass the output of coding.sh refine mine --json`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
+    throw new UsageError(`--mined ${file}: ${(err as NodeJS.ErrnoException).code ?? "not JSON"}; pass the output of ${cliCommand(e.c.env, ["refine", "mine", "--json"])}`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
   }
   const list = Array.isArray(doc) ? doc : (doc as { findings?: unknown })?.findings;
   if (!Array.isArray(list) || !list.every((f) => f && typeof f === "object" && typeof (f as MinedFinding).label === "string" && typeof (f as MinedFinding).count === "number" && typeof (f as MinedFinding).support?.sessions === "number")) {
-    throw new UsageError(`--mined ${file} holds no findings; pass the output of coding.sh refine mine --json`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
+    throw new UsageError(`--mined ${file} holds no findings; pass the output of ${cliCommand(e.c.env, ["refine", "mine", "--json"])}`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
   }
   return list as MinedFinding[];
 }
@@ -747,9 +748,9 @@ async function proposeCommand(c: CommandContext, e: Env): Promise<number> {
   return 0;
 }
 
-/** A `refine distill` candidate in `refine log`. */
-const proposeLine = (k: ProposeEntry): string =>
-  `Distilled ${k.id} ${k.files[0]?.path ?? ""} from ${k.provenance.corpusEpisodes} episodes (${k.at.slice(0, 10)}): ${k.verdict}${k.reasons.length ? `, ${k.reasons[0]}` : `; test it with coding.sh refine test ${k.id}`}`;
+/** A `refine distill` candidate in `refine log`; the command that tests it is named for the user's shell. */
+const proposeLine = (k: ProposeEntry, env: NodeJS.ProcessEnv): string =>
+  `Distilled ${k.id} ${k.files[0]?.path ?? ""} from ${k.provenance.corpusEpisodes} episodes (${k.at.slice(0, 10)}): ${k.verdict}${k.reasons.length ? `, ${k.reasons[0]}` : `; test it with ${cliCommand(env, ["refine", "test", k.id])}`}`;
 
 async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Promise<number> {
   const { out } = c;
@@ -765,7 +766,7 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
     return 0;
   }
   if (!rounds.length) {
-    for (const k of entries) if (k.op === "propose") out.print(proposeLine(k));
+    for (const k of entries) if (k.op === "propose") out.print(proposeLine(k, c.env));
     out.note(`No refine rounds in this repo yet (${ledgerFile(e.dir)})`);
     out.next("Test an edit to AGENTS.md", "coding.sh refine test ./drafts/AGENTS.md");
     return 0;
@@ -774,7 +775,7 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
   const rechecks = () => {
     for (const k of entries) {
       if (k.op === "recheck") out.print(`Recheck ${k.candidate} under ${k.canary.model} (${k.at.slice(0, 10)}): ${k.canary.reason}`);
-      if (k.op === "propose") out.print(proposeLine(k));
+      if (k.op === "propose") out.print(proposeLine(k, c.env));
     }
   };
   if (climb && decisionRounds.length === 0) {

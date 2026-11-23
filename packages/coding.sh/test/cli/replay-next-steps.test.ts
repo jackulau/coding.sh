@@ -183,18 +183,20 @@ describe("replay and exp replay: what they print", () => {
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.equal(up.seen.length, before, "no key: no request");
     assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
-    const set = envLine(env, "ANTHROPIC_API_KEY", "…");
+    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # or a subscription token in $CLAUDE_CODE_OAUTH_TOKEN`;
     assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
   });
 
   it("no key: exp replay prints the line that sets it in the user's shell, and sends nothing", async () => {
     const before = up.seen.length;
-    const r = await cli(["exp", "replay", `${SESSION}#-1`, "--vary", "model=claude-haiku-4-5", "--n", "1"]);
+    const args = ["exp", "replay", `${SESSION}#-1`, "--vary", "model=claude-haiku-4-5", "--n", "1"];
+    const r = await cli(args);
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.equal(up.seen.length, before, "no key: no request");
     assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
-    assert.match(r.stderr, /add --dry-run to see the cost first:$/m);
-    const set = envLine(env, "ANTHROPIC_API_KEY", "…");
+    const dry = cliCommand(env, [...args, "--dry-run"]);
+    assert.ok(lines(r.stderr).includes(`    See the cost first: ${dry}`), `expected "See the cost first: ${dry}" in:\n${r.stderr}`);
+    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # the agent's own login is never stored, so it can't be reused; a subscription token in $CLAUDE_CODE_OAUTH_TOKEN works too`;
     assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
   });
 

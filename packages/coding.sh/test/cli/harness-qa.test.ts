@@ -153,6 +153,116 @@ describe("harness snapshot --agent claude-code with CLAUDE_CONFIG_DIR, and the M
   });
 });
 
+describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_DIR", () => {
+  const run = (cwd: string, cfg: string, args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "snapshot", "-a", "claude-code", ...args], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    return r;
+  };
+  type Snap = { outcome: string; bundle: { id: string; files: string[]; createdAt: string } };
+  const json = (cwd: string, cfg: string, name: string): Snap => JSON.parse(run(cwd, cfg, ["--name", name, "--json"]).stdout);
+
+  it("records a file in the config dir once, as ~/.claude/…, with the id a run from another folder gets", () => {
+    const dir = join(root, "holds-config");
+    const cfg = join(dir, "cc");
+    const elsewhere = join(root, "holds-nothing");
+    mkdirSync(elsewhere, { recursive: true });
+    put(join(cfg, "CLAUDE.md"), "user rules\n@notes.md\n@rules/style.md\n");
+    put(join(cfg, "notes.md"), "notes\n");
+    put(join(cfg, "rules", "style.md"), "style\n");
+    const inside = json(dir, cfg, "inner");
+    assert.deepEqual(inside.bundle.files, ["~/.claude/CLAUDE.md", "~/.claude/notes.md", "~/.claude/rules/style.md"]);
+    const outside = json(elsewhere, cfg, "inner");
+    assert.deepEqual(outside.bundle.files, inside.bundle.files);
+    assert.equal(outside.bundle.id, inside.bundle.id);
+  });
+
+  it("keys an import beside the file that imports it, and keeps the project files of a project in the config dir", () => {
+    // The config dir inside the project: the project's CLAUDE.md imports a file there by a project
+    // path, the user CLAUDE.md by its own, and each key is where that import resolves.
+    const dir = join(root, "imports-both");
+    const cfg = join(dir, "cc");
+    put(join(dir, "CLAUDE.md"), "project rules\n@cc/notes.md\n");
+    put(join(cfg, "CLAUDE.md"), "user rules\n@notes.md\n");
+    put(join(cfg, "notes.md"), "notes\n");
+    assert.deepEqual(json(dir, cfg, "both").bundle.files, ["CLAUDE.md", "cc/notes.md", "~/.claude/CLAUDE.md", "~/.claude/notes.md"]);
+    // A repo checked out in the config dir's skills/: Claude Code run in it loads its CLAUDE.md,
+    // .mcp.json and their imports as the project's, so they stay project files.
+    const config = join(root, "config-holds-repo");
+    const repo = join(config, "skills", "demo");
+    put(join(config, "CLAUDE.md"), "user rules\n");
+    put(join(repo, "SKILL.md"), "---\nname: demo\ndescription: A demo skill.\n---\n");
+    put(join(repo, "CLAUDE.md"), "repo rules\n@docs/a.md\n");
+    put(join(repo, "docs", "a.md"), "a\n");
+    put(join(repo, ".mcp.json"), "{}\n");
+    assert.deepEqual(json(repo, config, "repo").bundle.files, [
+      ".mcp.json",
+      "CLAUDE.md",
+      "docs/a.md",
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/demo/.mcp.json",
+      "~/.claude/skills/demo/CLAUDE.md",
+      "~/.claude/skills/demo/SKILL.md",
+      "~/.claude/skills/demo/docs/a.md",
+    ]);
+  });
+
+  it("says the bundle already exists when the same setup is snapshotted again, in text and --json", () => {
+    const dir = join(root, "twice");
+    const cfg = join(root, "twice-config");
+    mkdirSync(cfg, { recursive: true });
+    put(join(dir, "CLAUDE.md"), "twice\n");
+    const first = json(dir, cfg, "twice");
+    const second = json(dir, cfg, "twice");
+    assert.deepEqual([first.outcome, second.outcome], ["created", "unchanged"]);
+    assert.equal(second.bundle.id, first.bundle.id);
+    const text = run(dir, cfg, ["--name", "twice"]);
+    assert.match(text.stderr + text.stdout, /twice already exists, unchanged: 1 file\b/);
+    assert.ok(text.stdout.includes(first.bundle.id), text.stdout);
+    // An MCP server is a record outside the id: the same bundle, its record updated.
+    put(join(cfg, ".claude.json"), JSON.stringify({ mcpServers: { docs: { command: "node" } } }));
+    const mcp = run(dir, cfg, ["--name", "twice"]);
+    assert.match(mcp.stderr + mcp.stdout, /twice already exists, MCP servers updated: 1 file, 1 MCP server recorded \(docs\)/);
+    assert.ok(mcp.stdout.includes(first.bundle.id), mcp.stdout);
+    put(join(cfg, ".claude.json"), "{}");
+    const gone = json(dir, cfg, "twice");
+    assert.deepEqual([gone.outcome, gone.bundle.id], ["updated", first.bundle.id]);
+    assert.equal(json(dir, cfg, "twice").outcome, "unchanged");
+    put(join(dir, "CLAUDE.md"), "changed\n");
+    const changed = run(dir, cfg, ["--name", "twice"]);
+    assert.match(changed.stderr + changed.stdout, /twice: 1 file\b/);
+    assert.doesNotMatch(changed.stderr + changed.stdout, /already exists/);
+    // Back to the first setup: the bundle already stored, snapshotted last, so the name picks it
+    // again (a name means the newest bundle so named), not the changed one.
+    put(join(dir, "CLAUDE.md"), "twice\n");
+    const back = json(dir, cfg, "twice");
+    assert.deepEqual([back.outcome, back.bundle.id], ["unchanged", first.bundle.id]);
+    const listed = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "list", "--json"], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd: dir, encoding: "utf8", timeout: 60_000 });
+    assert.equal(listed.status, 0, listed.stderr);
+    const named = (JSON.parse(listed.stdout) as { bundles: { id: string; name: string }[] }).bundles.filter((b) => b.name === "twice");
+    assert.equal(named.length, 2);
+    assert.equal(named[0]!.id, first.bundle.id, "harness list puts the setup snapshotted last first");
+  });
+
+  it("says a harness TOML whose note alone changed is the same bundle, its note updated", () => {
+    const dir = join(root, "noted");
+    put(join(dir, "CLAUDE.md"), "noted\n");
+    const toml = (note: string) => put(join(dir, "harness.toml"), `name = "noted"\nagent = "claude-code"\ninclude = ["CLAUDE.md"]\nnote = "${note}"\n`);
+    const snap = (...args: string[]) => {
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "snapshot", "--file", join(dir, "harness.toml"), ...args], { env, cwd: dir, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+      return r;
+    };
+    toml("one");
+    const first = JSON.parse(snap("--json").stdout) as Snap;
+    toml("two");
+    const text = snap();
+    assert.match(text.stderr + text.stdout, /noted already exists, note updated: 1 file\b/);
+    const again = JSON.parse(snap("--json").stdout) as Snap;
+    assert.deepEqual([first.outcome, again.outcome, again.bundle.id], ["created", "unchanged", first.bundle.id]);
+  });
+});
+
 describe("harness audit follows @imports", () => {
   it("counts a file a loaded CLAUDE.md imports as loaded, with its size in the load cost", async () => {
     const app = join(home, "import-app");

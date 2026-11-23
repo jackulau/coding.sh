@@ -31,6 +31,9 @@ coding.sh doctor --json   # the same as one JSON document
 1 agent not capturing
 ```
 
+The rows and the last line go to stdout, and the next steps to stderr, so
+`coding.sh doctor > doctor.txt` saves every row.
+
 A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
 show up, work down this list:
 
@@ -88,6 +91,7 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names no install that is still there. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
 | `Hook hooks run the coding.sh … at …, another install` | `bin/cli-path` names another install that is still there. The hooks run it, and it owns the store. | `coding.sh upgrade-store` from the install the hooks should run (it asks first), or use the install the row names. |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
+| `Status line runs coding.sh statusline, which PowerShell and cmd can't run (<file>)` | Windows only. Claude Code's status line names `coding.sh`, as older versions installed it. Claude Code runs it through PowerShell when Git Bash is not installed, so no status line shows. doctor only reads the file. | `codingsh statusline install` (in Git Bash, `coding.sh statusline install`) |
 | `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
 | `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
 | `Stats N model calls past physical limits (…)` | Recent stored model calls show more than 500 output tokens a second (10,000 for a model whose calls usually top 500, as on a fast host such as Cerebras or Groq), a first token outside the call, or a cost below $0 or above $50. A parser or unit bug, not a real call. | `coding.sh show <session>` for the session it names, and report it. |
@@ -180,7 +184,14 @@ a second:
 ```text
 coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v11. This runs once.
 coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
-coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
+coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
+```
+
+A smaller store upgrades without progress. When a person runs the command at a terminal, one dim
+line then names the copy of the index it kept (not with `--json`, and not when stderr is piped):
+
+```text
+coding.sh: index upgraded to schema v11. The index as it was is kept at ~/.coding.sh/index.db.v8.bak: `coding.sh upgrade-store --restore` puts it back, and it is yours to delete.
 ```
 
 - **Another command waits.** A command that opens the index while another process upgrades it
@@ -254,8 +265,13 @@ stderr:
 ```
 
 When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
-`--force`, `purge`, a rollback), the message says it needs your approval, and the JSON has
-`askUser: true`. An AI agent that hits such an error asks you before it runs `next`.
+`--force`, `purge`, a rollback), the JSON has `askUser: true`. An AI agent that hits such an error
+asks you before it runs `next`.
+
+The message says it needs your approval when an agent may be reading: without a terminal, or when
+a variable that agents set is present (`CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`). At a terminal with none of them set, you approve the step yourself, so the
+message leaves that out.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
@@ -268,11 +284,11 @@ The command line was wrong. Nothing ran.
 | `unknown_command` | `Unknown command "workflows frob"` | `coding.sh --help` lists commands, and `coding.sh <command> --help` its actions. Typos get a suggestion. |
 | `missing_command` | `Missing command for coding.sh dataset. Choose one of: add, import, list` | Add the action. |
 | `unknown_action` | `Unknown workflows action "…"` | `coding.sh workflows --help` |
-| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. |
+| `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. In PowerShell or cmd, after a value with a space, the message also says how to write a double quote inside a value: Windows PowerShell 5.1 splits the value at one. |
 | `missing_value` | `--since needs a value <WHEN>` | Give the option a value. |
 | `invalid_value` | `Invalid value for capture.mode: capture.mode must be one of "full", "metadata", got "loud"` (config set) | Use one of the values the message lists. |
 | `bad_flag` | `--facets: can't count foo; use agent, model, …` (sessions) | Use a value the message lists. |
-| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. |
+| `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. In PowerShell or cmd the message also says how to write a double quote inside a value, as for `unknown_option`. |
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error, such as `--by must be one of agent, model, …, got "foo"` | Read the message. |
@@ -280,7 +296,7 @@ The command line was wrong. Nothing ran.
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
-| `unknown_flag` | `Unknown session flag "no-verificaton"` / `Did you mean --flag no-verification?` (sessions) | Use the flag it names, or one from [Flags and derails](https://coding.sh/docs/query#flags-and-derails). |
+| `unknown_flag` | `Unknown session flag "no-verificaton"` / `Did you mean --flag no-verification?` (sessions, export, search, usage) | Use the flag it names, or one from [Flags and derails](https://coding.sh/docs/query#flags-and-derails). |
 | `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](https://coding.sh/docs/config), or a `--where` key from [Query language](https://coding.sh/docs/query#filter-with---where). To search for the word itself, quote it. |
 | `bad_value` | `--where: cost: must be a USD amount like 0.5, got "abc" at character 6` | Use a value the key takes; the message gives one. Durations need a unit (`duration>10m`). |
 | `unterminated_quote`, `unbalanced_parens` | `--where: missing ')' at character 23` | Close the quote or parenthesis the caret points at. |
@@ -317,7 +333,7 @@ The command ran and something failed.
 | `no_backup` | `No index from before a migration is kept next to ~/.coding.sh/index.db: nothing to restore` | `upgrade-store --restore` found no `index.db.v<N>.bak` this coding.sh can open: none was kept, or a `coding.sh purge` deleted it. Update instead: `coding.sh update`. |
 | `source_checkout` | `coding.sh is running from a source checkout (…), so it won't open your real store in ~/.coding.sh: …` | Set `CODING_SH_HOME` to a temp dir, or `CODING_SH_DEV_REAL_STORE=1` to use the real store. |
 | `locked` | `Can't ingest: …` | Another ingest is running. Wait for it, then run `coding.sh ingest`. |
-| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
+| `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. `init --proxy` writes no base URL while it can't use `proxy.port`: another program holds it, it is 0, or this home's proxy runs on another port. It prints the command that fixes it, such as `coding.sh config set proxy.port 4321`. Run that, then `coding.sh init --proxy` again. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |
 | `proxy_failed` | `The background proxy did not start` | Read `~/.coding.sh/proxy.log`, or run `coding.sh proxy` in the foreground to see the error. |
 | `grader_error` | (judge grade) `grader error: …` (exit 2) | The grader could not grade, so there is no verdict. Check the grader's provider and API key, then run again. A fail verdict exits 1. |

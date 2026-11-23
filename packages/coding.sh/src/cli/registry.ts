@@ -392,7 +392,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     actions: [
       { name: "status", summary: "Show whether a proxy is running, and where (exit 1 when not)", examples: ["coding.sh proxy status"] },
-      { name: "stop", summary: "Stop the background proxy", examples: ["coding.sh proxy stop"] },
+      { name: "stop", summary: "Stop the running proxy: it finishes the calls in flight first, for up to 10 s", examples: ["coding.sh proxy stop"] },
       { name: "env", summary: "Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy", examples: ['eval "$(coding.sh proxy env)"'] },
     ],
     examples: ["coding.sh proxy", "coding.sh proxy --background", "coding.sh init --proxy", "coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic"],
@@ -1514,7 +1514,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2)" },
           { name: "config", type: "string", value: "<NAME>", desc: "The score config every item is scored with (coding.sh score configs); it must exist" },
           { name: "sample", type: "number", value: "<N>", desc: "Pick N of the matching sessions at random (default: all of them)" },
-          { name: "assign", type: "string", value: "<NAME>", desc: "Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it" },
+          { name: "assign", type: "string", value: "<NAME>", desc: "Every item is for this person or serve read key name: on serve, only the key with that name sees it, while the CLI sees every item" },
         ],
         examples: ["coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20", "coding.sh review create week --where 'since:7d' --config helpfulness --assign alice"],
       },
