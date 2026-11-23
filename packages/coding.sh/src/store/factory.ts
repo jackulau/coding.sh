@@ -162,11 +162,17 @@ export async function openIndexStore(url: string, config: Config, o: OpenIndexOp
   // The line that closes an upgrade comes after the repricing below, and counts it.
   return holdUpgradeLine(async () => {
     const store = await make(url, config);
-    await store.migrate();
+    try {
+      await store.migrate();
+    } catch (err) {
+      await store.close().catch(() => {});
+      throw err;
+    }
     // A pass on a store other processes open holds the lock the refold of this home holds
     // (core/reparse.ts), so two processes never run one at once.
     if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
-    await repriceOnOpen(store, url, config, o);
+    // Never fails the open: a cursor that can't be read or written now is tried again on a later open.
+    await repriceOnOpen(store, url, config, o).catch(() => {});
     return store;
   });
 }

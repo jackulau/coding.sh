@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import type { Config } from "../../src/core/types.ts";
-import { fileUrlPath, msysPath, openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
+import { fileUrlPath, msysPath, openIndexStore, openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
@@ -79,6 +79,25 @@ describe("openStores", () => {
     assert.equal(ok.sinks[0]!.name, "null");
     await assert.rejects(() => openStores(config({ store: { index: "custom://a", blobs: "custom://fail" } })), /bucket missing/);
     assert.ok(closed);
+  });
+
+  it("opens a store whose reprice cursor can't be read, and closes one that fails to migrate", async () => {
+    registerIndexStore("cursor-busy", () => {
+      const s = new MemoryIndexStore();
+      s.getCursor = async () => { throw new Error("database is locked"); };
+      return s;
+    });
+    const store = await openIndexStore("cursor-busy://", config());
+    await store.close();
+    let closed = false;
+    registerIndexStore("migrate-fails", () => {
+      const s = new MemoryIndexStore();
+      s.migrate = async () => { throw new Error("disk full"); };
+      s.close = async () => { closed = true; };
+      return s;
+    });
+    await assert.rejects(() => openIndexStore("migrate-fails://", config()), /disk full/);
+    assert.ok(closed, "a store that fails to migrate is closed");
   });
 });
 
