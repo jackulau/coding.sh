@@ -1363,7 +1363,7 @@ coding.sh work [action] [options]
 |---|---|
 | [`show`](#codingsh-work-show) | What one item is doing, what it waits on, its files and child sessions, and the next step |
 | [`ack`](#codingsh-work-ack) | Acknowledge an item's current cause: it leaves the queue until something new happens |
-| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; it comes back sooner if it moves to a more urgent bucket |
+| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; until then it shows only while it is in a more urgent bucket |
 
 | Option | Default | Description |
 |---|---|---|
@@ -1436,7 +1436,7 @@ coding.sh work ack w3f9a1c
 
 ### `coding.sh work snooze`
 
-Hide an item for a while; it comes back sooner if it moves to a more urgent bucket.
+Hide an item for a while; until then it shows only while it is in a more urgent bucket.
 
 ```text
 coding.sh work snooze <ID> <DURATION> [options]

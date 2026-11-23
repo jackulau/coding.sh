@@ -9,7 +9,7 @@ import type { IndexStore } from "../core/types.ts";
 import type { Session } from "../schema/index.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
-import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
+import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
 import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workFiles, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
@@ -253,7 +253,7 @@ export async function workSnooze(index: IndexStore, src: WorkSource, q: URLSearc
   const until = now + ms;
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
   const overlay = readOverlay(src.overlay);
-  addSnooze(overlay, [...new Set([item.primaryId, item.cause?.sessionId ?? item.primaryId])], { until, bucket });
+  snoozeItem(overlay, item, { until, bucket });
   writeOverlay(src.overlay, overlay, now);
   return { id: item.id, snoozedUntil: new Date(until).toISOString(), bucket };
 }
