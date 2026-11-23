@@ -151,8 +151,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * 4: 1-hour cache writes at their own rate, and the US-only data-residency multiplier.
  * 5: each estimate split by token type (`payload.costByTokenType`).
  * 6: `-orchestrator` names, and aliases for names that share no id with their row (`ALIASES`).
+ * 7: a token count below 0 or not a finite number bills nothing, and no estimate is made that is not a finite number.
  */
-export const PRICING_RULES_VERSION = 6;
+export const PRICING_RULES_VERSION = 7;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({
@@ -506,8 +507,11 @@ export function pricesFor(overrides?: Prices): Prices {
   return t;
 }
 
+/** A token count as an estimate bills it: a finite number above 0, else 0. */
+const billable = (v: number | undefined): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+
 const hasTokens = (u: Usage | undefined): u is Usage =>
-  !!u && [u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens].some((v) => typeof v === "number" && v > 0);
+  !!u && [u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens].some((v) => billable(v) > 0);
 
 /** Events whose usage is billed tokens: model calls, and session usage snapshots (T3 Code v1, OpenCode totals). */
 const priceable = (e: AgentEvent): boolean => e.kind === "llm.call" || (e.kind === "notification" && e.payload?.type === "usage-summary");
@@ -609,6 +613,8 @@ export function eventPrice(e: AgentEvent, prices: Prices): ResolvedPrice | undef
  * A model call is priced on its own: its tier, its own prompt size, its 1-hour cache
  * writes and its inference geography. A usage snapshot holds running session
  * totals, so it is priced at standard short-context rates.
+ * A token count below 0 or not a finite number bills nothing (it stays as sent), and an
+ * estimate that would not be a finite number is not made.
  * A cost the agent or gateway reported always wins. Returns `e` itself when unchanged, else a copy.
  */
 export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
@@ -616,16 +622,19 @@ export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
   const pl = e.payload ?? {};
   const r = eventPrice(e, prices);
   if (!r) return e;
+  const u: Usage = { inputTokens: billable(e.usage.inputTokens), outputTokens: billable(e.usage.outputTokens), cacheReadTokens: billable(e.usage.cacheReadTokens), cacheWriteTokens: billable(e.usage.cacheWriteTokens) };
   const call = e.kind === "llm.call";
-  const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(e.usage), geoValue(pl.inferenceGeo)) : { rates: r.price, tier: undefined };
+  const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(u), geoValue(pl.inferenceGeo)) : { rates: r.price, tier: undefined };
   const long = call ? cacheWrite1h(pl) : 0;
+  const cost = costFrom(u, rates, long);
+  if (!Number.isFinite(cost)) return e;
   const payload: Record<string, unknown> = { ...e.payload, costEstimated: true };
   if (r.fallback) payload.pricedAs = r.key;
   else delete payload.pricedAs;
   if (tier) payload.priceTier = tier;
   else delete payload.priceTier;
-  payload.costByTokenType = costParts(e.usage, rates, long);
-  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, rates, long) }, payload };
+  payload.costByTokenType = costParts(u, rates, long);
+  return { ...e, usage: { ...e.usage, costUsd: cost }, payload };
 }
 
 /**

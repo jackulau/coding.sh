@@ -11,6 +11,9 @@
 //   has. A cost the agent reported is kept, and a call with no tokens or no price is left as it was.
 // - A call's cost never falls when its input, output, cache reads, cache writes or 1-hour cache writes
 //   rise, whether or not its prompt crosses a long-context threshold.
+// - A token count below 0 or not a finite number bills nothing: the call costs what it would without
+//   it, and a call with no other count gets no estimate. The count is kept as it was sent. An estimate
+//   that would not be a finite number is not made.
 // - A session's token counts and cost are the sums over the calls it counts, plus its latest usage
 //   snapshot. A call that repeats an earlier call's responseId, or replays one, counts once. A wrapper
 //   span over a call with the same tokens counts once, with its own values, except that a cost the
@@ -249,6 +252,43 @@ function checkRaise(s: Subject, { call, field, by }: RaiseCase): void {
   assert.ok(after >= floor, `the cost fell from ${before} to ${after} when ${field} rose by ${by}`);
 }
 
+/** Token counts no source should send: below 0, or not a finite number. */
+const BAD_COUNTS = [-1, -1_000, -1_000_000, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+const COUNT_FIELDS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+const USAGE_KEY = { input: "inputTokens", output: "outputTokens", cacheRead: "cacheReadTokens", cacheWrite: "cacheWriteTokens" } as const;
+
+interface BadCase {
+  call: Call;
+  /** Counts sent as a bad value. */
+  bad: [(typeof COUNT_FIELDS)[number], number][];
+}
+
+function badGen(s: Subject): Gen<BadCase> {
+  return gen.record<BadCase>({ call: callGen(s), bad: gen.array(gen.tuple(gen.pick(COUNT_FIELDS), gen.pick(BAD_COUNTS)), { minLength: 1, maxLength: 4 }) });
+}
+
+function checkBad(s: Subject, { call, bad }: BadCase): void {
+  const clean: Call = { ...call };
+  const sent: Call = { ...call };
+  for (const [f, v] of bad) {
+    delete clean[f];
+    sent[f] = v;
+  }
+  const what = bad.map(([f, v]) => `${f} ${v}`).join(", ");
+  const e = callEvent(sent);
+  const got = s.price(e, s.prices);
+  const want = s.price(callEvent(clean), s.prices);
+  const cost = want.usage?.costUsd;
+  if (cost === undefined) {
+    assert.equal(got, e, `a call with no other count was priced at ${got.usage?.costUsd} (${what})`);
+    return;
+  }
+  assert.equal(got.usage?.costUsd, cost, `${what} changed the cost from ${cost} to ${got.usage?.costUsd}`);
+  assert.deepEqual(got.payload.costByTokenType, want.payload.costByTokenType, `${what} changed the parts by token type`);
+  assert.equal(got.payload.priceTier, want.payload.priceTier, `${what} changed the rates`);
+  for (const [f] of bad) assert.ok(Object.is(got.usage?.[USAGE_KEY[f]], sent[f]), `pricing changed the ${f} count it was sent`);
+}
+
 // ---------------------------------------------------------------- sessions
 
 /** A call in a session, and how it arrives. */
@@ -457,6 +497,15 @@ test("a call's cost never falls when one of its token counts rises, across a lon
   t.diagnostic(`${crossed} raises crossed a threshold`);
 });
 
+test("a token count below 0 or not a finite number bills nothing", async () => {
+  await forAll(badGen(REAL), (b) => checkBad(REAL, b), { runs: CALL_RUNS, label: "bad counts" });
+});
+
+test("a call whose estimate would not be a finite number gets none", () => {
+  const e = callEvent({ model: "claude-opus-5-5", input: Number.MAX_VALUE, output: Number.MAX_VALUE });
+  assert.equal(REAL.price(e, REAL.prices), e);
+});
+
 test("a session's tokens and cost are the sums over the calls it counts, and what it left out is the duplicate", async (t) => {
   const seen = { calls: 0, leftOut: 0, wrapped: 0, estimated: 0 };
   await forAll(
@@ -506,6 +555,23 @@ test("each check fails on a mutant of the table, the pricer or the fold", async 
       return parts && parts.output > 0 ? { ...out, payload: { ...out.payload, costByTokenType: { ...parts, output: 0 } } } : out;
     },
   };
+  const sizeOfNegative: Subject = {
+    ...REAL,
+    price: (e, prices) => {
+      const u = e.usage;
+      if (!u) return priceEvent(e, prices);
+      const abs: Usage = { ...u };
+      for (const k of TOKEN_KEYS) {
+        const v = u[k];
+        if (v !== undefined && Number.isFinite(v)) abs[k] = Math.abs(v);
+      }
+      const out = priceEvent({ ...e, usage: abs }, prices);
+      if (out.usage === abs) return e;
+      const usage: Usage = { ...u };
+      if (out.usage?.costUsd !== undefined) usage.costUsd = out.usage.costUsd;
+      return { ...out, usage };
+    },
+  };
   const lastCallDropped: Subject = {
     ...REAL,
     fold: (events) => {
@@ -538,6 +604,7 @@ test("each check fails on a mutant of the table, the pricer or the fold", async 
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
     ["cost, gpt-6-luna output at -0.5", () => failure(callGen(only("gpt-6-luna", negative)), (c) => checkCall(only("gpt-6-luna", negative), c), "negative"), /the cost is negative/],
     ["parts, a pricer with no output part", () => failure(callGen(noOutputPart), (c) => checkCall(noOutputPart, c), "no output part"), /do not add up to the cost/],
+    ["bad counts, a pricer that bills a negative count by its size", () => failure(badGen(sizeOfNegative), (b) => checkBad(sizeOfNegative, b), "size of negative"), /changed the cost|with no other count was priced/],
     ["raise, claude-haiku-5-5 long-context rates below the short ones", () => failure(raiseGen(only("claude-haiku-5-5", cheapLong)), (r) => checkRaise(only("claude-haiku-5-5", cheapLong), r), "cheap long context"), /the cost fell .* when (input|cacheRead|cacheWrite) rose/],
     ["raise, claude-opus-5-5 1-hour writes at half the 5-minute rate", () => failure(raiseGen(only("claude-opus-5-5", halfHour)), (r) => checkRaise(only("claude-opus-5-5", halfHour), r), "cheap 1-hour writes"), /the cost fell .* when cacheWrite1h rose/],
     ["session, a fold that drops the last call", () => failure(sessionGen(lastCallDropped), (c) => checkSession(lastCallDropped, c), "last call dropped"), /add up to|left out/],
