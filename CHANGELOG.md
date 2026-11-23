@@ -391,6 +391,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** The node hook, and ingest when it rewrites a spool side file, replace a value nested too deep to copy with `[redacted:too-deep]`, as the index does. The node hook now writes a payload with a JSON document that deep inside a string, instead of dropping it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **MCP.** On Windows, coding.sh no longer exits when it runs git in a folder whose path is 259 characters or longer, so the MCP server answers a tool call that names one. That git call, or one in a missing folder, fails with an error that says why. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#from-inside-your-agent))
 - **Install.** `uninstall` removes coding.sh from an agent's other config files when it can't read or parse one of them, leaves that file as it is, prints the error and exits 1. Before, it removed nothing from that agent and could say that nothing was installed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#uninstall))
+- **Capture.** On Windows, the node hook writes an event whose agent name Windows keeps for a device, such as `con` or `nul.txt`, or ends in a dot, which Windows drops from a folder name, under `spool/unknown`, as it does for other names that are not safe folder names. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 
 ## [0.1.7] - 2026-11-16
 
