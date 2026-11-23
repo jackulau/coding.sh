@@ -7,7 +7,7 @@ import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { PRICING_RULES_VERSION, pricesFor } from "../../src/core/pricing.ts";
-import { priceStamp, REPRICE_CURSOR, repriceLock, repriceStored } from "../../src/core/reprice.ts";
+import { priceStamp, repriceEvents, REPRICE_CURSOR, repriceLock, repriceStored } from "../../src/core/reprice.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -316,6 +316,30 @@ describe("a reprice pass beside an ingest in another process", () => {
     assert.equal((await costs(store)).plain, 5);
     assert.equal((await store.getSession("s1"))!.stats.usage?.costUsd, 61);
     await store.close();
+  });
+
+  it("sqlite: repriceEvents (the refold's) leaves a call alone that a gateway companion billed after its first read", async () => {
+    const store = await SqliteIndexStore.open(":memory:");
+    const events = [ev("start", { kind: "session.start", ts: 900 }), ev("call", { model: "claude-opus-4-5", usage: { inputTokens: M } })];
+    await store.putEvents(events);
+    await store.upsertSession(buildSession(events));
+    // `coding.sh gateway enrich` in another process stores its companion right after the pass's first read.
+    const read = store.listEvents.bind(store);
+    let between: (() => Promise<unknown>) | undefined = () => store.putEvents([ev("gw", { kind: "span", source: "gateway", parentId: "call", usage: { costUsd: 7 } })]);
+    store.listEvents = async (id, o) => {
+      const out = await read(id, o);
+      const run = between;
+      between = undefined;
+      await run?.();
+      return out;
+    };
+    try {
+      await repriceEvents(store, (await store.getSession("s1"))!, pricesFor());
+      assert.equal(between, undefined, "the companion was stored during the pass");
+      assert.equal((await costs(store)).call, undefined, "no estimate on top of the gateway's bill");
+    } finally {
+      await store.close();
+    }
   });
 });
 
