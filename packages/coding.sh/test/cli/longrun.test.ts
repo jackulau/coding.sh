@@ -126,12 +126,14 @@ describe("a 12-hour session", () => {
     assert.equal(all.events.length, all.eventCount);
   });
 
-  test("each sessions --json row is under 2 KB: stats without phases, derails without their event", () => {
+  // Stats that grow with the session (phases, each derail's event) stay out of a row. A bounded stat
+  // may add a little: stats.waits holds five kinds at most and adds about 100 bytes to the 12-hour row.
+  test("each sessions --json row is under 2.25 KB: stats without phases, derails without their event", () => {
     const { sessions } = JSON.parse(cli("sessions", "--json", "--limit", "10")) as { sessions: Session[] };
     assert.ok(sessions.length >= 2);
     for (const s of sessions) {
       const bytes = Buffer.byteLength(JSON.stringify(s));
-      assert.ok(bytes < 2048, `the row of ${s.id} is ${bytes} bytes`);
+      assert.ok(bytes < 2304, `the row of ${s.id} is ${bytes} bytes`);
       assert.equal(s.stats.phases, undefined);
     }
     const main = sessions.find((s) => s.id === m.sessionId)!;
