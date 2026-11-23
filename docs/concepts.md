@@ -27,8 +27,8 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
 - [`stats.retrieval`](https://coding.sh/docs/api/read#get-apisessionsid) counts reads and searches.
 - `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
-- `latest` and `last` open your newest session, so a session with one of them as its id prints its
-  `x_` alias.
+- `latest` and `last` open your newest session. A session with one of them as its id prints its
+  `x_` alias, which opens it, in `sessions`, `tree`, `work`, `blame` and `attribution`.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
 ### Turn

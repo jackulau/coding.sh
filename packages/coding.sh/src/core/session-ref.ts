@@ -193,10 +193,19 @@ export function matchRef(set: IdSet, ref: string): RefMatch | undefined {
 /**
  * A session id short enough for a table: its first 8 characters, and for a subagent
  * (`<parent>:sub:<agentId>`) 8 of each part (`a03d2f6b:sub:a7d49789`), so it does not read as
- * its parent. matchRef takes it back.
+ * its parent. A RESERVED word prints as its alias (wholeRef). matchRef takes it back.
  */
 export function shortSessionId(id: string): string {
+  if (RESERVED.has(id)) return wholeRef(id);
   return id.split(SUB).map((part) => part.slice(0, SHORT_ID_MIN)).join(SUB);
+}
+
+/**
+ * `id` as a list prints it whole: the id itself, or for a RESERVED word, which opens the newest
+ * session, x_ and its first 8 alias digits, which open this one.
+ */
+export function wholeRef(id: string): string {
+  return RESERVED.has(id) ? `${ALIAS}${aliasDigits(id).slice(0, ALIAS_MIN)}` : id;
 }
 
 /**

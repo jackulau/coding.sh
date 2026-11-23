@@ -9,7 +9,7 @@ import { costNote } from "../../core/pricing.ts";
 import { buildRunTree, buildSessionTree, buildSubtree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, shortSessionId, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, shortSessionId, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -71,7 +71,7 @@ function printNode(out: Output, n: TreeNode, isRoot: boolean, base: number): voi
   const branch = isRoot ? "" : "└ ";
   const role = n.depth === 0 ? s.agent : (s.parent?.type ?? s.agent);
   const parts = [
-    s.id,
+    wholeRef(s.id),
     out.style(role, "bold"),
     s.model ?? "",
     durationMs !== undefined ? duration(durationMs) : "-",
@@ -108,7 +108,7 @@ export async function run(c: CommandContext): Promise<number> {
         const s = await resolveSession(ctx, arg);
         // The tree under the session; --all, the whole tree from its top-level agent.
         tree = whole ? await buildSessionTree(ctx.index, s.id) : await buildSubtree(ctx.index, s.id);
-        label = tree && tree.roots[0] ? treeLabel(tree.roots[0]!.session) : s.id;
+        label = tree && tree.roots[0] ? treeLabel(tree.roots[0]!.session) : wholeRef(s.id);
       } catch (e) {
         tree = await buildRunTree(ctx.index, arg);
         if (!tree) throw notFoundWithBacklog(e, backlog); // neither a session nor a run: surface the session error
@@ -159,10 +159,10 @@ export async function run(c: CommandContext): Promise<number> {
       const w = worst.session;
       const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
-      out.print(`  ${which} ${w.id}: ${worstFirst(w.flags).join(", ")}`);
-      out.next("Open it", `coding.sh show ${w.id}`);
+      out.print(`  ${which} ${wholeRef(w.id)}: ${worstFirst(w.flags).join(", ")}`);
+      out.next("Open it", `coding.sh show ${wholeRef(w.id)}`);
     }
-    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${tree.roots[0]!.session.id} --all`);
+    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${wholeRef(tree.roots[0]!.session.id)} --all`);
     return 0;
   }, { create: false });
 }
@@ -177,7 +177,7 @@ export function fixFirstRole(depth: number, type: string | undefined): string {
   return t && t.toLowerCase() !== "subagent" ? `subagent ${t}` : "subagent";
 }
 
-/** A short label for a tree's root: its title, else its id. */
+/** A short label for a tree's root: its title, else its id (wholeRef). */
 function treeLabel(s: Session): string {
-  return s.title ? oneLine(clean(s.title), 70) : s.id;
+  return s.title ? oneLine(clean(s.title), 70) : wholeRef(s.id);
 }

@@ -17,7 +17,7 @@ import type { CheckpointRun } from "../../experiments/checkpoints.ts";
 import type { DurableStats, Usage } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
-import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
+import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { ago, clean, CliError, duration, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
@@ -556,7 +556,7 @@ export async function run(c: CommandContext): Promise<number> {
         subagents: treeJson(subagents.roots),
       };
       // The count alone does not say where the rest are.
-      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${s.id} --json` });
+      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${wholeRef(s.id)} --json` });
       doc.skills = skills?.used ?? [];
       doc.comments = comments;
       if (runs.length) doc.checkpointExperiments = runs;
@@ -650,7 +650,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.print();
       out.print(out.style("Subagents", "bold"));
       printTree(out, pageTree(tree, 0, SUBAGENT_TEXT_LIMIT).roots);
-      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${s.id} lists them all`);
+      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${wholeRef(s.id)} lists them all`);
     }
     return 0;
   }, { create: false });
