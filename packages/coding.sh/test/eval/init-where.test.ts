@@ -44,7 +44,7 @@ describe("initSuite --where on SQLite", () => {
       const git = new FakeSnapshots().add("start", BUGGY).add("end", { ...FIXED, "test/add.test.js": HIDDEN_TEST });
       const r = await initSuite(
         { name: "bash-runs", root, source: "sessions", sessionsRepo: "all", where: parseWhere("tool:Bash"), verifier: "node test/add.test.js", since: 5_000 },
-        { index, blobs: new MemBlobs(), git, now: 12_000 },
+        { index, blobs: new MemBlobs(), git, now: 12_000, startReadable: () => true },
       );
       assert.deepEqual(r.tasks!.map((t) => t.sessionId), ["bash"]);
     } finally {
