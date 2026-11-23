@@ -69,15 +69,17 @@ llm replay noise floor 4% (n=50) [1%, 14%]; control vs exp_01J…: 9 output(s) d
 |---|---|
 | `noise floor 4%` | The control's pass or fail differs from the recording's in 4% of case-trials. A smaller B − A may be noise. |
 | `9 output(s) differ` | Outputs of the control that differ from the recording's, passing or not. |
-| `first live call 3–12` | Where the control's replay stopped in each case-trial. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
+| `first live call 3–12` | Where the control's replay stopped in each case-trial: the earliest and the latest, or one number when every case-trial stopped at the same call. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
 | `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out, and a warning names the case-trial and why. |
 | `Replayed arms are correlated` | Confirm a win with a fresh live run before you ship it. |
+| `every model call of the candidate matched the recording` | Your task made no live call, so its replies are the recorded ones. A change to the system prompt alone is never sent. Test it with a live run, without `--replay`. |
 
 :::more What counts as the same request
 The key is a sha256 of the request body after these steps:
 
 - The system prompt is dropped (Anthropic `system`, OpenAI `system` and `developer` messages,
-  Responses `instructions`), so a system-prompt edit still replays every call.
+  Responses `instructions`), so a system-prompt edit still replays every call: the edit is never
+  sent to the model.
 - `stream`, `stream_options`, `metadata`, `user` and every `cache_control` are dropped.
 - The run id, the working directory, the temp dir and `HOME` become placeholders.
 - `"content": "hi"` and `[{"type": "text", "text": "hi"}]` count as the same message.
@@ -143,7 +145,7 @@ keeps the cache under 1 GB, dropping the least recently used recordings first.
 |---|---|
 | `0 cached` on a replay | The task sets its own base URL, or calls another provider. It must read `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`. |
 | Everything runs live from call 1 | The first request changed. A change to the system prompt alone still replays. A change to the tools or the model replays only when the recording and the replay both set `excludeTools` or `excludeModel`. |
-| `… did not record a command or http task spec` | The recording ran a function task, which can't be stored as the control. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
+| `… did not record a command or http task spec` | The recording ran a function task, which can't be stored as the control, or it is a replay that an older coding.sh made without storing its task. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
 | Calls missing from the count | Paths other than messages, chat completions and responses, such as `count_tokens`, go straight to the API. WebSocket APIs are not proxied. |
 
 The proxy adds under 50 ms per call, measured against a local stub API.

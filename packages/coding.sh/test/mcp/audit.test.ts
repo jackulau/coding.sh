@@ -57,8 +57,9 @@ before(async () => {
   try {
     const now = Date.now();
     // Two sessions in the repo: one reads deploy.md, neither reads stale.md or invokes the pdf skill.
+    // The other writes scratch.md, which is gone from disk since.
     await putSession(ctx.index, sessionEvents("s1", { cwd: repo, startedAt: now - 2 * 86_400_000 }, [["user.message", { text: "how do I deploy?" }], ["tool.start", { tool: "Read", toolUseId: "r1", input: { file_path: join(mem, "deploy.md") } }], ["assistant.message", { text: "make ship" }]]));
-    await putSession(ctx.index, sessionEvents("s2", { cwd: repo, startedAt: now - 86_400_000 }, [["user.message", { text: "hi" }], ["assistant.message", { text: "hello" }]]));
+    await putSession(ctx.index, sessionEvents("s2", { cwd: repo, startedAt: now - 86_400_000 }, [["user.message", { text: "hi" }], ["tool.start", { tool: "Write", toolUseId: "w1", input: { file_path: join(mem, "scratch.md"), content: "x" } }], ["assistant.message", { text: "hello" }]]));
   } finally {
     await ctx.close();
   }
@@ -87,19 +88,22 @@ async function call(args: Record<string, unknown> = {}): Promise<Record<string, 
   return r.structuredContent!;
 }
 
-type File = { path: string; kind: string; tokens?: number; loaded: number; read: number; loadTokens?: number; flags: string[] };
+type File = { path: string; kind: string; tokens?: number; gone?: true; loaded: number; read: number; loadTokens?: number; flags: string[] };
 
 describe("harness_audit", () => {
   it("lists the unused files first, with absolute paths, load tokens per session and the refine run command", async () => {
     const r = (await call()) as { sessions: number; loadTokensPerSession: number; unused: Record<string, number>; files: File[]; next: string[]; note: string };
     assert.equal(r.sessions, 2);
-    assert.deepEqual(r.unused, { neverRead: 1, writeOnly: 0, loadedNotRead: 1 });
-    const flagged = r.files.filter((f) => f.flags.length);
+    assert.deepEqual(r.unused, { neverRead: 1, writeOnly: 0, loadedNotRead: 1, deleted: 1 });
+    const flagged = r.files.filter((f) => f.flags.length && !f.gone);
     assert.deepEqual(flagged.map((f) => [f.path, f.flags]).sort(), [
       [join(mem, "stale.md"), ["never-read"]],
       [join(home, ".claude", "skills", "pdf", "SKILL.md"), ["loaded-not-read"]],
     ]);
     assert.ok(r.files.indexOf(flagged.at(-1)!) === flagged.length - 1, "flagged files come first");
+    const last = r.files.at(-1)!;
+    assert.deepEqual([last.path, last.gone, last.flags], [join(mem, "scratch.md"), true, ["deleted"]], "a file gone from disk comes last, after the unflagged ones");
+    assert.ok(r.files.indexOf(last) > flagged.length, "files on disk with no flag come before it");
     const stale = r.files.find((f) => f.path === join(mem, "stale.md"))!;
     assert.deepEqual([stale.tokens, stale.loaded, stale.read], [1000, 0, 0]);
     const claude = r.files.find((f) => f.path === join(repo, "CLAUDE.md"))!;

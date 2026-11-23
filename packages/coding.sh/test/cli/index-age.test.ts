@@ -56,7 +56,9 @@ describe("an index whose last ingest finished 3h ago", () => {
     assert.match(r.stdout, /! Index +updated 3h ago; run (?:coding\.sh|codingsh) ingest/);
     assert.match(r.stdout, /Work +nothing needs you/i);
     const j = await runCmd(status, sb, { json: true });
-    assert.deepEqual(j.json.index, { updatedAt: new Date(lastIngest).toISOString(), stale: true });
+    const { ageMs, ...index } = j.json.index;
+    assert.deepEqual(index, { updatedAt: new Date(lastIngest).toISOString(), stale: true });
+    assert.ok(ageMs >= 3 * HOUR && ageMs < 3 * HOUR + MIN, String(ageMs));
     assert.equal(j.json.work.stalled, 0);
   });
 });

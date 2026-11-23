@@ -23,7 +23,7 @@ import { HARNESS_LOADED, INPUT_PATH_KEYS, MEMORY_PATH_TEXT, SKILL_TOOL } from ".
 import { commandOf } from "./sessions.ts";
 
 export type MemoryKind = "memory" | "context" | "rule" | "skill";
-export type MemoryFlag = "never-read" | "write-only" | "loaded-not-read";
+export type MemoryFlag = "never-read" | "write-only" | "loaded-not-read" | "deleted";
 
 /** A file on disk, keyed like the audit (`~/…` under the home). */
 export interface MemoryFileInfo {
@@ -77,6 +77,7 @@ export interface MemoryRow {
 
 export interface MemoryAudit {
   sessions: number;
+  /** By kind, then load cost, then path; files flagged `deleted` come after the rest. */
   files: MemoryRow[];
   totals: {
     files: number;
@@ -87,8 +88,11 @@ export interface MemoryAudit {
     sessionsReading: number;
     sessionsWriting: number;
     neverRead: number;
+    /** Written files on disk that no other session loaded or read. */
     writeOnly: number;
     loadedNotRead: number;
+    /** Written files no other session loaded or read that are no longer on disk (flag `deleted`). Absent when none. */
+    deleted?: number;
   };
 }
 
@@ -477,8 +481,9 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
       if (!t.wrote && (t.read || t.loaded)) otherUse++;
     }
     const flags: MemoryFlag[] = [];
-    // write-only: written, and no session that did not write it ever loaded or read it.
-    if (wrote > 0 && otherUse === 0) flags.push("write-only");
+    // write-only: written, and no session that did not write it ever loaded or read it. A file no
+    // longer on disk is flagged deleted instead: nothing is left to read.
+    if (wrote > 0 && otherUse === 0) flags.push(f ? "write-only" : "deleted");
     else if (f && kind === "skill" && loaded > 0 && read === 0) flags.push("loaded-not-read");
     // A file added after every session in the window started was never there to read: no flag.
     else if (f && loaded === 0 && read === 0 && !(f.since !== undefined && sessions.every((s) => s.startedAt < f.since!))) flags.push("never-read");
@@ -500,21 +505,22 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     });
   }
   const order: Record<MemoryKind, number> = { memory: 0, context: 1, rule: 2, skill: 3 };
-  rows.sort((a, b) => order[a.kind] - order[b.kind] || (b.loadTokens ?? 0) - (a.loadTokens ?? 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  // Deleted files last: a table that puts flagged files first then shows the ones still on disk first.
+  const gone = (r: MemoryRow) => Number(r.flags.includes("deleted"));
+  rows.sort((a, b) => gone(a) - gone(b) || order[a.kind] - order[b.kind] || (b.loadTokens ?? 0) - (a.loadTokens ?? 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const count = (flag: MemoryFlag) => rows.filter((r) => r.flags.includes(flag)).length;
-  return {
-    sessions: new Set(sessions.map((s) => s.rootId ?? s.id)).size,
-    files: rows,
-    totals: {
-      files: rows.length,
-      bytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0),
-      loadTokens: rows.reduce((a, r) => a + (r.loadTokens ?? 0), 0),
-      sessionsLoading: sessionsLoading.size,
-      sessionsReading: sessionsReading.size,
-      sessionsWriting: sessionsWriting.size,
-      neverRead: count("never-read"),
-      writeOnly: count("write-only"),
-      loadedNotRead: count("loaded-not-read"),
-    },
+  const totals: MemoryAudit["totals"] = {
+    files: rows.length,
+    bytes: rows.reduce((a, r) => a + (r.bytes ?? 0), 0),
+    loadTokens: rows.reduce((a, r) => a + (r.loadTokens ?? 0), 0),
+    sessionsLoading: sessionsLoading.size,
+    sessionsReading: sessionsReading.size,
+    sessionsWriting: sessionsWriting.size,
+    neverRead: count("never-read"),
+    writeOnly: count("write-only"),
+    loadedNotRead: count("loaded-not-read"),
   };
+  const deleted = count("deleted");
+  if (deleted) totals.deleted = deleted;
+  return { sessions: new Set(sessions.map((s) => s.rootId ?? s.id)).size, files: rows, totals };
 }

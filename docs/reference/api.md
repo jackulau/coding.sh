@@ -2022,10 +2022,11 @@ It returns what `coding.sh work --json` returns for the same store and filters, 
 
 `totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1` or `stage` lists them). The page's headings read "20 of 671" from it.
 
-Item fields for workflow runs and replaced failures:
+Item fields for workflow runs, replaced failures and linked worktrees:
 
 - A workflow run's item has `workflow`: the run's `id`, its `name` when known, and `phases`. Each phase has its `name` (absent if none), `agents`, `running`, `failed`, `done`, and `costUsd` when known.
 - A failed item that a later item on the same branch replaced has `supersededBy`, that item's id.
+- An item whose main session ran in a linked worktree has `repoMain`, the root of the repo's main checkout. `repo` stays the worktree. It is absent in a main checkout.
 - The top-level `needYou` counts blocked and failed items that are neither probably closed nor superseded.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.

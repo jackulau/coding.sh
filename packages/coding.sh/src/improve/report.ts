@@ -9,7 +9,7 @@ import type { IndexStore } from "../core/types.ts";
 import { insideDir } from "../eval/decision.ts";
 import { extractTestCommand, guessVerifierFromEvents, guessVerifierFromRepo, inspectRepo } from "../eval/task.ts";
 import { autoCliProvider, CLI_PLAN, isCliProvider, type CliProvider } from "../judge/subscription.ts";
-import { changeEffects, currentVersion, sessionVersions, type ChangeEffect, type GroupStats } from "./changes.ts";
+import { changeEffects, currentVersion, headlessReason, sessionVersions, type ChangeEffect, type GroupStats } from "./changes.ts";
 import { failureRecords, rankIssues, type FailureRecord, type Issue } from "./issues.ts";
 
 export interface ImproveScope {
@@ -222,13 +222,23 @@ export function shownChange(e: ChangeEffect): ChangeEffect {
   };
 }
 
+/** What findChanges reads: the changes since `since`, and the sessions it weighs them with. */
+export interface ChangeOptions {
+  since: number;
+  limit?: number;
+  agents?: readonly string[];
+  sessionsIn?: string;
+  /** Count headless sessions (claude -p, an Agent SDK, codex exec) too. */
+  headless?: boolean;
+}
+
 /**
  * Harness changes in `root` since `since` (newest first, at most `limit`), with the
  * sessions before and after each. Sessions are read from 30 days before `since`,
  * so the oldest change still has a baseline; from under `root`, or `sessionsIn`
  * (another dir, or "all": the project's other checkouts and worktrees).
  */
-export async function findChanges(index: IndexStore, root: string, o: { since: number; limit?: number; agents?: readonly string[]; sessionsIn?: string; headless?: boolean }): Promise<ChangeEffect[]> {
+export async function findChanges(index: IndexStore, root: string, o: ChangeOptions): Promise<ChangeEffect[]> {
   const repo = o.sessionsIn === "all" ? undefined : (o.sessionsIn ?? root);
   const sessions = await scopeSessions(index, { ...(repo ? { repo } : {}), since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
   try {
@@ -243,6 +253,35 @@ export async function findChanges(index: IndexStore, root: string, o: { since: n
     return [];
   }
 }
+
+/**
+ * For each change with no sessions after it, how many headless sessions ran after it: without
+ * `headless` they are left out, and "No captured session ran" would be false. Read again with
+ * `headless` only when such a change exists, so the count matches what counting them shows.
+ */
+export async function headlessAfter(index: IndexStore, root: string, opts: ChangeOptions, changes: readonly ChangeEffect[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (opts.headless || !changes.some((e) => e.verdict === "no-sessions-after")) return counts;
+  const wide = await findChanges(index, root, { ...opts, headless: true });
+  const all = (e: ChangeEffect) => e.after.sessions + (e.after.idle ?? 0);
+  for (const e of changes) {
+    if (e.verdict !== "no-sessions-after") continue;
+    const w = wide.find((x) => x.change.commit === e.change.commit);
+    const n = w ? all(w) - all(e) : 0;
+    if (n > 0) counts.set(e.change.commit, n);
+  }
+  return counts;
+}
+
+/**
+ * The changes, each one only headless sessions ran with (counts: headlessAfter) with a reason that
+ * says so and names `option`, which counts them (headlessReason).
+ */
+export const withHeadless = (changes: readonly ChangeEffect[], counts: ReadonlyMap<string, number>, option?: string): ChangeEffect[] =>
+  changes.map((e) => {
+    const n = counts.get(e.change.commit);
+    return n ? { ...e, reason: headlessReason(e, n, option) } : e;
+  });
 
 /** The largest chance that sessions on the current harness all miss an issue by luck for improve to call it quiet. */
 export const QUIET_CHANCE = 0.2;

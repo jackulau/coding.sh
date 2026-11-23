@@ -108,8 +108,9 @@ Subagents
 ```
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
-session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
-with work in it; eval, compare and experiment trials count only when there is nothing else.
+session id, a unique prefix (4+ characters), [an `x_` alias](../concepts.md#session) or `latest`.
+`latest` is your newest session with work in it; eval, compare and experiment trials count only
+when there is nothing else.
 
 A failed model call shows its status and error on its `llm` line; the Model errors row counts
 them. When a source records only model calls (the proxy, or an SDK call outside `trace()`), the
@@ -208,8 +209,8 @@ coding.sh sessions --flag looping
 
 ## Subagents and the run tree
 
-`show` lists a session's subagents at the end, and `sessions --subagents` or `--where is:child`
-lists them. `tree` shows a multi-agent run with what each part cost:
+`show`, `sessions --subagents` and `--where is:child` list subagents. `tree` shows a multi-agent
+run with each part's cost:
 
 ```sh
 coding.sh tree 9887c95d-2739-4dae-8222-4471386def67
@@ -224,7 +225,8 @@ Apply each SQLite migration once when two processes open the index
   └ 9887c95d-2739-4dae-8222-4471386def67:sub:a8f20c41e7  Explore  claude-haiku-4-5  50s  2 tools  $0.0145  Find user_version reads
 ```
 
-`--run` reads the argument as a run id, so a fan-out's agents show as one tree.
+From a subagent, `tree` shows its part, and `--all` the whole run. `--run` takes a run id, so a
+fan-out shows as one tree.
 
 ## Replay a session
 
@@ -296,7 +298,7 @@ Hook-only captures often carry no tool output, so their invalid counts are a low
 
 ## Memory and instruction files
 
-`coding.sh harness audit` counts the sessions that loaded, read and wrote each AGENTS.md, rule,
+`coding.sh harness audit` counts the sessions loading, reading and writing each AGENTS.md, rule,
 skill and memory file over the last 30 days, flagged files first.
 
 ```sh
@@ -306,13 +308,14 @@ coding.sh harness audit --agent codex --since 90d
 
 | Flag | The file |
 |---|---|
-| `never-read` | Is on disk, and no session in the window loaded or read it. A file added after every session in the window started is not flagged. |
+| `never-read` | Is on disk, and no session loaded or read it. A file added after the last session started is not flagged. |
 | `write-only` | Was written, and no other session loaded or read it. |
-| `loaded-not-read` | Is a skill that was listed but never invoked or read. |
+| `deleted` | Would be `write-only`, but is gone from disk. |
+| `loaded-not-read` | Is a skill listed but never invoked or read. |
 
 A file pulled in with an `@path` import (`@AGENTS.md`) counts as loaded in each Claude Code
 session that loaded the importing file, up to 5 imports deep. The load cost is the file's tokens (bytes / 4) times the sessions
-that loaded it.
+loading it.
 
 It also warns when a Claude Code subagent file's `tools:` is a map, which leaves it no tools.
 

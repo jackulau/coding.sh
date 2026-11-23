@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, isAbsolute, posix, win32 } from "node:path";
 import type { IndexStore, Session } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
-import { matchesPlace, pathKey, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
+import { matchesPlace, pathKey, pathPlace, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
 import { matchesSession } from "../query/match.ts";
 import { needsEvents, parseWhere, type Node } from "../query/where.ts";
 
@@ -23,7 +23,10 @@ export interface Budget {
   limitUsd: number;
   /** Only this agent's sessions. */
   agent?: string;
-  /** Only sessions in this repo: an absolute path (the root or a folder under it) or a bare repo name. */
+  /**
+   * Only sessions in this repo: an absolute path (the root or a folder under it) or a bare repo
+   * name, matched as `sessions --repo` matches it (repoPlace).
+   */
   repo?: string;
   /**
    * Only the sessions this --where query matches (`user:u1`, `model:claude-opus-*`), as typed;
@@ -143,15 +146,25 @@ export function upsertBudget(list: readonly Budget[], b: Omit<Budget, "id" | "cr
   return { budgets: [...list, budget], budget, replaced: false };
 }
 
-/** A stored repo as a place: an absolute path matches at or under it, anything else is a repo name. */
+/**
+ * A stored repo as a place, read as `sessions --repo` reads it: anything but an absolute path is
+ * a repo name; a path matches at or under it, and a checkout's root or a folder inside a linked
+ * worktree takes in every worktree of its repo. The path stays as stored. Finding its repo reads
+ * the .git files there, so a budget resolves its place once per read, not once per session.
+ */
 export function repoPlace(repo: string): Place {
-  return isAbsolute(repo) ? { path: repo } : { name: repo };
+  if (!isAbsolute(repo)) return { name: repo };
+  const main = pathPlace(repo).repo;
+  return main ? { path: repo, repo: main } : { path: repo };
 }
 
-/** Whether a session counts toward a budget (its period aside). */
-export function sessionInScope(s: Session, b: Budget): boolean {
+/** The budget's repo as a place (repoPlace), or undefined when it counts every repo. */
+const placeOf = (b: Budget): Place | undefined => (b.repo ? repoPlace(b.repo) : undefined);
+
+/** Whether a session counts toward a budget (its period aside); `place` is the budget's placeOf. */
+export function sessionInScope(s: Session, b: Budget, place: Place | undefined): boolean {
   if (b.agent && s.agent !== b.agent) return false;
-  if (b.repo && !matchesPlace(s, repoPlace(b.repo))) return false;
+  if (place && !matchesPlace(s, place)) return false;
   return true;
 }
 
@@ -174,10 +187,11 @@ export function statusOf(b: Budget, spendUsd: number, sessions: number, now = Da
 /** Sums costUsd over sessions already read (each counted once per budget it falls in). */
 export function spendOf(sessions: readonly Session[], b: Budget, now = Date.now()): { spendUsd: number; sessions: number } {
   const since = periodStart(b.period, now);
+  const place = placeOf(b);
   let spendUsd = 0;
   let n = 0;
   for (const s of sessions) {
-    if (s.startedAt < since || !sessionInScope(s, b)) continue;
+    if (s.startedAt < since || !sessionInScope(s, b, place)) continue;
     n++;
     const c = s.stats.usage?.costUsd;
     if (typeof c === "number" && Number.isFinite(c)) spendUsd += c;
@@ -248,6 +262,7 @@ export function whereRoot(b: Budget): Node | undefined {
 /** A --where budget's status: the period's sessions, those in scope that match, and their subagents. */
 async function whereStatus(index: IndexStore, b: Budget, root: Node, now: number): Promise<BudgetStatus> {
   const since = periodStart(b.period, now);
+  const place = placeOf(b);
   const rows: SpendRow[] = [];
   const hits = new Set<string>();
   // Session keys are answered on the rows the scan reads; event keys and text ask the store's query path.
@@ -262,12 +277,12 @@ async function whereStatus(index: IndexStore, b: Budget, root: Node, now: number
     }
     const s = next.value;
     rows.push(spendRow(s));
-    if (inMemory && sessionInScope(s, b) && matchesSession(root, s, () => [])) hits.add(s.id);
+    if (inMemory && sessionInScope(s, b, place) && matchesSession(root, s, () => [])) hits.add(s.id);
   }
   if (!inMemory) {
     const q: ScanQuery = { since, topLevel: false, query: { root } };
     if (b.agent) q.agent = b.agent;
-    if (b.repo) q.place = repoPlace(b.repo);
+    if (place) q.place = place;
     const found = scanSessions(index, q, TOTALS_SCAN_CAP);
     for (;;) {
       const next = await found.next();
@@ -361,7 +376,8 @@ export function statuslineWhereStatus(b: Budget, today: readonly Session[], now 
   if (!root || b.period !== "day" || needsEvents(root)) return undefined;
   const since = periodStart(b.period, now);
   const inPeriod = today.filter((s) => s.startedAt >= since);
-  const hits = new Set(inPeriod.filter((s) => sessionInScope(s, b) && matchesSession(root, s, () => [])).map((s) => s.id));
+  const place = placeOf(b);
+  const hits = new Set(inPeriod.filter((s) => sessionInScope(s, b, place) && matchesSession(root, s, () => [])).map((s) => s.id));
   const r = rolledSpend(inPeriod.map(spendRow), (id) => hits.has(id));
   return statusOf(b, r.spendUsd, r.sessions, now);
 }

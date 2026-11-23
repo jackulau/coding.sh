@@ -30,7 +30,8 @@ Files
   M src/adapters/more/antigravity.ts  1 change, last touched at step 3
 ```
 
-A session id can be a unique prefix of 4 or more characters, or `latest`. To find a session by what
+A session id can be a unique prefix of 4 or more characters, the `x_` alias coding.sh prints for
+it, or `latest`. To find a session by what
 was said in it, use `coding.sh search "rate limit"`.
 
 ## Read one step
@@ -109,6 +110,10 @@ calls a model.
 Any captured session. History import (`coding.sh ingest --backfill`) works for Claude Code, Codex,
 OpenCode, Cursor CLI, the Antigravity CLI (and older Gemini CLI installs), GitHub Copilot CLI, Factory Droid, Goose, Pi
 and T3 Code. Amp, SDK apps and commands wrapped with `coding.sh run` are recorded from install on.
+
+Steps come from the agent's prompts and tool calls. A session logged only by `coding.sh proxy`, or
+by an SDK call outside `trace()`, has model calls but no steps: `replay` says so and points to
+`coding.sh show`, which lists the calls.
 
 ### Can my agent read an old session itself?
 

@@ -363,10 +363,10 @@ describe("stages and kinds", () => {
   test("review: stopped with changed files, a failure, or the person's turn", () => {
     const changed = one([sess("c", 13 * MIN, { stats: { filesChanged: 3 } })]);
     assert.deepEqual(stageOf(changed), ["review", "change"]);
-    assert.equal(changed.stageWhy, "changed 3 files, stopped 12m ago");
+    assert.equal(changed.stageWhy, "changed 3 files, last active 12m ago");
     const tests = one([sess("t", 5 * MIN, { stats: { testsFailed: 2 } })]);
     assert.deepEqual(stageOf(tests), ["review", "research"]);
-    assert.equal(tests.stageWhy, "tests: 2 failed, stopped 4m ago");
+    assert.equal(tests.stageWhy, "tests: 2 failed, last active 4m ago");
     const turn = one([open("u", 5 * MIN, { stats: { waiting: wait("turn", ago(5 * MIN)) } })]);
     assert.equal(turn.bucket, "turn");
     assert.deepEqual(stageOf(turn), ["review", "research"]);
@@ -377,7 +377,20 @@ describe("stages and kinds", () => {
     const i = one([sess("f", 2 * MIN, { flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } as never } })]);
     assert.equal(i.bucket, "failed");
     assert.deepEqual(stageOf(i), ["review", "research"]);
-    assert.equal(i.stageWhy, "api 529, stopped 1m ago");
+    assert.equal(i.stageWhy, "api 529, last active 1m ago");
+  });
+
+  test("with two sessions, the failed reason names whose end it times and the stage the item's last activity", () => {
+    // From QA: the main session ended 6h ago on API errors, and its child worked on until 4h ago.
+    const H = 60 * MIN;
+    const main = sess("m", 8 * H, { endedAt: ago(6 * H), flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } as never } });
+    const child = sess("m:sub:1", 5 * H, { endedAt: ago(4 * H), parent: { sessionId: "m" } });
+    const i = one([main, child]);
+    assert.deepEqual([i.bucket, i.sessionIds.length], ["failed", 2]);
+    assert.equal(i.reason, "main session ended 6h ago on api 529");
+    assert.equal(i.stageWhy, "api 529, last active 4h ago");
+    // One session has no other to tell it from.
+    assert.equal(one([main]).reason, "ended 6h ago on api 529");
   });
 
   test("an acked review item becomes done; acking only the failure leaves it in review", () => {
@@ -391,7 +404,7 @@ describe("stages and kinds", () => {
     const done = one([s], { overlay: o });
     assert.equal(done.hidden, "acked");
     assert.deepEqual(stageOf(done), ["done", "change"]);
-    assert.equal(done.stageWhy, "acknowledged: tests: 1 failed, changed 1 file, stopped 4m ago");
+    assert.equal(done.stageWhy, "acknowledged: tests: 1 failed, changed 1 file, last active 4m ago");
   });
 
   test("a snoozed review item stays review", () => {
@@ -407,8 +420,8 @@ describe("stages and kinds", () => {
     const i = one([sess("d", 5 * MIN)]);
     assert.equal(i.hidden, "done");
     assert.deepEqual(stageOf(i), ["done", "research"]);
-    assert.equal(i.stageWhy, "stopped 4m ago, no file changed");
-    assert.equal(one([sess("p", 5 * MIN, { stats: { testsPassed: 6 } })]).stageWhy, "tests: 6 passed, stopped 4m ago");
+    assert.equal(i.stageWhy, "last active 4m ago, no file changed");
+    assert.equal(one([sess("p", 5 * MIN, { stats: { testsPassed: 6 } })]).stageWhy, "tests: 6 passed, last active 4m ago");
   });
 
   test("stages count every item in the window, hidden ones included; the stage filter lists hidden items", () => {
@@ -422,7 +435,7 @@ describe("stages and kinds", () => {
     assert.deepEqual(queue(sessions, { stages: ["done"] }).items.map((i) => i.primaryId), ["done"]);
     assert.deepEqual(queue(sessions, { stages: ["executing", "planning"] }).items.map((i) => i.primaryId).sort(), ["plan", "running"]);
     const j = workItemJson(q.items[0]!);
-    assert.deepEqual([j.stage, j.kind, j.stageWhy], ["review", "change", "changed 2 files, stopped 2m ago"]);
+    assert.deepEqual([j.stage, j.kind, j.stageWhy], ["review", "change", "changed 2 files, last active 2m ago"]);
   });
 
   test("stageWhy stays short, and work show's distinct file count replaces the sum", async () => {
@@ -437,18 +450,18 @@ describe("stages and kinds", () => {
     const ev = (sessionId: string, path: string) => ({ id: `${sessionId}${path}`, v: 0, sessionId, ts: ago(4 * MIN), agent: "claude-code", kind: "file.change", payload: { path } }) as AgentEvent;
     const events: Record<string, AgentEvent[]> = { root: [ev("root", "a.ts"), ev("root", "b.ts")], "root:sub:1": [ev("root:sub:1", "a.ts"), ev("root:sub:1", "c.ts")] };
     await workFiles({ listEvents: async (id: string) => events[id] ?? [] }, item, [root, sub], NOW);
-    assert.match(item.stageWhy, /^changed 3 files, stopped/);
+    assert.match(item.stageWhy, /^changed 3 files, last active/);
   });
 
   test("workStage reads only the sessions and causes it is given", () => {
     const s = sess("a", 5 * MIN, { stats: { filesChanged: 1 } });
-    assert.deepEqual(workStage([s], s, NOW), { stage: "review", kind: "change", why: "changed 1 file, stopped 4m ago" });
+    assert.deepEqual(workStage([s], s, NOW), { stage: "review", kind: "change", why: "changed 1 file, last active 4m ago" });
     assert.equal(workStage([s], s, NOW, undefined, () => true).stage, "done");
     // A long failure is cut to make room; the file count and the age after it are never cut.
     const big = sess("b", 5 * MIN, { stats: { filesChanged: 73 } });
     const failure = "3 failed agents (4 failing tests, 12 failing tests, 2 failing tests)";
     const why = workStage([big], big, NOW, [{ bucket: "failed", sessionId: "b", at: ago(4 * MIN), fingerprint: "f", failure }]).why;
-    assert.match(why, /…, changed 73 files, stopped 4m ago$/);
+    assert.match(why, /…, changed 73 files, last active 4m ago$/);
     assert.ok(why.length <= STAGE_WHY_MAX, why);
     assert.deepEqual([...STAGES],["planning", "executing", "review", "approval", "done"]);
   });
