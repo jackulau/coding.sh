@@ -124,6 +124,38 @@ describe("harness_changes tool", () => {
   });
 });
 
+describe("a change only headless runs used", () => {
+  it("both tools say so and how many (headlessLeftOut), and headless: true counts them", async () => {
+    const world = await improveWorld(root, "headless-after", { afterFlagged: 0, plan: { before: [{ test: true }, { test: true }, { test: true }], after: [{ headless: true }, { headless: true }] } });
+    const other = new RawClient(world.env as Record<string, string>, world.repo);
+    try {
+      await other.initialize();
+      type Change = { commit: string; verdict: string; reason: string; headlessLeftOut?: number };
+      const changes = async (name: string, args: Record<string, unknown> = {}) => {
+        const r = await other.call(name, args);
+        assert.notEqual(r.isError, true, `${name} failed: ${r.content?.[0]?.text}`);
+        assert.deepEqual(schemaViolations(r.structuredContent, tools.find((t) => t.name === name)!.outputSchema), [], `${name} output matches its outputSchema`);
+        return (r.structuredContent as { changes: Change[] }).changes;
+      };
+      const rule = world.commits.rule!.slice(0, 7);
+      const reason = "Only headless sessions ran with this change: 2 (claude -p, an Agent SDK, codex exec). headless: true counts them.";
+      const listed = (await changes("harness_changes")).find((x) => x.commit === rule)!;
+      assert.deepEqual([listed.verdict, listed.reason, listed.headlessLeftOut], ["no-sessions-after", reason, 2]);
+      assert.deepEqual((await changes("harness_changes", { commit: rule })).map((x) => [x.commit, x.reason, x.headlessLeftOut]), [[rule, reason, 2]]);
+      const counted = (await changes("harness_changes", { headless: true })).find((x) => x.commit === rule)!;
+      assert.notEqual(counted.verdict, "no-sessions-after");
+      assert.equal(counted.headlessLeftOut, undefined);
+      // improve shows the change the same way.
+      const shown = (await changes("improve")).find((x) => x.commit === rule)!;
+      assert.deepEqual([shown.verdict, shown.reason, shown.headlessLeftOut], ["no-sessions-after", reason, 2]);
+      const all = (await changes("improve", { headless: true })).find((x) => x.commit === rule)!;
+      assert.deepEqual([all.verdict === "no-sessions-after", all.headlessLeftOut], [false, undefined]);
+    } finally {
+      await other.close();
+    }
+  });
+});
+
 describe("harness_changes flagged sessions", () => {
   it("lists the sessions still flagged after each change with their flags: 5 per change when listing, up to 20 for one commit", async () => {
     const bad = await improveWorld(root, "still-flagged", { afterFlagged: 6, beforeTested: true });
@@ -166,6 +198,7 @@ describe("prompts", () => {
     const got = (await c.request("prompts/get", { name: "did-it-help", arguments: { commit: "abc1234" } })).result as { messages: { role: string; content: { type: string; text: string } }[] };
     assert.equal(got.messages[0]!.role, "user");
     assert.match(got.messages[0]!.content.text, /^Call the coding\.sh harness_changes tool and commit "abc1234"\./);
+    assert.match(got.messages[0]!.content.text, /headlessLeftOut .*harness_changes with headless: true/, "a change only headless runs used: how to count them");
     const imp = (await c.request("prompts/get", { name: "improve" })).result as { messages: { content: { text: string } }[] };
     assert.match(imp.messages[0]!.content.text, /^Call the coding\.sh improve tool\./);
     const bad = await c.request("prompts/get", { name: "nope" });

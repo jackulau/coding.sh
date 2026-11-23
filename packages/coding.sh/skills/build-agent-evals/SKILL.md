@@ -25,7 +25,7 @@ Every `eval_init` call needs `name` (the suite's folder under `evals/`), `source
 ## From failed sessions
 
 1. Call `eval_candidates`. It ranks this repo's recent sessions by how good a task each would make
-   and rejects the ones that cannot be replayed.
+   and rejects the ones that cannot be replayed; `rejectedBy` counts them by reason.
 2. Show the user the top candidates and the verifier you propose. A verifier is a shell command
    that exits 0 only when the task is solved, such as `npm test`.
 3. After the user agrees, call `eval_init` with `name`, `source: "sessions"`, `sessionIds`,

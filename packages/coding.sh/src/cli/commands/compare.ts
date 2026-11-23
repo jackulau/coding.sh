@@ -40,7 +40,7 @@ import { JobStore } from "../../jobs/store.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { finishedToResume, finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
-import { rerunWithYes } from "../next-steps.ts";
+import { envLine, rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -664,11 +664,11 @@ function requireGateway(env: NodeJS.ProcessEnv, name: string): GatewayConfig {
   }
   if (id === "vercel") {
     const g = gatewaySettings(env);
-    if (!g.apiKey) throw new CliError(`--gateway needs an AI Gateway key in $${g.apiKeyEnv}`, { reason: "missing_key", next: ["Create one at vercel.com/ai-gateway, then:", `export ${g.apiKeyEnv}=...`] });
+    if (!g.apiKey) throw new CliError(`--gateway needs an AI Gateway key in $${g.apiKeyEnv}`, { reason: "missing_key", next: ["Create one at vercel.com/ai-gateway, then:", envLine(env, g.apiKeyEnv, "...")] });
     return gatewayConfig("vercel", env);
   }
   const c = gatewayConfig(id, env);
-  if (!c.apiKey) throw new CliError(`--gateway ${id} needs a key in $${c.apiKeyEnv} (${GATEWAYS[id].name})`, { reason: "missing_key", next: [`export ${c.apiKeyEnv}=...`] });
+  if (!c.apiKey) throw new CliError(`--gateway ${id} needs a key in $${c.apiKeyEnv} (${GATEWAYS[id].name})`, { reason: "missing_key", next: [envLine(env, c.apiKeyEnv, "...")] });
   return c;
 }
 

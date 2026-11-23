@@ -123,7 +123,9 @@ export function renderLlmReplay(r: ComparisonLlmReplay, paint: (s: string, style
   const out: string[] = [];
   if (r.noise) {
     const n = r.noise;
-    const fl = n.firstLive ? `; first live call ${n.firstLive.min}–${n.firstLive.max} (median ${n.firstLive.median})` : "";
+    const f = n.firstLive;
+    // One number when every case-trial went live at the same call.
+    const fl = !f ? "" : f.min === f.max ? `; first live call ${f.min}` : `; first live call ${f.min}–${f.max} (median ${f.median})`;
     out.push(`llm replay noise floor ${(n.rate * 100).toFixed(0)}% (n=${n.n}) ${paint(`[${(n.lo * 100).toFixed(0)}%, ${(n.hi * 100).toFixed(0)}%]; control vs ${n.source}: ${n.outputsDiffer} output(s) differ${fl}`, "dim")}`);
   }
   if (r.warning) out.push(paint(`! ${r.warning}`, "yellow"));
