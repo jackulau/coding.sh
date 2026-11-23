@@ -13,10 +13,12 @@ import { runInNewContext } from "node:vm";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import * as evalCmd from "../../src/cli/commands/eval.ts";
 import * as improve from "../../src/cli/commands/improve.ts";
+import * as review from "../../src/cli/commands/review.ts";
 import * as show from "../../src/cli/commands/show.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
 import { createCodingShMcp } from "../../src/mcp/server.ts";
+import * as score from "../../src/scores/cli.ts";
 import { MemoryBlobStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/server.ts";
@@ -347,6 +349,49 @@ describe("eval run names each failed trial's session, and each captured failure'
     assert.ok(ref, markdown);
     assert.equal(await opens(sb, refIn(`coding.sh show ${ref}`, "show")), SPACED);
   });
+});
+
+describe("review and score add name the session by a reference that opens it", () => {
+  // `latest` as typed opens the newest session, and a full id with a space reaches show as three words.
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const now = Date.now();
+    await sb.seed([mkSession(A, now - 3000), mkSession("latest", now - 2000), mkSession(SPACED, now - 1000)]);
+    const r = await runCmd(score, sb, { action: "config", positionals: ["ok"], flags: { type: "boolean" } });
+    assert.equal(r.error, undefined, String(r.error?.message));
+  });
+  after(() => sb.cleanup());
+
+  for (const [queue, id] of [["named", "latest"], ["spaced", SPACED]] as const) {
+    test(`review next and review done name session ${JSON.stringify(id)} by a reference that opens it`, async () => {
+      const made = await runCmd(review, sb, { action: "create", positionals: [queue], flags: { where: `id:${JSON.stringify(id)}`, config: "ok" } });
+      assert.equal(made.error, undefined, String(made.error?.message));
+      const next = await runCmd(review, sb, { action: "next", positionals: [queue] });
+      const shown = /^ {2}session {2}(.+)$/m.exec(next.stdout)?.[1];
+      const read = /^\s*(coding\.?sh show .*)$/m.exec(next.stderr)?.[1];
+      assert.ok(shown && read, next.stdout + next.stderr);
+      assert.equal(await opens(sb, refIn(`coding.sh show ${shown}`, "show")), id, shown);
+      assert.equal(await opens(sb, refIn(read, "show")), id, read);
+      // --json keeps the whole id.
+      assert.equal((await runCmd(review, sb, { action: "next", positionals: [queue], json: true })).json.next.targetId, id);
+      // The reference names the item too, as review done takes an item by its session.
+      const done = await runCmd(review, sb, { action: "done", positionals: [queue, shown, "true"] });
+      const on = /on session (.+)$/m.exec(done.stderr)?.[1];
+      assert.ok(on, done.stderr + String(done.error?.message));
+      assert.equal(await opens(sb, refIn(`coding.sh show ${on}`, "show")), id, on);
+    });
+  }
+
+  // The session named latest is given by its alias, as `latest` would score the newest one.
+  for (const [given, id] of [["x_brf2qjp3", "latest"], [SPACED, SPACED]] as const) {
+    test(`score add names session ${JSON.stringify(id)} by a reference that opens it`, async () => {
+      const r = await runCmd(score, sb, { action: "add", positionals: [given, "fine", "true"] });
+      const on = /Scored fine = true \(boolean\) on session (.+)$/m.exec(r.stderr)?.[1];
+      assert.ok(on, r.stderr + String(r.error?.message));
+      assert.equal(await opens(sb, refIn(`coding.sh show ${on}`, "show")), id, on);
+    });
+  }
 });
 
 // The viewer's copied commands, built by the page's own functions (src/viewer/ui/index.html) from the

@@ -1545,7 +1545,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Score an item with the queue's config and mark it done (doing it again replaces the score)",
         args: [
           { name: "queue", desc: "The queue's name", required: true },
-          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+          { name: "item", desc: "The item's number (review next), or its session: its id or the reference review next prints", required: true },
           { name: "value", desc: "The score: true or false, a number or a category, as the config allows", required: true },
         ],
         flags: [{ name: "comment", type: "string", value: "<TEXT>", desc: "Why this score" }],
@@ -1556,7 +1556,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Skip an item; it is counted as skipped and never comes up again",
         args: [
           { name: "queue", desc: "The queue's name", required: true },
-          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+          { name: "item", desc: "The item's number (review next), or its session: its id or the reference review next prints", required: true },
         ],
         examples: ["coding.sh review skip codex-flagged 2"],
       },

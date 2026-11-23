@@ -3,6 +3,7 @@
 // through here; a done item's score is written by the caller's own score path (addScore
 // for the CLI, postScore for the API), so it is checked against the config the same way
 // a score from `coding.sh score add` or POST /api/scores is.
+import { findSessionRef } from "../core/session-ref.ts";
 import { isEmptySession } from "../core/sessions.ts";
 import type { IndexStore, ReviewItem, ReviewQueue, Score, ScoreConfig, SessionFilter } from "../core/types.ts";
 import { findSessions } from "../query/run.ts";
@@ -220,13 +221,22 @@ export async function nextItem(index: IndexStore, name: string, o: NextOptions =
   return undefined;
 }
 
-/** The item `id` of the queue (a number, or the item's session id); a ReviewError when there is none. */
+/**
+ * The item `id` of the queue: a number, or the item's session, by its id or by a reference that opens
+ * it (findSessionRef, so the one review next prints). A ReviewError when there is none.
+ */
 export async function getItem(index: IndexStore, q: ReviewQueue, id: string | number): Promise<ReviewItem> {
   const items = await reviewStore(index).listReviewItems(q.name);
   const raw = String(id);
-  const it = /^\d+$/.test(raw) ? items.find((x) => x.id === Number(raw)) : items.find((x) => x.targetId === raw);
+  const it = /^\d+$/.test(raw) ? items.find((x) => x.id === Number(raw)) : (items.find((x) => x.targetId === raw) ?? (await itemOfSession(index, items, raw)));
   if (!it) throw new ReviewError("unknown_item", `Review queue ${q.name} has no item ${raw}: its items are 1 to ${items.length}`);
   return it;
+}
+
+/** The item whose session `ref` opens anywhere a session id is taken (findSessionRef), when the queue holds it. */
+async function itemOfSession(index: IndexStore, items: readonly ReviewItem[], ref: string): Promise<ReviewItem | undefined> {
+  const s = await findSessionRef(index, ref).catch(() => undefined);
+  return s ? items.find((x) => x.targetId === s.id) : undefined;
 }
 
 export interface CompleteOptions {

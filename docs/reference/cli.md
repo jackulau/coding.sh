@@ -2507,7 +2507,7 @@ coding.sh review done <QUEUE> <ITEM> <VALUE> [options]
 | Argument | Required | Description |
 |---|---|---|
 | `queue` | yes | The queue's name. |
-| `item` | yes | The item's number (review next), or its session id. |
+| `item` | yes | The item's number (review next), or its session: its id or the reference review next prints. |
 | `value` | yes | The score: true or false, a number or a category, as the config allows. |
 
 | Option | Default | Description |
@@ -2529,7 +2529,7 @@ coding.sh review skip <QUEUE> <ITEM>
 | Argument | Required | Description |
 |---|---|---|
 | `queue` | yes | The queue's name. |
-| `item` | yes | The item's number (review next), or its session id. |
+| `item` | yes | The item's number (review next), or its session: its id or the reference review next prints. |
 
 ```sh
 coding.sh review skip codex-flagged 2
