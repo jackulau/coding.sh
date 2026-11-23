@@ -40,7 +40,9 @@
 // stall is the fewest that lets in a second holder. CODING_SH_MODEL_BOUND=n gives each contender n more
 // attempts, so a process that lost its lock can contend again; at 1 the run with a stall has 591,195
 // states and takes about 20 s. A second stall would check that two stalls let in at most two more
-// holders.
+// holders. A holder beats once per hold, where the code beats every interval: each later beat repeats
+// the first one's race, a read and then a touch of whatever file is there, so it can refresh a
+// successor's lock again.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
