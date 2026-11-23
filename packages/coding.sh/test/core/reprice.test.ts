@@ -12,6 +12,9 @@ import { priceStamp, repriceEvents, REPRICE_CURSOR, repriceLock, repriceStored }
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { resolveServeConfig } from "../../src/server/config.ts";
+import { createLogger } from "../../src/server/log.ts";
+import { startServe } from "../../src/server/serve.ts";
 import { openIndexStore, registerIndexStore } from "../../src/store/factory.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
@@ -615,5 +618,41 @@ describe("opening the index reprices it", () => {
     assert.equal((await store.getSession("s99"))!.stats.usage?.costUsd, 5);
     assert.ok((await store.getCursor(REPRICE_CURSOR)) > 0, "the pass finished");
     await store.close();
+  });
+
+  it("serve with a store of its own (`--store`): the open's pass starts no ingest of the home's spool", async () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-reprice-serve-"));
+    roots.push(root);
+    const home = join(root, "home");
+    mkdirSync(join(home, "spool"), { recursive: true });
+    mkdirSync(join(home, "bin"));
+    const marker = wakeMarker(join(home, "spool", ".ingest.lock"));
+    const started = join(root, "started");
+    // Stands in for the CLI: says it was started, and exits.
+    const cli = join(root, "cli.mjs");
+    writeFileSync(cli, `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(started)}, String(process.pid));
+`);
+    writeFileSync(join(home, "bin", "cli-path"), cli);
+    // Two stretches at least, so the pass looks at the marker a hook left.
+    const store = await withCalls(new MemoryIndexStore(), 14);
+    slowReads(store, () => true, () => {}, 40);
+    let live = true;
+    registerIndexStore("serve-own", () => {
+      if (!live) throw new Error("serve-own:// was a test's store");
+      return store;
+    });
+    writeFileSync(marker, "");
+    // `coding.sh --store serve-own:// serve`: main.ts names the store in the command's env, not in process.env.
+    const env: NodeJS.ProcessEnv = { HOME: root, USERPROFILE: root, CODING_SH_HOME: home, CODING_SH_STORE_URL: "serve-own://", CODING_SH_LOG: "json" };
+    const h = await startServe(resolveServeConfig({ port: 0 }, env), { log: createLogger({ format: "json", write: () => {} }), enrichSpan: false, alerts: false });
+    try {
+      assert.ok((await store.getCursor(REPRICE_CURSOR)) > 0, "the open's pass ran");
+      assert.equal(existsSync(started), false, "no `ingest --background` started");
+      assert.equal(existsSync(marker), true, "the marker stays for the home's next ingest");
+    } finally {
+      live = false;
+      await h.shutdown();
+    }
   });
 });

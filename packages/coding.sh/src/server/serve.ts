@@ -144,7 +144,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   if (o.stores) ({ index, blobs } = o.stores);
   else {
     // A database that is still starting (Compose, platforms) gets 30 s; any other error fails at once.
-    index = await retryTransient(() => openIndexStore(cfg.core.store.index, cfg.core), {
+    index = await retryTransient(() => openIndexStore(cfg.core.store.index, cfg.core, { env: cfg.env }), {
       timeoutMs: STORE_WAIT_MS,
       delayMs: 1000,
       onRetry: (e, attempt) => log.warn("store not reachable yet, retrying", { index: safeUrl(cfg.core.store.index), attempt, error: (e as Error).message }),
