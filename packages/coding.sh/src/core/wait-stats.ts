@@ -332,6 +332,7 @@ export function waitStatsOf(s: WaitStatsState | undefined, o: { launch?: "headle
   const t: Tally = { kinds: structuredClone(s.kinds), agent: { ...s.agent } };
   for (const w of s.waits) tally(t, w, w.resumed ?? s.last ?? w.at, w.resumed !== undefined ? "agent" : "open");
   const byKind: Partial<Record<WaitKind, WaitTotal>> = {};
+  const samples: number[] = [];
   let count = 0;
   let ms = 0;
   let openCount = 0;
@@ -344,6 +345,7 @@ export function waitStatsOf(s: WaitStatsState | undefined, o: { launch?: "headle
     if (k.count > 1) total.medianMs = percentile(k.samples, 50);
     if (k.open) total.open = k.open;
     byKind[kind] = total;
+    samples.push(...k.samples);
     count += k.count;
     ms += k.ms;
     openCount += k.open;
@@ -353,6 +355,8 @@ export function waitStatsOf(s: WaitStatsState | undefined, o: { launch?: "headle
   const steers = turns && s.turns ? s.steers : 0;
   if (!count && !steers) return undefined;
   const out: WaitStats = { count, ms, byKind };
+  const median = count > 1 ? percentile(samples, 50) : undefined;
+  if (median !== undefined) out.medianMs = median;
   if (openCount) out.open = { count: openCount, ms: openMs };
   if (turns && t.agent.count) out.agent = t.agent;
   if (steers) out.steers = steers;

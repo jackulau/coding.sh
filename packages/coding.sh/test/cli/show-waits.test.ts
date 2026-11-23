@@ -25,6 +25,7 @@ before(async () => {
     waits("waited", {
       count: 4,
       ms: 23 * MIN,
+      medianMs: 4 * MIN,
       byKind: { question: { count: 1, ms: 5 * MIN }, turn: { count: 3, ms: 18 * MIN, medianMs: 4 * MIN, open: 1 } },
       open: { count: 1, ms: 10 * MIN },
       agent: { count: 2, ms: 3 * MIN },
@@ -40,8 +41,8 @@ after(() => sb.cleanup());
 
 const row = async (id: string) => (await runCmd(show, sb, { positionals: [id] })).stdout.split("\n").filter((l) => l.startsWith("  Waited on you"));
 
-test("the row counts the waits, their time and their kinds, then what is still unanswered, capped and the steers", async () => {
-  assert.deepEqual(await row("waited"), ["  Waited on you 4 times, 23m00s (1 question, 3 turns); 1 unanswered; 1 capped at 12h; 2 steers"]);
+test("the row counts the waits, their time, the median wait and their kinds, then what is still unanswered, capped and the steers", async () => {
+  assert.deepEqual(await row("waited"), ["  Waited on you 4 times, 23m00s, median 4m00s (1 question, 3 turns); 1 unanswered; 1 capped at 12h; 2 steers"]);
 });
 
 test("a session the person only steered says so", async () => {

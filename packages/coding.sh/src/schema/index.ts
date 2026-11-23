@@ -314,6 +314,11 @@ export interface WaitStats {
   count: number;
   /** Their summed length (ms). Waits on different threads at the same time each count. */
   ms: number;
+  /**
+   * The median length (ms) of every kind's waits, when count is over one: the typical wait, which a
+   * few long ones (a session picked up the next day) do not move as they move `ms`.
+   */
+  medianMs?: number;
   byKind: Partial<Record<WaitKind, WaitTotal>>;
   /**
    * Waits nobody answered, counted up to the session's end, a resume, or its last event (included

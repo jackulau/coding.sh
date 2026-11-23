@@ -826,8 +826,9 @@ steer; stopping the turn (Esc) is not.
 
 | Field | Meaning |
 |---|---|
-| `stats.waits` (`count`, `ms`, `byKind`, `open`, `agent`, `steers`, `capped`) | Absent when the session never waited on the person and nobody steered. `coding.sh show` prints it on one line, and `coding.sh stats --json` sums it over the window |
+| `stats.waits` (`count`, `ms`, `medianMs`, `byKind`, `open`, `agent`, `steers`, `capped`) | Absent when the session never waited on the person and nobody steered. `coding.sh show` prints it on one line, and `coding.sh stats --json` sums it over the window |
 | `stats.waits.count`, `stats.waits.ms` | The waits and their time, answered or not. Each wait counts 12 hours at most |
+| `stats.waits.medianMs` | The median wait across all kinds, when `count` is over 1 (over each kind's first 500 waits). A few long waits raise `ms` far more than the median |
 | `stats.waits.byKind` | The same by kind, each with `count`, `ms`, `medianMs` (when `count` is over 1; over the first 500 waits) and `open`. Kinds: `permission` (a permission prompt, until its call ends; a T3 Code approval, until it is resolved), `question`, `plan`, `request` (another request from a host app, such as T3 Code's secret and link requests) and `turn` (the main thread's turn ended, until the person's next prompt; only in a session launched interactively that is not a subagent) |
 | `stats.waits.open` (`count`, `ms`) | Waits nobody answered: still open at the last event (counted up to it), or ended by the session's end or a resume. They are in `count` and `ms` |
 | `stats.waits.agent` (`count`, `ms`) | Turn waits an agent ended, not the person: a prompt an agent made, or the agent going on by itself. They are not in `count` and `ms` |

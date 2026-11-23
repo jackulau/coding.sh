@@ -350,13 +350,15 @@ const WAIT_WORDS: Record<WaitKind, string> = { permission: "permission prompt", 
 
 /**
  * How often and how long the session waited on the person, and on what:
- * "4 times, 23m00s (1 question, 3 turns); 1 unanswered; 2 steers".
+ * "4 times, 23m00s, median 4m00s (1 question, 3 turns); 1 unanswered; 2 steers".
+ * The median sits beside the total, which a few waits capped at 12 hours can fill.
  */
 export function waitsRow(s: Session): [string, string] | undefined {
   const w = s.stats.waits;
   if (!w) return undefined;
   const kinds = Object.entries(w.byKind).map(([k, t]) => plural(t.count, WAIT_WORDS[k as WaitKind] ?? k));
-  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)} (${kinds.join(", ")})` : "0 times"];
+  const median = w.medianMs !== undefined ? `, median ${duration(w.medianMs)}` : "";
+  const parts = [w.count ? `${plural(w.count, "time")}, ${duration(w.ms)}${median} (${kinds.join(", ")})` : "0 times"];
   if (w.open) parts.push(`${w.open.count} unanswered`);
   if (w.capped) parts.push(`${w.capped} capped at 12h`);
   if (w.steers) parts.push(plural(w.steers, "steer"));

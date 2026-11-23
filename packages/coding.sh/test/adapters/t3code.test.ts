@@ -1084,10 +1084,12 @@ describe("T3 prompts an agent made, and threads a person started", () => {
     const s = await index.getSession("grok-person");
     assert.equal(s?.stats.launch, "interactive");
     // Turn waits: 10:01:30 to 10:03 (another thread's message ended it), 10:03:30 to 10:06 (the person),
-    // 10:06:30 to 10:07 (a notification). The secret request: 10:03:05 to 10:03:25.
+    // 10:06:30 to 10:07 (a notification). The secret request: 10:03:05 to 10:03:25. The median of
+    // the two waits is the lower one, by nearest rank.
     assert.deepEqual(s?.stats.waits, {
       count: 2,
       ms: 170_000,
+      medianMs: 20_000,
       byKind: { request: { count: 1, ms: 20_000 }, turn: { count: 1, ms: 150_000 } },
       agent: { count: 2, ms: 120_000 },
       steers: 1,

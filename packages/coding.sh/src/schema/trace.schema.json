@@ -1437,6 +1437,10 @@
           "description": "Their summed length (ms). Waits on different threads at the same time each count.",
           "type": "number"
         },
+        "medianMs": {
+          "description": "The median length (ms) of every kind's waits, when count is over one: the typical wait, which a\nfew long ones (a session picked up the next day) do not move as they move `ms`.",
+          "type": "number"
+        },
         "byKind": {
           "type": "object",
           "properties": {

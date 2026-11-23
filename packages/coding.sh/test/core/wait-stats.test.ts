@@ -64,7 +64,19 @@ describe("turn waits", () => {
 
   test("the median is the middle wait", () => {
     const events = [prompt(0), turnEnd(10), prompt(40), turnEnd(50), prompt(110), turnEnd(120), prompt(240)];
-    assert.deepEqual(stats(events), { count: 3, ms: 210_000, byKind: { turn: { count: 3, ms: 210_000, medianMs: MIN } } });
+    assert.deepEqual(stats(events), { count: 3, ms: 210_000, medianMs: MIN, byKind: { turn: { count: 3, ms: 210_000, medianMs: MIN } } });
+  });
+
+  test("the session's median spans its kinds, and a wait capped at 12 hours fills ms but leaves the median", () => {
+    // A question answered in 30 s, turns answered in 1 and 2 minutes, then a turn picked up the next day.
+    const events = [prompt(0), call(5, "AskUserQuestion", "q1"), done(35, "AskUserQuestion", "q1"), turnEnd(40), prompt(100), turnEnd(110), prompt(230), turnEnd(240), prompt(240 + DAY)];
+    assert.deepEqual(stats(events), {
+      count: 4,
+      ms: 30_000 + MIN + 2 * MIN + 12 * 60 * MIN,
+      medianMs: MIN,
+      byKind: { question: { count: 1, ms: 30_000 }, turn: { count: 3, ms: MIN + 2 * MIN + 12 * 60 * MIN, medianMs: 2 * MIN } },
+      capped: 1,
+    });
   });
 
   test("a Stop hook's blocked stop is no end: the wait starts at the turn's real end", () => {
@@ -179,7 +191,7 @@ describe("threads", () => {
       done(50, "Bash", "b1", true, sub),
       done(55, "Agent", "sp1"),
     ];
-    assert.deepEqual(stats(events, "headless"), { count: 2, ms: MIN, byKind: { permission: { count: 1, ms: 30_000 }, question: { count: 1, ms: 30_000 } } });
+    assert.deepEqual(stats(events, "headless"), { count: 2, ms: MIN, medianMs: 30_000, byKind: { permission: { count: 1, ms: 30_000 }, question: { count: 1, ms: 30_000 } } });
   });
 
   test("a subagent's end ends its own waits only, unanswered", () => {
@@ -187,6 +199,7 @@ describe("threads", () => {
     assert.deepEqual(stats(events, "headless"), {
       count: 2,
       ms: 55_000,
+      medianMs: 25_000,
       byKind: { permission: { count: 1, ms: 25_000, open: 1 }, question: { count: 1, ms: 30_000 } },
       open: { count: 1, ms: 25_000 },
     });
@@ -235,13 +248,13 @@ describe("subagent sessions", () => {
 describe("backfills", () => {
   test("a transcript's permission notifications start no wait; questions and turns still count", () => {
     const events = transcript([begin(0), prompt(0), call(1, "Bash", "b1"), permission(2), done(12, "Bash", "b1"), call(13, "AskUserQuestion", "q1"), done(43, "AskUserQuestion", "q1"), turnEnd(50), prompt(110)]);
-    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 90_000, byKind: { question: { count: 1, ms: 30_000 }, turn: { count: 1, ms: MIN } } });
+    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 90_000, medianMs: 30_000, byKind: { question: { count: 1, ms: 30_000 }, turn: { count: 1, ms: MIN } } });
   });
 
   test("a transcript's quiet marker ends no wait: the next prompt or call end does", () => {
     // Each backfill that finds a transcript quiet stores a marker at its last entry; a session picked up later keeps it.
     const events = transcript([begin(0), prompt(0), call(10, "AskUserQuestion", "q1"), ev(10, "session.end", { reason: "idle" }), done(50, "AskUserQuestion", "q1"), turnEnd(60), ev(60, "session.end", { reason: "idle" }), prompt(120)]);
-    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 100_000, byKind: { question: { count: 1, ms: 40_000 }, turn: { count: 1, ms: MIN } } });
+    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 100_000, medianMs: 40_000, byKind: { question: { count: 1, ms: 40_000 }, turn: { count: 1, ms: MIN } } });
   });
 });
 
@@ -259,7 +272,7 @@ describe("open waits, resumes and the cap", () => {
 
   test("a resume closes what waited at the last event before it, unanswered", () => {
     const events = [begin(0), prompt(0), turnEnd(10), idlePrompt(70), begin(3 * DAY, "cli", { source: "resume" }), prompt(3 * DAY + 5), turnEnd(3 * DAY + 15), prompt(3 * DAY + 75)];
-    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 2 * MIN, byKind: { turn: { count: 2, ms: 2 * MIN, medianMs: MIN, open: 1 } }, open: { count: 1, ms: MIN } });
+    assert.deepEqual(buildSession(events).stats.waits, { count: 2, ms: 2 * MIN, medianMs: MIN, byKind: { turn: { count: 2, ms: 2 * MIN, medianMs: MIN, open: 1 } }, open: { count: 1, ms: MIN } });
   });
 
   test("a compaction's session.start is no resume", () => {
@@ -298,6 +311,7 @@ describe("host app requests (T3 Code)", () => {
     assert.deepEqual(stats(events, null), {
       count: 4,
       ms: 160_000,
+      medianMs: 30_000,
       byKind: { permission: { count: 2, ms: 70_000, medianMs: 30_000, open: 1 }, question: { count: 1, ms: 30_000 }, request: { count: 1, ms: MIN } },
       open: { count: 1, ms: 40_000 },
     });
@@ -335,6 +349,7 @@ describe("incremental folds", () => {
     assert.deepEqual(whole, {
       count: 4,
       ms: 21_000 + 30_000 + MIN + MIN,
+      medianMs: 30_000,
       byKind: { permission: { count: 1, ms: 21_000 }, question: { count: 1, ms: 30_000 }, turn: { count: 2, ms: 2 * MIN, medianMs: MIN, open: 1 } },
       open: { count: 1, ms: MIN },
       agent: { count: 1, ms: MIN },
