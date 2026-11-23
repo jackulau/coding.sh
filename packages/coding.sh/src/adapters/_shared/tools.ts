@@ -5,8 +5,10 @@ import { commandOrigin, normalizeTracePath } from "../../core/shell-diff.ts";
 import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, runsElsewhere, runsTests, structuredPatchDiff, unifiedDiff, writesNothing, type FileChangeInfo } from "./heuristics.ts";
 import { arr, blobList, fieldLimit, isObj, obj, outputText, str, type Emitter } from "./normalize.ts";
 
-/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`; Droid's `Execute` takes `{command}`. */
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command", "execute"]);
+/** Shell tools (lower case). Antigravity's `run_command` takes `{CommandLine, Cwd}`. */
+const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command"]);
+/** Tool names too generic to be a shell by name: a shell call only with a command line. */
+const SHELL_IF_COMMAND = new Set(["exec", "execute"]);
 const WRITE_TOOLS = new Set(["write", "write_file", "create_file", "writefile", "write_to_file"]);
 const EDIT_TOOLS = new Set(["edit", "str_replace", "str_replace_editor", "str_replace_based_edit_tool", "search_replace", "replace", "edit_file", "strreplace", "replace_in_file"]);
 const MULTIEDIT_TOOLS = new Set(["multiedit", "multi_edit"]);
@@ -33,11 +35,12 @@ export function isFileReadTool(tool: string): boolean {
 }
 
 /**
- * A shell call: a shell tool, or an `exec` call with a command line (Devin's shell tool,
- * `{command, shell_id}`). The name `exec` alone is too generic to count.
+ * A shell call: a shell tool, or an `exec` or `execute` call with a command line (Devin's shell
+ * tool, `{command, shell_id}`; Droid's `Execute`, `{command}`). Those names alone are too generic
+ * to count: an `execute` tool may run a query.
  */
 export function isShellCall(tool: string, input: unknown): boolean {
-  return isShellTool(tool) || (lc(tool) === "exec" && isObj(input) && typeof input.command === "string");
+  return isShellTool(tool) || (SHELL_IF_COMMAND.has(lc(tool)) && isObj(input) && typeof input.command === "string");
 }
 
 /** The command line of a shell tool call (string, argv array, or bash -lc wrapper). */
