@@ -26,6 +26,7 @@ import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } f
 import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
 import { normalizeTracePath } from "./shell-diff.ts";
 import { shellCallFiles } from "./shell-files.ts";
+import { foldRetrieval, markRetrievalEdit, retrievalOf, retrievalState, type RetrievalState } from "./retrieval.ts";
 
 export { REOPEN_SLACK_MS };
 
@@ -587,7 +588,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 41; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's; stats.prs, the pull requests a session opened, merged, closed or linked (SessionState.prs, foldPrs); llm-error, a last failed model call the session never got past (FlagState.llmError); the tools:unseen tag, a session whose source records model calls only (FlagState.sight). 39: stats.prs links a PR URL in a call's output only for a push or a gh pr command whose own PR it is, not every URL a compound command printed (release notes), and a view's --repo is not the session's repo. 40: stats.prs caps only the PRs a session linked at PRS_MAX; the ones it opened, merged or closed stay (up to PRS_ALL_MAX), so an orchestrator's early merges are kept. 41: stats.prs.own, a PR the session pushed to or linked to its own thread (HOST_PR_LINK), so an item whose PR another session merged leaves review (core/work.ts prsOfItem).
+export const SESSION_FOLD_VERSION = 42; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's; stats.prs, the pull requests a session opened, merged, closed or linked (SessionState.prs, foldPrs); llm-error, a last failed model call the session never got past (FlagState.llmError); the tools:unseen tag, a session whose source records model calls only (FlagState.sight). 39: stats.prs links a PR URL in a call's output only for a push or a gh pr command whose own PR it is, not every URL a compound command printed (release notes), and a view's --repo is not the session's repo. 40: stats.prs caps only the PRs a session linked at PRS_MAX; the ones it opened, merged or closed stay (up to PRS_ALL_MAX), so an orchestrator's early merges are kept. 41: stats.prs.own, a PR the session pushed to or linked to its own thread (HOST_PR_LINK), so an item whose PR another session merged leaves review (core/work.ts prsOfItem). 42: stats.retrieval, the reads, searches and web calls of a session's tool calls and the files it read and then edited (core/retrieval.ts, SessionState.retrieval).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -709,6 +710,8 @@ export interface SessionState {
   waiting: WaitingState;
   /** Pull requests the session's tool calls opened, merged, closed or linked (stats.prs, foldPrs). */
   prs: PrFoldState;
+  /** Reads, searches and web calls, and the files read and then edited (stats.retrieval, core/retrieval.ts). */
+  retrieval: RetrievalState;
   /**
    * Models of the agent's own model calls (core/models.ts), and of the
    * proxy's: the proxy's count only in a session with no other model calls.
@@ -759,6 +762,7 @@ export function sessionState(): SessionState {
     weightEdits: weightEditState(),
     waiting: waitingState(),
     prs: prFoldState(),
+    retrieval: retrievalState(),
     models: modelState(),
     proxyModels: modelState(),
   };
@@ -931,6 +935,8 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   if (isEnrichment(e)) return;
   foldWaiting(s.waiting, e, isBackfillEvent(e));
   foldPrs(s.prs, e, failure?.cls);
+  // Before the tool case below adds this event's id to toolIds: a call seen live and from its transcript counts once.
+  foldRetrieval(s.retrieval, e, { cwd: s.cwd ?? e.cwd, seen: s.toolIds, failure });
 
   s.captured++;
   if (!s.agents.includes(e.agent)) s.agents.push(e.agent);
@@ -1003,9 +1009,9 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       if (e.kind === "tool.start") {
         const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? s.cwd).map((f) => changeKey(f, e.cwd, s.cwd));
         if (written.length && typeof id === "string" && id) s.shellFiles.set(id, written);
-        else for (const f of written) s.files.add(f);
+        else for (const f of written) changed(s, f);
       } else if (typeof id === "string" && s.shellFiles.has(id)) {
-        if (failure?.cls !== "interrupted") for (const f of s.shellFiles.get(id)!) s.files.add(f);
+        if (failure?.cls !== "interrupted") for (const f of s.shellFiles.get(id)!) changed(s, f);
         s.shellFiles.delete(id);
       }
       if (e.kind === "tool.end" && e.payload.ok === false) {
@@ -1026,7 +1032,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       break;
     case "file.change":
       // Keyed like a shell call's writes (relative to the cwd), so a file edited both ways counts once.
-      if (typeof e.payload.path === "string" && e.payload.path) s.files.add(changeKey(e.payload.path, e.cwd, s.cwd));
+      if (typeof e.payload.path === "string" && e.payload.path) changed(s, changeKey(e.payload.path, e.cwd, s.cwd));
       break;
     case "test.result":
       s.lastTest = { passed: num(e.payload.passed) ?? 0, failed: num(e.payload.failed) ?? 0 };
@@ -1043,6 +1049,12 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       if (e.payload.type === "host-link" && typeof e.payload.title === "string" && e.payload.title.trim()) s.hostTitle ??= makeTitle(e.payload.title);
       break;
   }
+}
+
+/** A file the session changed (filesChanged), and an edit for stats.retrieval. */
+function changed(s: SessionState, key: string): void {
+  s.files.add(key);
+  markRetrievalEdit(s.retrieval, key, s.cwd);
 }
 
 /**
@@ -1105,6 +1117,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   }
   const compactionRefetches = compactionRefetchStatsOf(s.waste);
   if (compactionRefetches) session.stats.compactionRefetches = compactionRefetches;
+  const retrieval = retrievalOf(s.retrieval);
+  if (retrieval) session.stats.retrieval = retrieval;
   const cacheBreaks = cacheBreaksOf(counted.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   if (cacheUnderused(usage, session.stats.turns)) session.flags.push(FLAGS.cacheLow);
