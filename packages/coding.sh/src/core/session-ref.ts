@@ -1,7 +1,8 @@
 // Session references: what a person or an agent may pass where coding.sh takes a session id, and the
 // shortest id coding.sh prints for one. The CLI (cli/common.ts resolveSession), the MCP tools
-// (mcp/tools.ts) and `work show` resolve through findSessionRef, so a short id one of them prints
-// opens in the others. An id whose shortest prefix is long or needs quoting in a shell (a T3 Code
+// (mcp/tools.ts), `work show` and the session part of a call reference (`<session>#<n>`,
+// proxy/calls.ts) resolve through findSessionRef, so a short id one of them prints opens in the
+// others. An id whose shortest prefix is long or needs quoting in a shell (a T3 Code
 // thread id can run past 200 characters, with percent-encoding) prints as an alias instead.
 import { hash } from "node:crypto";
 import { isEmptySession } from "./sessions.ts";
