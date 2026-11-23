@@ -108,3 +108,28 @@ describe("eval init names each session by a reference that opens it", () => {
     assert.equal(await opens(sb, draft), SPACED);
   });
 });
+
+describe("eval new names a session whose id is latest by its alias when the ledger fails", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const now = Date.now();
+    const at = { repo: { root: "/work/demo", head: "abc1234" } };
+    await sb.seed(
+      [mkSession("latest", now - 3000, at), mkSession(B, now - 1000, at)],
+      [ev("latest", "session.start", {}, at), ev("latest", "user.message", { text: "add a --json flag to the report command" }), ev("latest", "user.message", { text: "and keep the text output as it is" })],
+    );
+  });
+  after(() => sb.cleanup());
+
+  test("the error and its next step open the session the command drafted from", async () => {
+    // The mock judge writes no ledger, offline: the draft fails the way a model's bad answer does.
+    const r = await runCmd(evalCmd, sb, { action: "new", positionals: ["x_brf2qjp3"], flags: { statement: "ledger", judge: '{"provider":"mock"}' } });
+    assert.equal(r.error?.reason, "draft_failed", String(r.error?.message));
+    const named = /requirement ledger for (\S+):/.exec(r.error.message)?.[1];
+    const again = /eval new (\S+) --statement ledger/.exec(r.error.next.join("\n"))?.[1];
+    assert.ok(named && again, `${r.error.message}\n${r.error.next}`);
+    assert.equal(await opens(sb, named), "latest");
+    assert.equal(await opens(sb, again), "latest");
+  });
+});
