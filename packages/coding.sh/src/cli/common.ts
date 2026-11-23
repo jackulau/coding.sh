@@ -472,7 +472,7 @@ function ambiguousError(e: AmbiguousRef): CliError {
 // In args.ts, so main.ts quotes its hints without loading this module.
 export { shellQuote } from "./args.ts";
 
-export { latestSession, MIN_ID_PREFIX, shortSessionId } from "../core/session-ref.ts";
+export { latestSession, MIN_ID_PREFIX, shortSessionId, wholeRef } from "../core/session-ref.ts";
 
 /** `--where <query>`, parsed; undefined without the flag. A bad query is a usage error (exit 2) naming where it broke. */
 export function whereFlag(c: CommandContext): Query | undefined {

@@ -7,6 +7,7 @@ import { commandHead, COMPOUND, failureRecords, rankIssues } from "../../src/imp
 import { extractTestCommand } from "../../src/eval/task.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { sessionEvents } from "../helpers-decision.ts";
+import { assertCpuUnder } from "../helpers-timing.ts";
 
 const head = (cmd: string, output: string, exitCode?: number) => failingPart(cmd, { output, ...(exitCode !== undefined ? { exitCode } : {}) })?.argv.slice(0, 2).join(" ");
 
@@ -49,6 +50,41 @@ describe("shellParts", () => {
     assert.deepEqual(away("Get-Content a.ts *> $null", "powershell"), [true]);
     assert.deepEqual(away("Get-Content a.ts 2> $null", "powershell"), [false]);
     assert.deepEqual(away("Get-Content a.ts 2>&1", "powershell"), [false]);
+  });
+
+  it("skips 40,000 leading assignments, `!`s, redirects or wrapper flags in linear time", () => {
+    const n = 40000;
+    const lines: [string, string, "sh" | "powershell", string][] = [
+      ["assignments", `${"A=1 ".repeat(n)}cat f`, "sh", "cat"],
+      ["!s", `${"! ".repeat(n)}cat f`, "sh", "cat"],
+      ["redirects", `${"2>/dev/null ".repeat(n)}cat f`, "sh", "cat"],
+      ["xargs flags", `xargs ${"-0 ".repeat(n)}cat`, "sh", "cat"],
+      ["env assignments", `env ${"A=1 ".repeat(n)}cat f`, "sh", "cat"],
+      ["timeout flags", `timeout ${"-s 9 ".repeat(n / 2)}60 cat f`, "sh", "cat"],
+      ["PowerShell dots", `${". ".repeat(n)}Get-Content f`, "powershell", "Get-Content"],
+      ["PowerShell assignments", `${"$a = ".repeat(n)}Get-Content f`, "powershell", "Get-Content"],
+      ["PowerShell assignments without spaces", `${"$a=".repeat(n)}Get-Content f`, "powershell", "Get-Content"],
+    ];
+    for (const [label, cmd, shell, prog] of lines) {
+      assertCpuUnder(label, () => shellParts(cmd, shell));
+      assert.deepEqual(shellParts(cmd, shell).map((p) => p.prog), [prog], label);
+    }
+  });
+
+  it("reads 80,000 `#`s inside a word or 40,000 `2>&1`s in linear time", () => {
+    const argv = (cmd: string, shell: "sh" | "powershell" = "sh") => shellParts(cmd, shell).map((p) => p.argv);
+    // A `#` that starts a word starts a comment; one inside a word is part of it.
+    assert.deepEqual(argv("echo a#b#c # note"), [["echo", "a#b#c"]]);
+    assert.deepEqual(argv("echo a#b#c # note", "powershell"), [["echo", "a#b#c"]]);
+    assert.deepEqual(argv("grep x f 2>&1 2>&1"), [["grep", "x", "f"]]);
+    const word = "a#".repeat(80000);
+    for (const shell of ["sh", "powershell"] as const) {
+      assertCpuUnder(`#s (${shell})`, () => shellParts(`echo ${word}`, shell));
+      assert.deepEqual(argv(`echo ${word}`, shell), [["echo", word]]);
+    }
+    const cmd = `grep x f ${"2>&1 ".repeat(40000)}`;
+    assertCpuUnder("2>&1s", () => shellParts(cmd));
+    assert.deepEqual(argv(cmd), [["grep", "x", "f"]]);
   });
 });
 

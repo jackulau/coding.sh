@@ -516,6 +516,7 @@ describe("harness audit: the narrow read (IndexStore.memoryEvents)", () => {
       tool("x1", "Skill", "pdf"),
       tool("x1", "Bash", ["cat CLAUDE.md"]),
       tool("x1", undefined, { command: "cat CLAUDE.local.md" }),
+      tool("x1", "run_command", { CommandLine: `cat ${MEM}/agy.md`, Cwd: APP, toolSummary: "read the notes" }),
       // No use to the audit: nothing names a memory or instruction file.
       tool("x1", "Bash", { command: "ls -la" }),
       tool("x1", "Read", { path: "notes.txt" }),
@@ -593,15 +594,16 @@ describe("harness audit: the narrow read (IndexStore.memoryEvents)", () => {
         assert.deepEqual(got.get(id), whole.flatMap((e) => memoryEventOf(e) ?? []), `${name}: ${id}`);
       }
       const x1 = got.get("x1")!;
-      assert.equal(x1.length, 27, `${name}: 21 tool calls, 2 file changes and 4 loads of x1; not ls, notes.txt, a null input, the other notification or src/a.ts`);
+      assert.equal(x1.length, 28, `${name}: 22 tool calls, 2 file changes and 4 loads of x1; not ls, notes.txt, a null input, the other notification or src/a.ts`);
       assert.deepEqual(x1[1]!.payload, { tool: "Edit", input: { file_path: ".claude/rules/tests.md" } }, `${name}: an edit's text is left out`);
       assert.deepEqual(x1[2]!.payload, { tool: "Write", input: { filePath: `${APP}/src/a.ts` } }, `${name}: a file's content is left out`);
       assert.deepEqual(x1[7]!.payload, { tool: "Read", input: { path: `${APP}/GEMINI.md` } }, `${name}: a null is not a value`);
       assert.deepEqual(x1[12]!.payload, { tool: "shell", input: `tee ${MEM}/teed.md` }, `${name}: a bare command`);
       assert.deepEqual(x1[14]!.payload, { tool: "Bash", wrapper: true, input: { command: `cat ${MEM}/wrapped.md` } }, `${name}: wrapper stays a boolean`);
       assert.deepEqual(x1[19]!.payload, { tool: "Bash" }, `${name}: an input that is a list has nothing the audit reads`);
+      assert.deepEqual(x1[21]!.payload, { tool: "run_command", input: { CommandLine: `cat ${MEM}/agy.md` } }, `${name}: Antigravity's command line is kept`);
       assert.deepEqual(x1.at(-4)!.payload, { kind: "harness.loaded", loadedBy: "nested_memory", paths: [`${APP}/pkg/CLAUDE.md`, `${APP}/pkg/deep/CLAUDE.md`] }, name);
-      assert.deepEqual(got.get("x2")!.map((e) => [e.ts, e.kind, (e.payload.input as { file_path?: string } | undefined)?.file_path ?? e.payload.path]), [[4000, "tool.start", `${MEM}/early.md`], [5035, "tool.start", `${MEM}/tie.md`], [9000, "file.change", `${MEM}/tie.md`], [9000, "tool.start", `${MEM}/tie.md`]], `${name}: by time, then as stored`);
+      assert.deepEqual(got.get("x2")!.map((e) => [e.ts, e.kind, (e.payload.input as { file_path?: string } | undefined)?.file_path ?? e.payload.path]), [[4000, "tool.start", `${MEM}/early.md`], [5036, "tool.start", `${MEM}/tie.md`], [9000, "file.change", `${MEM}/tie.md`], [9000, "tool.start", `${MEM}/tie.md`]], `${name}: by time, then as stored`);
       assert.deepEqual(got.get("x3"), [], name);
       assert.deepEqual(await store.memoryEvents!([]), [], name);
       assert.deepEqual((await store.memoryEvents!(["x2"])).map((e) => e.sessionId), ["x2", "x2", "x2", "x2"], `${name}: only the sessions asked for`);
@@ -758,6 +760,14 @@ describe("stats.memoryUse: what the fold keeps of a session's events", () => {
     assert.deepEqual(fold(events, () => undefined, undefined), [{ use: "read", path: "/home/me/app/CLAUDE.md", ts: 3 }], "no directory: only paths written in full");
     // In a memory directory, any .md is a memory file.
     assert.deepEqual(fold([tool("Read", { file_path: "notes.md" }, 2)], () => undefined, MEM), [{ use: "read", path: `${MEM}/notes.md`, ts: 2 }]);
+  });
+
+  it("Antigravity's run_command names its command in CommandLine", () => {
+    const events = [tool("run_command", { CommandLine: `cat ${MEM}/a.md`, Cwd: "/home/me/app" }, 1), tool("run_command", { CommandLine: `echo x >> ${MEM}/b.md`, Cwd: "/home/me/app" }, 2)];
+    assert.deepEqual(memoryUseOfEvents(events, "/home/me/app"), [
+      { use: "read", path: `${MEM}/a.md`, ts: 1 },
+      { use: "wrote", path: `${MEM}/b.md`, ts: 2 },
+    ]);
   });
 
   it("the state survives the fold's save and is the same shape as a fresh one", () => {
