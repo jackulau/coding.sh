@@ -640,9 +640,10 @@ once.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
 token count below 0 or not a finite number, as the estimate does. So do `stats.cacheBreaks`,
-`stats.inheritedTokens` and the context size the `no-progress` derail reads. When a call's input,
-cache read or cache write count is skipped, its size can be too low, so the derail does not measure
-the context's growth from that call.
+`stats.inheritedTokens` and the context size the `no-progress` derail reads.
+
+When a call's input, cache read or cache write count is skipped, its size can be too low, so the
+derail does not measure the context's growth from that call.
 
 **Agent and host.**
 
