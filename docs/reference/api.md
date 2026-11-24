@@ -639,8 +639,10 @@ bill linked to two copies of one call, such as the proxy's copy and the agent's 
 once.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
-token count below 0 or not a finite number, as the estimate does. So do `stats.cacheBreaks`, the
-context size the `no-progress` derail reads, and `stats.inheritedTokens`.
+token count below 0 or not a finite number, as the estimate does. So do `stats.cacheBreaks`,
+`stats.inheritedTokens` and the context size the `no-progress` derail reads. When a call's input,
+cache read or cache write count is skipped, its size can be too low, so the derail does not measure
+the context's growth from that call.
 
 **Agent and host.**
 
@@ -831,7 +833,7 @@ Limits:
 | Field | Meaning |
 |---|---|
 | `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). A T3 Code thread whose first prompt a person sent is `interactive`, whatever its agent's start says (T3 Code's `host-link` notification carries `launch`), unless another agent's import reads its session (OpenCode, Cursor, Pi). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
-| `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. Absent for other sessions, and when the count is below 0 or not a finite number |
+| `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. A token count below 0 or not a finite number in that call is skipped. Absent for other sessions, and when no tokens are counted |
 
 - A fork subagent's session holds only its own model calls, so the parent's calls count once, in the parent. The fork's reads of the inherited context from the prompt cache count in its `usage`.
 
