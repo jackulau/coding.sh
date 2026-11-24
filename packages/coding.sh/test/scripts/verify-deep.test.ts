@@ -140,12 +140,21 @@ test("gets the knobs set in the environment", () => {
   });
 
   it("refuses a time limit that is not a number above 0 and at most 35791 minutes, before any file runs", () => {
-    for (const minutes of ["0", "abc", "Infinity", "40000"]) {
+    for (const minutes of ["0", "abc", "Infinity", "35791.2", "35792", "40000"]) {
       const r = spawnSync(process.execPath, ["--no-warnings", SCRIPT, `--minutes=${minutes}`, "model"], { cwd: PKG, encoding: "utf8", timeout: 60_000 });
       assert.equal(r.status, 2, `${minutes}: ${r.stdout}${r.stderr}`);
       assert.match(r.stderr, /^verify:deep: --minutes must be a number above 0 and at most 35791/, minutes);
       assert.doesNotMatch(r.stdout, /^seed /m, minutes);
     }
+  });
+
+  it("takes a time limit of 35791 minutes, the most its timer can wait", () => {
+    // A timer past 2^31 - 1 ms fires at once, which would stop the file as timed out.
+    const passes = `import { test } from "node:test"; test("passes", () => {});`;
+    const r = runScript({ "passes.test.ts": passes }, {}, ["--minutes", "35791"]);
+    assert.equal(r.code, 0, r.all);
+    assert.match(r.summary, /Each file had 35791 minutes\./);
+    assert.match(r.summary, /\| passes \| .* \| pass \| /);
   });
 
   it("writes the summary and the step summary again after each file, after what the step summary held before", () => {

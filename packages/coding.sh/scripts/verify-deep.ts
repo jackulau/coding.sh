@@ -267,8 +267,8 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
     return 0;
   }
   const minutes = Number(parsed.values.minutes ?? 40);
-  // Past 2^31 - 1 ms, about 35,791 minutes, setTimeout fires at once and every file would time out.
-  if (!(minutes > 0 && minutes * 60_000 <= 2 ** 31 - 1)) throw new UsageError(`--minutes must be a number above 0 and at most 35791, not ${JSON.stringify(parsed.values.minutes)}`);
+  // Past 2^31 - 1 ms, 35,791.39 minutes, setTimeout fires at once and every file would time out.
+  if (!(minutes > 0 && minutes <= 35791)) throw new UsageError(`--minutes must be a number above 0 and at most 35791, not ${JSON.stringify(parsed.values.minutes)}`);
   const p = plan(parsed.positionals.length ? parsed.positionals : verifyFiles(), env);
   console.log(`seed ${p.seed} (${p.seedFrom === "random" ? "picked at random" : "from CODING_SH_PROP_SEED"}); CODING_SH_PROP_SEED=${p.seed} runs the property files with it again`);
   const out = parsed.values.out ? resolve(parsed.values.out) : mkdtempSync(join(tmpdir(), "verify-deep-"));
