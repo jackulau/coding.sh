@@ -372,7 +372,7 @@ test("npm and npx run through a shell on Windows only, where they are .cmd files
   assert.equal(needsShell("node", "win32"), false);
   assert.equal(needsShell("npx", "linux"), false);
   assert.equal(needsShell("npm", "darwin"), false);
-  // run.mjs and gate.mjs spawn through it, so a Windows pre-push can start `npx tsc`.
+  // run.mjs and gate.mjs spawn through it, so a Windows hook or gate can start `npm run typecheck`.
   for (const f of ["scripts/hooks/run.mjs", "scripts/gate.mjs"]) {
     assert.match(readFileSync(join(REPO, f), "utf8"), /shell: needsShell\(/, `${f} uses needsShell`);
   }

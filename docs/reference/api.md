@@ -799,7 +799,8 @@ Limits:
 - A command coding.sh does not know as a reader (`awk`, a script) is not a read.
 - `cat a b c` is one read of three files.
 - A search that was stopped, or whose output was cut, is never empty.
-- A failed or stopped read names no file, nor does a path that is a variable or a glob. A failed shell line keeps its files unless an error names one.
+- A failed or stopped read names no file, nor does a path that is a variable or a glob.
+- A failed shell line keeps a file unless an error names its base name whole: an error about `data.ts` keeps `a.ts`, and one about `lib/a.ts` also drops `src/a.ts`.
 - A `cd` in a subshell moves the rest of the line too.
 - A `git show` path resolves from the call's directory, not the repository root.
 - Case counts past the drive letter: `A.ts` and `a.ts` are two files.

@@ -1,7 +1,8 @@
 // Cross-process advisory lock: a lockfile created with O_EXCL holding
 // { pid, host, ts, nonce }. Two `coding.sh ingest` runs (a CLI call and the
 // viewer's background ingest, say) would otherwise read the same spool range
-// and both send it to every sink, so sinks would see duplicate batches.
+// and both send it to every sink, so sinks would see duplicate batches. The
+// lock keeps them apart unless a process stalls (the windows are below).
 //
 // Stale detection: the holder refreshes the file's mtime every `heartbeatMs`.
 // A lock is stale when its holder is a dead pid on this host, or its mtime is
@@ -12,14 +13,30 @@
 // Breaking a stale lock is serialized: a breaker first takes `<lock>.break`
 // (O_EXCL), judges the lock again under it, and removes it only if it is the
 // same stale file (rename aside, compare inode/mtime/content, link back if
-// not). A live lock is only ever created where no file exists, so a breaker
-// never removes a lock a peer just took, and two breakers of one stale lock
-// never both win.
+// not). A live lock is only ever created where no file exists. That keeps a
+// breaker off a peer's lock unless a process stalls past its limit:
+// - release reads the lock, then removes it. A holder that stalls past staleMs
+//   between the two removes the lock a peer took meanwhile.
+// - A holder that stalled past staleMs can release, or a second breaker remove,
+//   the stale file between a breaker's judgment and its rename. The breaker
+//   then renames a peer's fresh lock aside and links it back (the peer's fence
+//   fails meanwhile), or removes it when a third process creates the lock in
+//   that moment or the file system has no hard links.
+// - A breaker that stalls past BREAK_STALE_MS under the guard has its guard
+//   judged stale and removed, so a second breaker works at the same time. When
+//   the first judged the lock before its stall, the lock the second then takes
+//   fares as above.
+// The exit handler and the guard's own release are the same read, then remove.
 //
 // Fencing: the nonce identifies this acquisition. assertHeld() throws
 // LockLostError once the file no longer carries it (broken by a peer after a
 // stall longer than staleMs, e.g. a sleeping laptop), so the holder stops
-// before writing cursors or sending to sinks.
+// before writing cursors or sending to sinks. A check and the write it guards
+// are two steps: a holder that stalls past staleMs between them writes after a
+// peer took the lock, and after the windows above, a holder that never stalled
+// can too. Ingest checks before a commit's cursor writes inside the store's
+// transaction, which with SQLite holds the write lock; a sink send is the
+// write left exposed.
 //
 // Locks still held when the process exits (process.exit(130) on a second
 // Ctrl-C skips `finally`) are removed by an exit handler.
@@ -173,12 +190,17 @@ function removeIfSame(path: string, seen: Seen): void {
 }
 
 /**
- * Breaks a stale lock. Breakers take `<lock>.break` (O_EXCL) first, so only one
- * process at a time judges and removes the lock: a stale file can only be
- * replaced through this guard (a live lock is created only where no file
- * exists), so the breaker never removes a lock a peer just took. Returns false
- * when another breaker holds the guard (the caller waits like for a live
- * holder).
+ * Breaks a stale lock. Breakers take `<lock>.break` (O_EXCL) first, so one
+ * process at a time judges and removes the lock, unless a breaker stalls past
+ * BREAK_STALE_MS and a second one takes the guard over. The lock is judged
+ * again under the guard and removed with removeIfSame, which links back a file
+ * created since the judgment. A file is created only where none exists, so
+ * that keeps the breaker off a lock a peer just took, unless the judged file
+ * goes away by another path first (the release of a holder that stalled past
+ * staleMs, a second breaker): then the peer's fresh lock is renamed aside for
+ * a moment, and removed if a third process creates the lock in that moment or
+ * the file system has no hard links (see the header). Returns false when
+ * another breaker holds the guard (the caller waits like for a live holder).
  */
 function breakStale(path: string, staleMs: number, nonce: string): boolean {
   const guard = `${path}.break`;
@@ -192,6 +214,7 @@ function breakStale(path: string, staleMs: number, nonce: string): boolean {
     const now = inspect(path, staleMs, Date.now());
     if (now.state === "stale") removeIfSame(path, now);
   } finally {
+    // A read, then a remove, like release: a stall between them removes a guard a second breaker took.
     if (readHolder(guard)?.nonce === nonce) rmSync(guard, { force: true });
   }
   return true;
@@ -237,6 +260,7 @@ let exitHook = false;
 function releaseAllOnExit(): void {
   for (const [path, nonce] of held) {
     try {
+      // The same read, then remove, as release.
       if (readHolder(path)?.nonce === nonce) rmSync(path, { force: true });
     } catch {
       // exiting anyway
@@ -295,7 +319,8 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
       released = true;
       clearInterval(timer);
       if (held.get(path) === nonce) held.delete(path);
-      // Only remove the file if it is still ours.
+      // Remove the file only if it is still ours: a read, then a remove. A stall past staleMs between
+      // the two removes the lock a peer took meanwhile (see the header).
       if (ours()) rmSync(path, { force: true });
     },
   };
@@ -303,9 +328,10 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
 
 /**
  * Wake-up marker next to a lock (`.ingest.lock` → `.ingest.pending`): a
- * producer touches it when work arrives that a live holder may have missed;
- * the holder clears it before a pass and re-runs after release when it is
- * back (see core/ingest.ts).
+ * producer touches it when work arrives that a live holder may have missed.
+ * Ingest clears it before each pass and runs another pass after release when
+ * it is back, up to three; when the last one ends with it back, it hands it to
+ * a new background ingest (core/ingest.ts, onPassesExhausted).
  */
 export function wakeMarker(lockPath: string): string {
   return lockPath.replace(/\.lock$/, "") + ".pending";

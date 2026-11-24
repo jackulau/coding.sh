@@ -3,11 +3,14 @@
 // TechArticle dateModified on docs pages. Plain .mjs so the Astro config can
 // import it.
 //
-// A source with uncommitted edits, or no git history, falls back to the build
-// time. A shallow checkout would date every file at HEAD, so the site workflow
+// A source with uncommitted edits, or no git history, is dated by when the
+// file was last written. Each build step (astro build, then the Markdown twins)
+// loads this module again, so a clock read here would differ between them and
+// split the sitemap and the twins across midnight; the file's time does not.
+// A shallow checkout would date every file at HEAD, so the site workflow
 // fetches full history; a release's notes skip the shallow cut-off's lines.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { LOCALES, DEFAULT_LOCALE } from "../i18n/locales.mjs";
@@ -26,14 +29,24 @@ function git(args) {
   }
 }
 
-/** ISO date of the last commit touching `file` (absolute path), or the build time. */
+/** ISO time `file` was last written, or the build time if it cannot be read. */
+function writtenAt(file) {
+  try {
+    return statSync(file).mtime.toISOString();
+  } catch {
+    return BUILD_TIME;
+  }
+}
+
+/** ISO date of the last commit touching `file` (absolute path), or when it was last written. */
 function fileLastmod(file) {
   if (cache.has(file)) return cache.get(file);
-  let date = BUILD_TIME;
+  let date;
   if (!git(["status", "--porcelain", "--", file])) {
     const committed = git(["log", "-1", "--format=%cI", "--", file]);
     if (committed) date = new Date(committed).toISOString();
   }
+  date ??= writtenAt(file);
   cache.set(file, date);
   return date;
 }
@@ -46,9 +59,10 @@ const releaseSlug = (v) => `v${v.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
 
 /**
  * ISO lastmod for a released version's notes (/changelog/<slug>[/<n>]): the
- * newest commit among the lines of its section in CHANGELOG.md (the build time
- * if one is uncommitted), or its release date without git. Undefined for any
- * other page, and for the unreleased version, which follows the whole file.
+ * newest commit among the lines of its section in CHANGELOG.md (when the file
+ * was last written if one is uncommitted), or its release date without git.
+ * Undefined for any other page, and for the unreleased version, which follows
+ * the whole file.
  */
 function releaseLastmod(route) {
   const m = route.match(/^changelog\/([^/]+)(?:\/\d+)?$/);
@@ -68,8 +82,8 @@ function releaseLastmod(route) {
     const records = blame.split(/^(?=[0-9a-f]{40} \d+ \d+)/m).filter(Boolean);
     const times = records.filter((r) => !/^boundary$/m.test(r)).map((r) => Number(r.match(/^committer-time (\d+)$/m)?.[1])).filter(Boolean);
     const releasedAt = Date.parse(`${released}T00:00:00Z`) / 1000;
-    // An uncommitted line (blame's all-zero commit) dates the page at the build time, as fileLastmod does.
-    if (/^0{40} /m.test(blame)) date = BUILD_TIME;
+    // An uncommitted line (blame's all-zero commit) dates the page when the file was last written, as fileLastmod does.
+    if (/^0{40} /m.test(blame)) date = writtenAt(CHANGELOG);
     else date = new Date(Math.max(releasedAt, ...times) * 1000).toISOString();
   }
   cache.set(key, date);
