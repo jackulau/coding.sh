@@ -1,5 +1,6 @@
 // coding.sh usage, human output: unpriced sessions get a share warning and a named-model hint,
 // a row with priced and unpriced sessions shows its cost as a lower bound (≥$), and --json is untouched.
+// An estimate that rounds to $0.0000 keeps its ~.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
@@ -78,5 +79,23 @@ describe("usage with every session priced", () => {
     assert.match(r.stdout, /\$1\.50/);
     assert.ok(!r.stdout.includes("≥") && !r.stderr.includes("≥"));
     assert.ok(!/no reported cost|No price for/.test(r.stderr));
+  });
+});
+
+describe("usage with an estimate that rounds to $0.0000", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    // One cheap model call: 120 + 30 tokens at a small model's list price.
+    const s = session("tiny", { agent: "sdk-app", model: "gpt-4o-mini", startedAt: now, endedAt: now + 1000, stats: { events: 3, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 120, outputTokens: 30, costUsd: 0.000036, estimatedCostUsd: 0.000036 } } });
+    await seed(env.dataHome, { sessions: [s] });
+  });
+  after(() => env.restore());
+
+  test("the row still says the cost is estimated, and the note explains ~", () => {
+    const r = ok(["usage"]);
+    const row = r.stdout.split("\n").find((l) => l.startsWith("sdk-app"))!;
+    assert.match(row, /~\$0\.0000\s*$/);
+    assert.match(r.stderr, /~ = includes cost estimated from tokens × list price/);
   });
 });
