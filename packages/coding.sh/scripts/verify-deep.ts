@@ -52,6 +52,7 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
   "pushback-prop": { runs: 10000 },
+  "redact-deep-prop": { runs: 10000 },
   "redact-env-prop": { runs: 10000 },
   "redact-pii-prop": { runs: 10000 },
   "redact-prop": { runs: 10000 },
