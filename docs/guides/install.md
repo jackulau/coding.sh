@@ -68,7 +68,8 @@ Bash, `coding.sh` works. Run in PowerShell or cmd, the next steps and error hint
 name `codingsh`, `--json` included, and `update` names `npm install -g coding.sh`
 to reinstall. `status` does too for a stopped ingest's hint, the MCP `status` tool's update
 `command` names the bin for the shell that started the server, and on Windows the viewer's update
-pill copies `codingsh update`.
+pill copies `codingsh update`. In PowerShell and cmd, help names `codingsh` too, and an example
+that passes JSON names a file instead, with the file's JSON on the line below.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
