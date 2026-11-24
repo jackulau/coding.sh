@@ -199,7 +199,8 @@ cache_write = 3.75
 
 `input` and `output` are required. `cache_read` and `cache_write` are optional and default to the
 input price. `[pricing."<model>"]`, the older spelling, still works; `[prices]` wins a model set in
-both. Stored estimates are recomputed the next time the index opens after a change.
+both. Stored estimates are recomputed the next time the index opens after a change, and an
+estimate that no price makes any more, such as one from a deleted row, is removed.
 
 Long-context and service-tier rates are optional sub-tables:
 
@@ -401,7 +402,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by Claude Code and Codex for the commands they run. Treated as non-interactive, as `CI` is, even in a terminal: no prompts or spinners. A step that needs the user's consent stops and says to ask them (`askUser: true` with `--json`). The agent reruns it with `--yes` once they approve. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
 | `CODING_SH_NO_STAR_PROMPT` | Turn off the one-time GitHub star prompt in the terminal and the viewer. `NO_UPDATE_NOTIFIER` and `CI` turn it off too. |
-| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `usage`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. A read while another process imports transcripts answers at once. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. After an upgrade that changes how sessions are folded, MCP results carry `"index": {"refolding": true}` until the stored sessions are folded again (`coding.sh ingest` does it, or the background ingest a read starts), and while a re-parse runs: a session not yet folded shows the older version's stats, whole. |
+| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `usage`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. A read while another process imports transcripts answers at once. While a re-parse or a repricing holds `reparse.lock`, these reads skip the ingest and add `"reparsing": true` to `pending`; that run has the spool ingested between its steps where it can, else the next ingest does ([Troubleshooting](../troubleshooting.md#the-first-command-after-an-upgrade-is-slow)). After an upgrade that changes how sessions are folded, MCP results carry `"index": {"refolding": true}` until the stored sessions are folded again (`coding.sh ingest` does it, or the background ingest a read starts), and while a re-parse runs: a session not yet folded shows the older version's stats, whole. |
 
 ### Installer
 

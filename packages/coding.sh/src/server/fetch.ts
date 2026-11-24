@@ -97,7 +97,7 @@ export function createFetchHandler(opts: FetchHandlerOptions = {}): FetchHandler
     let blobs: BlobStore;
     if (opts.stores) ({ index, blobs } = opts.stores);
     else {
-      index = await openIndexStore(cfg.core.store.index, cfg.core);
+      index = await openIndexStore(cfg.core.store.index, cfg.core, { env: cfg.env ?? env });
       try {
         blobs = await openBlobStore(cfg.core.store.blobs, cfg.core);
       } catch (e) {

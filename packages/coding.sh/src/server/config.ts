@@ -42,6 +42,11 @@ export interface ForwardConfig {
 export interface ServeConfig {
   /** Core config (stores, capture, pricing); update.check forced off. */
   core: Config;
+  /**
+   * The environment the config was resolved from, with DATABASE_URL as CODING_SH_STORE_URL. Opening the
+   * index reads it to decide whether a repricing starts background ingests of the home's spool. Unset: process.env.
+   */
+  env?: NodeJS.ProcessEnv;
   host: string;
   port: number;
   role: ServeRole;
@@ -229,6 +234,7 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
 
   return {
     core,
+    env,
     host,
     port,
     role: flags.role ?? "all",
