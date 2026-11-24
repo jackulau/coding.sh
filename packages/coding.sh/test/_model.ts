@@ -38,7 +38,7 @@ export interface Model<S> {
 export interface CheckOptions {
   /** States deeper than this are not expanded (default unbounded). */
   maxDepth?: number;
-  /** Stop after this many distinct states (default 1,000,000). */
+  /** Stop after this many distinct states (default defaultMaxStates()). */
   maxStates?: number;
   /** Report deadlocks (default true). */
   deadlock?: boolean;
@@ -99,11 +99,20 @@ function traceTo<S>(nodes: Map<string, Node<S>>, key: string): Trace<S> {
   return { init: at.state, steps: steps.reverse() };
 }
 
+/**
+ * The cap on distinct states when a check names none: a million, more than any model reaches at its
+ * default bounds, or 16 million when CODING_SH_MODEL_BOUND is above 0 and the models grow. A Map holds
+ * at most 2^24 entries. Each state takes about 1 to 2.5 KB of heap.
+ */
+export function defaultMaxStates(env: NodeJS.ProcessEnv = process.env): number {
+  return Number(env.CODING_SH_MODEL_BOUND ?? "0") > 0 ? 16_000_000 : 1_000_000;
+}
+
 /** Explores the model breadth first and reports the first broken invariant or deadlock, with a shortest trace. */
 export function check<S>(model: Model<S>, opts: CheckOptions = {}): CheckResult<S> {
   const key = model.key ?? stableKey;
   const maxDepth = opts.maxDepth ?? Infinity;
-  const maxStates = opts.maxStates ?? 1_000_000;
+  const maxStates = opts.maxStates ?? defaultMaxStates();
   const nodes = new Map<string, Node<S>>();
   const queue: string[] = [];
   let transitions = 0;

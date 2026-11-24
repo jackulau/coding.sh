@@ -65,12 +65,12 @@
 // Bounds: two sessions, two processes and the run after them, one hook line, one crash and one
 // reprice that throws. Two sessions are the fewest where saved progress skips a session and where the
 // pass leaves out a session the refold repriced, two processes the fewest for a race, and one crash
-// is enough to stop a refold or a pass part way. CODING_SH_MODEL_BOUND=n adds n processes to each run,
-// and n hook lines and n crashes to the runs with a new fold version, which checks a refold stopped
-// more than once and three or more runs racing for the locks. The three runs explore 1,464, 1,993
-// and 1,822 states at the default bound, 26,306, 17,678 and 8,146 at 1 (about 2 s), and 336,808,
-// 133,437 and 21,438 at 2 (about 22 s). At 3 the first run passes check's cap of a million states,
-// and the test fails on `complete` rather than pass a search it cut short.
+// is enough to stop a refold or a pass part way. CODING_SH_MODEL_BOUND=n adds n processes, n hook
+// lines and n crashes to each run, and n reprices that throw to the runs with new prices, which checks
+// a refold or a reprice stopped more than once and three or more runs racing for the locks. The three
+// runs explore 1,464, 1,993 and 1,822 states at the default bound, 26,306, 45,424 and 14,570 at 1
+// (about 3 s), and 336,808, 698,519 and 58,571 at 2 (about 60 s). At 3 the first run alone has
+// 3,443,232 states (about 3 min and 8 GB of heap). A bound above 0 raises check's cap to 16 million.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
@@ -657,7 +657,7 @@ test("after a new fold version, refolds that race, crash and stop part way leave
 });
 
 test("after new prices, runs at once reprice every event and row once, through a crash and a pass that throws", (t) => {
-  const cfg: Config = { procs: 2 + extra, foldBump: false, priceBump: true, lines: 1, crashes: 1, failures: 1 };
+  const cfg: Config = { procs: 2 + extra, foldBump: false, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1 + extra };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -674,7 +674,7 @@ test("after new prices, runs at once reprice every event and row once, through a
 });
 
 test("after both, processes one at a time leave every row current through a crash and a reprice that throws", (t) => {
-  const cfg: Config = { procs: 2 + extra, foldBump: true, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1, sequential: true };
+  const cfg: Config = { procs: 2 + extra, foldBump: true, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1 + extra, sequential: true };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
