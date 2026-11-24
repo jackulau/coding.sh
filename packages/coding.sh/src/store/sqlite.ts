@@ -1274,15 +1274,24 @@ export class SqliteIndexStore implements IndexStore {
     const update = this.stmt(
       "UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = json_patch(json_set(json_remove(payload, '$.pricedAs', '$.priceTier', '$.costByTokenType'), '$.costEstimated', json('true')), ?) WHERE id = ?",
     );
+    // An estimate no price backs any more goes: the event is left with no cost.
+    const clear = this.stmt(
+      "UPDATE events SET usage = json_remove(usage, '$.costUsd'), payload = json_remove(payload, '$.costEstimated', '$.pricedAs', '$.priceTier', '$.costByTokenType') WHERE id = ?",
+    );
     // Folds hold the old costs: drop those of the sessions touched.
     const dropFold = this.stmt("DELETE FROM kv WHERE key = (SELECT 'fold:' || session_id FROM events WHERE id = ?)");
     return this.tx(() => {
       let found = 0;
-      for (const { id, costUsd, pricedAs, priceTier, costByTokenType } of costs) {
-        const set: Record<string, unknown> = { ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) };
-        if (costByTokenType) set.costByTokenType = costByTokenType;
-        const n = Number(update.run(costUsd, JSON.stringify(set), id).changes);
-        if (n) dropFold.run(id);
+      for (const c of costs) {
+        let n: number;
+        if (c.clear) n = Number(clear.run(c.id).changes);
+        else {
+          const { id, costUsd, pricedAs, priceTier, costByTokenType } = c;
+          const set: Record<string, unknown> = { ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) };
+          if (costByTokenType) set.costByTokenType = costByTokenType;
+          n = Number(update.run(costUsd, JSON.stringify(set), id).changes);
+        }
+        if (n) dropFold.run(c.id);
         found += n;
       }
       return found;
