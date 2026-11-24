@@ -616,9 +616,11 @@ jobs:
       # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
       # do not use the service, so it is stopped before anything else. It is disabled first, so
       # that nothing starts it while it stops or after. A stop failed in 2 of the first 1232 jobs
-      # (the service refused it once, and once it was not stopping 2 s later), so a failed stop is
-      # tried again 5 s later, up to 5 times. The step fails if the service is still not stopped.
+      # (the service refused it once, and once it was not stopping 2 s later), so a stop is tried
+      # up to 5 times, 5 s apart. The step fails if the service is still not stopped, and after 3
+      # minutes, since Stop-Service waits for as long as the service takes to stop.
       - name: Stop the Storage Service
+        timeout-minutes: 3
         shell: pwsh
         run: |
           Set-Service -Name StorSvc -StartupType Disabled

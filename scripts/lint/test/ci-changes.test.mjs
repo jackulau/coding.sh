@@ -198,10 +198,10 @@ test("ci.yml stops the Storage Service before anything else in the Windows job",
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   const windows = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
   // The service starts a disk read about 11 minutes after boot; a viewer page that first loads
-  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, the
-  // service disabled before the first stop, a failed stop tried again, and a service that is
-  // still not stopped fails the job.
-  const head = "\n      - name: Stop the Storage Service\n        shell: pwsh\n        run: |\n";
+  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, given 3
+  // minutes (Stop-Service waits for as long as the service takes), the service disabled before
+  // the first stop, a failed stop tried again, and a service that is still not stopped fails the job.
+  const head = "\n      - name: Stop the Storage Service\n        timeout-minutes: 3\n        shell: pwsh\n        run: |\n";
   assert.equal(windows.split(head).length, 2, "the step, once");
   assert.equal(windows.indexOf("\n      - "), windows.indexOf(head), "it is the first step");
   const rest = windows.slice(windows.indexOf(head) + head.length);
