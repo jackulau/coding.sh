@@ -48,7 +48,7 @@ the knobs in the `NIGHTLY` table of `scripts/verify-deep.ts`: each model at a ra
 property file with more runs. A knob you set replaces the table's value, and file names after `--`
 run only those files. It prints the seed first: `CODING_SH_PROP_SEED` when you set it, otherwise a
 random one. It ends with each file's knobs, result and time, and the command that replays each
-failed file. A model at bound 2 can take 3 GB of heap. If Node runs out of memory, set
+failed file. A model at bound 2 can take 6.5 GB of heap. If Node runs out of memory, set
 `NODE_OPTIONS=--max-old-space-size=8192`.
 
 The Verify deep workflow (`.github/workflows/verify-deep.yml`) runs it every night with the table's

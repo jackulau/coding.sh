@@ -67,7 +67,7 @@ jobs:
       run:
         working-directory: packages/coding.sh
     env:
-      # A model holds every state it has reached: lock-model at bound 2 takes about 3 GB of heap.
+      # A model holds every state it has reached: refold-model at bound 2 takes about 6.5 GB of heap.
       # The runner has 16 GB.
       NODE_OPTIONS: --max-old-space-size=12288
     steps:
