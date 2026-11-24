@@ -18,7 +18,7 @@
   {
     "kind": "user.message",
     "sessionId": "11111111-2222-4333-8444-555555555555",
-    "ts": 1793527200005,
+    "ts": 1793527199999,
     "payload": {
       "text": "Add a sum function in sum.js and run the tests"
     },

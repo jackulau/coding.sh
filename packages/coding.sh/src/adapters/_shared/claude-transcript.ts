@@ -159,6 +159,18 @@ export function promptText(e: Record<string, unknown>): string | undefined {
   return t !== undefined && syntheticUserKind(t) === undefined ? t : undefined;
 }
 
+/** What the person typed, from a user entry: a prompt's text, or a slash command's name and arguments ("/review src"). */
+export function typedText(e: Record<string, unknown>): string | undefined {
+  const t = userText(e);
+  if (t === undefined) return undefined;
+  const kind = syntheticUserKind(t);
+  if (kind === undefined) return t;
+  const name = kind === "command" ? tag(t, "command-name") : undefined;
+  if (!name) return undefined;
+  const args = tag(t, "command-args");
+  return args ? `${name} ${args}` : name;
+}
+
 /** The user entry where a fork's own transcript starts: it holds the tool_result for the parent's Agent call `toolUseId`. */
 function isForkStart(e: Record<string, unknown>, toolUseId: string): boolean {
   return e.type === "user" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_result" && b.tool_use_id === toolUseId);

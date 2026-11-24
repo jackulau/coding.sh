@@ -3,7 +3,7 @@
 // isolation. See docs/ADAPTERS.md.
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
@@ -45,6 +45,7 @@ import {
   runHeadless,
   str,
   toMs,
+  typedText,
   walkFiles,
   which,
   firingKey,
@@ -143,6 +144,68 @@ async function transcriptWindow(path: string, untilTs: number, whole = false): P
   while (prev > 0 && !(isObj(entries[prev]) && promptText(entries[prev] as Record<string, unknown>) !== undefined)) prev--;
   const hooks = entries.slice(Math.max(prev, 0), start).filter((e) => isObj(e) && e.type === "attachment" && /^hook_/.test(str(obj(e.attachment).type) ?? ""));
   return { entries: [...hooks, ...entries.slice(start, end)], lost };
+}
+
+/** How far from its UserPromptSubmit line a prompt's transcript entry may be. */
+const PROMPT_ENTRY_SLACK_MS = 10_000;
+/** A transcript line that can hold a prompt: a user entry that is not a tool result. Checked before parsing. */
+const USER_LINE = /"type"\s*:\s*"user"/;
+const TOOL_RESULT_LINE = /"type"\s*:\s*"tool_result"/;
+const foldSpace = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * When the transcript recorded the prompt a UserPromptSubmit line carries: the
+ * entry with the same typed text, the latest at or before the line, else the
+ * first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code writes the entry
+ * before the hook runs. Undefined when no entry matches. `ctx.missing` hears of
+ * a transcript that is gone, or that has grown past the line.
+ */
+async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
+  if (!path) return undefined;
+  let text: string;
+  let reached: boolean;
+  try {
+    const fh = await open(path, "r");
+    try {
+      const size = (await fh.stat()).size;
+      const from = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+      const buf = Buffer.alloc(size - from);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+      text = buf.subarray(0, bytesRead).toString("utf8");
+      if (from > 0) text = text.slice(text.indexOf("\n") + 1); // the first line is partial
+      reached = from === 0;
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    ctx.missing?.(path, sessionId);
+    return undefined;
+  }
+  const want = foldSpace(prompt);
+  let before: number | undefined;
+  let after: number | undefined;
+  for (const l of text.split("\n")) {
+    if (!USER_LINE.test(l) || TOOL_RESULT_LINE.test(l)) continue;
+    let e: unknown;
+    try {
+      e = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (!isObj(e)) continue;
+    const ts = toMs(e.timestamp, 0);
+    if (ts <= at - PROMPT_ENTRY_SLACK_MS) {
+      reached = true; // the tail reaches back past the window
+      continue;
+    }
+    if (ts > at + PROMPT_ENTRY_SLACK_MS || e.isSidechain === true) continue;
+    const typed = typedText(e);
+    if (typed === undefined || foldSpace(typed) !== want) continue;
+    if (ts <= at) before = Math.max(before ?? ts, ts);
+    else after = Math.min(after ?? ts, ts);
+  }
+  if (before === undefined && after === undefined && !reached) ctx.missing?.(path, sessionId);
+  return before ?? after;
 }
 
 /** The plugins' hook commands under the config dir a transcript lives in (<dir>/projects/<slug>/…). */
@@ -263,8 +326,13 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode), entrypoint: line.entrypoint }, raw.source === "resume" ? {} : { key: ["start"] });
       break;
     case "UserPromptSubmit": {
-      const t = await clipText(ctx, str(raw.prompt) ?? "");
-      em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
+      const prompt = str(raw.prompt) ?? "";
+      const t = await clipText(ctx, prompt);
+      // The turn's first model call starts when the transcript recorded the prompt, before this hook ran:
+      // the prompt takes that time, less 1 ms so it sorts before the call.
+      const entry = inChild ? undefined : await promptEntryTs(ctx, str(raw.transcript_path), sessionId, prompt, line.ts);
+      const said = em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
+      if (entry !== undefined) said.ts = entry - 1;
       break;
     }
     case "PreToolUse": {
@@ -754,7 +822,8 @@ export const claudeCode: Adapter = {
   //    2 s old (the same permission prompt for two tool calls in a row).
   // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
   // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  parseVersion: 20,
+  // 21 (0.1.8): a hook prompt takes the time its transcript entry was written, less 1 ms, not the time the hook ran.
+  parseVersion: 21,
 
   detect() {
     const dir = claudeConfigDir();
