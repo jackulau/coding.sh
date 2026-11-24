@@ -300,6 +300,8 @@ describe("round 9 viewer QA fixes on big sessions and small screens, in a browse
     // In a replay the replay bar sticks under the top bar; the list comes up below both.
     await p.eval(`location.hash = '#/s/${SID}?step=2'`);
     await p.waitFor("document.querySelector('.rp-bar') && !document.querySelector('.rp-bar').hidden && document.querySelector('.st[aria-selected=\"true\"]')", "the replay at step 2");
+    // The replay pane draws its Steps button when step 2's detail arrives, which can be after the replay bar shows.
+    await p.waitFor("/^Step 2 of /.test(document.querySelector('#event-pane .pane-top .meta')?.textContent ?? '') && [...document.querySelectorAll('.to-steps')].some((b) => b.offsetParent)", "the replay pane's Steps button");
     await p.eval("scrollTo(0, document.documentElement.scrollHeight)");
     await steps();
     const r = await where(".rp-bar");
