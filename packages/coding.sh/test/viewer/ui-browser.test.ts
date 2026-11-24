@@ -16,6 +16,9 @@ import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, failedRequ
 const chrome = findChrome();
 // Every CI leg (Linux, Windows) has a Chrome: there, a skipped viewer suite is a bug.
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 const T0 = 1_762_400_000_000;
 // Real-looking ids: long enough that the eval command overflows a phone screen.
 const PARENT = "4b9889a2-c0d2-4046-9d28-6b07d00c01a8";
@@ -1044,7 +1047,7 @@ describe("viewer UI: benchmarks", { skip: chrome ? false : "no Chrome/Chromium f
     try {
       const text: string = await page.waitFor("document.querySelector('.panel.empty')?.innerText", "empty state");
       assert.match(text, /No benchmarks yet/);
-      assert.match(text, /coding\.sh bench new/);
+      assert.match(text, new RegExp(`${CLI} bench new`));
       await page.eval("location.hash = '#/benchmarks/nope'");
       assert.match(await page.waitFor("document.querySelector('.panel.empty h2')?.textContent", "not found"), /Benchmark not found/);
     } finally {
@@ -1481,7 +1484,7 @@ describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chro
       const text: string = await page.eval(paneText);
       assert.match(text, /recorded\s+Bash: npm test/);
       assert.match(text, /different/);
-      assert.match(text, /coding\.sh replay 7f3c1e2a --step 4 --fork --with CLAUDE\.md --save-case forks/);
+      assert.match(text, new RegExp(`${CLI} replay 7f3c1e2a --step 4 --fork --with CLAUDE\\.md --save-case forks`));
       assert.deepEqual(runs, [{ step: 4, files: { "CLAUDE.md": "Run the tests with node --test." }, trials: 1 }]);
     } finally {
       await page.close();

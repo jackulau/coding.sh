@@ -61,15 +61,19 @@ Run the installer from Git Bash, which comes with [Git for Windows](https://gitf
 In PowerShell or cmd, install with npm: `npm install -g coding.sh`, then `codingsh init`. Under
 WSL, coding.sh behaves as it does on Linux and records the agents you run inside WSL.
 
-In PowerShell and cmd, type `codingsh` instead of `coding.sh` (for example `codingsh init` and
-`codingsh ui`). npm also installs an extensionless sh script named `coding.sh`, and PowerShell and
-cmd pick it over `coding.sh.cmd`, so `coding.sh` fails there. `codingsh` is the same CLI. In Git
-Bash, `coding.sh` works. Run in PowerShell or cmd, the next steps and error hints commands print
+On Windows, type `npx -p coding.sh codingsh` for `npx coding.sh`, and in PowerShell and cmd,
+`codingsh` for an installed `coding.sh` (for example `codingsh init` and `codingsh ui`). npm also
+installs an extensionless sh script named `coding.sh`, and PowerShell and cmd pick it over
+`coding.sh.cmd`, so `coding.sh` fails there; npx runs its command through cmd from any shell.
+`codingsh` is the same CLI, from the same npm package, `coding.sh`. In Git Bash, `coding.sh`
+works. Run in PowerShell or cmd, the next steps and error hints commands print
 name `codingsh`, `--json` included, and `update` names `npm install -g coding.sh`
-to reinstall. `status` does too for a stopped ingest's hint, the MCP `status` tool's update
-`command` names the bin for the shell that started the server, and on Windows the viewer's update
-pill copies `codingsh update`. In PowerShell and cmd, help names `codingsh` too, and an example
-that passes JSON names a file instead, with the file's JSON on the line below.
+to reinstall. `status` does too for a stopped ingest's hint, and the MCP `status` tool's update
+`command` names the bin for the shell that started the server. In PowerShell and cmd, help names
+`codingsh` too, and an example that passes JSON names a file instead, with the file's JSON on the
+line below. In a browser on Windows, the commands the viewer page shows and copies name `codingsh`
+(`npx -p coding.sh codingsh` for `npx coding.sh`). Errors the server sends, such as the page for a
+missing token, still name `coding.sh`.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
@@ -146,7 +150,7 @@ npm uninstall -g coding.sh
 rm -rf ~/.coding.sh             # optional: delete captured data
 ```
 
-In PowerShell, type `codingsh` for `coding.sh`, and delete the data with
+In PowerShell, type `codingsh uninstall` for `coding.sh uninstall`, and delete the data with
 `Remove-Item -Recurse -Force ~\.coding.sh`.
 
 `uninstall` restores each agent config file byte for byte if nothing else has edited it since

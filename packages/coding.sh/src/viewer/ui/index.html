@@ -2096,7 +2096,7 @@ async function request(path, init, quiet) {
   if (!quiet) busy(1);
   try {
     const res = await fetch(path, { credentials: "same-origin", ...init });
-    if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by coding.sh ui.");
+    if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by " + forShell("coding.sh ui") + ".");
     return res;
   } finally {
     if (!quiet) busy(-1);
@@ -2245,9 +2245,21 @@ function shq(s) {
 // command with such a value is shown but never copied.
 const PASTE_UNSAFE = /[\u0000-\u001f\u007f-\u009f'\u2018-\u201b&|<>]/;
 const unsafeCmds = new Set();
+// The page cannot see the user's shell. On Windows npm installs a `codingsh` command that Git
+// Bash, PowerShell and cmd all run, while PowerShell and cmd resolve `coding.sh` to npm's sh
+// shim, which fails there, and npx runs its command through cmd whatever the shell. So the page
+// writes each command with `coding.sh`, and forShell() renames that first word on Windows.
+const IS_WIN = /Win/.test(String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""));
+function forShell(command) {
+  return IS_WIN ? String(command).replace(/^(npx )?coding\.sh(?= |$)/, (_, npx) => (npx ? "npx -p coding.sh codingsh" : "codingsh")) : command;
+}
+// The index's age line comes from the server in the CLI's words; its command gets the same rename.
+function indexText(text) {
+  return IS_WIN ? String(text).replace(/\brun coding\.sh ingest\b/, "run " + forShell("coding.sh ingest")) : text;
+}
 // A command for the clipboard: the fixed command words, then each value quoted.
 function shCmd(command, ...args) {
-  const cmd = [command, ...args.map(shq)].join(" ");
+  const cmd = [forShell(command), ...args.map(shq)].join(" ");
   if (args.some((a) => PASTE_UNSAFE.test(String(a)))) unsafeCmds.add(cmd);
   return cmd;
 }
@@ -2255,6 +2267,7 @@ function copyBtn(getText, label, what, text) {
   return h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-label": label || "Copy", onclick: () => copy(typeof getText === "function" ? getText() : getText, what) }, text || "Copy");
 }
 function cmdBlock(command, label) {
+  command = forShell(command);
   return h("div", { class: "cmd" },
     h("code", { text: command }),
     h("button", { class: "btn btn-sm", type: "button", "aria-label": label || "Copy command", onclick: () => copy(command) }, "Copy"));
@@ -4172,7 +4185,7 @@ function captureEmpty() {
     h("p", { text: "To record new sessions as they happen, set up the hooks once. init imports past sessions too:" }),
     cmdBlock("npx coding.sh init", "Copy init command"),
     h("ol", { class: "steps" },
-      h("li", null, "Run ", h("code", null, "npx coding.sh init"), " in a terminal. It detects installed agents, adds hooks and imports their past sessions."),
+      h("li", null, "Run ", h("code", null, forShell("npx coding.sh init")), " in a terminal. It detects installed agents, adds hooks and imports their past sessions."),
       h("li", null, "Use Claude Code, Codex or another supported agent in any git repository."),
       h("li", null, "Come back here. New sessions show up on their own within a few seconds.")));
   const waiting = h("div", { class: "empty-part" },
@@ -5803,7 +5816,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const trials = h("div", { class: "seg", role: "group", "aria-label": "Forked calls" }, [1, 3, 5].map((k) => h("button", { type: "button", "aria-pressed": String(f.trials === k), onclick: () => { f.trials = k; renderReplayPane(); } }, "×" + k)));
     out.push(h("div", { class: "rp-fork-go" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: f.busy || !pv.canCall, onclick: forkRun }, f.busy ? "Forking…" : "Run fork"), trials,
-      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where coding.sh ui runs.")));
+      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where " + forShell("coding.sh ui") + " runs.")));
     const r = f.result;
     const rows = [h("span", { class: "meta" }, "recorded"), h("code", null, pv.recorded ? pv.recorded.label : "no recorded reply"), h("span")];
     if (r) r.trials.forEach((t, i) => rows.push(h("span", { class: "meta" }, r.trials.length > 1 ? "forked " + (i + 1) : "forked"), h("code", { class: t.error ? "tone-fail" : "" }, t.error ? "error: " + t.error : t.label),
@@ -8147,10 +8160,11 @@ function workCounts(counts) {
   const parts = WORK_BUCKETS.filter(([b]) => counts[b]).map(([b, label]) => counts[b] + " " + label.toLowerCase());
   return parts.length ? parts.join(" · ") : "nothing needs you";
 }
-/** A snooze end comes as ISO, as `work --json` keeps it; people read it in local time, as the CLI prints it. */
+/** A snooze end comes as ISO, as `work --json` keeps it; people read it in local time, as the CLI prints it.
+ * A code part that starts with `coding.sh ` is a command, named for the shell; a file named coding.sh stays, as in the CLI. */
 function workNext(next) {
   const m = /^snoozed until (\d{4}-\d{2}-\d{2}T[\d:.]+Z)$/.exec(next || "");
-  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, text) : text);
+  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, /^(npx )?coding\.sh /.test(text) ? forShell(text) : text) : text);
 }
 /** The CLI marks commands in a next step with backticks; the page shows them as code: [[false, "review: "], [true, "git diff"], …]. */
 function workNextParts(next) {
@@ -8234,7 +8248,7 @@ async function showWork(seq, query) {
     shown = doc;
     const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
     // How old the index is, in the CLI's words (an older server sends no `index`): in the line while fresh, a warning while old.
-    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, indexText(doc.index.text)) : null;
     swap(meta, workCounts(doc.counts) + " · since " + st.since, age && !doc.index.stale ? [" · ", age] : null);
     stageSeg.hidden = stagesMeta.hidden = !doc.stages;
     if (doc.stages) stagesMeta.textContent = "Stages: " + workStages(doc.stages);
@@ -8348,7 +8362,7 @@ function workError(e, go) {
   if (e.status === 404) {
     return h("div", { class: "panel empty" },
       h("h2", { text: "The work queue is in the local viewer only" }),
-      h("p", { text: "Acks and snoozes live in this machine's coding.sh home, so a shared server has no queue. Open coding.sh ui on the machine your agents run on, or ask the CLI there." }),
+      h("p", { text: "Acks and snoozes live in this machine's coding.sh home, so a shared server has no queue. Open " + forShell("coding.sh ui") + " on the machine your agents run on, or ask the CLI there." }),
       cmdBlock("coding.sh work", "Copy work command"));
   }
   if (e.status === 400) {
@@ -8531,7 +8545,7 @@ async function showWorkItem(seq, id, query) {
     title.textContent = oneLine(doc.title) || "(untitled)";
     // Three lines show; the whole title is the tooltip.
     title.title = oneLine(doc.title);
-    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, indexText(doc.index.text)) : null;
     swap(meta, doc.id + " · " + workStateText(doc) + " · since " + st.since, age ? [" · ", age] : null);
     swap(slot, workItemPage(doc, st, act));
   };
@@ -8819,7 +8833,7 @@ async function showReviewQueue(seq, name) {
       h("div", { class: "review-score" }, h("label", { class: "review-label", for: "rv-comment" }, "Comment ", h("span", { class: "meta" }, "(optional)")), comment),
       h("div", { class: "review-actions" }, doneBtn, skipBtn,
         href ? h("a", { class: "btn btn-ghost", href, "aria-keyshortcuts": "o", title: "Open the session (o)" }, "Open session") : null,
-        copyBtn(it.command, "Copy the CLI command for this item", "command", "Copy CLI")));
+        copyBtn(forShell(it.command), "Copy the CLI command for this item", "command", "Copy CLI")));
   };
   /** Loads the queue and its next item; `note` (plain words) goes above the item, as the person should know why it changed. */
   async function load(note) {
@@ -8887,7 +8901,7 @@ async function showWorkflows(seq) {
     swap(slot, h("div", { class: "panel empty" },
       h("h2", { text: "No workflow runs yet" }),
       h("p", { text: "A workflow run is one program that starts many agents: a Claude Code Workflow tool script, or a LangGraph, Mastra or Agents SDK app. Import the Claude Code runs on this machine, then open one here." }),
-      h("p", null, "The ", h("a", { href: "#/work" }, "Work"), " page groups a run's agents from their sessions alone. This page lists only the runs ", h("code", null, "coding.sh workflows import"), " has added."),
+      h("p", null, "The ", h("a", { href: "#/work" }, "Work"), " page groups a run's agents from their sessions alone. This page lists only the runs ", h("code", null, forShell("coding.sh workflows import")), " has added."),
       cmdBlock("coding.sh workflows import", "Copy workflows import command")));
     announce("No workflow runs");
     return;
@@ -9114,7 +9128,7 @@ async function showPlayground(seq, callId, sessionId) {
     if (!current(seq)) return;
     meta.textContent = "";
     swap(body, e.status === 404 && /only in the local viewer/.test(e.message)
-      ? h("div", { class: "panel empty" }, h("h2", null, "The playground runs in the local viewer"), h("p", null, "Start it with coding.sh ui. Shared and team viewers do not send model requests."), cmdBlock("coding.sh ui"))
+      ? h("div", { class: "panel empty" }, h("h2", null, "The playground runs in the local viewer"), h("p", null, "Start it with " + forShell("coding.sh ui") + ". Shared and team viewers do not send model requests."), cmdBlock("coding.sh ui"))
       : errorPanel(e, () => showPlayground(seq, callId, sessionId)));
     return;
   }
@@ -9201,7 +9215,7 @@ async function showPlayground(seq, callId, sessionId) {
   // Run and compare with what the agent got.
   const status = h("p", { class: "meta pg-status", role: "status" });
   const recorded = outputCard("Recorded response", rebuilt.response, rebuilt.response ? null : "No recorded response for this call.");
-  const fresh = h("div", { class: "pg-out-slot" }, outputCard("This run", null, firstReady ? "Run the request to see the new response here." : "No provider is ready. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (or a local OPENAI_BASE_URL) and restart coding.sh ui."));
+  const fresh = h("div", { class: "pg-out-slot" }, outputCard("This run", null, firstReady ? "Run the request to see the new response here." : "No provider is ready. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (or a local OPENAI_BASE_URL) and restart " + forShell("coding.sh ui") + "."));
   const runBtn = h("button", { class: "btn btn-primary", type: "button", disabled: !firstReady }, "Run");
   runBtn.addEventListener("click", async () => {
     let r;
@@ -9846,10 +9860,7 @@ async function loadUpdate() {
   if (!u || !u.updateAvailable || typeof u.latest !== "string" || !/^[0-9A-Za-z.+-]{1,40}$/.test(u.latest)) return;
   const pill = $("#update");
   pill.querySelector(".ver").textContent = "v" + u.latest;
-  // The page cannot see the user's shell. On Windows npm installs `codingsh` for Git Bash,
-  // PowerShell and cmd alike, while there `coding.sh` resolves to the sh shim and fails.
-  const win = /Win/.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
-  const cmd = (win ? "codingsh" : "coding.sh") + " update";
+  const cmd = forShell("coding.sh update");
   pill.title = "Version " + u.latest + " of coding.sh is available (you have " + u.current + "). Click to copy: " + cmd;
   pill.setAttribute("aria-label", "Update available: coding.sh " + u.latest + ". Copy the update command.");
   pill.addEventListener("click", () => copy(cmd));
@@ -9914,7 +9925,7 @@ const ingestState = { importing: false, captureSetUp: false, index: null };
 function indexAgeEl(el) {
   const ix = ingestState.index;
   el.hidden = !(ix && ix.text);
-  el.textContent = el.hidden ? "" : ix.text;
+  el.textContent = el.hidden ? "" : indexText(ix.text);
   el.classList.toggle("warn", !!(ix && ix.stale));
   return el;
 }
