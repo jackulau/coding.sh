@@ -190,6 +190,25 @@ describe("derail detection", () => {
       assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, cacheWriteTokens: Number.POSITIVE_INFINITY, outputTokens: 50 })), []);
     });
 
+    it("does not start the context size at a call with a token count below 0 or not a finite number", () => {
+      // The first model call in the stretch reports a bad cache read, so its size is only its 500 fresh
+      // input tokens. Then 90 reads cycle through 12 files at a 100k context: no growth.
+      const stretch = (first: Usage) => {
+        const out = [...edit("a.ts", "1", "2"), llm(100_000), ...read("src/f0.ts"), ev("llm.call", { ok: true }, { usage: first })];
+        for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls + 10; i++) out.push(llm(100_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
+        return out;
+      };
+      for (const cacheReadTokens of [-99_500, Number.NaN]) {
+        reset();
+        const events = stretch({ inputTokens: 500, cacheReadTokens, outputTokens: 50 });
+        assert.deepEqual(flags(events), [], `cache read ${cacheReadTokens}`);
+        // Stored, NaN reads back as null.
+        assert.deepEqual(flags(JSON.parse(JSON.stringify(events))), [], `stored cache read ${cacheReadTokens}`);
+      }
+      reset();
+      assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, outputTokens: 50 })), []);
+    });
+
     it("reads Antigravity's run_command line: a shell write is progress, a read is not", () => {
       const around = (command: string) => [...edit("a.ts", "1", "2"), ...circle(50, 10), ...call("run_command", { CommandLine: command, Cwd: "/work/demo" }), ...circle(50, 10, 120_000)];
       reset();
