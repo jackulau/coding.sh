@@ -26,6 +26,7 @@ import {
   emitDerived,
   hasFlag,
   hasOurHooks,
+  INTERRUPT_PROMPT,
   isObj,
   isolatedHome,
   lineRaw,
@@ -113,6 +114,8 @@ const FLUSH_SLACK_MS = 2_000;
  * flushed around Stop). A prompt after untilTs opens the next turn and ends
  * the window: an ingest that runs once a `--resume` has started, or a re-parse
  * with the whole transcript on disk, reads the same turn the Stop's own ingest did.
+ * A turn the person stopped (Esc) fires no Stop: Claude Code writes an interrupt
+ * prompt after it, and the window reads back over each such turn before its own.
  *
  * `lost`: the window can't be read as it was when the line was captured. The
  * file is gone, or it has grown and the turn starts before the tail read here.
@@ -136,14 +139,35 @@ async function transcriptWindow(path: string, untilTs: number, whole = false): P
     }
     end = i;
   }
-  const lost = start < 0 && size > TRANSCRIPT_TAIL_BYTES;
+  let lost = start < 0 && size > TRANSCRIPT_TAIL_BYTES;
   start = Math.max(start, 0);
+  let prev = promptBefore(entries, start);
+  while (isInterrupt(entries[start]) || (prev >= 0 && isInterrupt(entries[prev]))) {
+    if (prev < 0) {
+      // The stopped turn starts before the tail read here.
+      lost ||= size > TRANSCRIPT_TAIL_BYTES;
+      start = 0;
+      break;
+    }
+    start = prev;
+    prev = promptBefore(entries, start);
+  }
   // Hook output written before the prompt (SessionStart's, on the first turn or
   // after a compaction) reaches no Stop window otherwise: since the previous prompt.
-  let prev = start - 1;
-  while (prev > 0 && !(isObj(entries[prev]) && promptText(entries[prev] as Record<string, unknown>) !== undefined)) prev--;
   const hooks = entries.slice(Math.max(prev, 0), start).filter((e) => isObj(e) && e.type === "attachment" && /^hook_/.test(str(obj(e.attachment).type) ?? ""));
   return { entries: [...hooks, ...entries.slice(start, end)], lost };
+}
+
+/** Index of the last prompt entry before `i`, or -1. */
+function promptBefore(entries: unknown[], i: number): number {
+  let j = i - 1;
+  while (j >= 0 && !(isObj(entries[j]) && promptText(entries[j] as Record<string, unknown>) !== undefined)) j--;
+  return j;
+}
+
+/** The prompt Claude Code writes after a turn the person stopped. */
+function isInterrupt(e: unknown): boolean {
+  return isObj(e) && INTERRUPT_PROMPT.test(promptText(e) ?? "");
 }
 
 /** How far from its UserPromptSubmit line a prompt's transcript entry may be. */
@@ -358,7 +382,8 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       const w = await windowEvents(ctx, str(raw.transcript_path), line.ts, sessionId, undefined, line.runId, false);
       extra.push(...w.events);
       if (w.model) em.base.model ??= w.model;
-      if (!w.events.some((e) => e.kind === "assistant.message") && str(raw.last_assistant_message)) {
+      // The window can also hold turns the person stopped: only a reply in the turn that ended counts here.
+      if (!w.events.some((e) => e.kind === "assistant.message" && e.turnId === w.turnId) && str(raw.last_assistant_message)) {
         const t = await clipText(ctx, raw.last_assistant_message as string);
         em.emit("assistant.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
       }
@@ -822,7 +847,7 @@ export const claudeCode: Adapter = {
   //    2 s old (the same permission prompt for two tool calls in a row).
   // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
   // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  // 21 (0.1.8): a hook prompt takes the time its transcript entry was written, less 1 ms, not the time the hook ran.
+  // 21 (0.1.8): a hook prompt takes the time its transcript entry was written, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]").
   parseVersion: 21,
 
   detect() {

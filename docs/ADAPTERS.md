@@ -138,7 +138,7 @@ counts (`STOPPED` in `src/core/turn-stats.ts`):
 
 | Agent | What marks a stopped turn |
 |---|---|
-| Claude Code | A prompt that starts `[Request interrupted by user` |
+| Claude Code | A prompt that starts `[Request interrupted by user`. On hook capture, also a tool call the person cut short (`PostToolUseFailure` with `is_interrupt: true`) |
 | Codex | `turn_aborted`, read as a `turn.end` whose `status` is its reason, else `aborted`. `interrupted` and `aborted` count; `replaced` and `review_ended` do not |
 | OpenCode | `session.execution.interrupted` |
 | Cursor CLI | The stop hook's `status: "aborted"` |
@@ -148,10 +148,17 @@ Other agents mark none, or coding.sh has no capture that shows how they mark one
 from T3 Code's own store marks none either, whatever agent ran it: coding.sh reads only whether
 each of its turns completed. Those turns count in `stats.turnsByModel.<model>.cancelNotRecorded`,
 and `coding.sh stats --scorecard` leaves them out of its cancelled row and names the capture they
-came from (`t3code` for a thread built from T3 Code's store). A Claude Code stop is a prompt's
-text, so a Claude Code turn whose prompt has no text (`capture.mode = "metadata"`) or came from its
-OpenTelemetry export counts there too, under `claude-code`. In metadata mode the stop itself counts
-as the person's next prompt.
+came from (`t3code` for a thread built from T3 Code's store).
+
+A Claude Code stop is a prompt's text, so a Claude Code turn whose prompt has no text
+(`capture.mode = "metadata"`) or came from its OpenTelemetry export counts there too, under
+`claude-code`. In metadata mode the stop itself counts as the person's next prompt.
+
+Claude Code fires no `Stop` hook on a turn the person stopped. The next `Stop` reads the transcript
+back over the stopped turns and records each stop's prompt. A stop that cut a tool call short also
+shows in that call's `PostToolUseFailure`. On hook capture, a turn with neither, such as one stopped
+just before the session ended, counts in `cancelNotRecorded`: hooks cannot tell it from a turn
+still running.
 
 ## Replay
 
@@ -272,6 +279,7 @@ order.
 - **Codex:** `-s read-only` fires no hooks. SessionEnd has a 1s default and a 3s hard cap. The sandbox blocks network from hooks (spool-to-file is safe). Tool names `shell_command`/`apply_patch` changed upstream, so normalize defensively.
 - **Claude Code:** the model reads as unknown when large tool results fill the transcript tail; scan backwards further. `SubagentStop` lacks `tool_use_id`. Old `Task` matchers never fire; use `Agent`.
 - **Claude Code:** a `Stop` line's model calls and replies are read from the transcript it names: the turn from the last prompt at or before the Stop to the next prompt, within the last 8 MB of the file. A `claude -p --resume` or a queued prompt can write the next prompt within 2 s of the Stop, so the window ends there. When the transcript is gone (an eval run's temporary home) or the turn or its prompt is no longer in the last 8 MB, the adapter says so (`NormalizeContext.missing`) and a re-parse keeps the session's stored hook rows.
+- **Claude Code:** fires no `Stop` on a turn the person stopped. A `Stop`'s read also goes back over the stopped turns before it, which end in a `[Request interrupted by user` prompt, and gets their model calls and stop prompts.
 - **Claude Code:** writes a prompt to the transcript before its `UserPromptSubmit` hook runs. A hook prompt takes that entry's time less 1 ms, else the hook's, so a model call that starts at the entry stays in the prompt's turn.
 - **Claude Code:** files a Bash command edits (`sed -i`, heredoc writes, `tee`) are in the tool result's `toolUseResult.bashEditDiff` (per-file hunks, plus `changedFiles` past the first few), which becomes `file.change`. It is on by default only in auto and bypass-permissions modes; `CLAUDE_CODE_BASH_EDIT_DIFF=true` or the `bashEditDiffEnabled` setting turns it on elsewhere. The diff lists every file that changed while the command ran, including ones it never touched (a `git rebase`, a test run's output, another agent in the same checkout), so `test-tamper` only counts a file the command names. A file the command does not name becomes no `file.change` when a git command brought it in (`checkout`, `switch`, `merge`, `pull`, `rebase`, `reset`, …), when every stage of the command only reads, waits or prints (`cat`, `grep`, `git status`, `git fetch`, `sleep`, …), or when the command starts with `cd` to an absolute path outside the session's folder. Other unnamed files, such as a script's or a build's output, stay.
 - **Claude Code:** context loaded mid-session is only in transcript `attachment` lines, never in hooks: `nested_memory` (Claude Code's instructions file from a subdirectory), `dynamic_skill` (a nested `.claude/skills` became available) and `invoked_skills` (skills restored after a compaction). A Skill call's "Base directory for this skill" line names the skill's folder. Each becomes a `notification` with `payload.kind: "harness.loaded"` and `loadedBy`, paths and skill names (never the text). Live windows read them too; the attachment's uuid keys the event, so backfill and live capture store it once.

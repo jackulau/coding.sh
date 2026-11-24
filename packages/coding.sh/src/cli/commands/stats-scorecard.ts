@@ -183,13 +183,18 @@ function leftOutParts(l: ScorecardLeftOut): string[] {
   return parts;
 }
 
-/** The cancelled row's coverage, when a column counted turns whose capture does not record a stopped turn. */
+/**
+ * The cancelled row's coverage, when a column counted turns whose capture does not record a stopped
+ * turn. Claude Code records a stop, but not in every capture (core/turn-stats.ts), so its turns say why.
+ */
 function cancelLeftOut(groups: readonly ScorecardGroup[]): string | undefined {
   const turns = new Map<string, number>();
   for (const g of groups) for (const [agent, n] of Object.entries(g.cancelNotRecorded ?? {})) turns.set(agent, (turns.get(agent) ?? 0) + n);
   if (!turns.size) return undefined;
   const parts = [...turns].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)).map(([agent, n]) => `${plural(n, "turn")} of ${agent}`);
-  return `Cancelled turns leave out ${join(parts)}: those captures do not record a turn the person stopped.`;
+  const note = `Cancelled turns leave out ${join(parts)}: those captures do not record a turn the person stopped.`;
+  if (!turns.has("claude-code")) return note;
+  return `${note} A claude-code turn is left out when it was captured in metadata mode or over OpenTelemetry, or when hooks have not seen it end, such as a turn still running.`;
 }
 
 const join = (xs: readonly string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);

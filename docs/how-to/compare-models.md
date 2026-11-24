@@ -107,6 +107,9 @@ pushback.
 - A thread built from T3 Code's own store records no stopped turns, whatever agent ran it.
 - A `claude-code` stop is a prompt's text. Its turns record no stops when the prompt has no text
   (`capture.mode = "metadata"`) or came from its OpenTelemetry export.
+- On hook capture, a `claude-code` stop shows when a later turn ends, or at once when it cut a tool
+  call short. A turn with neither is left out: one still running, or one stopped just before the
+  session ended.
 - The notes under the table say which sessions and turns a row left out.
 
 ## Narrow it down

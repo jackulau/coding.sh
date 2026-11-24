@@ -13,11 +13,13 @@
 // - replied, pushback: the person's next prompt answers the turn before it. A prompt with text
 //   counts in `replied`, and pushbackKind (core/pushback.ts) names how it pushed back, if it did.
 // - cancelled: the person stopped the turn. Claude Code writes a "[Request interrupted by user"
-//   prompt; Codex, OpenCode, Cursor and Pi say so on the turn's end (STOPPED). CANCEL_AGENTS names
-//   the agents that record it. A turn whose prompt another agent's capture holds counts in
-//   cancelNotRecorded instead, never in cancelled: a T3 Code thread built from T3 Code's own store
-//   has only T3 Code's events, whatever agent the thread ran. So does a Claude Code turn whose prompt
-//   has no text (capture.mode = "metadata") or came from its OTLP export (stopUnseen).
+//   prompt, and its hooks mark a tool call the stop cut short (interrupted); Codex, OpenCode, Cursor
+//   and Pi say so on the turn's end (STOPPED). CANCEL_AGENTS names the agents that record it. A turn
+//   whose prompt another agent's capture holds counts in cancelNotRecorded instead, never in
+//   cancelled: a T3 Code thread built from T3 Code's own store has only T3 Code's events, whatever
+//   agent the thread ran. So does a Claude Code turn whose prompt has no text (capture.mode =
+//   "metadata") or came from its OTLP export (stopUnseen), and a turn its hooks captured that shows
+//   no end yet (endUnseen): hooks read the stop prompt from the transcript at the next Stop.
 // - durationsMs: from the prompt to the end of the turn's last work (a model call, a tool call, a
 //   message, a turn end the agent recorded, the person stopping it), on every thread, with the time
 //   it waited on the person (a permission prompt) or on a background task. A transcript's
@@ -63,8 +65,9 @@ const STOPPED = new Map<string, (p: Record<string, unknown>) => boolean>([
 export const CANCEL_AGENTS: ReadonlySet<string> = new Set(["claude-code", ...STOPPED.keys()]);
 
 /**
- * A Claude Code prompt that cannot show the turn's stop. The stop is a prompt's text, which its hooks
- * and transcript record: metadata mode keeps no prompt text, and its OTLP export sends no such prompt.
+ * A Claude Code prompt whose turn cannot show a stop. The stop is a prompt's text, which the transcript
+ * records and the hooks read from it at the next Stop: metadata mode keeps no prompt text, and the
+ * OTLP export sends no such prompt.
  */
 const stopUnseen = (e: AgentEvent): boolean =>
   e.agent === "claude-code" && (typeof e.payload.text !== "string" || e.source === "otel-log" || e.source === "otel-span");
@@ -95,6 +98,8 @@ interface OpenTurn {
   cancelled?: true;
   /** Its prompt came from the capture of an agent that does not record a stop (not in CANCEL_AGENTS), or cannot show it (stopUnseen). */
   notRecorded?: true;
+  /** Its prompt came from a Claude Code hook, and no end of the turn has come yet: no turn end, interrupted tool call or stop prompt. */
+  endUnseen?: true;
   /** The session was resumed after its last work: nothing more counts in it. */
   idle?: true;
 }
@@ -145,8 +150,11 @@ export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): v
       if (t) close(s, t, str(e.payload.text));
       s.turn = { at: e.ts, own: new Map(), otel: new Map(), proxy: new Map() };
       if (!CANCEL_AGENTS.has(e.agent) || stopUnseen(e)) s.turn.notRecorded = true;
+      // No hook fires when the person stops a turn: the stop prompt comes with the next Stop's transcript window.
+      else if (e.agent === "claude-code" && e.source === "hook") s.turn.endUnseen = true;
     } else if (o.by === "interrupt" && t && !t.idle) {
       t.cancelled = true;
+      delete t.endUnseen;
       t.end = Math.max(t.end ?? e.ts, e.ts);
     }
     return;
@@ -169,7 +177,14 @@ export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): v
     if (!model) return;
     const calls = o.proxyCall ? t.proxy : o.otelCopy ? t.otel : t.own;
     calls.set(model, (calls.get(model) ?? 0) + 1);
-  } else if (e.kind === "turn.end" && STOPPED.get(e.agent)?.(e.payload)) t.cancelled = true;
+  } else if (e.kind === "turn.end") {
+    if (STOPPED.get(e.agent)?.(e.payload)) t.cancelled = true;
+    if (e.agent === "claude-code") delete t.endUnseen;
+  } else if (e.kind === "tool.end" && e.agent === "claude-code" && e.payload.interrupted === true) {
+    // The person stopped the turn during the call (a hook's PostToolUseFailure, is_interrupt).
+    t.cancelled = true;
+    delete t.endUnseen;
+  }
 }
 
 /** The model that made most of the turn's calls, the first one called on a tie; "" when it made none. */
@@ -191,7 +206,7 @@ function turnModel(t: OpenTurn): string {
 /** Counts a turn in its model's tally: the turn, whether the person stopped it (or that its capture does not say), and how long it ran. */
 function count(m: ModelTurns, t: OpenTurn): void {
   m.turns++;
-  if (t.notRecorded) m.notRecorded++;
+  if (t.notRecorded || t.endUnseen) m.notRecorded++;
   else if (t.cancelled) m.cancelled++;
   const ms = t.end === undefined ? 0 : Math.round(t.end - t.at);
   if (ms > 0 && m.durations.length < SAMPLES_MAX) m.durations.push(ms);

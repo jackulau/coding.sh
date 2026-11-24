@@ -134,6 +134,26 @@ describe("stats --scorecard", () => {
     assert.deepEqual(two[0], ["MEASURE", "claude-code", "codex", "DIFFERENCE"]);
   });
 
+  test("the cancelled note says why claude-code turns are left out, hook capture included", async () => {
+    const own = sandbox();
+    try {
+      await own.seed([
+        // One turn whose end its hooks have not seen, such as one still running.
+        mkSession("h1", t, { model: "m-a", stats: { launch: "interactive", turnsByModel: { "m-a": { turns: 4, replied: 3, cancelled: 1, cancelNotRecorded: 1 } } } }),
+        mkSession("g1", t + 1, { agent: "gemini-cli", model: "m-a", stats: { launch: "interactive", turnsByModel: { "m-a": { turns: 2, replied: 1, cancelNotRecorded: 2 } } } }),
+      ]);
+      const r = await runCmd(stats, own, { flags: { scorecard: true } });
+      assert.deepEqual(cells(r.stdout).find((x) => x[0] === "Cancelled turns"), ["Cancelled turns", "33.3% (1/3)"]);
+      const note = "Cancelled turns leave out 1 turn of claude-code and 2 turns of gemini-cli: those captures do not record a turn the person stopped. A claude-code turn is left out when it was captured in metadata mode or over OpenTelemetry, or when hooks have not seen it end, such as a turn still running.";
+      assert.ok(r.stderr.includes(note), r.stderr);
+      // Without claude-code turns the note gives no claude-code reasons.
+      const other = await runCmd(stats, own, { flags: { scorecard: true, where: "agent:gemini-cli" } });
+      assert.ok(other.stderr.includes("Cancelled turns leave out 2 turns of gemini-cli: those captures do not record a turn the person stopped.\n"), other.stderr);
+    } finally {
+      own.cleanup();
+    }
+  });
+
   test("honors the window and --where; --all changes nothing", async () => {
     const all = await run({ all: true });
     assert.equal(all.stdout, (await run({})).stdout);
