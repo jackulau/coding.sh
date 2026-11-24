@@ -1142,7 +1142,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Add cases to a dataset (creates it when missing)",
         args: [{ name: "name", desc: "Dataset name", required: true }],
         flags: [
-          { name: "case", type: "list", value: "<JSON>", desc: 'Case as JSON: {"input":…,"expected":…} (repeatable)' },
+          { name: "case", type: "list", value: "<JSON|FILE>", desc: 'Case as JSON or a JSON file: {"input":…,"expected":…} (repeatable)' },
           { name: "session", type: "list", commas: true, value: "<ID>", desc: "Case from a captured session (repeatable)" },
           { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split for the added cases (default: stable hash of the case id, 60/20/20)" },
           { name: "kind", type: "string", value: "<KIND>", choices: ["bad", "guard", "control"], desc: "Kind for the added cases: bad fails before the fix, guard and control pass before and after" },

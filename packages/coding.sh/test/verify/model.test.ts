@@ -1,9 +1,10 @@
 // The model checker (test/_model.ts) on toy models whose answer is known: a non-atomic counter gives its
 // shortest counterexample and the atomic one passes; locks taken in opposite orders deadlock and ordered ones
-// do not; the counts are exact on a model small enough to count by hand; a bound marks the search incomplete.
+// do not; the counts are exact on a model small enough to count by hand; a bound marks the search incomplete,
+// and a raised CODING_SH_MODEL_BOUND lifts the default one.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { actionsOf, check, formatTrace, stableKey, update, type Action, type Model } from "../_model.ts";
+import { actionsOf, check, defaultMaxStates, formatTrace, stableKey, update, type Action, type Model } from "../_model.ts";
 
 interface Counter {
   counter: number;
@@ -119,6 +120,12 @@ test("a bound marks the search incomplete instead of passing it silently", () =>
   assert.equal(byStates.complete, false);
   assert.equal(byStates.states, 50);
   assert.equal(check(forever, { maxStates: 2000 }).violation?.trace.steps.length, 1000);
+});
+
+test("a raised model bound lifts the default cap on states, and the default run keeps a million", () => {
+  assert.equal(defaultMaxStates({}), 1_000_000);
+  assert.equal(defaultMaxStates({ CODING_SH_MODEL_BOUND: "0" }), 1_000_000);
+  assert.equal(defaultMaxStates({ CODING_SH_MODEL_BOUND: "2" }), 16_000_000);
 });
 
 test("a broken initial state is reported with an empty trace", () => {

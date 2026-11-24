@@ -1809,7 +1809,7 @@ coding.sh dataset add <NAME> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--case <JSON>` |  | Case as JSON: {"input":…,"expected":…} (repeatable) |
+| `--case <JSON|FILE>` |  | Case as JSON or a JSON file: {"input":…,"expected":…} (repeatable) |
 | `--session <ID>` |  | Case from a captured session (repeatable) Takes a comma list too (a,b). |
 | `--split <SPLIT>` |  | Split for the added cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
 | `--kind <KIND>` |  | Kind for the added cases: bad fails before the fix, guard and control pass before and after. One of: `bad`, `guard`, `control`. |
@@ -3209,7 +3209,7 @@ coding.sh bench new <NAME> [options]
 | `--sitemap <URL>` |  | urls source: sitemap URL (repeatable) |
 | `--dataset <NAME>` |  | dataset source: dataset to sample from. |
 | `-c, --contender <NAME=CMD|URL|agent:ID[:MODEL]>` |  | A contender (repeatable, at least two) |
-| `-g, --grader <JSON>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
 | `-n, --cases <N>` | `50` | Cases per run. |
 | `--global` |  | Write to ~/.coding.sh/benchmarks instead of ./bench. |
 | `--force` |  | Overwrite an existing definition. |

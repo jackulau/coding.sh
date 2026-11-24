@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
+import { parseDefinition } from "../../src/bench/define.ts";
 import { buildTools, type ToolCtx } from "../../src/mcp/tools.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { cleanup, project } from "./helpers.ts";
@@ -19,6 +20,18 @@ function cli(cwd: string, env: NodeJS.ProcessEnv, args: string[], extra: NodeJS.
   const r = spawnSync(process.execPath, ["--no-warnings", MAIN, ...args], { cwd, env: { ...env, ...extra, NO_COLOR: "1" }, encoding: "utf8", timeout: 120_000 });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout) as Record<string, any> };
 }
+
+describe("bench new -g <JSON|FILE>", () => {
+  test("reads a grader from a JSON file as well as inline JSON, and help says so", () => {
+    const { root, env } = project();
+    writeFileSync(join(root, "grader.json"), '{"kind":"contains","value":"4"}\n');
+    const r = cli(root, env, ["bench", "new", "graders", "--command", "node gen.mjs", "-c", "good=node good.cjs", "-c", "bad=node bad.cjs", "-g", "grader.json", "-g", '{"kind":"exact"}']);
+    assert.equal(r.status, 0, r.stderr);
+    const file = join(root, "bench", "graders.toml");
+    assert.deepEqual(parseDefinition(readFileSync(file, "utf8"), file).graders, [{ kind: "contains", value: "4" }, { kind: "exact" }]);
+    assert.match(cli(root, env, ["bench", "new", "--help"]).stdout, /-g, --grader <JSON\|FILE> +Grader spec/);
+  });
+});
 
 describe("bench e2e", () => {
   const p = project();

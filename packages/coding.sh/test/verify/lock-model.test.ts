@@ -41,10 +41,13 @@
 // Bounds: three contenders with one attempt each, one crash, and no stall or one: 1,433 and 37,635
 // states. Three is the fewest where one holder dies and two contenders race to break its lock, and one
 // stall is the fewest that lets in a second holder. CODING_SH_MODEL_BOUND=n gives each contender n more
-// attempts, so a process that lost its lock can contend again; at 1 the run with a stall has 591,195
-// states and takes about 20 s. A second stall would check that two stalls let in at most two more
-// holders. A holder beats once per hold, where the code beats every interval: each later beat repeats
-// the first one's race, a read and then a touch of whatever file is there, so it can refresh a
+// attempts, so a process that lost its lock can contend again, and allows n more crashes. It also adds a
+// run with n + 1 stalls and one attempt each. With three processes every invariant holds trivially
+// after two stalls, so that run checks that no state gets stuck and that the shortest way to three
+// holders takes two stalls. At 1 the run with one stall has 617,586 states (about 8 s) and the one with
+// two stalls 236,077; at 2 the run with one stall has 2,342,064 (about 45 s) and the one with three
+// stalls 711,165. A holder beats once per hold, where the code beats every interval: each later beat
+// repeats the first one's race, a read and then a touch of whatever file is there, so it can refresh a
 // successor's lock again.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -403,14 +406,14 @@ function lockModel(cfg: Config): Model<Lk> {
   };
 }
 
-function roundsFrom(env: NodeJS.ProcessEnv): number {
+function boundFrom(env: NodeJS.ProcessEnv): number {
   const raw = env.CODING_SH_MODEL_BOUND ?? "0";
   const extra = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(extra)) throw new Error(`CODING_SH_MODEL_BOUND must be a whole number, not ${raw}`);
-  return 1 + extra;
+  return extra;
 }
 
-const rounds = roundsFrom(process.env);
+const extra = boundFrom(process.env);
 
 function run(t: { diagnostic: (m: string) => void }, cfg: Config, model = lockModel(cfg)): CheckResult<Lk> {
   const t0 = performance.now();
@@ -429,7 +432,7 @@ function reaches(cfg: Config, name: string, at: (s: Lk) => boolean): CheckResult
 }
 
 test("without a stall one process holds the lock, and a crashed holder's lock is broken once", (t) => {
-  const cfg: Config = { procs: 3, rounds, crashes: 1, stalls: 0 };
+  const cfg: Config = { procs: 3, rounds: 1 + extra, crashes: 1 + extra, stalls: 0 };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -447,7 +450,7 @@ test("without a stall one process holds the lock, and a crashed holder's lock is
 });
 
 test("with one stall two processes can hold the lock, and never three", (t) => {
-  const cfg: Config = { procs: 3, rounds, crashes: 1, stalls: 1 };
+  const cfg: Config = { procs: 3, rounds: 1 + extra, crashes: 1 + extra, stalls: 1 };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -488,4 +491,17 @@ test("each check the code makes on purpose breaks an invariant when left out", (
     assert.equal(v.invariant, invariant, mutant);
     assert.ok(actionsOf(v.trace).some((a) => a.endsWith("crashes")), mutant);
   }
+});
+
+// One attempt each: more attempts and more stalls together pass ten million states. With three
+// processes every invariant holds trivially after two stalls, so this run checks for stuck states and
+// for how a third holder gets in.
+test("with more stalls no state gets stuck, and the shortest way to three holders takes two stalls", { skip: extra === 0 && "the bound adds the stalls" }, (t) => {
+  const cfg: Config = { procs: 3, rounds: 1, crashes: 1, stalls: 1 + extra };
+  const r = run(t, cfg);
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, true);
+  const three = reaches(cfg, "three holders", (s) => holders(s) === 3).violation?.trace;
+  assert.ok(three, "two stalls let in two more holders");
+  assert.equal(actionsOf(three).filter((a) => a.endsWith("stalls past the stale limit")).length, 2);
 });

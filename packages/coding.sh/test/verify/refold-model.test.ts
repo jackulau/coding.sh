@@ -76,13 +76,13 @@
 // reprice that throws; the runs with the opener have one background process beside it. Two sessions
 // are the fewest where saved progress skips a session and where the pass leaves out a session the
 // refold repriced, two processes the fewest for a race, and one crash is enough to stop a refold or a
-// pass part way. CODING_SH_MODEL_BOUND=n adds n processes to each run, n crashes to the runs with a
-// new fold version, and n hook lines to those without the opener (with both, the opener's run passes
-// check's cap at 2), which checks a refold stopped more than once and three or more runs racing for
-// the locks. The five runs (the opener's two last) explore 1,464, 1,777, 1,776, 3,212 and 1,051
-// states at the default bound, 26,306, 16,106, 7,974, 38,986 and 14,891 at 1 (about 3 s), and
-// 336,808, 123,621, 21,014, 375,043 and 163,267 at 2 (about 30 s). At 3 the first run passes check's
-// cap of a million states, and the test fails on `complete` rather than pass a search it cut short.
+// pass part way. CODING_SH_MODEL_BOUND=n adds n processes, n hook lines and n crashes to each run,
+// and n reprices that throw to the runs with new prices, which checks a refold or a reprice stopped
+// more than once and three or more runs racing for the locks. The five runs (the opener's two last)
+// explore 1,464, 1,777, 1,776, 3,212 and 1,051 states at the default bound, 26,306, 41,608, 14,094,
+// 117,882 and 37,616 at 1 (about 7 s), and 336,808, 650,215, 56,459, 2,475,857 and 816,935 at 2
+// (about 3 min and 6.5 GB of heap). At 3 the first run alone has 3,443,232 states (about 3 min and
+// 8 GB of heap). A bound above 0 raises check's cap to 16 million.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
@@ -713,7 +713,7 @@ test("after a new fold version, refolds that race, crash and stop part way leave
 });
 
 test("after new prices, runs at once reprice every event and row once, through a crash and a pass that throws", (t) => {
-  const cfg: Config = { procs: 2 + extra, foldBump: false, priceBump: true, lines: 1, crashes: 1, failures: 1 };
+  const cfg: Config = { procs: 2 + extra, foldBump: false, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1 + extra };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -735,7 +735,7 @@ test("after new prices, runs at once reprice every event and row once, through a
 });
 
 test("after both, processes one at a time leave every row current through a crash and a reprice that throws", (t) => {
-  const cfg: Config = { procs: 2 + extra, foldBump: true, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1, sequential: true };
+  const cfg: Config = { procs: 2 + extra, foldBump: true, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1 + extra, sequential: true };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -752,7 +752,7 @@ test("after both, processes one at a time leave every row current through a cras
 });
 
 test("after both, a pass at open beside a background ingest leaves every row current through a crash and a reprice that throws", (t) => {
-  const cfg: Config = { procs: 1 + extra, foldBump: true, priceBump: true, lines: 1, crashes: 1 + extra, failures: 1, opener: "lock" };
+  const cfg: Config = { procs: 1 + extra, foldBump: true, priceBump: true, lines: 1 + extra, crashes: 1 + extra, failures: 1 + extra, opener: "lock" };
   const openerOf = (s: St): Proc => proc(s, cfg.procs);
   // reparse.lock keeps the opener's pass from running beside a background refold or pass.
   const r = run(t, cfg, {
