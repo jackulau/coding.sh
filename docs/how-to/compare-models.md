@@ -28,7 +28,7 @@ coding.sh stats --scorecard --since 90d
 MEASURE                model-a        model-b         DIFFERENCE
 Turns                  64             41
   sessions             3              2
-Pushback               17.2% (10/58)  32.4% (12/37)   no clear difference
+Pushback (4 kinds)     17.2% (10/58)  32.4% (12/37)   no clear difference
   95% CI               9.6% to 28.9%  19.6% to 48.5%  -2.1 to +33.0pp
   sessions             3              2
 Pushback: intent       3.4% (2/58)    2.7% (1/37)     no clear difference
@@ -65,18 +65,20 @@ that row.
 | Row | What it counts |
 |---|---|
 | Turns | Your prompts, each with the agent's work until your next one. A turn counts under the model that made most of its model calls, or the session's model when it made none. |
-| Pushback | Of the turns you answered with a prompt, the ones that prompt pushed back on. |
-| Pushback: intent | The agent did something else: "not what I meant", "you misunderstood", "you edited the wrong file". |
-| Pushback: undo | Take the work out: "undo that", "revert your changes", "put it back". |
-| Pushback: redo | Do it again: "try again", "start over", "I don't like it". |
-| Pushback: broken | The work does not work: "still failing", "that didn't work", "you broke the build", "you made it worse". |
+| Pushback (4 kinds) | Of the turns you answered with a prompt, the ones whose prompt names one of the four kinds below. |
+| Pushback: intent | The agent did something else: "not what I meant", "that's wrong", "you edited the wrong file". |
+| Pushback: undo | Take the work out: "undo that", "revert your changes", "take that out". |
+| Pushback: redo | Do it again: "try again", "retry", "start over", "I don't like it". |
+| Pushback: broken | The work does not work: "still failing", "that didn't work", "now the tests fail", "same error". |
 | Cancelled turns | The turns you stopped, out of the turns whose capture records a stopped turn ([below](#what-each-row-reads)). |
 | Median turn | How long a turn ran, from your prompt to the end of its last work, with the quartiles. It has an interval from 6 turns on. |
 | Failed file edits | File edit calls that failed, out of all of them. |
 | Failed shell commands | Shell commands that failed, out of all of them. |
 
-A prompt takes the first kind it matches, so the four kinds add up to Pushback. "No problem", "wait
-for the build" and "actually, also add a test" are not pushback.
+A prompt takes the first kind it matches, so the four kinds add up to Pushback (4 kinds). The row
+counts only these kinds. Other corrections, such as "no, use the other helper" or "you forgot the
+docs", do not count. "No problem", "wait for the build" and "actually, also add a test" are not
+pushback.
 
 ## 2. Read the result
 
@@ -126,7 +128,8 @@ for the build" and "actually, also add a test" are not pushback.
 - Tiny counts can still read as clear: 0 of 4 against 1 of 1 gives +100.0pp, with an interval of
   +6.7 to +100.0pp. Check the counts before you trust a difference.
 - Pushback is read from the words of your next prompt, its first 400 characters. Other corrections,
-  such as "you forgot the docs", name no kind and do not count.
+  such as "you forgot the docs" or "no, use the other helper", name no kind and do not count. A
+  model whose misses draw those words scores better than one whose misses draw "still failing".
 - A prompt about work outside the agent's last turn, such as "roll back the prod deploy to v1.2",
   names no kind. The kinds come from matching words, so some prompts are still read wrong.
 - A turn's time includes the time it waited on you, such as at a permission prompt.

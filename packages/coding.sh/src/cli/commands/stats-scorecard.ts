@@ -140,7 +140,7 @@ export function scorecardRows(card: Scorecard): string[][] {
     row("  sessions", (g) => String(g.turns?.sessions ?? ""));
   }
   if (any((g) => g.pushback)) {
-    rateRows("Pushback", (g) => g.pushback, d?.pushback);
+    rateRows("Pushback (4 kinds)", (g) => g.pushback, d?.pushback);
     for (const kind of PUSHBACK_KINDS) rateRows(`Pushback: ${kind}`, (g) => g.pushback?.byKind[kind], d?.pushbackByKind?.[kind], false);
   }
   if (any((g) => g.cancelled || g.cancelNotRecorded)) {

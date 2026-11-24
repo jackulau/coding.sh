@@ -54,7 +54,7 @@ export interface ScorecardGroup {
   key: string;
   /** The turns the group ran, and the sessions they came from. */
   turns?: { n: number; sessions: number };
-  /** Of the turns the person answered with a prompt, the ones that prompt pushed back on; byKind splits them, each out of the same turns. */
+  /** Of the turns the person answered with a prompt, the ones whose prompt names one of the four kinds (pushbackKind); byKind splits them, each out of the same turns. Other corrections are not counted. */
   pushback?: ScorecardRate & { byKind: Record<PushbackKind, ScorecardRate> };
   /** Turns the person stopped, out of the turns whose capture records it. */
   cancelled?: ScorecardRate;

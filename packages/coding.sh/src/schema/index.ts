@@ -361,8 +361,9 @@ export interface WaitStats {
 }
 
 /**
- * How the person's next prompt pushed back on the agent's turn (core/pushback.ts): `intent` (not
- * what they meant), `undo` (take it out), `redo` (do it again), `broken` (it does not work).
+ * The kind of pushback the person's next prompt names on the agent's turn (core/pushback.ts):
+ * `intent` (not what they meant), `undo` (take it out), `redo` (do it again), `broken` (it does not
+ * work). A correction that names none of these has no kind.
  */
 export type PushbackKind = "intent" | "undo" | "redo" | "broken";
 
@@ -375,7 +376,7 @@ export interface TurnTally {
   turns: number;
   /** Turns the person answered with a prompt that has text: what `pushback` counts out of. Absent when none. */
   replied?: number;
-  /** Those prompts that pushed back on the turn before them, by kind. Absent when none did. */
+  /** Those prompts that name one of the four kinds of pushback on the turn before them, by kind. Other corrections are not counted. Absent when none did. */
   pushback?: Partial<Record<PushbackKind, number>>;
   /** Turns the person stopped, of the turns whose capture records it. Absent when none. */
   cancelled?: number;

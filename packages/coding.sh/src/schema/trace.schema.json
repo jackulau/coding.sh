@@ -1392,7 +1392,7 @@
           "type": "number"
         },
         "pushback": {
-          "description": "Those prompts that pushed back on the turn before them, by kind. Absent when none did.",
+          "description": "Those prompts that name one of the four kinds of pushback on the turn before them, by kind. Other corrections are not counted. Absent when none did.",
           "type": "object",
           "properties": {
             "intent": {

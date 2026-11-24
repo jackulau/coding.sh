@@ -56,7 +56,7 @@ describe("stats --scorecard", () => {
       ["MEASURE", "m-a", "m-b", "DIFFERENCE"],
       ["Turns", "30", "15", ""],
       ["  sessions", "2", "2", ""],
-      ["Pushback", "14.3% (4/28)", "46.2% (6/13)", "+31.9pp"],
+      ["Pushback (4 kinds)", "14.3% (4/28)", "46.2% (6/13)", "+31.9pp"],
       ["  95% CI", "5.7% to 31.5%", "23.2% to 70.9%", "+3.2 to +58.0pp"],
       ["  sessions", "2", "2", ""],
       ["Pushback: intent", "3.6% (1/28)", "0.0% (0/13)", "no clear difference"],
@@ -251,7 +251,7 @@ describe("stats --scorecard on recorded captures", () => {
     assert.deepEqual(rows[0], ["MEASURE", "claude-sonnet-4-5", "gpt-5", "DIFFERENCE"]);
     assert.deepEqual(row("Turns"), ["Turns", "2", "1", ""]);
     // The Codex turn has no reply after it, so there is no pushback to read.
-    assert.deepEqual(row("Pushback"), ["Pushback", "0.0% (0/1)", "-", ""]);
+    assert.deepEqual(row("Pushback (4 kinds)"), ["Pushback (4 kinds)", "0.0% (0/1)", "-", ""]);
     assert.deepEqual(row("Cancelled turns"), ["Cancelled turns", "0.0% (0/2)", "0.0% (0/1)", "no clear difference"]);
     assert.deepEqual(row("Median turn"), ["Median turn", "507ms (2)", "2.7s (1)", "no clear difference"]);
     // 1 of 1 against 0 of 4: Newcombe's interval (+6.7 to +100.0pp) leaves out 0, so the cell gives
