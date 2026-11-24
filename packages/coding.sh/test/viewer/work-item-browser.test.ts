@@ -16,6 +16,9 @@ import { FakeBlobs } from "./fakes.ts";
 import { workSessions } from "./_work.ts";
 
 const chrome = findChrome();
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 
 /** The count in the heading of the bucket an item is in: "1 of 4". */
@@ -60,7 +63,7 @@ describe("Work totals and item pages in a browser", { skip: chrome ? false : "no
     assert.equal(await p.eval("document.querySelectorAll('.work-item').length"), 5);
     assert.equal(await p.eval(heading("review")), "1 of 4");
     assert.equal(await p.eval(heading("blocked")), "1");
-    assert.match(await p.eval("document.querySelector('.work-more').textContent"), /3 more items than this page shows\..*coding\.sh work --limit 8/);
+    assert.match(await p.eval("document.querySelector('.work-more').textContent"), new RegExp(`3 more items than this page shows\\..*${CLI} work --limit 8`));
     const all = "document.querySelector('.work-more [data-act=all]')";
     assert.equal(await p.eval(`${all}.textContent`), "Show all 8");
     await p.eval(`${all}.click()`);

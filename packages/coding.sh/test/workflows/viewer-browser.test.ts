@@ -14,6 +14,9 @@ import { FakeBlobs, FakeIndex } from "../viewer/fakes.ts";
 import { ganttRunFixture } from "./_fixtures.ts";
 
 const chrome = findChrome();
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 
 describe("workflow pages in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
@@ -106,6 +109,6 @@ describe("workflow pages in a browser", { skip: chrome ? false : "no Chrome/Chro
 
   test("an unknown run says so and names the command that lists runs", async () => {
     const p = await open("#/workflows/nope", "document.querySelector('.panel.empty')");
-    assert.match(await p.eval("document.querySelector('.panel.empty').textContent"), /No such workflow run.*coding\.sh workflows list/s);
+    assert.match(await p.eval("document.querySelector('.panel.empty').textContent"), new RegExp(`No such workflow run.*${CLI} workflows list`, "s"));
   });
 });

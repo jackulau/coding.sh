@@ -13,6 +13,9 @@ import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts
 import { FakeBlobs, session } from "./fakes.ts";
 
 const chrome = findChrome();
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 
 const ROOT = "qa8v-root";
@@ -92,7 +95,7 @@ describe("round 8 viewer QA fixes in a browser", { skip: chrome ? false : "no Ch
     const p = await open("#/workflows", "document.querySelector('.panel.empty h2')");
     const m = await p.eval("({ text: document.querySelector('.panel.empty').textContent, work: !!document.querySelector('.panel.empty a[href=\"#/work\"]') })");
     assert.match(m.text, /No workflow runs yet/);
-    assert.match(m.text, /The Work page groups a run's agents from their sessions alone\. This page lists only the runs coding\.sh workflows import has added\./);
+    assert.match(m.text, new RegExp(`The Work page groups a run's agents from their sessions alone\\. This page lists only the runs ${CLI} workflows import has added\\.`));
     assert.ok(m.work, "the empty state links to the Work page");
     assert.deepEqual(p.errors, []);
   });
