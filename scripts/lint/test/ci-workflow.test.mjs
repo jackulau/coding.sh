@@ -64,6 +64,11 @@ test("ci.yml builds and checks the site in a job of its own", () => {
   assert.match(site, /\n      - name: Site build\n        working-directory: apps\/site\n        run: npm run build\n/);
   assert.match(site, /\n      - name: Site check\n        working-directory: apps\/site\n        env:\n          CODING_SH_REQUIRE_DIST: "1"\n        run: npm run check\n/);
   assert.match(site, /\n      - name: Install\n        run: npm ci\n/);
+  // Full history, as the deploy has: a page is dated by the last commit to its source, and a
+  // shallow checkout's merge-commit date changes the page's size from the one the deploy checks.
+  const fullHistory = /\n      - uses: actions\/checkout@v5\n        with:\n(?: +#.*\n)*          fetch-depth: 0\n/;
+  assert.match(site, fullHistory, "the site job fetches full history");
+  assert.match(read(".github/workflows/site.yml"), fullHistory, "the deploy fetches full history");
   // No step of either job is skipped or let through: a failure fails the job.
   for (const body of [build, site]) {
     assert.doesNotMatch(body, /\n        if: /);
@@ -231,4 +236,17 @@ test("ci.yml runs the hook budget once: a miss fails the step", () => {
   assert.match(step, /^        run: node scripts\/dogfood\/bench\.mjs hook --check --tolerance 20$/m);
   assert.equal(step.match(/bench\.mjs/g)?.length, 1, "one run of the benchmark");
   assert.doesNotMatch(step, /\|\||continue-on-error|retry|if:/);
+});
+
+// A command substitution inside `export` loses its status: a failed npm pack would go on and
+// hand install.sh the package folder as the tarball. A pack that prints no name would do the same.
+test("ci.yml's Windows installer check stops when npm pack fails", () => {
+  const job = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
+  assert.match(job, /\n    defaults:\n      run:\n(?: +#.*\n)*        shell: bash\n/, "the job's steps run on bash with pipefail");
+  const step = /\n      - name: Installer \(Git Bash\)\n([\s\S]*?)(?=\n\n|\n      - name: |$)/.exec(job)?.[1] ?? "";
+  assert.ok(step.includes('\n          tgz=$(cd packages/coding.sh && npm pack --silent | tail -n 1)\n          export CODING_SH_TARBALL="$PWD/packages/coding.sh/$tgz"\n'), "the pack is a plain assignment, then the export");
+  assert.doesNotMatch(step, /export [^\n]*\$\(cd packages\/coding\.sh/, "no pack inside an export");
+  const check = step.indexOf('\n          [ -f "$CODING_SH_TARBALL" ] || { echo "::error::');
+  assert.ok(check > step.indexOf("export CODING_SH_TARBALL="), "the tarball is checked after the export");
+  assert.ok(check < step.indexOf("install.sh\n"), "and before install.sh runs");
 });
