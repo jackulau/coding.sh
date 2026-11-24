@@ -498,11 +498,12 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   // can store and send an event before its line is read, under the same id or, for the kinds
   // message-copies.ts matches, an id of its own. An id goes out to a sink at most once per pass
   // (one ingestLocked call), a line new to the index leaves out the events its put found stored
-  // (repeats), and a live copy of what an import stored by the time the line is read goes to
-  // neither the index nor a sink. The line or import that stored them sent them, lies below the
-  // sink cursor, or is sent when the sink catches up. The copy check runs at the read and the put
-  // at the checkpoint, and an import does not take this lock: an import that stores its copy in
-  // between leaves both copies in the index and the sinks, on any store.
+  // (repeats), and a live copy of what an import stored before this pass first read the session's
+  // copies goes to neither the index nor a sink. The line or import that stored them sent them,
+  // lies below the sink cursor, or is sent when the sink catches up. Each side reads a session's
+  // copies once, at its first lookup in the pass or the import, and an import does not take this
+  // lock: an import running beside this run can leave both copies in the index and the sinks, on
+  // any store.
   //
   // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
   // each of their events the index holds, also a live copy that the copy check now leaves out
@@ -531,10 +532,12 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   // - a holder that stalled past the stale limit sends lines that the process which took the lock
   //   over sends too, or its late sink-cursor write moves the cursor back over lines that process
   //   sent;
-  // - a sink catches up after a failed send, or a sink new to the file (added later, or renamed)
+  // - a sink catches up after a failed send or after a run died between its cursor writes and its
+  //   sends (the raw scrub, the end snapshots), or a sink new to the file (added later, or renamed)
   //   reads it from the start, from lines that carry an event another line sent, or a live copy of
   //   an event an import sent (lines below the local cursor send every event);
-  // - an import stores its copy of a live event between the line's copy check and its put (above);
+  // - an import running beside this run stores its copy of a live event after this pass read the
+  //   session's copies, or this run stores its copy after the import read them (above);
   // - an older build's gc left a deleted file's in-flight keys, and a new file at the same path
   //   grows as long as the larger key: its lines below that key are suspect;
   // - InsertedEvents reads the stored ids of a store with no putEventsReturningIds before the put,

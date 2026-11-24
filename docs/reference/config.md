@@ -117,10 +117,10 @@ hooks).
   transcript import sent first.
 - When a hook and a transcript both record a prompt, a reply, a session start or end, or a
   compaction, a sink gets the copy of whichever stored it first.
-- A sink can get both copies when an import stores its copy while a spool ingest is between
-  reading the hook's line and storing it, on any store.
-- A sink catching up on spool lines ingest already stored is sent the hook's copies in them as
-  well, so it can get both: after a failed send, or when added later or under a new name.
+- A sink can get both copies when an import runs beside a spool ingest, on any store: each looks
+  for the other's copies of a session once, when it first reads that session.
+- A sink catching up on spool lines ingest already stored also gets the hook's copies in them, so
+  it can get both: after a failed send, a crash before the send, or when added later or renamed.
 - A run that crashes or stalls between storing events and sending them leaves them for the next run
   to send. After a crash, a stall or a failed send, a sink can get an event again.
 - On Postgres and ClickHouse, a sink can also get an event twice when a transcript import stores it
