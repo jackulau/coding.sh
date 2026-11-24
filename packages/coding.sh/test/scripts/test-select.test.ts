@@ -131,10 +131,13 @@ describe("scripts/test-select.ts: the rules", () => {
     assert.deepEqual(picks(root, ["pkg/test/server.mjs"]), ["test/spawns.test.ts"]);
   });
 
-  it("every narrowed run keeps the tests of the shards and of these rules", () => {
+  it("every narrowed run keeps the tests of the shards, of the verify table and of these rules", () => {
+    // The small repository has no verify-deep.test.ts, and a kept file that is not there is left out.
     const s = narrowed(selectTests(["CHANGELOG.md"], root, "pkg"));
-    assert.deepEqual(s.files, [...ALWAYS].sort());
-    assert.match(s.why.at(-1)!, /every narrowed run: test\/scripts\/test-select\.test\.ts, test\/scripts\/test-shards\.test\.ts/);
+    assert.deepEqual(s.files, ["test/scripts/test-select.test.ts", "test/scripts/test-shards.test.ts"]);
+    assert.match(s.why.at(-1)!, /every narrowed run: test\/scripts\/test-select\.test\.ts, test\/scripts\/test-shards\.test\.ts, test\/scripts\/verify-deep\.test\.ts$/);
+    // verify-deep.test.ts lists test/verify, so a changed or new verify file runs it.
+    assert.ok(narrowed(selectTests(["packages/coding.sh/test/verify/lock-model.test.ts"], ROOT)).files.includes("test/scripts/verify-deep.test.ts"));
   });
 
   it("a diff of several paths runs the union, and says which rule each path fell under", () => {
