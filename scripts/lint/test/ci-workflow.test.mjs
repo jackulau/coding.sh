@@ -239,11 +239,14 @@ test("ci.yml runs the hook budget once: a miss fails the step", () => {
 });
 
 // A command substitution inside `export` loses its status: a failed npm pack would go on and
-// hand install.sh the package folder as the tarball.
+// hand install.sh the package folder as the tarball. A pack that prints no name would do the same.
 test("ci.yml's Windows installer check stops when npm pack fails", () => {
   const job = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
   assert.match(job, /\n    defaults:\n      run:\n(?: +#.*\n)*        shell: bash\n/, "the job's steps run on bash with pipefail");
   const step = /\n      - name: Installer \(Git Bash\)\n([\s\S]*?)(?=\n\n|\n      - name: |$)/.exec(job)?.[1] ?? "";
   assert.ok(step.includes('\n          tgz=$(cd packages/coding.sh && npm pack --silent | tail -n 1)\n          export CODING_SH_TARBALL="$PWD/packages/coding.sh/$tgz"\n'), "the pack is a plain assignment, then the export");
   assert.doesNotMatch(step, /export [^\n]*\$\(cd packages\/coding\.sh/, "no pack inside an export");
+  const check = step.indexOf('\n          [ -f "$CODING_SH_TARBALL" ] || { echo "::error::');
+  assert.ok(check > step.indexOf("export CODING_SH_TARBALL="), "the tarball is checked after the export");
+  assert.ok(check < step.indexOf("install.sh\n"), "and before install.sh runs");
 });

@@ -695,7 +695,7 @@ jobs:
       # install.sh in Git Bash, into a throwaway npm prefix and home, then init + doctor. The pack
       # is a plain assignment, so a failed npm pack stops the step (the job's bash has pipefail).
       # Inside an `export` its status would be lost, and install.sh would get the package folder
-      # as the tarball.
+      # as the tarball. A pack that names no file stops the step too.
       - name: Installer (Git Bash)
         if: matrix.shard == 1
         env:
@@ -707,6 +707,7 @@ jobs:
           mkdir -p "$T/home/.claude" "$T/npm-global"
           tgz=$(cd packages/coding.sh && npm pack --silent | tail -n 1)
           export CODING_SH_TARBALL="$PWD/packages/coding.sh/$tgz"
+          [ -f "$CODING_SH_TARBALL" ] || { echo "::error::npm pack printed no tarball name"; exit 1; }
           export npm_config_prefix="$(cygpath -w "$T/npm-global")" PATH="$T/npm-global:$PATH"
           export HOME="$T/home" USERPROFILE="$(cygpath -w "$T/home")" CODING_SH_HOME="$T/home/.coding.sh"
           sh install.sh
