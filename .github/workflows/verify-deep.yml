@@ -17,11 +17,6 @@ name: Verify deep
 # It is printed first, and the job summary gives it with each file's knobs, result and time, and
 # the command that replays each failed file. A failed run keeps each file's output, the summary
 # and the seed as an artifact.
-#
-# The known deep case is left out, not asserted: on a store without transactions, two stalls and
-# a crash together can leave an event stored and never sent. capture-model.test.ts checks the sink
-# on that store with no crash and no stall at every bound, and says why above that test, so a
-# raised bound does not reach the case.
 
 on:
   schedule:
@@ -52,7 +47,8 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request replaces its run. A nightly or manual run is never cut short.
+# A new push to a pull request replaces its run. A nightly or manual run is not cancelled once it
+# starts; a newer one waits for it, and replaces any run already waiting.
 concurrency:
   group: verify-deep-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
