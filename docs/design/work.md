@@ -302,33 +302,35 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   another ingest holds the lock, then the 7-day window.
 - The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
   queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
-  command, so its items equal `work --json` for the same store and filters. The agent, repo, since,
-  stage and `all` filters live in the URL; `stage` filters as `--stage` does. Each item shows its
-  stage and kind as chips with `stageWhy` as their title, and the header counts the stages. A server
-  that sends no `stages` gets no chips and no stage filter. A run item shows the command's phase
-  line, and its details list its agents under their phase with the phase's cost (`workflowAgents`
-  in the answer). A superseded failure links the item that superseded it (`sessionOf` gives that
-  item's session). `coding.sh ui` on its own home adds `index` to the answer: `updatedAt`,
-  `stale`, and `text` in the command's words. The page shows the age in its header, or the stale
-  line as a warning, and a stale index's queue is judged as of the last ingest, as the command
-  judges it. The session list's header shows the same age from `GET /api/ingest`. A server that
-  sends none of these fields gets none of them. Ack and snooze buttons post to `/api/work/ack` and
-  `/api/work/snooze`, which write `work.json` by the command's rules. A group's heading reads
-  "119 of 671" when the answer lists only part of its bucket (`totals` counts each bucket before
-  `limit` cuts the list), and Show all asks for up to 1,000 items. Each item links to its page,
-  `#/w/<id>`, which reads `GET /api/work/<id>`: what `work show <id> --json` gives, built with the
-  same functions, with the list's `since`, `agent` and `repo` filters. Only `coding.sh ui` serves
-  it; `coding.sh serve` answers 404.
+  command, so its items equal `work --json` for the same store and filters, outside PowerShell and
+  cmd (below). The agent, repo, since, stage and `all` filters live in the URL; `stage` filters as
+  `--stage` does. Each item shows its stage and kind as chips with `stageWhy` as their title, and
+  the header counts the stages. A server that sends no `stages` gets no chips and no stage filter. A
+  run item shows the command's phase line, and its details list its agents under their phase with
+  the phase's cost (`workflowAgents` in the answer). A superseded failure links the item that
+  superseded it (`sessionOf` gives that item's session). `coding.sh ui` on its own home adds `index`
+  to the answer: `updatedAt`, `stale`, and `text` in the command's words. The page shows the age in
+  its header, or the stale line as a warning, and a stale index's queue is judged as of the last
+  ingest, as the command judges it. The session list's header shows the same age from `GET
+  /api/ingest`. A server that sends none of these fields gets none of them. Ack and snooze buttons
+  post to `/api/work/ack` and `/api/work/snooze`, which write `work.json` by the command's rules. A
+  group's heading reads "119 of 671" when the answer lists only part of its bucket (`totals` counts
+  each bucket before `limit` cuts the list), and Show all asks for up to 1,000 items. Each item
+  links to its page, `#/w/<id>`, which reads `GET /api/work/<id>`: what `work show <id> --json`
+  gives outside PowerShell and cmd, built with the same functions, with the list's `since`, `agent`
+  and `repo` filters. Only `coding.sh ui` serves it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:
   the counts, `needYou`, and the first 5 items as `work --json` gives them, over the same 7-day
-  window, with acks and snoozes applied. `more` counts the items left out, and `rest` names
-  `coding.sh work --json`, which lists them. The tool stays
+  window, with acks and snoozes applied. `more` counts the items left out, and `rest` names the
+  command that lists them, `coding.sh work --json` (named for the shell, below). The tool stays
   read-only: ack and snooze stay with the user.
-- In PowerShell and cmd, the commands in each item's next step name `codingsh`, the bin that runs
-  there ([Windows](../guides/install.md#windows)), in `work`, `work show` and `work ack --json`. The
-  MCP `work` and `status` tools do the same when PowerShell or cmd started the server, and the
+- In PowerShell and cmd (on Windows, when neither `MSYSTEM` nor `SHELL` is set), the commands in
+  each item's next step name `codingsh`, the bin that runs there
+  ([Windows](../guides/install.md#windows)), in `work`, `work show` and `work ack --json`. The MCP
+  `work` and `status` tools do the same when PowerShell or cmd started the server, and the
   `status` tool's `rest` names that bin too. Under npx they name the npx form. The agent's own
-  resume command stays as it is.
+  resume command stays as it is. The viewer's `GET /api/work` and `GET /api/work/<id>` leave
+  `coding.sh` as it is on every platform.
 - The MCP `work` tool pages the queue as `work --json` gives it, with `limit` and `cursor`, and
   the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
   `work show` finds it (an item id, a prefix of one, or the id of a session in the item, hidden or
