@@ -141,12 +141,14 @@ test("the box's commands are the ones /docs/install shows", distOpts(DIST), () =
   assert.ok(text(html).includes(NPX_WIN), `/docs/install names ${NPX_WIN}`);
 });
 
-test("each prompt, the setup and the task after it, tells an agent on Windows to run codingsh in PowerShell and cmd", () => {
+test("each prompt, the setup and the task after it, tells an agent on Windows to run codingsh, and npx's form of it", () => {
   // The coding-agents setup prompt ends by telling the person to start a new session, so the next
-  // prompt is often read by an agent that never saw the setup prompt's Windows line.
+  // prompt is often read by an agent that never saw the setup prompt's Windows line. A rule that
+  // only renamed coding.sh to codingsh would turn npx coding.sh into npx codingsh, an npm package
+  // that is not ours.
   for (const p of QUICKSTART_PATHS) {
     for (const [which, prompt] of [["setup", p.setup], ["first", p.first]]) {
-      for (const word of ["Windows", "PowerShell", "cmd", "run codingsh instead of coding.sh"]) {
+      for (const word of ["Windows", "PowerShell", "cmd", "npx -p coding.sh codingsh for npx coding.sh", "codingsh for an installed coding.sh"]) {
         assert.ok(prompt.includes(word), `the ${p.id} ${which} prompt names ${word}`);
       }
     }
