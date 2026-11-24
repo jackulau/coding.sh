@@ -78,11 +78,13 @@ commands the viewer page shows and copies name `codingsh` (`npx -p coding.sh cod
 - Eval task `setup` and verifier commands run in `sh`, so they need Git for Windows.
 - `bench schedule --install-cron` needs cron. On Windows, run the printed command from Task
   Scheduler, or use `--workflow-out` for a GitHub Actions schedule.
-- The viewer copies each value in double quotes, which PowerShell, cmd and Git Bash all read. It
-  does not copy a command whose value holds a character they would still read there: a double
-  quote, `$`, a backtick, `!`, `%`, `& | < > ^`, a control character, or a backslash at the end
-  or doubled. The empty Experiments page gives `exp run --task` a JSON file, since PowerShell and
-  cmd change JSON typed into an argument.
+- The viewer puts a value that needs quoting in double quotes, which PowerShell, cmd and Git Bash
+  all read. Git Bash still rewrites a value that starts with `/` into a Windows path;
+  `MSYS_NO_PATHCONV=1` stops that.
+- The viewer does not copy a command with an empty value, or a value that holds a double quote,
+  `$`, a backtick, `!`, `%`, `& | < > ^`, a control character, or a trailing or doubled backslash.
+- The viewer's empty Experiments page gives `exp run --task` a JSON file, since PowerShell and cmd
+  change JSON typed into an argument.
 
 CI runs the test suite and this installer on Windows. It also installs the current releases of
 OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider, runs one session of each against

@@ -169,9 +169,9 @@ viewer needs.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Copied commands.** Values are single-quoted, or double-quoted on Windows, where cmd reads no
-  single quotes. A value that no quoting makes safe, such as one with `&` or a control character,
-  is shown but not copied.
+- **Copied commands.** Values that need quoting are single-quoted, or double-quoted on Windows,
+  where cmd reads no single quotes. A value that no quoting makes safe, such as one with `&` or a
+  control character, is shown but not copied.
 
 ## Follow a running session
 

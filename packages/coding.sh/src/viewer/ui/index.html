@@ -2225,7 +2225,7 @@ function toast(msg) {
 async function copy(text, what) {
   if (unsafeCmds.has(text)) {
     toast(IS_WIN
-      ? "Not copied: a value in this command holds a character that PowerShell, cmd or Git Bash would still read in double quotes."
+      ? "Not copied: a value in this command is empty or holds a character that PowerShell, cmd or Git Bash could still read in double quotes."
       : "Not copied: a value in this command holds a quote, a control character or & | < >, which no one quoting is safe for in every shell.");
     return;
   }
@@ -2240,21 +2240,25 @@ async function copy(text, what) {
 // a shell, and session ids, paths and names are not ours to trust. Off Windows a value goes in
 // single quotes. cmd.exe does not read those, so on Windows it goes in double quotes, which
 // PowerShell, cmd and Git Bash all read. There a backslash (Git Bash drops it), a leading @
-// (PowerShell drops the word) or a comma also needs them.
+// (PowerShell drops the word) or a comma also needs them, and so does a leading - unless the
+// value is a plain flag like --step: PowerShell splits -a.b in two, and through npm's
+// codingsh.ps1 it also splits -a:b and drops a bare --.
 function shq(s) {
   s = String(s);
-  if (IS_WIN) return /^[A-Za-z0-9_+=:.\/-]+$/.test(s) ? s : '"' + s + '"';
+  if (IS_WIN) return /^[A-Za-z0-9_+=:.\/-]+$/.test(s) && (s[0] !== "-" || /^--?[A-Za-z][A-Za-z0-9-]*$/.test(s)) ? s : '"' + s + '"';
   return /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
 }
 // A value no quoting holds: its command is shown but never copied. Off Windows: a straight or
 // curly single quote (PowerShell ends single quotes at a curly one too), & | < > (cmd.exe ignores
 // single quotes) and control characters, which act before any shell reads them. On Windows, in
 // double quotes: a straight or curly double quote; $, ` and ! (PowerShell or Git Bash read them);
-// % & | < > ^ (PowerShell runs npm's codingsh.cmd with the quotes taken off a word with no space,
-// and cmd.exe reads them); control characters; and a backslash that ends the value (a program
-// reads it as escaping the closing quote) or doubles (Git Bash reads \\ as one).
+// % (cmd.exe reads it in double quotes); & | < > ^ (when PowerShell runs a .cmd file, such as
+// npm's codingsh.cmd typed by name or with no codingsh.ps1 beside it, it passes a word with no
+// space without its quotes, and cmd.exe reads these); control characters; a backslash that ends
+// the value (a program reads it as escaping the closing quote) or doubles (Git Bash reads \\ as
+// one); and an empty value, which Windows PowerShell drops.
 const PASTE_UNSAFE = /[\u0000-\u001f\u007f-\u009f'\u2018-\u201b&|<>]/;
-const PASTE_UNSAFE_WIN = /[\u0000-\u001f\u007f-\u009f"\u201c-\u201e$`!%&|<>^]|\\\\|\\$/;
+const PASTE_UNSAFE_WIN = /[\u0000-\u001f\u007f-\u009f"\u201c-\u201e$`!%&|<>^]|\\\\|\\$|^$/;
 const unsafeCmds = new Set();
 // The page cannot see the user's shell. On Windows npm installs a `codingsh` command that Git
 // Bash, PowerShell and cmd all run, while PowerShell and cmd resolve `coding.sh` to npm's sh
