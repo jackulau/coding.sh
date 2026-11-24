@@ -682,6 +682,18 @@ describe("session usage rollup", () => {
     }
   });
 
+  it("a gateway generation linked to the proxy's copy and to the agent's record with no usage counts the whole bill, in either order", () => {
+    // The agent's record carries no usage (a Codex call without usage), so its companion holds the whole bill. The proxy's
+    // copy is left out of the totals with its own cost, so its companion's difference is not the bill.
+    const proxied = ev("llm.call", { responseId: "gen_x", costEstimated: true }, { source: "proxy", usage: { inputTokens: 1000, outputTokens: 100, costUsd: 1 } });
+    const own = ev("llm.call", { responseId: "gen_x" });
+    const [a, b, c, d] = [proxied, billFor(proxied, 1), own, billFor(own, 0)];
+    for (const order of [[a, b, c, d], [c, d, a, b]]) {
+      const s = buildSession(order.map((e, i) => ({ ...e, ts: 1 + i })));
+      assert.equal(s.stats.usage?.costUsd, 1.5, order[0] === a ? "the proxy's copy first" : "the agent's record first");
+    }
+  });
+
   it("a gateway generation linked to two counted calls adds its bill once", () => {
     // The agent's record of one response at the top of one trace and nested in another. The call still counts twice, as
     // before (the wrapper takes the nested call's cost though it repeats a counted response), but its bill's 0.5 counts once.

@@ -481,16 +481,23 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     folds.set(e, f);
     for (const id of f.costFrom) costed.add(id);
   }
-  // The companion that holds each generation's bill: the first whose call is counted, else the first.
+  // The companion that holds each generation's bill: the first whose call is counted, then the first whose call is in
+  // the events with no usage (its companion holds the whole bill), else the first.
   const isCounted = (id: string): boolean => usageCalls.has(id) && (!dropped.has(id) || costed.has(id));
   const billOf = new Map<string, AgentEvent>();
-  if (billed.size)
+  if (billed.size) {
+    const present = new Set<string>();
+    for (const e of sorted) if (e.kind === "llm.call") present.add(e.id);
+    // 2: a counted call. 1: a call with no usage. 0: a call left out, such as a proxy's copy of a call the agent's own
+    // capture recorded, whose companion holds only the bill minus the copy's own cost.
+    const rank = (id: string): number => (isCounted(id) ? 2 : present.has(id) && !usageCalls.has(id) ? 1 : 0);
     for (const e of sorted) {
       const g = generationOf(e);
       if (!g || (dropped.has(e.parentId!) && !costed.has(e.parentId!))) continue;
       const held = billOf.get(g);
-      if (!held || (!isCounted(held.parentId!) && isCounted(e.parentId!))) billOf.set(g, e);
+      if (!held || rank(e.parentId!) > rank(held.parentId!)) billOf.set(g, e);
     }
+  }
   for (const e of sorted) {
     if (isUsageSnapshot(e)) continue;
     if (carriesUsage(e)) {
