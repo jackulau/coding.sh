@@ -20,7 +20,7 @@ function runScript(files: Record<string, string>, env: NodeJS.ProcessEnv, extra:
     // Knobs set for this test run would reach the script's files and its summary.
     const full: NodeJS.ProcessEnv = { ...process.env };
     for (const v of KNOB_VARS) delete full[v];
-    Object.assign(full, env, { GITHUB_STEP_SUMMARY: step });
+    Object.assign(full, { GITHUB_STEP_SUMMARY: step }, env);
     delete full.NODE_TEST_CONTEXT; // else the script's files report to this test run instead of their own output
     delete full.GITHUB_ACTIONS;
     const out = join(dir, "out");
@@ -157,9 +157,25 @@ test("gets the knobs set in the environment", () => {
     assert.match(r.summary, /\| passes \| .* \| pass \| /);
   });
 
-  it("writes the summary and the step summary again after each file, after what the step summary held before", () => {
-    // The second file runs after the first, so it finds the first one's row in both.
-    const first = `import { test } from "node:test"; test("passes", () => {});`;
+  it("warns once and still runs every file when it cannot write the step summary", () => {
+    const passes = `import { test } from "node:test"; test("passes", () => {});`;
+    const missing = join(tmpdir(), `verify-deep-no-folder-${process.pid}`, "step-summary.md");
+    const r = runScript({ "one.test.ts": passes, "two.test.ts": passes }, { GITHUB_STEP_SUMMARY: missing });
+    assert.equal(r.code, 0, r.all);
+    assert.equal(r.all.match(/cannot use GITHUB_STEP_SUMMARY/g)?.length, 1, r.all);
+    assert.match(r.summary, /\| one \| .* \| pass \| [^]*\| two \| .* \| pass \| /);
+    assert.match(r.summary, /2 passed, 0 failed, in /);
+  });
+
+  it("writes the summary and the step summary before the first file and after each one, after what the step summary held before", () => {
+    // The first file finds both written before it ran. The second runs after the first, so it finds the first one's row in both.
+    const first = `import { test } from "node:test"; import assert from "node:assert/strict"; import { readFileSync } from "node:fs"; import { dirname, join } from "node:path";
+test("finds both summaries written before any file ran", () => {
+  const step = readFileSync(process.env.GITHUB_STEP_SUMMARY ?? "", "utf8");
+  assert.match(step, /^earlier step\\n## Verify past the default bounds\\n/);
+  assert.match(step, /0 passed, 0 failed, in 0\\.0 s\\. Not run yet: first-file, second-file\\.\\n/);
+  assert.equal(step, "earlier step\\n" + readFileSync(join(dirname(process.env.GITHUB_STEP_SUMMARY ?? ""), "out", "summary.md"), "utf8"));
+});`;
     const second = `import { test } from "node:test"; import assert from "node:assert/strict"; import { readFileSync } from "node:fs"; import { dirname, join } from "node:path";
 test("finds the first file in both summaries", () => {
   const step = readFileSync(process.env.GITHUB_STEP_SUMMARY ?? "", "utf8");

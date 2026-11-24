@@ -13,9 +13,9 @@
 // otherwise a random one. The seed is printed first. A file that runs past its time limit (--minutes,
 // default 40, at most 35791) is stopped and counts as failed. --out <dir> keeps each file's output,
 // seed.txt and summary.md there (default: a new temp folder). summary.md, and $GITHUB_STEP_SUMMARY
-// when that is set, are written again after each file. A model past its default bound can need
-// several GB of heap: raise it with NODE_OPTIONS=--max-old-space-size=<MB>, which the summary's
-// replay commands keep. Exits 1 when a file fails, 2 on a bad knob or argument.
+// when that is set, are written before the first file and after each one. A model past its default
+// bound can need several GB of heap: raise it with NODE_OPTIONS=--max-old-space-size=<MB>, which the
+// summary's replay commands keep. Exits 1 when a file fails, 2 on a bad knob or argument.
 import { spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -276,11 +276,33 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
   writeFileSync(join(out, "seed.txt"), `${p.seed}\n`);
   console.log(`output in ${out}`);
   const groups = env.GITHUB_ACTIONS === "true";
-  // Each rewrite of the step summary keeps what it held before this run.
-  const step = env.GITHUB_STEP_SUMMARY;
-  const before = step && existsSync(step) ? readFileSync(step, "utf8") : "";
+  // Each rewrite of the step summary keeps what it held before this run. A step summary that cannot be
+  // read or written, such as a path left set in a local shell, costs only the step summary: one warning.
+  let step = env.GITHUB_STEP_SUMMARY || undefined;
+  let before = "";
+  const dropStep = (err: unknown) => {
+    console.warn(`verify:deep: cannot use GITHUB_STEP_SUMMARY (${err instanceof Error ? err.message : String(err)}); the summary is in ${join(out, "summary.md")}`);
+    step = undefined;
+  };
+  try {
+    if (step && existsSync(step)) before = readFileSync(step, "utf8");
+  } catch (err) {
+    dropStep(err);
+  }
   const results: FileResult[] = [];
-  let md = summary(p, results, minutes, env.NODE_OPTIONS);
+  let md = "";
+  // Written before the first file and after each one, so a run stopped from outside still says which files ran.
+  const writeSummary = () => {
+    md = summary(p, results, minutes, env.NODE_OPTIONS);
+    writeFileSync(join(out, "summary.md"), md);
+    if (!step) return;
+    try {
+      writeFileSync(step, before + md);
+    } catch (err) {
+      dropStep(err);
+    }
+  };
+  writeSummary();
   for (const f of p.files) {
     const head = `${f.name}${Object.keys(f.vars).length ? ` (${Object.entries(f.vars).map(([k, v]) => `${k}=${v}`).join(" ")})` : ""}`;
     console.log(groups ? `::group::${head}` : `== ${head}`);
@@ -288,10 +310,7 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
     if (groups) console.log("::endgroup::");
     console.log(`== ${f.name}: ${r.result} in ${formatTime(r.ms)}`);
     results.push(r);
-    // Written after each file, so a run stopped from outside still says which files ran.
-    md = summary(p, results, minutes, env.NODE_OPTIONS);
-    writeFileSync(join(out, "summary.md"), md);
-    if (step) writeFileSync(step, before + md);
+    writeSummary();
   }
   console.log(`\n${md}\noutput in ${out}`);
   return results.every((r) => r.result === "pass") ? 0 : 1;
