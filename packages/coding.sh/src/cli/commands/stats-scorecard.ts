@@ -160,7 +160,7 @@ export function scorecardRows(card: Scorecard): string[][] {
 }
 
 /** What each kind of row read, and the sessions the turn rows left out. */
-function scopeNote(card: Scorecard): string {
+export function scopeNote(card: Scorecard): string {
   const left = leftOutParts(card.turnsLeftOut);
   const turns = card.turnSessions
     ? `Turn rows count the turns of ${plural(card.turnSessions, "top-level session")} launched interactively.${left.length ? ` They leave out ${join(left)}.` : ""}`

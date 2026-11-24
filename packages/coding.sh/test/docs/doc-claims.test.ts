@@ -1,10 +1,12 @@
 // Doc lines that state what the code does: the MCP status tool's work-item count in the
-// changelog, the parts of the status line in its how-to, and file modes in the CLI reference.
+// changelog, the parts of the status line in its how-to, file modes in the CLI reference, and the
+// scorecard's scope note and intervals in its how-to, its help and the changelog.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { scopeNote } from "../../src/cli/commands/stats-scorecard.ts";
 import { statuslineLine } from "../../src/cli/statusline.ts";
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -38,5 +40,21 @@ describe("doc claims", () => {
     const lines = read("docs", "reference", "cli.md").split("\n").filter((l) => l.includes("mode 600"));
     assert.ok(lines.length > 0, "the CLI reference mentions mode 600");
     assert.deepEqual(lines.filter((l) => !l.includes("mode 600 where the OS has file modes")), []);
+  });
+
+  it("the compare-models how-to shows the scope note the scorecard prints for its example", () => {
+    const example = /## 1\. Print the scorecard[\s\S]*?```text\n([\s\S]*?)```/.exec(read("docs", "how-to", "compare-models.md"))?.[1];
+    assert.ok(example, "found the example output");
+    // The Turns row's sessions are the top-level sessions launched interactively. The window also has a subagent session and a headless one.
+    const turns = /^Turns .*\n {2}sessions +(\d+) +(\d+)$/m.exec(example);
+    assert.ok(turns, "found the Turns row's sessions");
+    const turnSessions = Number(turns[1]) + Number(turns[2]);
+    const note = scopeNote({ by: "model", sessions: turnSessions + 2, turnSessions, groups: [], turnsLeftOut: { subagent: 1, headless: 1 } });
+    assert.ok(example.includes(`\n  ${note}\n`), `the example shows the note: ${note}`);
+  });
+
+  it("the scorecard's how-to, help and changelog line give the Turns row no interval", () => {
+    assert.doesNotMatch(read("docs", "how-to", "compare-models.md"), /Every row shows its/);
+    for (const doc of ["CHANGELOG.md", "docs/reference/cli.md"]) assert.doesNotMatch(read(doc), /--scorecard[^\n]*turns, [^\n]*each with its counts and a 95% interval/, doc);
   });
 });

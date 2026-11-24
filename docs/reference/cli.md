@@ -1224,7 +1224,7 @@ coding.sh stats [options]
 |---|---|---|
 | `-m, --measure <MEASURE>` | `sessions` | What the trend shows. One of: `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`. |
 | `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week). With --scorecard: one column per model (the default) or agent. One of: `agent`, `model`, `repo`, `flag`. |
-| `--scorecard` |  | Compare models side by side: turns, then pushback, cancelled turns, the median turn, failed file edits and failed shell commands, each with its counts and a 95% interval. |
+| `--scorecard` |  | Compare models side by side: turns, and counts with a 95% interval for pushback and its kinds, cancelled turns, the median turn, failed file edits and failed shell commands. |
 | `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--until <WHEN>` |  | Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now) |

@@ -812,7 +812,7 @@ export const COMMANDS: CommandSpec[] = [
     flags: [
       { name: "measure", short: "m", type: "string", value: "<MEASURE>", choices: ["sessions", "failures", "failure-rate", "cost", "tokens", "tool-calls", "tool-errors", "tool-error-rate", "llm-calls", "llm-p95", "ttft-p50"], desc: "What the trend shows", default: "sessions" },
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "repo", "flag"], desc: "One row per group, with its trend (default: one row per day or week). With --scorecard: one column per model (the default) or agent" },
-      { name: "scorecard", type: "boolean", desc: "Compare models side by side: turns, then pushback, cancelled turns, the median turn, failed file edits and failed shell commands, each with its counts and a 95% interval" },
+      { name: "scorecard", type: "boolean", desc: "Compare models side by side: turns, and counts with a 95% interval for pushback and its kinds, cancelled turns, the median turn, failed file edits and failed shell commands" },
       { name: "per", type: "string", value: "<BUCKET>", choices: ["day", "week"], desc: "Bucket size", default: "day" },
       { ...SINCE, default: "30d" },
       { name: "until", type: "string", value: "<WHEN>", desc: "Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now)" },

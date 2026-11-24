@@ -1,6 +1,7 @@
 // The model scorecard (`coding.sh stats --scorecard`): the window's sessions side by side, one group
-// per model or per agent, each row with its counts and a 95% interval. It adds up what the fold keeps
-// per session (Session.stats.turnsByModel, edits and shells, core/turn-stats.ts) and reads no events.
+// per model or per agent, each row but Turns with its counts and a 95% interval. It adds up what the
+// fold keeps per session (Session.stats.turnsByModel, edits and shells, core/turn-stats.ts) and reads
+// no events.
 //
 // - Turn rows (turns, pushback, cancelled, duration) count the turns of top-level sessions launched
 //   interactively, the only sessions with turnsByModel: a headless prompt is no person's reaction,

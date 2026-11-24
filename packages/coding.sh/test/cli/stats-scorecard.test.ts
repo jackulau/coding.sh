@@ -1,5 +1,6 @@
 // `stats --scorecard` sets the window's models side by side: one column per model (or agent), one row
-// per measure with its counts and a 95% interval, and with exactly two columns a DIFFERENCE column.
+// per measure, each but Turns with its counts and a 95% interval, and with exactly two columns a
+// DIFFERENCE column.
 // It adds up the tallies the fold keeps per session (Session.stats.turnsByModel, edits, shells), so
 // the store needs no events. core/scorecard.ts has the counting; this file has the command.
 import assert from "node:assert/strict";

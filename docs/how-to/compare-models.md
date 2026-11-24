@@ -1,8 +1,8 @@
 # Compare models on your own sessions
 
 Put the models you used side by side on your own sessions: how often you pushed back or stopped a
-turn, how long a turn took, and how often edits and shell commands failed. Every row shows its
-counts and a 95% interval.
+turn, how long a turn took, and how often edits and shell commands failed. Each of these comes
+with its counts and a 95% interval.
 
 ```sh
 coding.sh stats --scorecard --since 90d
@@ -53,14 +53,15 @@ Failed shell commands  6.7% (14/210)  14.6% (23/158)  +7.9pp
   95% CI               4.0% to 10.9%  9.9% to 20.9%   +1.6 to +14.8pp
   sessions             3              3
   DIFFERENCE is model-b minus model-a: percentage points for a rate, time for the median. Where its 95% interval includes 0 it says no clear difference.
-  Turn rows count the 5 top-level sessions launched interactively, not 1 subagent session and 1 headless session. Edit and shell rows count the calls of all 7 sessions, each under its own model.
+  Turn rows count the turns of 5 top-level sessions launched interactively. They leave out 1 subagent session and 1 headless session. Edit and shell rows count the calls of all 7 sessions, each under its own model.
   The intervals treat each turn and each call as independent. Turns of one session are alike, so the real uncertainty is larger.
   The models did different tasks, so a difference can come from the task mix. coding.sh compare runs two of them on the same tasks: https://coding.sh/docs/how-to/compare-models
 ```
 
 Each model gets a column, the one with the most turns first. Under a measure, `95% CI` gives its
-95% interval and `sessions` the sessions it read. `-` means the column has nothing to count for
-that row.
+95% interval and `sessions` the sessions it read. Turns has no interval. The pushback kinds count
+the same turns as Pushback (4 kinds), so they have no `sessions` row. `-` means the column has
+nothing to count for that row.
 
 | Row | What it counts |
 |---|---|
