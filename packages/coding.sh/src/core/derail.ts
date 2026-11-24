@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import type { AgentEvent } from "../schema/index.ts";
 import { failureState, foldFailure, type FailureState, type ToolFailure } from "./failures.ts";
+import { billableUsage, promptTokens } from "./pricing.ts";
 import { commandField } from "./shell-tools.ts";
 
 export const DERAIL_FLAGS = {
@@ -338,11 +339,10 @@ function patchDeltas(patch: string): RawDelta[] {
 
 const shortPath = (p: string): string => p.split(/[\\/]/).slice(-2).join("/");
 
-/** Tokens the model saw on one call: fresh input plus cache reads and writes. */
+/** Tokens the model saw on one call: fresh input plus cache reads and writes. A count below 0 or not a finite number adds nothing. */
 const contextOf = (e: AgentEvent): number | undefined => {
-  const u = e.usage;
-  if (!u) return undefined;
-  const n = (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
+  if (!e.usage) return undefined;
+  const n = promptTokens(billableUsage(e.usage));
   return n > 0 ? n : undefined;
 };
 

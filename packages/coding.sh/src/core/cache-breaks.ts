@@ -9,7 +9,9 @@
 // + cache reads + cache writes. A call breaks the cache when the previous call
 // in its scope used the cache (has a cache field), had P > 4096, and this call
 // read less than half of that from cache, losing more than 2048 tokens:
-// lost = min(prev P, this P) − this call's cache reads.
+// lost = min(prev P, this P) − this call's cache reads. A token count below 0
+// or not a finite number is absent, as in stats.usage: it adds nothing to P or
+// the reads, and it is not a cache field.
 // Cause, first match: a context.compact in the scope between the two calls;
 // a different model; a gap past the cache lifetime (5 minutes, or 1 hour when
 // the previous call wrote to the 1-hour cache); else other.
@@ -21,7 +23,7 @@
 // idle between turns: the person was away).
 import type { AgentEvent, CacheBreakCause, CacheBreakStats, CacheIdleKind, Usage } from "../schema/index.ts";
 import { modelOf } from "./models.ts";
-import { cacheWrite1h, callRates, callTier, eventPrice, geoValue, pricesFor, promptTokens, type Prices } from "./pricing.ts";
+import { billableUsage, cacheWrite1h, callRates, callTier, eventPrice, geoValue, pricesFor, promptTokens, tokenCount, type Prices } from "./pricing.ts";
 
 export interface CacheBreak {
   /** The llm.call that paid again, and the one before it in the same scope. */
@@ -71,16 +73,17 @@ export const CACHE_IDLE_LABEL: Record<CacheIdleKind, string> = {
 };
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-const hasCacheField = (u: Usage): boolean => num(u.cacheReadTokens) !== undefined || num(u.cacheWriteTokens) !== undefined;
+const hasCacheField = (u: Usage): boolean => tokenCount(u.cacheReadTokens) !== undefined || tokenCount(u.cacheWriteTokens) !== undefined;
 
 /** USD per re-billed token for this call: what it paid to write (or send) them minus what reading them from cache costs. */
 function extraRate(e: AgentEvent, prices: Prices): number | undefined {
   const r = eventPrice(e, prices);
   if (!r) return undefined;
-  const u = e.usage!;
+  // The counts as the estimate bills them, so the long-context tier is the one priceEvent picks.
+  const u = billableUsage(e.usage);
   const { rates } = callRates(r.price, callTier(e.payload), promptTokens(u), geoValue(e.payload.inferenceGeo));
   const read = rates.cacheRead ?? rates.input;
-  const write = num(u.cacheWriteTokens) ?? 0;
+  const write = u.cacheWriteTokens ?? 0;
   if (write <= 0) return (rates.input - read) / 1e6;
   // Writes split between the 5-minute and the 1-hour cache, priced by their shares.
   const w5 = rates.cacheWrite ?? rates.input;
@@ -127,13 +130,13 @@ export function foldCacheBreaks(s: CacheBreakState, e: AgentEvent, prices: Price
   // Gateway companions repeat a call's usage; replayed calls were never sent again.
   if (e.kind !== "llm.call" || !e.usage || e.payload.replay === true || e.source === "gateway") return;
   const u = e.usage;
-  const p = promptTokens(u);
+  const p = promptTokens(billableUsage(u));
   if (p <= 0) return;
   const prev = s.last.get(scope);
   const model = modelOf(e);
   s.last.set(scope, { id: e.id, p, end: e.ts + (num(e.durationMs) ?? 0), compacted: false, cache: hasCacheField(u), long: cacheWrite1h(e.payload) > 0, ...(model ? { model } : {}) });
   if (!prev || !prev.cache || prev.p <= CACHE_BREAK_MIN_PREV) return;
-  const read = num(u.cacheReadTokens) ?? 0;
+  const read = tokenCount(u.cacheReadTokens) ?? 0;
   const lost = Math.min(prev.p, p) - read;
   if (read >= CACHE_BREAK_READ_SHARE * prev.p || lost <= CACHE_BREAK_MIN_LOST) return;
   const gapMs = Math.max(0, e.ts - prev.end);
