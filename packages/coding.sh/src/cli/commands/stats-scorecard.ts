@@ -13,7 +13,7 @@ import { andQuery, parseWhere, printWhere, type Query } from "../../query/where.
 import type { Session } from "../../schema/index.ts";
 import { NONE } from "../../viewer/metrics.ts";
 import { UsageError } from "../args.ts";
-import { pendingField, queryCliError, str, windowJson, windowNote, type IngestBacklog, type TimeWindow } from "../common.ts";
+import { pendingField, queryCliError, refolding, str, windowJson, windowNote, type IngestBacklog, type TimeWindow } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
 import { cliCommand } from "../next-steps.ts";
 import { duration, plural } from "../output.ts";
@@ -45,9 +45,13 @@ export async function runScorecard(c: CommandContext, ctx: Context, o: Scorecard
     throw queryCliError(e);
   }
   const card = scorecardOf(found.sessions, o.by);
+  const { truncated } = found;
+  // A session the rebuild after an update has not reached yet has none of the stats the scorecard adds up.
+  const refold = await refolding(ctx, c.env);
   if (out.json) {
-    const doc: Scorecard & { truncated?: true } = { ...card };
-    if (found.truncated) doc.truncated = true;
+    const doc: Scorecard & { truncated?: true; refolding?: true } = { ...card };
+    if (truncated) doc.truncated = true;
+    if (refold) doc.refolding = true;
     out.data({ ...doc, window: windowJson(o.window), ...pendingField(o.backlog) });
     return 0;
   }
@@ -55,19 +59,27 @@ export async function runScorecard(c: CommandContext, ctx: Context, o: Scorecard
   const span = `from ${day(o.since)} to ${day(o.until)}${o.where ? " matching the query" : ""}`;
   const base = o.by === "agent" ? ["stats", "--scorecard", "--by", "agent"] : ["stats", "--scorecard"];
   const again = (...more: string[]) => cliCommand(c.env, [...base, ...more]);
+  // The person's window, as they typed it: a next step keeps it.
+  const typed = (f: "since" | "until") => (str(c.flags[f]) === undefined ? [] : [`--${f}`, str(c.flags[f])!]);
+  /** What leaves counts out: the rebuild after an update, or the scan cap. */
+  const incomplete = () => {
+    if (refold) out.warn("coding.sh is rebuilding its index after an update: a session it has not reached yet can have no turns, file edits or shell commands to count. Run this again in a minute for the rest.");
+    if (truncated) out.warn(`Stopped after ${QUERY_SCAN_CAP.toLocaleString("en-US")} sessions: narrow --since or --where.`);
+  };
   if (!card.sessions) {
     out.note(`No sessions ${span}`);
     if (!(await ctx.index.listSessions({ limit: 1 })).length) {
       // An empty store, not just an empty window: say how the first session gets here.
       const n = noSessionsNext(c.env);
       out.next(n.label, n.command);
-    } else if (o.where) out.next("Drop --where to see every session in the window, or widen it", again("--since", "90d"));
-    else out.next("Widen the window", again("--since", "90d"));
+    } else if (o.where) out.next("Drop --where to see every session in the window", again(...typed("since"), ...typed("until")));
+    else out.next("Widen the window", again("--since", widerSince(o.since), ...typed("until")));
     return 0;
   }
   if (!card.groups.length) {
     out.note(card.sessions === 1 ? `The one session ${span} has no turn, file edit or shell command to count.` : `None of the ${card.sessions} sessions ${span} has a turn, a file edit or a shell command to count.`);
     out.note(scopeNote(card));
+    incomplete();
     return 0;
   }
   const headers = ["MEASURE", ...card.groups.map((g) => g.key || NONE)];
@@ -81,14 +93,16 @@ export async function runScorecard(c: CommandContext, ctx: Context, o: Scorecard
   if (notRecorded) out.note(notRecorded);
   out.note("The intervals treat each turn and each call as independent. Turns of one session are alike, so the real uncertainty is larger.");
   if (card.groups.length > 1) out.note(`The ${noun} did different tasks, so a difference can come from the task mix. coding.sh compare runs two of them on the same tasks: https://coding.sh/docs/how-to/compare-models`);
-  if (found.truncated) out.warn(`Stopped after ${QUERY_SCAN_CAP.toLocaleString("en-US")} sessions: narrow --since or --where.`);
+  incomplete();
   const firstTwo = firstTwoWhere(card, found.sessions, o);
-  if (firstTwo) {
-    // The person's window, as they typed it.
-    const bounds = ["since", "until"].flatMap((f) => (str(c.flags[f]) === undefined ? [] : [`--${f}`, str(c.flags[f])!]));
-    out.next("Compare the first two columns, with a DIFFERENCE column", again(...bounds, "--where", firstTwo));
-  }
+  if (firstTwo) out.next("Compare the first two columns, with a DIFFERENCE column", again(...typed("since"), ...typed("until"), "--where", firstTwo));
   return 0;
+}
+
+/** A --since that starts before `since`: 90 days back, or twice as far back as `since` when that is 90 days or more. To the nearest day, so --since 100d gives 200d. */
+export function widerSince(since: number, now = Date.now()): string {
+  const days = Math.round((now - since) / 86_400_000);
+  return `${days < 90 ? 90 : days * 2}d`;
 }
 
 /**
@@ -149,8 +163,10 @@ export function scorecardRows(card: Scorecard): string[][] {
 function scopeNote(card: Scorecard): string {
   const left = leftOutParts(card.turnsLeftOut);
   const turns = card.turnSessions
-    ? `Turn rows count the ${plural(card.turnSessions, "top-level session")} launched interactively${left.length ? `, not ${join(left)}` : ""}.`
-    : `No top-level session was launched interactively, so there are no turn rows${left.length ? `: the window has ${join(left)}` : ""}.`;
+    ? `Turn rows count the turns of ${plural(card.turnSessions, "top-level session")} launched interactively.${left.length ? ` They leave out ${join(left)}.` : ""}`
+    : card.turnsLeftOut.noTurns
+      ? `There are no turn rows: the window has ${join(left)}.`
+      : `No top-level session was launched interactively, so there are no turn rows${left.length ? `: the window has ${join(left)}` : ""}.`;
   const n = card.sessions;
   const calls = n === 1 ? "the one session, under its own" : `${n === 2 ? "both sessions" : `all ${n} sessions`}, each under its own`;
   return `${turns} Edit and shell rows count the calls of ${calls} ${card.by}.`;
@@ -160,6 +176,7 @@ function leftOutParts(l: ScorecardLeftOut): string[] {
   const parts: string[] = [];
   if (l.subagent) parts.push(plural(l.subagent, "subagent session"));
   if (l.headless) parts.push(plural(l.headless, "headless session"));
+  if (l.noTurns) parts.push(`${plural(l.noTurns, "interactive session")} with no turn recorded`);
   const unknown = Object.entries(l.launchUnknown ?? {}).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
   const one = unknown.length === 1 && unknown[0]![1] === 1;
   if (unknown.length) parts.push(`${join(unknown.map(([agent, n]) => `${n} ${agent}`))} ${one ? "session whose capture does not say how it was launched" : "sessions whose captures do not say how they were launched"}`);

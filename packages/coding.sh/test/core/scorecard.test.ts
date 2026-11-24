@@ -97,13 +97,15 @@ describe("scorecardOf", () => {
         sess({ model: "a", launch: "headless", shells: [3, 1] }),
         sess({ agent: "gemini-cli", model: "a" }),
         sess({ agent: "gemini-cli", model: "a" }),
-        // A provider switch is not a subagent, and an interactive session with no turns is left out of nothing.
+        // A provider switch is not a subagent: a top-level session launched interactively with no turn
+        // recorded (no prompt, or stored by an older coding.sh and not folded again yet).
         sess({ model: "a", launch: "interactive", parent: { sessionId: "p", type: "provider-switch" } }),
+        sess({ model: "a", launch: "interactive" }),
       ],
       "model",
     );
     assert.equal(card.turnSessions, 0);
-    assert.deepEqual(card.turnsLeftOut, { subagent: 1, headless: 1, launchUnknown: { "gemini-cli": 2 } });
+    assert.deepEqual(card.turnsLeftOut, { subagent: 1, headless: 1, launchUnknown: { "gemini-cli": 2 }, noTurns: 2 });
     assert.equal(card.groups.length, 1);
     const a = card.groups[0]!;
     assert.equal(a.turns, undefined);

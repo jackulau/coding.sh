@@ -8,6 +8,9 @@ import { after, before, describe, test } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import * as stats from "../../src/cli/commands/stats.ts";
+import { widerSince } from "../../src/cli/commands/stats-scorecard.ts";
+import { acquireLock } from "../../src/core/lock.ts";
+import { paths } from "../../src/core/paths.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { collect, FIXTURES, testCtx, tmpEnv } from "../adapters/_helpers.ts";
@@ -82,7 +85,7 @@ describe("stats --scorecard", () => {
     ]);
     for (const note of [
       "DIFFERENCE is m-b minus m-a: percentage points for a rate, time for the median. Where its 95% interval includes 0 it says no clear difference.",
-      "Turn rows count the 4 top-level sessions launched interactively, not 1 subagent session, 1 headless session and 1 aider session whose capture does not say how it was launched. Edit and shell rows count the calls of all 7 sessions, each under its own model.",
+      "Turn rows count the turns of 4 top-level sessions launched interactively. They leave out 1 subagent session, 1 headless session and 1 aider session whose capture does not say how it was launched. Edit and shell rows count the calls of all 7 sessions, each under its own model.",
       "Cancelled turns leave out 3 turns of gemini-cli: those captures do not record a turn the person stopped.",
       "The intervals treat each turn and each call as independent.",
       "The models did different tasks, so a difference can come from the task mix. coding.sh compare runs two of them on the same tasks: https://coding.sh/docs/how-to/compare-models",
@@ -112,6 +115,7 @@ describe("stats --scorecard", () => {
     assert.ok(j.difference.edits.lo < 0 && j.difference.edits.hi > 0);
     assert.equal(j.window.since.slice(0, 2), "20");
     assert.equal("truncated" in j, false);
+    assert.equal("refolding" in j, false);
   });
 
   test("by agent: three columns, no difference, and cancelled not recorded where the capture has none", async () => {
@@ -178,13 +182,28 @@ describe("stats --scorecard", () => {
     assert.match(quiet.stderr, /the window has 1 aider session whose capture does not say how it was launched\./);
   });
 
-  test("an empty window says so and names the next step", async () => {
+  test("an empty window says so and names the next step, with the window as typed", async () => {
     const r = await run({ where: "model:nope" });
     assert.equal(r.stdout, "");
     assert.match(r.stderr, /No sessions from \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2} matching the query/);
-    assert.match(r.stderr, /Drop --where/);
+    assert.match(r.stderr, /Drop --where to see every session in the window:\n +\S+ stats --scorecard\n/);
     const j = (await run({ where: "model:nope" }, true)).json;
     assert.deepEqual([j.sessions, j.groups, j.difference], [0, [], undefined]);
+    // Dropping --where keeps the window; widening it starts further back than the typed --since and keeps --until.
+    const typed = await run({ since: "100d", until: "50d", where: "agent:codex" });
+    assert.match(typed.stderr, /Drop --where to see every session in the window:\n +\S+ stats --scorecard --since 100d --until 50d\n/);
+    const widen = await run({ since: "100d", until: "50d" });
+    assert.match(widen.stderr, /No sessions from/);
+    assert.match(widen.stderr, /Widen the window:\n +\S+ stats --scorecard --since 200d --until 50d\n/);
+    assert.match((await run({ since: "7d", until: "2d", by: "agent" })).stderr, /Widen the window:\n +\S+ stats --scorecard --by agent --since 90d --until 2d\n/);
+  });
+
+  test("a wider --since starts 90 days back, or twice as far back as the window", () => {
+    const now = Date.parse("2026-11-20T12:00:00Z");
+    assert.equal(widerSince(now - 30 * DAY, now), "90d");
+    assert.equal(widerSince(now - 90 * DAY, now), "180d");
+    // A few ms between parsing the flag and printing the step change nothing.
+    assert.equal(widerSince(now - 100 * DAY - 5, now), "200d");
   });
 
   test("refuses flags with no meaning here", async () => {
@@ -239,6 +258,52 @@ describe("stats --scorecard on recorded captures", () => {
     // the difference, and the counts beside it show how few calls it rests on.
     assert.deepEqual(row("Failed shell commands"), ["Failed shell commands", "0.0% (0/4)", "100.0% (1/1)", "+100.0pp"]);
     assert.equal(row("Failed file edits"), undefined);
-    assert.match(r.stderr, /Turn rows count the 2 top-level sessions launched interactively\. Edit and shell rows count the calls of both sessions, each under its own model\./);
+    assert.match(r.stderr, /Turn rows count the turns of 2 top-level sessions launched interactively\. Edit and shell rows count the calls of both sessions, each under its own model\./);
+  });
+});
+
+describe("stats --scorecard while coding.sh rebuilds its index after an update", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      // As an older coding.sh stored them: launched interactively, without the stats the scorecard adds up.
+      mkSession("pre1", t, { model: "m-a", stats: { launch: "interactive" } }),
+      mkSession("pre2", t + 1, { model: "m-a", stats: { launch: "interactive" } }),
+      mkSession("new", t + 2, { model: "m-b", stats: { launch: "interactive", turnsByModel: { "m-b": { turns: 3, replied: 2 } }, shells: { calls: 4, failed: 1 } } }),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  const run = (flags: Record<string, string | boolean>, json = false) => runCmd(stats, sb, { flags: { scorecard: true, ...flags }, json });
+
+  test("counts the interactive sessions with no turn recorded, and names them in the note", async () => {
+    const r = await run({});
+    assert.equal(r.error, undefined);
+    assert.ok(r.stderr.includes("Turn rows count the turns of 1 top-level session launched interactively. They leave out 2 interactive sessions with no turn recorded."), r.stderr);
+    assert.doesNotMatch(r.stderr, /rebuilding its index/);
+    const j = (await run({}, true)).json;
+    assert.deepEqual([j.turnSessions, j.turnsLeftOut], [1, { noTurns: 2 }]);
+    const none = await run({ where: "model:m-a" });
+    assert.equal(none.stdout, "");
+    assert.match(none.stderr, /None of the 2 sessions .* has a turn, a file edit or a shell command to count\./);
+    assert.match(none.stderr, /There are no turn rows: the window has 2 interactive sessions with no turn recorded\. Edit and shell rows count the calls of both sessions, each under its own model\./);
+  });
+
+  test("while a rebuild runs, the text says the counts are not all in and --json has refolding", async () => {
+    const held = await acquireLock(paths(sb.env).reparseLock, { waitMs: 0 });
+    try {
+      const warning = /! coding\.sh is rebuilding its index after an update: a session it has not reached yet can have no turns, file edits or shell commands to count\. Run this again in a minute for the rest\./;
+      const table = await run({});
+      assert.notEqual(table.stdout, "");
+      assert.match(table.stderr, warning);
+      const none = await run({ where: "model:m-a" });
+      assert.equal(none.stdout, "");
+      assert.match(none.stderr, warning);
+      assert.equal((await run({}, true)).json.refolding, true);
+    } finally {
+      held.release();
+    }
+    assert.equal("refolding" in (await run({}, true)).json, false);
   });
 });

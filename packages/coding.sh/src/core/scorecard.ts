@@ -93,13 +93,18 @@ export interface ScorecardLeftOut {
   headless?: number;
   /** By agent: sessions whose capture does not say how the agent was launched. */
   launchUnknown?: Record<string, number>;
+  /**
+   * Top-level sessions launched interactively with no turn recorded: no prompt, a fold error, or a
+   * session stored by an older coding.sh and not folded again yet.
+   */
+  noTurns?: number;
 }
 
 export interface Scorecard {
   by: ScorecardBy;
   /** The sessions read: every one in the window that matches the query. */
   sessions: number;
-  /** The top-level sessions launched interactively the turn rows read. */
+  /** The top-level sessions launched interactively with a turn recorded: the sessions the turn rows read. */
   turnSessions: number;
   /** Most turns first, then most edit and shell calls, then by key. */
   groups: ScorecardGroup[];
@@ -198,6 +203,7 @@ export function scorecardOf(sessions: readonly Session[], by: ScorecardBy): Scor
       if (isSubagent(s)) left.subagent = (left.subagent ?? 0) + 1;
       else if (s.stats.launch === "headless") left.headless = (left.headless ?? 0) + 1;
       else if (s.stats.launch === undefined) (left.launchUnknown ??= {})[s.agent] = (left.launchUnknown[s.agent] ?? 0) + 1;
+      else left.noTurns = (left.noTurns ?? 0) + 1;
       continue;
     }
     turnSessions++;
