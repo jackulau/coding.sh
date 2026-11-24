@@ -129,8 +129,11 @@ import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { enrichFromEve } from "../integrations/eve/map.ts";
 import { enrichGatewaySpan } from "../integrations/gateway/otel.ts";
 import { LOG_SOURCE, type MapContext, type MapResult, mergeCallCopies, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
+import { InsertedEvents } from "./ingest-shared.ts";
 import { OtlpDecodeError, type ResourceLogs, type ResourceSpans } from "./model.ts";
 import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStatus, validateMessage } from "./proto.ts";
+
+export { InsertedEvents };
 
 export const DEFAULT_PORT = 4318;
 export const DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -550,62 +553,6 @@ export function countOtlpItems(signal: Signal, decoded: ResourceSpans[] | Resour
 export async function storeAndRebuild(store: IndexStore, events: AgentEvent[]): Promise<{ inserted: number; sessions: Session[] }> {
   const { inserted } = events.length ? await store.putEvents(events) : { inserted: 0 };
   return { inserted, sessions: await rebuildSessions(store, new Set(events.map((e) => e.sessionId))) };
-}
-
-/** Ids a failed commit can leave owed (InsertedEvents); past this the oldest are forgotten. */
-const OWED_MAX = 100_000;
-
-/**
- * Says which of a commit's events are new to the store, for what runs after
- * the commit: [[sinks]] get an event once, however often its batch is posted.
- * One per writer (the receiver's group commit, serve's ingest queue).
- */
-export class InsertedEvents {
-  /**
-   * Ids stored by a commit that failed after its put (the rebuild threw, the
-   * client was answered 503): nothing was handed on, and the retry inserts
-   * nothing, so the retry's commit hands them on. In insertion order.
-   */
-  private readonly owed = new Set<string>();
-
-  /**
-   * putEvents, plus the ids it inserted. A store without putEventsReturningIds
-   * has the stored ids of the touched sessions read before the put, so call
-   * this inside the store's transaction where it has one.
-   */
-  async put(store: IndexStore, events: AgentEvent[]): Promise<{ inserted: number; ids: Set<string> }> {
-    if (!events.length) return { inserted: 0, ids: new Set() };
-    if (store.putEventsReturningIds) {
-      const r = await store.putEventsReturningIds(events);
-      return { inserted: r.inserted, ids: new Set(r.ids) };
-    }
-    const had = new Set<string>();
-    for (const id of new Set(events.map((e) => e.sessionId))) for (const e of await store.listEvents(id)) had.add(e.id);
-    const { inserted } = await store.putEvents(events);
-    // The count wins where it is certain: nothing inserted means nothing new, whatever the read said.
-    return { inserted, ids: new Set(inserted ? events.flatMap((e) => (had.has(e.id) ? [] : [e.id])) : []) };
-  }
-
-  /** The commit failed after these ids were put: the next commit that carries them hands them on. */
-  owe(ids: Iterable<string>): void {
-    for (const id of ids) this.owed.add(id);
-    for (const id of this.owed) {
-      if (this.owed.size <= OWED_MAX) break;
-      this.owed.delete(id);
-    }
-  }
-
-  /**
-   * The events of one request to hand on, in order: those whose id is in `ids`
-   * (what the put inserted) or owed. Each id is handed on once: it leaves `ids`
-   * and the owed set, so the first request of a commit that carries it gets it.
-   */
-  take(events: AgentEvent[], ids: Set<string>): AgentEvent[] {
-    return events.filter((e) => {
-      const inserted = ids.delete(e.id);
-      return this.owed.delete(e.id) || inserted;
-    });
-  }
 }
 
 /**

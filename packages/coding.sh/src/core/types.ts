@@ -326,7 +326,7 @@ export interface IndexStore {
    * this call inserted, each once, in any order (`ids.length === inserted`).
    * Serve and the collector hand [[sinks]] only those events, so a batch that is
    * posted again is mirrored once. Without it they read the stored ids of the
-   * sessions a batch touches before each put (InsertedEvents in otel/receiver.ts).
+   * sessions a batch touches before each put (InsertedEvents in otel/ingest-shared.ts).
    */
   putEventsReturningIds?(batch: AgentEvent[]): Promise<{ inserted: number; ids: string[] }>;
   upsertSession(session: Session): Promise<void>;

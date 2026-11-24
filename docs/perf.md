@@ -323,6 +323,27 @@ Long sessions are not faster. Every write rebuilds each session it touched from 
 so a request costs more as its session grows, and peak RSS in that mode reached about 250 MB in
 both builds.
 
+## Read commands
+
+Before it reads, a command such as `sessions` or `usage` ingests what hooks left in the spool and
+checks whether stored sessions need a re-parse after an upgrade. Both load the spool ingest,
+`core/ingest.ts`. It imported two names from the OTLP receiver, so every read also loaded the
+receiver, its protobuf decoder and its span mapping (233 KB of source a read never runs) and
+`node:http`, whose ESM import makes Node load its bundled HTTP client. The two names now live in
+`src/otel/ingest-shared.ts`. `test/core/ingest-imports.test.ts` fails if the ingest or the
+re-parse check loads the receiver or `node:http` again.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026, the built `cli.mjs` on an empty store. Each cell is
+the command over `node -e ""`, the median of 120 interleaved calls (80 for `--help`, which loads
+neither and is the control). In brackets is the paired median difference from the commit before
+this change, with its 95% bootstrap interval.
+
+| Command | Before | After |
+| --- | --- | --- |
+| `sessions` | +169.9 ms | +136.7 ms (-33.2 [-42.8, -26.0]) |
+| `usage` | +169.0 ms | +138.5 ms (-30.4 [-35.4, -26.4]) |
+| `--help` | +54.2 ms | +54.4 ms (+0.2 [-24.3, 21.6]) |
+
 ## Hook
 
 Agents run the hook on every tool call, so its cost adds to every step. Outside Windows the hook
