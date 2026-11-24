@@ -5816,7 +5816,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const trials = h("div", { class: "seg", role: "group", "aria-label": "Forked calls" }, [1, 3, 5].map((k) => h("button", { type: "button", "aria-pressed": String(f.trials === k), onclick: () => { f.trials = k; renderReplayPane(); } }, "×" + k)));
     out.push(h("div", { class: "rp-fork-go" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: f.busy || !pv.canCall, onclick: forkRun }, f.busy ? "Forking…" : "Run fork"), trials,
-      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where " + forShell("coding.sh ui") + " runs.")));
+      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set " + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or CLAUDE_CODE_OAUTH_TOKEN" : "") + " where " + forShell("coding.sh ui") + " runs.")));
     const r = f.result;
     const rows = [h("span", { class: "meta" }, "recorded"), h("code", null, pv.recorded ? pv.recorded.label : "no recorded reply"), h("span")];
     if (r) r.trials.forEach((t, i) => rows.push(h("span", { class: "meta" }, r.trials.length > 1 ? "forked " + (i + 1) : "forked"), h("code", { class: t.error ? "tone-fail" : "" }, t.error ? "error: " + t.error : t.label),
