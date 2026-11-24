@@ -1811,6 +1811,31 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 // textContent / append(string) only. Never use raw-HTML sinks here; a test
 // greps this file to enforce that.
 
+// A link straight to a session (#/s/<id>) asks for what opening it reads first (showSession's
+// paths) here, before the rest of this script runs and route() opens it. Each response is taken
+// once, as a preload (see the earlyReads loop after preloaded). The record and the first page of
+// events (EVENTS_PAGE, defined further down) go at once, the events with ?missing=null so that a
+// dead link logs no 404. The labels and sub-sessions wait for the record to say the session is there.
+// Nothing is asked for a session whose first reads the server embedded (the first row, src/viewer/ssr.ts).
+const earlyReads = (() => {
+  const m = /^#\/?s\/([^/?]+)/.exec(location.hash);
+  let id = "";
+  try { id = m ? decodeURIComponent(m[1]) : ""; } catch { return null; }
+  if (!id) return null;
+  const boot = document.getElementById("boot-data");
+  if (boot && boot.textContent.includes(JSON.stringify(sessionRecordPath(id)) + ":")) return null;
+  const get = (path) => fetch(path, { credentials: "same-origin", headers: { Accept: "application/json" } });
+  const eventsPath = "/api/sessions/" + encodeURIComponent(id) + "/events" + qs({ limit: 5000, rows: 1 });
+  const record = get(sessionRecordPath(id));
+  const known = record.then((r) => r.ok && r.clone().json()).then((s) => !!s, () => false);
+  const reads = new Map([[sessionRecordPath(id), record], [eventsPath, get(eventsPath + "&missing=null")]]);
+  for (const path of ["/api/labels" + qs({ sessionId: id }), "/api/sessions" + qs({ parent: id, limit: 500 })])
+    reads.set(path, known.then((yes) => (yes ? get(path) : null)));
+  // A read nobody takes (an embedded response won) fails quietly; the one who takes it still sees the error.
+  for (const sent of reads.values()) sent.catch(() => {});
+  return reads;
+})();
+
 // ------------------------------------------------------------ dom helpers
 
 // The one outside link h() takes: a pull request's web page (work --json prs), host/owner/name/pull/<n> and nothing more.
@@ -2092,10 +2117,11 @@ function clearAnnouncement() {
   announceSeq++;
   $("#status").textContent = "";
 }
-async function request(path, init, quiet) {
+/** `sent`: a response already asked for (earlyReads), read here as if this call had fetched it. */
+async function request(path, init, quiet, sent) {
   if (!quiet) busy(1);
   try {
-    const res = await fetch(path, { credentials: "same-origin", ...init });
+    const res = await (sent || fetch(path, { credentials: "same-origin", ...init }));
     if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by " + forShell("coding.sh ui") + ".");
     return res;
   } finally {
@@ -2105,12 +2131,15 @@ async function request(path, init, quiet) {
 async function api(path, init, quiet) {
   if (!init || !init.method || init.method === "GET") {
     const hit = preloadTake(path);
-    if (hit) return hit;
+    if (hit) {
+      const body = await hit;
+      if (body !== NOT_ASKED) return body;
+    }
   }
   return fetchJson(path, init, quiet);
 }
-async function fetchJson(path, init, quiet) {
-  const res = await request(path, { ...init, headers: { Accept: "application/json", ...(init && init.headers) } }, quiet);
+async function fetchJson(path, init, quiet, sent) {
+  const res = await request(path, { ...init, headers: { Accept: "application/json", ...(init && init.headers) } }, quiet, sent);
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON error */ }
   if (!res.ok) throw new ApiError(res.status, (body && body.error) || res.statusText || "request failed", body);
@@ -2169,6 +2198,8 @@ function createIntent(o) {
 // Preloaded GET responses, each used once by api() within PRELOAD_TTL.
 const PRELOAD_TTL = 20e3;
 const preloaded = new Map();
+/** A preload's body when the read was never sent (earlyReads): api() fetches the path itself. */
+const NOT_ASKED = Symbol("not asked");
 function preloadTake(path) {
   const p = preloaded.get(path);
   if (!p) return null;
@@ -2211,6 +2242,23 @@ function preloadSession(id) {
   } catch { /* a bad embed: the page fetches as usual */ }
   el.remove();
 })();
+// What the top of this script asked for on a link to a session (earlyReads), each read once like
+// a preload; an embedded response wins. A read it held back (the record said no such session) is
+// NOT_ASKED, and so is a null answer to a path that does not ask for one with ?missing=null (the
+// early events read found no session): api() then fetches the path itself. A read that ends
+// NOT_ASKED or fails leaves the map, so a later preload() of the path sends it.
+if (earlyReads) {
+  const at = Date.now();
+  for (const [path, sent] of earlyReads) {
+    if (preloaded.has(path)) continue;
+    const nullIsAnswer = path.endsWith("?missing=null");
+    const promise = sent.then((res) => (res ? fetchJson(path, undefined, true, res) : NOT_ASKED)).then((b) => (b === null && !nullIsAnswer ? NOT_ASKED : b));
+    const drop = () => { if (preloaded.get(path)?.promise === promise) preloaded.delete(path); };
+    promise.then((b) => { if (b === NOT_ASKED) drop(); }, drop);
+    preloaded.set(path, { at, promise });
+  }
+  earlyReads.clear();
+}
 const sessionIntent = createIntent({ delay: 100, setTimer: (f, ms) => setTimeout(f, ms), clearTimer: (t) => clearTimeout(t), onIntent: preloadSession });
 window.addEventListener("scroll", () => sessionIntent.scroll(), { passive: true, capture: true });
 
