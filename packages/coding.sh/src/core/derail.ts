@@ -7,7 +7,7 @@
 // can put a marker there and a comparison can measure time to first derail.
 // The thresholds below are deliberately conservative (docs/guides/explore.md
 // lists them): a flag should mean "look here", not "an agent did agent things".
-import { createHash } from "node:crypto";
+import { hash as oneShotHash } from "node:crypto";
 import type { AgentEvent } from "../schema/index.ts";
 import { failureState, foldFailure, type FailureState, type ToolFailure } from "./failures.ts";
 import { commandField } from "./shell-tools.ts";
@@ -267,7 +267,7 @@ function commandOf(input: unknown): string | undefined {
   return typeof c === "string" ? c : c?.join(" ");
 }
 
-const hash = (s: string): string => createHash("sha1").update(s).digest("base64");
+const hash = (s: string): string => oneShotHash("sha1", s, "base64");
 const baseName = (tool: string): string => tool.replace(/^mcp__.+?__/, "");
 const isEdit = (c: Call): boolean => c.editTool && c.ok !== false;
 /** Progress for no-progress: an edit, a shell command that writes, or work handed to a subagent. */

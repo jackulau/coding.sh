@@ -1,10 +1,10 @@
 // Id helpers. Event ids are content-derived so re-ingesting the same spool
 // line is a no-op; run/task ids are time-sortable so lists order naturally.
-import { createHash, randomBytes } from "node:crypto";
+import { hash, randomBytes } from "node:crypto";
 
 /** sha256 hex of a string (utf8) or bytes. */
 export function sha256Hex(data: string | Uint8Array): string {
-  return createHash("sha256").update(data).digest("hex");
+  return hash("sha256", data, "hex");
 }
 
 /**
