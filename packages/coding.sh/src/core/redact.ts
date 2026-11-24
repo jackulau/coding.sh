@@ -758,6 +758,15 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   // In PII_KINDS order (cards before phone numbers), after the secret rules.
   if (pii.size) rules.push(...piiRules(PII_KINDS.filter((k) => pii.has(k))));
   rules.push(...patternRules(opts.patterns ?? []));
+  // By position in `rules`, the redactor's public array: built again when that array changes.
+  let ix = needleIndex(rules);
+  // marks[i] === scanned in apply: the text it scanned last holds a needle of rules[i].
+  let marks = new Float64Array(rules.length);
+  let mark = 0;
+  const reindex = (): void => {
+    ix = needleIndex(rules);
+    marks = new Float64Array(rules.length);
+  };
 
   const string = (s: string, tally?: RedactionTally, only?: RuleFilter): string => {
     if (!tally) return apply(s, undefined, only);
@@ -774,25 +783,39 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 
   const apply = (s: string, onMatch?: OnMatch, only?: RuleFilter): string => {
     let out = s;
-    let lower: string | undefined;
     // `only`, from a text that holds `s`, skips the rules it holds no needle of until a rule
     // changes `s`. On that text itself it is the whole needle check.
-    let live = only?.live;
-    let exact = only !== undefined && only.text === s;
+    let at = ix;
+    let live = only?.ix === at ? only.live : undefined;
+    let exact = live !== undefined && only!.text === s;
+    // The mark of `out`'s scan in `marks`; 0 until the first rule with needles scans it.
+    let scanned = 0;
     for (let i = 0; i < rules.length; i++) {
       const r = rules[i]!;
+      if (r !== ix.rules[i]) reindex();
+      if (ix !== at) {
+        // Built again for changed rules: `only` and the scan hold the old positions.
+        at = ix;
+        live = undefined;
+        exact = false;
+        scanned = 0;
+      }
       // On the text as the rules before left it: a marker they wrote can hold a needle.
-      const need = needles.get(r);
-      if (need) {
+      if (ix.gated[i]) {
         if (live && !live[i]) continue;
-        if (!exact && !holdsAny(need.fold ? (lower ??= out.toLowerCase()) : out, need.any)) continue;
+        if (!exact) {
+          if (scanned === 0) markNeedles(ix, out, marks, (scanned = ++mark));
+          if (marks[i] !== scanned) continue;
+        }
       }
       const next = applyRule(r, out, onMatch);
+      // A callback that redacted another text marked that text's needles: scan `out` again.
+      if (mark !== scanned) scanned = 0;
       if (next === out) continue;
       out = next;
-      lower = undefined;
       live = undefined;
       exact = false;
+      scanned = 0;
     }
     return out;
   };
@@ -801,13 +824,11 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 
   /** Which rules `text` holds a needle of, as apply checks them (a rule without needles always runs). */
   const filter = (text: string): RuleFilter => {
+    if (ix.rules.length !== rules.length || rules.some((r, i) => r !== ix.rules[i])) reindex();
     const live = new Uint8Array(rules.length);
-    let lower: string | undefined;
-    for (let i = 0; i < rules.length; i++) {
-      const need = needles.get(rules[i]!);
-      live[i] = !need || holdsAny(need.fold ? (lower ??= text.toLowerCase()) : text, need.any) ? 1 : 0;
-    }
-    return { live, text };
+    markNeedles(ix, text, live, 1);
+    for (let i = 0; i < rules.length; i++) if (!ix.gated[i]) live[i] = 1;
+    return { live, text, ix };
   };
 
   const redactor: Redactor = {
@@ -835,6 +856,8 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 interface RuleFilter {
   live: Uint8Array;
   text: string;
+  /** The index it was taken with: `live` holds that index's positions. */
+  ix: NeedleIndex;
 }
 
 /** A redactor's passes with the rules limited by a RuleFilter, for redactBlobValue. */
@@ -845,6 +868,74 @@ interface FilteredPasses {
 }
 
 const passes = new WeakMap<Redactor, FilteredPasses>();
+
+/**
+ * A redactor's rule needles by their first two characters, so one pass over a text finds the
+ * rules it holds a needle of (a check per rule would scan the text once per needle).
+ */
+interface NeedleIndex {
+  /** The rules it was built for, in order. */
+  rules: readonly RedactRule[];
+  /** `gated[i]`: rules[i] runs only on a text that holds one of its needles. */
+  gated: Uint8Array;
+  /** By two ASCII characters `a`, `b` at a position (`a << 7 | b`): 1 + the bucket of needles that start with them. */
+  exact: Uint16Array;
+  /** The same for the `fold` needles, looked for in the lower-cased text; absent without one. */
+  fold?: Uint16Array;
+  buckets: { text: string; rules: number[] }[][];
+}
+
+/** Every built-in needle starts with two ASCII characters. A rule with a needle that does not runs on every text. */
+const indexableNeedle = (n: string): boolean => n.length >= 2 && n.charCodeAt(0) < 128 && n.charCodeAt(1) < 128;
+
+function needleIndex(rules: readonly RedactRule[]): NeedleIndex {
+  const gated = new Uint8Array(rules.length);
+  const exact = new Uint16Array(1 << 14);
+  let fold: Uint16Array | undefined;
+  const buckets: NeedleIndex["buckets"] = [];
+  const entries = new Map<string, { text: string; rules: number[] }>();
+  for (let i = 0; i < rules.length; i++) {
+    const need = needles.get(rules[i]!);
+    if (!need || !need.any.every(indexableNeedle)) continue;
+    gated[i] = 1;
+    const table = need.fold ? (fold ??= new Uint16Array(1 << 14)) : exact;
+    for (const text of need.any) {
+      const key = (need.fold ? "fold:" : "exact:") + text;
+      let entry = entries.get(key);
+      if (!entry) {
+        entries.set(key, (entry = { text, rules: [] }));
+        const slot = (text.charCodeAt(0) << 7) | text.charCodeAt(1);
+        if (!table[slot]) table[slot] = buckets.push([]);
+        buckets[table[slot]! - 1]!.push(entry);
+      }
+      if (!entry.rules.includes(i)) entry.rules.push(i);
+    }
+  }
+  return { rules: rules.slice(), gated, exact, fold, buckets };
+}
+
+/** Sets `marks[i] = mark` for each gated rule whose needles `s` holds, as holdsAny would find them. */
+function markNeedles(ix: NeedleIndex, s: string, marks: Float64Array | Uint8Array, mark: number): void {
+  scanNeedles(s, ix.exact, ix.buckets, marks, mark);
+  if (ix.fold) scanNeedles(s.toLowerCase(), ix.fold, ix.buckets, marks, mark);
+}
+
+function scanNeedles(s: string, table: Uint16Array, buckets: NeedleIndex["buckets"], marks: Float64Array | Uint8Array, mark: number): void {
+  // A needle is two characters or more, so the last position starts none.
+  const end = s.length - 1;
+  for (let i = 0; i < end; i++) {
+    const a = s.charCodeAt(i);
+    if (a > 127) continue;
+    const b = s.charCodeAt(i + 1);
+    if (b > 127) {
+      i++;
+      continue;
+    }
+    const bucket = table[(a << 7) | b]!;
+    if (bucket === 0) continue;
+    for (const entry of buckets[bucket - 1]!) if (s.startsWith(entry.text, i)) for (const r of entry.rules) marks[r] = mark;
+  }
+}
 
 /** `s` with one rule applied. */
 function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
