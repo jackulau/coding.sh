@@ -31,7 +31,7 @@ import { bundleBlobs, runBlobs, taskBlobs } from "../store/common.ts";
 import { requestBlobRefs } from "../proxy/blocks.ts";
 import { gcJudgeCache, type JudgeCacheGcResult } from "../judge/cache.ts";
 import { gcLlmCache, type LlmCacheGcResult } from "../llmcache/store.ts";
-import { sinkCursorKey } from "./ingest.ts";
+import { sinkCursorKey, spoolInFlightKeys } from "./ingest.ts";
 import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
 import { listSpoolFiles, rawFilesOf, spoolFileDay, type SpoolFile } from "./spool-read.ts";
 
@@ -268,9 +268,10 @@ async function sweepSpool(opts: GcOptions, result: GcResult, now: number, spoolD
       await unlink(file.path).catch((err: NodeJS.ErrnoException) => {
         if (err.code !== "ENOENT") throw err;
       });
-      // A later file at this path is new content: every consumer starts it from 0.
+      // A later file at this path is new content: every consumer starts it from 0, and none of its lines is suspect.
       await index.setCursor(file.source, 0);
       for (const name of sinkNames) await index.setCursor(sinkCursorKey(name, file.source), 0);
+      if (!index.transaction) for (const key of spoolInFlightKeys(file.source)) await index.setCursor(key, 0);
     }
     result.spool.deleted++;
     result.spool.rawFiles += raws.length;

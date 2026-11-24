@@ -1,5 +1,6 @@
 // The hook's session-end background ingest: when it starts, and when it stays out of the way.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ let env: NodeJS.ProcessEnv = {};
 let calls: { command: string; args: string[]; detached: boolean; stdio: string }[] = [];
 const spawn: KickSpawner = (command, args, o) => {
   calls.push({ command, args, detached: o.detached, stdio: o.stdio });
-  return { unref() {} };
+  return { unref() {}, on() {} };
 };
 
 beforeEach(() => {
@@ -68,5 +69,18 @@ describe("kickIngest", () => {
     rmSync(marker);
     assert.equal(kickIngest("PreToolUse", env, spawn), undefined);
     assert.equal(existsSync(marker), false, "only end events wake an ingest");
+  });
+
+  it("a spawn that fails after it returns does not end the hook", () => {
+    // spawn returns the child first and reports a failure (node gone after an upgrade) as an 'error' event.
+    const children: EventEmitter[] = [];
+    const failing: KickSpawner = () => {
+      const child = Object.assign(new EventEmitter(), { unref() {} });
+      children.push(child);
+      return child;
+    };
+    assert.equal(kickIngest("Stop", env, failing), join(root, "cli.mjs"));
+    assert.equal(children.length, 1);
+    assert.doesNotThrow(() => children[0]!.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" })));
   });
 });

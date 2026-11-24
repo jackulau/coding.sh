@@ -199,7 +199,7 @@ async function runWorker(d: Data): Promise<void> {
     stop.abort();
     wake?.();
   });
-  // ingestCli (common.ts) names the CLI a background ingest runs from argv[1]: the main thread's, not this file.
+  // ingestCli (mcp/launch.ts) names the CLI a background ingest runs from argv[1]: the main thread's, not this file.
   if (d.argv1) process.argv[1] = d.argv1;
   const [{ openContext }, { autoIngest, refolding }] = await Promise.all([import("../core/context.ts"), import("./common.ts")]);
   const ctx = await openContext({ env: process.env, cwd: d.cwd });
