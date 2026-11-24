@@ -172,6 +172,7 @@ describe("serve config", () => {
     const pg = resolveServeConfig({}, tmpEnv({ DATABASE_URL: "postgres://u:p@db:5432/x" }));
     assert.equal(pg.core.store.index, "postgres://u:p@db:5432/x");
     assert.equal(pg.core.store.blobs, "postgres://u:p@db:5432/x", "one DB is enough");
+    assert.equal(pg.env?.CODING_SH_STORE_URL, "postgres://u:p@db:5432/x", "the store open reads it: no background ingest of the home's spool");
     const notPg = resolveServeConfig({}, tmpEnv({ DATABASE_URL: "mysql://db/x" }));
     assert.match(notPg.core.store.index, /^sqlite:/);
     const explicit = resolveServeConfig({}, tmpEnv({ DATABASE_URL: "postgres://a/b", CODING_SH_STORE_URL: "sqlite://:memory:" }));
