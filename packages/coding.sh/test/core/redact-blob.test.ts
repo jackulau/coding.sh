@@ -97,3 +97,61 @@ describe("redactBlobValue runs only the rules the value's JSON text holds a need
     }
   });
 });
+
+describe("redactBlobValue copies only what redaction changes", () => {
+  const token = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+  /** redactForBlob, then serialized, then the string rules on that text: what redactBlobValue gives. */
+  const reference = (v: unknown) => {
+    const tally = redactionTally();
+    const clean = redactForBlob(redactor, v, tally);
+    return { text: typeof clean === "string" ? clean : redactor.string(JSON.stringify(clean) ?? "", tally), tally: JSON.stringify(tally) };
+  };
+  const deepFreeze = <T>(v: T): T => {
+    if (v && typeof v === "object") {
+      for (const x of Object.values(v)) deepFreeze(x);
+      Object.freeze(v);
+    }
+    return v;
+  };
+
+  it("leaves the value as it was, whether it changed in parts or not at all", () => {
+    const values: unknown[] = [
+      { a: { b: ["plain", { c: "text" }] }, d: [1, null, true], e: {} },
+      { a: { b: ["plain", { c: `AWS_SECRET_ACCESS_KEY=${SECRET}` }] }, d: ["x", token], e: { f: "same" } },
+      [{ a: "plain" }, ["--api-key", "abcdefgh"], { api_key: "abcdefgh" }, { s: JSON.stringify({ t: token }) }],
+    ];
+    for (const v of values) {
+      const before = JSON.stringify(v);
+      const want = reference(JSON.parse(before));
+      const tally = redactionTally();
+      // Frozen: a write into the input throws (an ES module is strict).
+      assert.equal(redactBlobValue(redactor, deepFreeze(v), tally), want.text, before);
+      assert.equal(JSON.stringify(tally), want.tally, before);
+      assert.equal(JSON.stringify(v), before);
+    }
+  });
+
+  it("serializes a value that is not JSON data as before: a copy of its own keys", () => {
+    class Box {
+      x = "plain";
+      y = { z: "token=abcdef1234567890" };
+    }
+    const values: unknown[] = [
+      { d: new Date(0), plain: "hello" },
+      [new Date(0), "x"],
+      { s: new String(token), n: new Number(3) },
+      { toJSON: () => ({ other: token }), a: "plain" },
+      Object.assign(Object.create(null), { a: "plain", inner: Object.assign(Object.create(null), { b: "text" }) }),
+      Object.assign(Object.create({ inherited: token }), { own: "plain" }),
+      new Box(),
+      { a: [1, , 3], b: { c: [undefined, "plain"] } },
+    ];
+    for (const v of values) {
+      const want = reference(v);
+      const tally = redactionTally();
+      const label = String(JSON.stringify(v)).slice(0, 120);
+      assert.equal(redactBlobValue(redactor, v, tally), want.text, label);
+      assert.equal(JSON.stringify(tally), want.tally, label);
+    }
+  });
+});

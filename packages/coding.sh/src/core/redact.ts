@@ -841,7 +841,8 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
     filter,
     string,
     // A string redactArgv rewrote, and a subtree too deep to walk, are new text: the full check.
-    value: (v, tally, only) => walk(v, (x) => string(x, tally, only), 0, tally, (x) => string(x, tally)),
+    // redactBlobValue only serializes the result, so what comes out the same is not copied.
+    value: (v, tally, only) => walk(v, (x) => string(x, tally, only), 0, tally, (x) => string(x, tally), true),
   });
   return redactor;
 }
@@ -954,7 +955,24 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
   return s.replace(r.pattern, marker(r.kind));
 }
 
-/** A new value with `f` applied to every string in it (keys are kept). */
+/**
+ * True for an object or array as JSON.parse makes them: JSON.stringify writes its own keys, as it
+ * would a copy's. A Date, a boxed string or anything with toJSON serializes as something else.
+ */
+function isJsonData(v: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(v);
+  return (Array.isArray(v) ? proto === Array.prototype : proto === Object.prototype || proto === null) && typeof (v as { toJSON?: unknown }).toJSON !== "function";
+}
+
+/** Sets an own data property, as JSON.parse does (a `__proto__` key too). */
+function defineOwn(o: Record<string, unknown>, k: string, value: unknown): void {
+  Object.defineProperty(o, k, { value, writable: true, enumerable: true, configurable: true });
+}
+
+/**
+ * `v` with `f` applied to every string in it (keys are kept). An object or array that comes out
+ * the same is `v` itself when it is JSON data (isJsonData); anything else is a new value.
+ */
 function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
   if (typeof v === "string") return f(v);
   if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
@@ -969,10 +987,24 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
       return v; // a cycle, or too deep for the stack: the redaction walk replaces it
     }
   }
-  if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
-  return out;
+  const same = isJsonData(v);
+  if (Array.isArray(v)) {
+    const out = v.map((x) => mapStrings(x, f, depth + 1));
+    return same && out.every((x, i) => x === v[i]) ? v : out;
+  }
+  const entries = Object.entries(v);
+  let out: Record<string, unknown> | undefined = same ? undefined : {};
+  for (let i = 0; i < entries.length; i++) {
+    const [k, x] = entries[i]!;
+    const y = mapStrings(x, f, depth + 1);
+    if (!out) {
+      if (y === x) continue;
+      out = {};
+      for (let j = 0; j < i; j++) defineOwn(out, entries[j]![0], entries[j]![1]);
+    }
+    defineOwn(out, k, y);
+  }
+  return out ?? v;
 }
 
 /** The document in a string that looks like a JSON object or array; anything else is undefined. */
@@ -1024,7 +1056,8 @@ function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level
  * The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too.
  * `v` is JSON data (what JSON.parse returns). For an object, the rules are first limited to those
  * whose needles its JSON text holds (RuleFilter): each string's own check is then needed only for
- * those, and the text pass needs none while the walk changed nothing. The output is the same.
+ * those, and the text pass needs none while the walk changed nothing. The walks copy only what they
+ * change, so a value with nothing to redact is serialized once. The output is the same.
  */
 export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally): string {
   const p = passes.get(r);
@@ -1042,7 +1075,8 @@ export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally):
   const only = text === undefined ? undefined : p.filter(text);
   const clean = only ? p.value(docs, tally, only) : r.value(docs, tally);
   if (typeof clean === "string") return clean;
-  const out = JSON.stringify(clean) ?? "";
+  // A walk that changed nothing gives `docs` back: its text is the one the filter was taken on.
+  const out = only && clean === docs ? only.text : (JSON.stringify(clean) ?? "");
   return only && out === only.text ? p.string(out, tally, only) : r.string(out, tally);
 }
 
@@ -1110,8 +1144,12 @@ export function redactArgv<T>(args: readonly T[]): T[] {
   return out;
 }
 
-/** `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text. */
-function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact): unknown {
+/**
+ * `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text.
+ * `keep`: an object or array that comes out the same is returned as is when it is JSON data (isJsonData), for a caller
+ * that only serializes the result. Without it every object and array is a new one.
+ */
+function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false): unknown {
   if (typeof v === "string") return redact(v);
   if (v === null || typeof v !== "object") return v;
   if (depth > 64) return tooDeep(v, full, tally);
@@ -1119,19 +1157,27 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
     if (tally) for (let i = 0; i < argv.length; i++) if (argv[i] !== v[i] && typeof v[i] === "string") tallyChange(tally, v[i] as string, argv[i] as string);
-    return argv.map((x, i) => walk(x, x === v[i] ? redact : full, depth + 1, tally, full));
+    const out = argv.map((x, i) => walk(x, x === v[i] ? redact : full, depth + 1, tally, full, keep));
+    return keep && isJsonData(v) && out.every((x, i) => x === v[i]) ? v : out;
   }
   if (v instanceof Uint8Array) return v;
-  const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+  const entries = Object.entries(v as Record<string, unknown>);
+  let out: Record<string, unknown> | undefined = keep && isJsonData(v) ? undefined : {};
+  for (let i = 0; i < entries.length; i++) {
+    const [k, x] = entries[i]!;
     const secretKey = typeof x === "string" && x.length > 0 && isSecretAttrKey(k) && !isAlreadyRedacted(x);
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")
-      : walk(x, redact, depth + 1, tally, full);
-    Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
+      : walk(x, redact, depth + 1, tally, full, keep);
+    if (!out) {
+      if (val === x) continue;
+      out = {};
+      for (let j = 0; j < i; j++) defineOwn(out, entries[j]![0], entries[j]![1]);
+    }
+    defineOwn(out, k, val);
   }
-  return out;
+  return out ?? v;
 }
 
 /**
