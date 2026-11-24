@@ -279,6 +279,28 @@ store sizes.
 The store is now mostly the index (1.43 MB per 1,000 events). The largest part left there is
 `search_extra`, which copies each `tool.end` output for full-text search (22.6 MB of the 142.6).
 
+## Repo facet
+
+`sessions --facets` and the viewer's filter list count sessions per repo. A session's repo is a
+long SQL expression over its folder: the main checkout's name, the worktree layouts of Claude
+Code, T3 Code and Codex, and the macOS temp folder. SQLite worked it out about two and a half
+times per session. The SQLite store now counts the sessions per folder first, then names each
+folder once, and a store has far fewer folders than sessions. `test/core/repo-identity.test.ts`
+checks that SQLite and the in-memory scan give the same counts.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026.
+[scripts/dogfood/bench-where.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench-where.mjs)
+ran on a generated store of 3,600 sessions and 208,010 events in 40 folders. Each run gives every
+query's warm median of 9 calls, and 10 pairs of runs of the old and new code alternate. In
+brackets is the paired median difference with its 95% bootstrap interval.
+
+| Query | Before | After |
+| --- | --- | --- |
+| `facets agent,model,repo,flag` | 35.2 ms | 8.9 ms (-26.3 [-27.2, -25.3]) |
+
+The other 19 queries (sessions, events, search and the other facets) moved by at most 0.8 ms, each
+with an interval that includes no change, and every query returned the same number of rows.
+
 ## OTLP collector
 
 `coding.sh collector` stores concurrent OTLP requests together:

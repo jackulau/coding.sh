@@ -1579,7 +1579,17 @@ export class SqliteIndexStore implements IndexStore {
     if (src.facetKey) where.unshift("f.key = ?"), params.unshift(src.facetKey);
     // Autocomplete: values starting with what was typed (LIKE folds ASCII case, as match.ts).
     const typed = o.prefix ? " AND v LIKE ? ESCAPE '\\'" : "";
-    const sql = `SELECT v, COUNT(DISTINCT sid) AS n FROM (SELECT ${src.value} AS v, s.id AS sid FROM ${src.from} ${where.length ? `WHERE ${where.join(" AND ")}` : ""})
+    const cond = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const g = src.group;
+    // A value read from a few columns (repo): count the sessions per distinct set of them, then work
+    // the value out once per set (one row per session here, so the sum counts each once). Without
+    // MATERIALIZED, SQLite copies the value into the outer WHERE and GROUP BY and works it out
+    // there again, per session if it pushes that WHERE down into g.
+    const sql = g
+      ? `WITH g AS MATERIALIZED (SELECT ${g.cols.map((c, i) => `${c} AS c${i}`).join(", ")}, COUNT(*) AS c FROM ${src.from} ${cond} GROUP BY ${g.cols.map((_, i) => i + 1).join(", ")}),
+      named AS MATERIALIZED (SELECT ${g.sql} AS v, c FROM g)
+      SELECT v, SUM(c) AS n FROM named WHERE v IS NOT NULL AND v <> ''${typed} GROUP BY v ORDER BY n DESC, v LIMIT ?`
+      : `SELECT v, COUNT(DISTINCT sid) AS n FROM (SELECT ${src.value} AS v, s.id AS sid FROM ${src.from} ${cond})
       WHERE v IS NOT NULL AND v <> ''${typed} GROUP BY v ORDER BY n DESC, v LIMIT ?`;
     if (o.prefix) params.push(`${like(o.prefix)}%`);
     params.push(o.limit ?? 20);
