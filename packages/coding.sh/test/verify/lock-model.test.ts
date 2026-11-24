@@ -42,11 +42,12 @@
 // states. Three is the fewest where one holder dies and two contenders race to break its lock, and one
 // stall is the fewest that lets in a second holder. CODING_SH_MODEL_BOUND=n gives each contender n more
 // attempts, so a process that lost its lock can contend again, and allows n more crashes. It also adds a
-// run with n more stalls and one attempt each, which checks that two stalls let in at most two more
-// holders. At 1 the run with one stall has 617,586 states (about 8 s) and the one with two stalls
-// 236,077; at 2 they have 2,342,064 (about 45 s) and 711,165. A holder beats once per hold, where the
-// code beats every interval: each later beat repeats the first one's race, a read and then a touch of
-// whatever file is there, so it can refresh a successor's lock again.
+// run with n more stalls and one attempt each. With three processes every invariant holds trivially
+// after two stalls, so that run checks that no state gets stuck and that the shortest way to three
+// holders takes two stalls. At 1 the run with one stall has 617,586 states (about 8 s) and the one with
+// two stalls 236,077; at 2 they have 2,342,064 (about 45 s) and 711,165. A holder beats once per hold,
+// where the code beats every interval: each later beat repeats the first one's race, a read and then a
+// touch of whatever file is there, so it can refresh a successor's lock again.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { actionsOf, check, formatTrace, type Action, type CheckResult, type Model } from "../_model.ts";
@@ -491,8 +492,10 @@ test("each check the code makes on purpose breaks an invariant when left out", (
   }
 });
 
-// One attempt each: more attempts and more stalls together pass ten million states.
-test("with more stalls each one lets in at most one more holder", { skip: extra === 0 && "the bound adds the stalls" }, (t) => {
+// One attempt each: more attempts and more stalls together pass ten million states. With three
+// processes every invariant holds trivially after two stalls, so this run checks for stuck states and
+// for how a third holder gets in.
+test("with more stalls no state gets stuck, and the shortest way to three holders takes two stalls", { skip: extra === 0 && "the bound adds the stalls" }, (t) => {
   const cfg: Config = { procs: 3, rounds: 1, crashes: 1, stalls: 1 + extra };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
