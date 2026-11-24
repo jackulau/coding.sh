@@ -2096,7 +2096,7 @@ async function request(path, init, quiet) {
   if (!quiet) busy(1);
   try {
     const res = await fetch(path, { credentials: "same-origin", ...init });
-    if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by coding.sh ui.");
+    if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by " + forShell("coding.sh ui") + ".");
     return res;
   } finally {
     if (!quiet) busy(-1);
@@ -2252,6 +2252,10 @@ const unsafeCmds = new Set();
 const IS_WIN = /Win/.test(String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""));
 function forShell(command) {
   return IS_WIN ? String(command).replace(/^(npx )?coding\.sh(?= |$)/, (_, npx) => (npx ? "npx -p coding.sh codingsh" : "codingsh")) : command;
+}
+// The index's age line comes from the server in the CLI's words; its command gets the same rename.
+function indexText(text) {
+  return IS_WIN ? String(text).replace(/\brun coding\.sh ingest\b/, "run " + forShell("coding.sh ingest")) : text;
 }
 // A command for the clipboard: the fixed command words, then each value quoted.
 function shCmd(command, ...args) {
@@ -5812,7 +5816,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const trials = h("div", { class: "seg", role: "group", "aria-label": "Forked calls" }, [1, 3, 5].map((k) => h("button", { type: "button", "aria-pressed": String(f.trials === k), onclick: () => { f.trials = k; renderReplayPane(); } }, "×" + k)));
     out.push(h("div", { class: "rp-fork-go" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: f.busy || !pv.canCall, onclick: forkRun }, f.busy ? "Forking…" : "Run fork"), trials,
-      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where coding.sh ui runs.")));
+      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where " + forShell("coding.sh ui") + " runs.")));
     const r = f.result;
     const rows = [h("span", { class: "meta" }, "recorded"), h("code", null, pv.recorded ? pv.recorded.label : "no recorded reply"), h("span")];
     if (r) r.trials.forEach((t, i) => rows.push(h("span", { class: "meta" }, r.trials.length > 1 ? "forked " + (i + 1) : "forked"), h("code", { class: t.error ? "tone-fail" : "" }, t.error ? "error: " + t.error : t.label),
@@ -8156,10 +8160,11 @@ function workCounts(counts) {
   const parts = WORK_BUCKETS.filter(([b]) => counts[b]).map(([b, label]) => counts[b] + " " + label.toLowerCase());
   return parts.length ? parts.join(" · ") : "nothing needs you";
 }
-/** A snooze end comes as ISO, as `work --json` keeps it; people read it in local time, as the CLI prints it. */
+/** A snooze end comes as ISO, as `work --json` keeps it; people read it in local time, as the CLI prints it.
+ * A code part that starts with `coding.sh ` is a command, named for the shell; a file named coding.sh stays, as in the CLI. */
 function workNext(next) {
   const m = /^snoozed until (\d{4}-\d{2}-\d{2}T[\d:.]+Z)$/.exec(next || "");
-  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, forShell(text)) : text);
+  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, /^(npx )?coding\.sh /.test(text) ? forShell(text) : text) : text);
 }
 /** The CLI marks commands in a next step with backticks; the page shows them as code: [[false, "review: "], [true, "git diff"], …]. */
 function workNextParts(next) {
@@ -8243,7 +8248,7 @@ async function showWork(seq, query) {
     shown = doc;
     const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
     // How old the index is, in the CLI's words (an older server sends no `index`): in the line while fresh, a warning while old.
-    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, indexText(doc.index.text)) : null;
     swap(meta, workCounts(doc.counts) + " · since " + st.since, age && !doc.index.stale ? [" · ", age] : null);
     stageSeg.hidden = stagesMeta.hidden = !doc.stages;
     if (doc.stages) stagesMeta.textContent = "Stages: " + workStages(doc.stages);
@@ -8540,7 +8545,7 @@ async function showWorkItem(seq, id, query) {
     title.textContent = oneLine(doc.title) || "(untitled)";
     // Three lines show; the whole title is the tooltip.
     title.title = oneLine(doc.title);
-    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, doc.index.text) : null;
+    const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, indexText(doc.index.text)) : null;
     swap(meta, doc.id + " · " + workStateText(doc) + " · since " + st.since, age ? [" · ", age] : null);
     swap(slot, workItemPage(doc, st, act));
   };
@@ -9920,7 +9925,7 @@ const ingestState = { importing: false, captureSetUp: false, index: null };
 function indexAgeEl(el) {
   const ix = ingestState.index;
   el.hidden = !(ix && ix.text);
-  el.textContent = el.hidden ? "" : ix.text;
+  el.textContent = el.hidden ? "" : indexText(ix.text);
   el.classList.toggle("warn", !!(ix && ix.stale));
   return el;
 }

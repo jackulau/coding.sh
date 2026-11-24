@@ -56,6 +56,8 @@ const AGENTS = [
 ];
 const OLD = { updatedAt: new Date(NOW - 40 * 60e3).toISOString(), stale: true, text: "index updated 40m ago: waits and stalls are as of then; run coding.sh ingest" };
 const FRESH = { updatedAt: new Date(NOW - 4 * 60e3).toISOString(), text: "index updated 4m ago" };
+// The page names the line's command as its platform's shells run it (indexText in index.html).
+const shown = (text: string) => (process.platform === "win32" ? text.replace("run coding.sh ingest", "run codingsh ingest") : text);
 
 /** /api/work's answer: with `fresh` a newer server's fields (agents, sessionOf, index), else an older server's. */
 function doc(o: { fresh: boolean; index?: unknown }): Record<string, unknown> {
@@ -121,7 +123,7 @@ describe("Work page runs and the index's age in a browser", { skip: chrome ? fal
     assert.equal(await p.eval(`${sup}.textContent`), "Superseded by w2c2c2c");
     assert.equal(await p.eval(`${sup}.querySelector('a').getAttribute('href')`), "#/s/passed");
     // The old index's line, as `coding.sh work` prints it, in the warn style above the items; the counts line has no age.
-    assert.deepEqual(await p.eval("[...document.querySelectorAll('.index-age')].map((e) => [e.textContent, e.classList.contains('warn'), !!e.closest('.work-notes')])"), [[OLD.text, true, true]]);
+    assert.deepEqual(await p.eval("[...document.querySelectorAll('.index-age')].map((e) => [e.textContent, e.classList.contains('warn'), !!e.closest('.work-notes')])"), [[shown(OLD.text), true, true]]);
     assert.equal(await p.eval("document.querySelector('#work-h + .meta').textContent"), "2 failed · since 7d");
     assert.deepEqual(p.errors, []);
   });
@@ -156,7 +158,7 @@ describe("Work page runs and the index's age in a browser", { skip: chrome ? fal
   test("the session list's header gives the index's age, and a worktree session's repo is its main checkout", async () => {
     const p = await open("#/", { ingest: { ingesting: false, filesPending: 0, lastIngestAt: null, index: { ...OLD, text: "index updated 40m ago; run coding.sh ingest" } } },
       "document.querySelector('.index-age.live:not([hidden])')");
-    assert.deepEqual(await p.eval("[...document.querySelectorAll('.index-age')].map((e) => [e.textContent, e.classList.contains('warn'), !!e.closest('.fact-line')])"), [["index updated 40m ago; run coding.sh ingest", true, true]]);
+    assert.deepEqual(await p.eval("[...document.querySelectorAll('.index-age')].map((e) => [e.textContent, e.classList.contains('warn'), !!e.closest('.fact-line')])"), [[shown("index updated 40m ago; run coding.sh ingest"), true, true]]);
     await p.waitFor("document.querySelectorAll('.row .repo-cell').length === 2", "the rows");
     assert.deepEqual(await p.eval("[...document.querySelectorAll('.row .repo-cell')].map((c) => [c.textContent, c.title])"), [["demo", "/work/demo"], ["api", "/work/api"]]);
     assert.deepEqual(p.errors, []);

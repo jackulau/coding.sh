@@ -32,7 +32,7 @@ function page(nav: Record<string, unknown>) {
     toast: (m: string) => toasts.push(m),
     h: (tag: string, attrs: unknown, ...kids: any[]) => ({ tag, attrs, kids }),
   };
-  const names = ["forShell", "shq", "shCmd", "copy", "cmdBlock", "workNextParts", "workNext"];
+  const names = ["forShell", "indexText", "shq", "shCmd", "copy", "cmdBlock", "workNextParts", "workNext"];
   const f: any = runInNewContext(`${consts}\n${names.map((n) => fn(n)).join("\n")}\n({ IS_WIN, ${names.join(", ")} })`, ctx);
   return { f, copied, toasts };
 }
@@ -96,6 +96,12 @@ test("on Windows each command the page shows or copies starts with codingsh, whi
     assert.match(toasts.at(-1)!, /^Not copied/);
     // The work queue's next step comes from the server, with its commands in backticks.
     assert.equal(plain(f.workNext("`coding.sh show a`, then `claude --resume a`")), "<codingsh show a>, then <claude --resume a>");
+    // A backticked file named coding.sh is not a command, as the CLI reads it.
+    assert.equal(plain(f.workNext("review: `coding.sh`, `src/a.ts`")), "review: <coding.sh>, <src/a.ts>");
+    // The index's age line, in the CLI's words (src/viewer/work.ts, src/core/ingest-health.ts).
+    assert.equal(f.indexText("index updated 40m ago; run coding.sh ingest"), "index updated 40m ago; run codingsh ingest");
+    assert.equal(f.indexText("index updated 3h ago: waits and stalls are as of then; run coding.sh ingest"), "index updated 3h ago: waits and stalls are as of then; run codingsh ingest");
+    assert.equal(f.indexText("index updated 4m ago"), "index updated 4m ago");
   }
   for (const nav of [{ platform: "MacIntel" }, { platform: "Linux x86_64" }, { userAgentData: { platform: "macOS" }, platform: "MacIntel" }, {}]) {
     const { f } = page(nav);
@@ -103,6 +109,7 @@ test("on Windows each command the page shows or copies starts with codingsh, whi
     assert.equal(f.forShell("npx coding.sh init"), "npx coding.sh init");
     assert.equal(f.cmdBlock("coding.sh doctor").kids[0].attrs.text, "coding.sh doctor");
     assert.equal(plain(f.workNext("`coding.sh show a`, then `claude --resume a`")), "<coding.sh show a>, then <claude --resume a>");
+    assert.equal(f.indexText("index updated 40m ago; run coding.sh ingest"), "index updated 40m ago; run coding.sh ingest");
   }
 });
 
@@ -122,6 +129,14 @@ test("a command the page writes into code goes through forShell, the page's one 
     if (/h\("code", (?:null, |\{\s*text:\s*)["'`](?:npx )?coding\.sh\b/.test(line)) bad.push(`${i + 1}: ${line.trim()}`);
   });
   assert.deepEqual(bad, [], "show commands as h(\"code\", null, forShell(...)), or with cmdBlock()");
+});
+
+test("text the page writes that names a command goes through forShell: the index's age and the token and API key messages", () => {
+  // The age line on the Work page, a work item's page and the session list's header.
+  assert.equal(script.match(/indexText\((?:doc\.index|ix)\.text\)/g)?.length, 3);
+  assert.doesNotMatch(script, /\}, doc\.index\.text\)|: ix\.text;/);
+  assert.match(script, /Reopen the URL printed by " \+ forShell\("coding\.sh ui"\) \+ "\."/);
+  assert.match(script, /" where " \+ forShell\("coding\.sh ui"\) \+ " runs\."/);
 });
 
 test("every copy( call copies a command named for the shell, or text that is not a command", () => {
