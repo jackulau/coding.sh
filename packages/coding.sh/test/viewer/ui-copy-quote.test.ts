@@ -237,7 +237,8 @@ test("text the page writes that names a command goes through forShell: the index
   assert.equal(script.match(/indexText\((?:doc\.index|ix)\.text\)/g)?.length, 3);
   assert.doesNotMatch(script, /\}, doc\.index\.text\)|: ix\.text;/);
   assert.match(script, /Reopen the URL printed by " \+ forShell\("coding\.sh ui"\) \+ "\."/);
-  assert.match(script, /" where " \+ forShell\("coding\.sh ui"\) \+ " runs\."/);
+  // The Fork from here hint, which names the key a provider needs.
+  assert.match(script, /" or CLAUDE_CODE_OAUTH_TOKEN" : ""\) \+ " and restart " \+ forShell\("coding\.sh ui"\) \+ "\."/);
 });
 
 test("every copy( call copies a command named for the shell, or text that is not a command", () => {
