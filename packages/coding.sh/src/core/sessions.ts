@@ -1111,7 +1111,10 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       break;
     case "notification":
       // A fork subagent (Claude Code): how much of the parent's context it started with. A count below 0 or not finite is skipped.
-      if (e.payload.kind === "fork") s.inheritedTokens ??= count(e.payload.inheritedTokens);
+      if (e.payload.kind === "fork") {
+        const n = count(e.payload.inheritedTokens);
+        if (n !== undefined) s.inheritedTokens ??= n;
+      }
       // A host that names the thread (T3 Code): its title reads better than a handoff or delegation preamble.
       if (e.payload.type === "host-link" && typeof e.payload.title === "string" && e.payload.title.trim()) s.hostTitle ??= makeTitle(e.payload.title);
       // A host that knows who started the thread (T3 Code): a person's thread is interactive, whatever the agent's SDK says.
