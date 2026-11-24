@@ -324,6 +324,11 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   window, with acks and snoozes applied. `more` counts the items left out, and `rest` names
   `coding.sh work --json`, which lists them. The tool stays
   read-only: ack and snooze stay with the user.
+- In PowerShell and cmd, the commands in each item's next step name `codingsh`, the bin that runs
+  there ([Windows](../guides/install.md#windows)), in `work`, `work show` and `work ack --json`. The
+  MCP `work` and `status` tools do the same when PowerShell or cmd started the server, and the
+  `status` tool's `rest` names that bin too. Under npx they name the npx form. The agent's own
+  resume command stays as it is.
 - The MCP `work` tool pages the queue as `work --json` gives it, with `limit` and `cursor`, and
   the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
   `work show` finds it (an item id, a prefix of one, or the id of a session in the item, hidden or

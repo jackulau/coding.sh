@@ -5,12 +5,15 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { UsageError } from "../../src/cli/args.ts";
 import * as improve from "../../src/cli/commands/improve.ts";
 import * as status from "../../src/cli/commands/status.ts";
+import * as work from "../../src/cli/commands/work.ts";
 import { cliCommand } from "../../src/cli/next-steps.ts";
 import { CliError, Output } from "../../src/cli/output.ts";
 import { paths } from "../../src/core/paths.ts";
-import { runCmd, sandbox, type Sandbox } from "./_cmd.ts";
+import { workItemId } from "../../src/core/work.ts";
+import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
 function capture(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, json = false) {
   const res = { stdout: "", stderr: "" };
@@ -89,5 +92,44 @@ describe("status and improve name codingsh in PowerShell", () => {
     assert.equal(r.error, undefined, String(r.error));
     assert.match(r.stderr, /\n {4}codingsh (init|doctor|improve)/, r.stderr);
     assert.doesNotMatch(r.stderr, /\n {4}coding\.sh /);
+  });
+});
+
+describe("work names codingsh in each item's next step in PowerShell", () => {
+  let sb: Sandbox;
+  const id = workItemId("broke");
+  before(async () => {
+    sb = sandbox();
+    // Ended on failing tests with a file changed: failed first, and ready for review once the failure is acked.
+    const at = Date.now() - 30 * 60e3;
+    await sb.seed([mkSession("broke", at, { cwd: "/work/demo", title: "fix the parser", endedAt: at + 10 * 60e3, stats: { testsFailed: 2, filesChanged: 1 } })]);
+  });
+  after(() => sb.cleanup());
+
+  it("in the list and work show, in text and --json; the agent's own resume command stays", async () => {
+    const list = await runCmd(work, sb, { platform: "win32", json: true });
+    assert.equal(list.error, undefined, list.error?.stack);
+    const next = list.json.items[0].next as string;
+    assert.match(next, /^`codingsh show [^`]+`, then `claude --resume broke`$/);
+    const text = await runCmd(work, sb, { platform: "win32" });
+    assert.ok(text.stdout.includes(`next: ${next}`), text.stdout);
+    const show = await runCmd(work, sb, { platform: "win32", action: "show", positionals: [id], json: true });
+    assert.equal(show.json.next, next);
+    const shown = await runCmd(work, sb, { platform: "win32", action: "show", positionals: [id] });
+    assert.match(shown.stdout, /\n {2}Next +`codingsh show /);
+    const linux = await runCmd(work, sb, { platform: "linux", json: true });
+    assert.equal(linux.json.items[0].next, next.replace("`codingsh ", "`coding.sh "));
+  });
+
+  it("in what work ack --json says the item shows now, and in a missing argument's usage", async () => {
+    const usage = await runCmd(work, sb, { platform: "win32", action: "show" });
+    assert.ok(usage.error instanceof UsageError, String(usage.error));
+    assert.equal(usage.error.message, "Missing argument <ID>. Usage: codingsh work show <id>");
+    const a = await runCmd(work, sb, { platform: "win32", action: "ack", positionals: [id], json: true });
+    assert.equal(a.error, undefined, a.error?.stack);
+    assert.equal(a.json.bucket, "failed");
+    assert.equal(a.json.now.bucket, "review");
+    assert.ok(a.json.now.next.includes(`\`codingsh work ack ${id}\``), a.json.now.next);
+    assert.doesNotMatch(a.json.now.next, /`coding\.sh /);
   });
 });

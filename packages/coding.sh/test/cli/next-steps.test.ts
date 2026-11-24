@@ -11,7 +11,7 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as init from "../../src/cli/commands/init.ts";
 import * as uninstall from "../../src/cli/commands/uninstall.ts";
 import { checkFailed, reinstallCommand, runUpdate, type UpdateDeps } from "../../src/cli/commands/update.ts";
-import { cliCommand, nextStepBin, quoteArg, rerunWithYes, runCommand } from "../../src/cli/next-steps.ts";
+import { cliCommand, commandsForShell, nextStepBin, quoteArg, rerunWithYes, runCommand } from "../../src/cli/next-steps.ts";
 import { CliError } from "../../src/cli/output.ts";
 import type { CommandModule } from "../../src/cli/types.ts";
 import { resolveWindowsCommand } from "../../src/core/spawn.ts";
@@ -115,6 +115,31 @@ describe("reinstalling the latest release", () => {
     assert.ok(r.error instanceof CliError, String(r.error));
     assert.equal(r.error.reason, "no_install_target");
     assert.deepEqual(r.error.next, ["Reinstall the latest release:", process.platform === "win32" ? "npm install -g coding.sh" : CURL]);
+  });
+});
+
+describe("commands in backticks, as in a work item's next step", () => {
+  const step = "review: `git -C /work/demo diff`, then `coding.sh work ack w1a2b3c`";
+
+  test("in PowerShell and cmd, each one that runs coding.sh names codingsh; other commands, paths and prose stay", () => {
+    const win = (s: string) => commandsForShell(s, {}, "win32");
+    assert.equal(win(step), "review: `git -C /work/demo diff`, then `codingsh work ack w1a2b3c`");
+    assert.equal(win("`coding.sh show s1`, then `claude --resume s1`"), "`codingsh show s1`, then `claude --resume s1`");
+    // A file named coding.sh is a path, not a command; text outside backticks is prose.
+    assert.equal(win("review: `coding.sh`, `src/a.ts` (outside /work/demo)"), "review: `coding.sh`, `src/a.ts` (outside /work/demo)");
+    assert.equal(win("run coding.sh work ack w1"), "run coding.sh work ack w1");
+    // An odd backtick leaves no span to trust.
+    assert.equal(win("a ` and `coding.sh work ack w1`"), "a ` and `coding.sh work ack w1`");
+    // A second pass changes nothing.
+    assert.equal(win(win(step)), win(step));
+  });
+
+  test("under npx it is the npx form; Git Bash, Cygwin, Linux and macOS keep coding.sh", () => {
+    assert.equal(commandsForShell(step, { npm_command: "exec" }, "win32"), step.replace("`coding.sh ", "`npx -p coding.sh codingsh "));
+    assert.equal(commandsForShell(step, { npm_command: "exec" }, "linux"), step.replace("`coding.sh ", "`npx coding.sh "));
+    for (const [env, platform] of [[{ MSYSTEM: "MINGW64" }, "win32"], [{ SHELL: "/usr/bin/bash" }, "win32"], [{}, "linux"], [{}, "darwin"]] as const) {
+      assert.equal(commandsForShell(step, env, platform), step, `${platform} ${JSON.stringify(env)}`);
+    }
   });
 });
 
