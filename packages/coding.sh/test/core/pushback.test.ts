@@ -51,6 +51,9 @@ describe("pushbackKind", () => {
       "Remove what you added to main.ts",
       "restore the original",
       "I want it back to how it was",
+      "undo the rename",
+      "revert that, it broke prod",
+      "Roll back the prod deploy, your change broke checkout",
     ],
     redo: [
       "try again",
@@ -64,6 +67,7 @@ describe("pushbackKind", () => {
       "I don't like it",
       "I don't like the naming, rename them",
       "give it another try",
+      "no, start from scratch on the parser",
     ],
     broken: [
       "it's still broken",
@@ -111,7 +115,7 @@ describe("pushbackKind", () => {
     }
   });
 
-  test("leaves out a feature, a condition, a check or a question that uses the same words", () => {
+  test("leaves out a feature, a condition, a check, a question or praise that uses the same words", () => {
     for (const t of [
       "Can you add an undo button to the toolbar?",
       "Add a revert command to the CLI",
@@ -132,9 +136,37 @@ describe("pushbackKind", () => {
       "I didn't work on that part, it's new",
       "Put the tests in a separate file",
       "Restore the database from the backup",
+      "Add a button to go back to the previous step",
+      "Add a start over button to the wizard",
+      "Nice, you broke it into smaller functions",
+      "Great, you broke it down nicely",
+      "Make the handler return the same error as v1",
+      "Same error handling as bar.ts, please",
+      "I don't like this library, but we must use it. Wrap it.",
     ]) {
       assert.equal(pushbackKind(t), undefined, t);
     }
+  });
+
+  test("leaves out work the prompt places outside the agent's last turn", () => {
+    for (const t of [
+      "Roll back the prod deploy to v1.2",
+      "Revert commit abc123 on the release branch",
+      "Undo the last migration in prod, it was mine",
+      "Undo my last commit, I pushed it by mistake",
+      "Start from scratch on the README, it is out of date",
+      "The upstream API still fails on 429s; add a retry",
+      "The tests are still failing on main from before your change; investigate",
+      "Same error as the one in issue #12: add a regression test",
+      "It doesn't work offline yet: add offline support",
+      "I didn't change anything in that file, so the diff is yours",
+      "I didn't fix the lint myself, can you?",
+    ]) {
+      assert.equal(pushbackKind(t), undefined, t);
+    }
+    // The same words count when the prompt says the agent made it.
+    assert.equal(pushbackKind("roll back the migration you added"), "undo");
+    assert.equal(pushbackKind("Revert the deploy you just did"), "undo");
   });
 
   test("reads a curly apostrophe as a straight one", () => {

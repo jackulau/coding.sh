@@ -125,6 +125,8 @@ for the build" and "actually, also add a test" are not pushback.
   +6.7 to +100.0pp. Check the counts before you trust a difference.
 - Pushback is read from the words of your next prompt, its first 400 characters. Other corrections,
   such as "you forgot the docs", name no kind and do not count.
+- A prompt about work outside the agent's last turn, such as "roll back the prod deploy to v1.2",
+  names no kind. The kinds come from matching words, so some prompts are still read wrong.
 - A turn's time includes the time it waited on you, such as at a permission prompt.
 - Each session keeps up to 500 turn times per model.
 - With `capture.mode = "metadata"` no prompt text is stored, so there are no pushback rows. A

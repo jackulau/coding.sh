@@ -16,7 +16,13 @@
 // name none either: "no problem", "wait for the build" and "actually, also add a test" are not
 // pushback. Nor is a phrase that names a feature ("add an undo button", "a retry loop that will
 // try again"), a condition or a check ("if that doesn't work, use the fallback", "make sure the
-// test still fails without the fix"), or a question ("is it still failing?").
+// test still fails without the fix"), a question ("is it still failing?") or praise ("you broke
+// it into smaller functions"). Nor is work the prompt places outside the agent's last turn: a
+// deploy, release or migration, a commit or version by name, the person's own change ("roll back
+// the prod deploy to v1.2", "revert commit abc123", "undo my last commit"), a failure from before
+// the agent's change or in someone else's code ("the upstream API still fails on 429s"), or a
+// feature not built yet ("it doesn't work offline yet"). Such work still counts when the prompt
+// says the agent made it ("roll back the migration you added").
 import type { PushbackKind } from "../schema/index.ts";
 
 export type { PushbackKind };
@@ -35,6 +41,8 @@ export const PUSHBACK_KINDS = ["intent", "undo", "redo", "broken"] as const sati
 
 /** Words a prompt can open with before the part that names the kind: "no, undo that", "ok, try again". */
 const LEAD = String.raw`^(?:(?:no|nope|nah|ok|okay|hmm+|ugh+|um+|uh+|please|pls|wait|sorry|actually|well|so|hey|stop)\b[\s,.!:;-]*)*`;
+/** At least one word that reacts to the last turn: "no, start over on the parser". */
+const REACT = String.raw`^(?:(?:no|nope|nah|hmm+|ugh+|wait|stop|actually)\b[\s,.!:;-]*)+`;
 /** Not when the clause so far makes it a condition or a check: "if that doesn't work", "make sure it still fails". */
 const GUARD = String.raw`(?<!\b(?:if|when|unless|whether|until|in case|check|checks|verify|verifies|ensure|ensures|confirm|make sure|be sure)\b[^.!?,;\n]{0,40})`;
 /** Not in a sentence that sets a condition: "if the request fails, try again". */
@@ -43,6 +51,27 @@ const COND = String.raw`(?<!\b(?:if|when|unless|whether|until|in case)\b[^.!?\n]
 const ASKED = String.raw`(?<!(?:^|[.!?]\s*)(?:is|are|was|were|does|do|did)\s+(?:it|that|this|they|the\s+\w+)\s+)`;
 /** Not the name of a feature: "an undo button", "a revert command". */
 const FEATURE = String.raw`(?!\s+(?:button|command|feature|function|option|support|stack|history|log|logic|script|tool|key|shortcut|endpoint|api|operation|action|mechanism|handler)s?\b)`;
+/** Not what a feature does: "a button to go back to the previous step". */
+const FEATURE_BEFORE = String.raw`(?<!\b(?:button|link|command|feature|function|option|tool|key|shortcut|menu|control|action|mode|endpoint|handler|setting|way|ability)s?\b[^.!?,;\n]{0,30})`;
+/** The clause names the agent's work: "the migration you added", "your commit". */
+const OWNED = String.raw`(?=[^.!?;\n]{0,80}?\b(?:your|you(?:'ve| have)? (?:just |already )?(?:added|made|wrote|did|changed|created|pushed|committed|ran|applied|introduced|deployed|merged|shipped|put|moved|removed|deleted|renamed))\b)`;
+/**
+ * The clause, up to a comma, places the work nowhere else: not prod, a deploy, release or
+ * migration, a pull request, a commit or version by name, or the person's own change.
+ */
+const NOT_ELSEWHERE = String.raw`(?![^.!?;,\n]{0,80}?(?:\b(?:prod|production|staging|deploys?|deployments?|releases?|migrations?|pull requests?|i (?:made|wrote|added|pushed|committed|deployed|did)|my (?:own |last |latest |previous |recent )?(?:changes?|commits?|edits?|work|fix|patch|pr|branch))\b|\bv\d+(?:\.\d+)+\b|\bcommit (?=[0-9a-f]*\d)[0-9a-f]{4,40}\b|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|#\d+\b))`;
+/** A named object is the agent's work: the clause says so, or places it nowhere else. */
+const AGENTS = `(?:${OWNED}|${NOT_ELSEWHERE})`;
+/** Not a failure the prompt says came first: "still failing on main from before your change", "pre-existing". */
+const BEFORE_YOU = String.raw`(?![^.!?;\n]{0,60}?\b(?:(?:from|since) before|before (?:your|you)\b[^.!?;\n]{0,30}?\b(?:too|as well)|pre-?existing|unrelated to (?:your|you|the|this))\b)`;
+/** Not someone else's code: "the upstream API still fails". */
+const OUTSIDE = String.raw`(?<!\b(?:upstream|third[- ]party|vendor|external|remote|their|legacy)\b[^.!?,;\n]{0,40})`;
+/** Not a feature not built yet: "it doesn't work offline yet". */
+const NOT_YET = String.raw`(?!(?:\s+[\w-]+){1,2}\s+yet\b)`;
+/** Not splitting code up: "you broke it into smaller functions", "you broke down the parser". */
+const SPLIT = String.raw`(?!\s+(?:(?:it|this|that|them|things|everything|the\s+\w+(?:\s+\w+)?)\s+)?(?:down|into|up|apart|out)\b)`;
+/** Not "same error" inside another name, or the same as something named: "the same error handling", "the same error as v1" ("as before" still counts). */
+const SAME_AS = String.raw`(?!\s+(?:handling|handler|handlers|class|classes|format|formatting|shape|logic|reporting|path|paths|wrapper|helper|helpers|pattern|style|semantics|contract|object|boundary|boundaries)\b)(?!(?:\s+\w+)?\s+as\s+(?!(?:before|earlier|previously|then|yesterday|last time|the last|the previous|the first)\b))`;
 
 const any = (parts: string[]): RegExp => new RegExp(parts.join("|"), "i");
 
@@ -58,9 +87,10 @@ const KIND_PATTERNS: [PushbackKind, RegExp][] = [
     String.raw`\b(?:that'?s|that is|this is) the wrong (?:file|one|function|method|class|component|page|place|branch|repo|folder|directory|thing)\b`,
   ])],
   ["undo", any([
-    LEAD + String.raw`(?:undo|revert|roll ?back|back out)\b` + FEATURE,
-    GUARD + String.raw`\b(?:undo|revert|roll ?back|back out|reverse)\s+(?:that|this|it|those|these|them|your|everything|all (?:of )?(?:that|this|it|those|these|your|the)\b|the (?:last|previous|latest|recent)\b|the (?:changes?|edits?|commits?)\b)`,
-    GUARD + String.raw`\b(?:revert|roll ?back|go back) to (?:the )?(?:previous|original|old|last|earlier|prior)\b`,
+    LEAD + String.raw`(?:undo|revert|roll ?back|back out)\b` + FEATURE + AGENTS,
+    GUARD + String.raw`\b(?:undo|revert|roll ?back|back out|reverse)\s+(?:it|them|everything|your|all (?:of )?(?:it|them|your))\b`,
+    GUARD + String.raw`\b(?:undo|revert|roll ?back|back out|reverse)\s+(?:that|this|those|these|all (?:of )?(?:that|this|those|these|the)|the (?:last|previous|latest|recent)|the (?:changes?|edits?|commits?))\b` + AGENTS,
+    GUARD + FEATURE_BEFORE + String.raw`\b(?:revert|roll ?back|go back) to (?:the )?(?:previous|original|old|last|earlier|prior)\b` + AGENTS,
     String.raw`\bput (?:it|that|this|them|those|these|everything|the \w+(?: \w+)?) back\b`,
     String.raw`\b(?:change|set|switch|turn|move) (?:it|that|this|them) back\b`,
     String.raw`\bremove (?:that|those)\b(?=\s*(?:[.!?,;:]|$|again\b|please\b|too\b|now\b|entirely\b|completely\b))`,
@@ -71,26 +101,28 @@ const KIND_PATTERNS: [PushbackKind, RegExp][] = [
     String.raw`\bback to (?:how|what|the way) it was\b`,
   ])],
   ["redo", any([
-    LEAD + String.raw`(?:try (?:it |that |this )?again|redo\b${FEATURE}|start (?:over|again|from scratch)|do (?:it|that|this) over)`,
+    LEAD + String.raw`(?:try (?:it |that |this )?again|redo\b${FEATURE}|start (?:over|again|from scratch)\b${FEATURE}(?!\s+(?:on|for)\b)|do (?:it|that|this) over)`,
+    REACT + String.raw`start (?:over|again|from scratch)\b`,
     COND + String.raw`\b(?:please|pls|can you|could you|let'?s|just) try (?:it |that |this )?again\b`,
     COND + String.raw`\btry (?:it |that |this )?again[\s.!]*$`,
     String.raw`\bredo (?:it|that|this|them|those|everything|the (?:whole|entire)\b|the (?:changes?|edits?|work|implementation|fix|refactor|design|layout|thing|code|tests?|function|file|page|ui)\b)`,
-    String.raw`\bstart (?:over|from scratch)\b`,
+    COND + String.raw`\bstart (?:over|from scratch)\b` + FEATURE + String.raw`(?!\s+(?:on|for)\b)`,
     String.raw`\bgive it another (?:try|shot|go|attempt)\b`,
-    String.raw`\bi (?:don'?t|do not) like (?:it|that|this|those|these|them|the (?:result|results|change|changes|approach|way|design|look|output|names?|naming|style|implementation|fix|solution|code|answer|ui|layout|wording|version))\b(?!\s+(?:when|if|how|because)\b)`,
+    String.raw`\bi (?:don'?t|do not) like (?:it|them|(?:that|this|those|these)(?=\s*(?:[.!?,;:)]|$|(?:at all|either|one|ones|much|very much|so much|anymore|any more)\b))|(?:the|this|that|these|those|your) (?:result|results|change|changes|approach|way|design|look|output|names?|naming|style|implementation|fix|solution|code|answer|ui|layout|wording|version))\b(?!\s+(?:when|if|how|because)\b)`,
     String.raw`\bnot (?:happy|satisfied) with (?:it|that|this|the (?:result|results|change|changes|approach|output|fix|solution))\b`,
   ])],
   ["broken", any([
-    GUARD + ASKED + String.raw`\bstill (?:broken|failing|fails|failed|crashing|crashes|crashed|erroring|errors out|throwing|throws|hangs|hanging|red|wrong|not (?:working|work|fixed|passing|compiling|building|right)|(?:doesn'?t|does not|won'?t|will not) (?:work|pass|compile|build|start|run))\b`,
-    GUARD + String.raw`\b(?:didn'?t|did not) (?:work(?! on\b)|fix|help|solve|change anything|do anything)\b`,
-    GUARD + String.raw`\b(?:it|that|this|they) (?:still )?(?:doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not) (?:work|working|fixed|compile|compiling)\b`,
-    GUARD + String.raw`\b(?:it'?s|it is|that'?s|that is|this is) (?:still )?not (?:working|fixed|compiling)\b`,
-    GUARD + String.raw`\byou(?:'ve| have| just)? (?:broke|broken)\b`,
-    GUARD + String.raw`\b(?:that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:broke|has broken|have broken)\b`,
-    GUARD + String.raw`\b(?:get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws?|throwing|shows?|showing|gives?|giving|returns?|returning)\s+(?:the\s+)?same (?:error|errors|failure|failures|exception|crash|problem|issue)\b`,
-    LEAD + String.raw`(?:the )?same (?:error|errors|failure|failures|exception|crash)\b`,
+    GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:broken|failing|fails|failed|crashing|crashes|crashed|erroring|errors out|throwing|throws|hangs|hanging|red|wrong|not (?:working|work|fixed|passing|compiling|building|right)|(?:doesn'?t|does not|won'?t|will not) (?:work|pass|compile|build|start|run))\b` + BEFORE_YOU,
+    // Not the person's own "I didn't fix it".
+    GUARD + String.raw`(?<!\bi (?:\w+ )?)\b(?:didn'?t|did not) (?:work(?! on\b)|fix|help|solve|change anything|do anything)\b`,
+    GUARD + String.raw`\b(?:it|that|this|they) (?:still )?(?:doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not) (?:work|working|fixed|compile|compiling)\b` + NOT_YET,
+    GUARD + String.raw`\b(?:it'?s|it is|that'?s|that is|this is) (?:still )?not (?:working|fixed|compiling)\b` + NOT_YET,
+    GUARD + String.raw`\byou(?:'ve| have| just)? (?:broke|broken)\b` + SPLIT,
+    GUARD + String.raw`\b(?:that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:broke|has broken|have broken)\b` + SPLIT,
+    GUARD + String.raw`\b(?:get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws|throwing|threw|shows|showing|showed|gives|giving|gave|returns|returning|returned)\s+(?:the\s+)?same (?:error|errors|failure|failures|exception|crash|problem|issue)\b` + SAME_AS,
+    LEAD + String.raw`(?:the )?same (?:error|errors|failure|failures|exception|crash)\b` + SAME_AS,
     GUARD + String.raw`\bsame (?:error|errors|failure|exception|crash) (?:as before|again)\b`,
-    GUARD + ASKED + String.raw`\bstill (?:get|getting|see|seeing|have|having)(?: (?:the|an|this|that|a))? (?:error|errors|failure|failures|exception|crash)\b`,
+    GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:get|getting|see|seeing|have|having)(?: (?:the|an|this|that|a))? (?:error|errors|failure|failures|exception|crash)\b` + BEFORE_YOU,
     GUARD + String.raw`\b(?:fails|failing|failed|broken|crashing|crashes|crashed) again\b`,
   ])],
 ];
