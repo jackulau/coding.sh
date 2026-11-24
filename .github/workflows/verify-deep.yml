@@ -7,11 +7,11 @@ name: Verify deep
 # CODING_SH_PROP_RUNS, the values in its NIGHTLY table. A knob set below replaces the table's
 # value for every file that reads that knob.
 #
-# The nightly run, and a manual run with no inputs, use the table: about 7 minutes on a desk
-# machine, more on a runner. A pull request that changes test/verify, the model and property helpers
-# (test/_model.ts, test/_prop.ts), scripts/verify-deep.ts or this file runs each model at bound 1 and
-# each property file with 200 runs: about 4 minutes on the desk. A manual run can set the bound, the
-# runs and the seed.
+# The nightly run, and a manual run with no inputs, use the table: about 9 minutes on a desk
+# machine. A pull request that changes test/verify, the model and property helpers (test/_model.ts,
+# test/_prop.ts), scripts/verify-deep.ts or this file runs each model at bound 1 and each property
+# file with 200 runs: about 4 minutes on the desk. A manual run can set the bound, the runs and the
+# seed.
 #
 # The property files share one seed: the seed input when it is given, otherwise the run number.
 # It is printed first, and the job summary gives it with each file's knobs, result and time, and
