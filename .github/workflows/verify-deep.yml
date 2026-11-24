@@ -1,0 +1,127 @@
+name: Verify deep
+
+# The formal models and property tests in packages/coding.sh/test/verify, run far past the bounds
+# the test suite gives them (CONTRIBUTING.md, "Property and model tests"). `npm run verify:deep`
+# (packages/coding.sh/scripts/verify-deep.ts) runs one file at a time, each in a process of its
+# own: each model at a raised CODING_SH_MODEL_BOUND and each property file with more
+# CODING_SH_PROP_RUNS, the values in its NIGHTLY table. A knob set below replaces the table's
+# value for every file that reads that knob.
+#
+# The nightly run, and a manual run with no inputs, use the table: about 9 minutes on a desk
+# machine. A pull request that changes test/verify, the model and property helpers (test/_model.ts,
+# test/_prop.ts), scripts/verify-deep.ts or this file runs each model at bound 1 and each property
+# file with 200 runs: about 4 minutes on the desk. A manual run can set the bound, the runs and the
+# seed.
+#
+# The property files share one seed: the seed input when it is given, otherwise the run number.
+# It is printed first, and the job summary gives it with each file's knobs, result and time, and
+# the command that replays each failed file. A failed run keeps each file's output, the summary
+# and the seed as an artifact.
+
+on:
+  schedule:
+    # 03:17 UTC every night: off the hour, when the fewest scheduled runs start.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      bound:
+        description: "CODING_SH_MODEL_BOUND for every model (empty: each model's NIGHTLY bound)"
+        required: false
+        default: ""
+      runs:
+        description: "CODING_SH_PROP_RUNS for every property file (empty: each file's NIGHTLY runs)"
+        required: false
+        default: ""
+      seed:
+        description: "CODING_SH_PROP_SEED, a whole number below 2^32 or random (empty: the run number)"
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - "packages/coding.sh/test/verify/**"
+      - "packages/coding.sh/test/_model.ts"
+      - "packages/coding.sh/test/_prop.ts"
+      - "packages/coding.sh/scripts/verify-deep.ts"
+      - ".github/workflows/verify-deep.yml"
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces its run. A nightly or manual run is not cancelled once it
+# starts; a newer one waits for it, and replaces any run already waiting.
+concurrency:
+  group: verify-deep-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: verify deep
+    runs-on: ubuntu-latest
+    # Above the Verify step's own limit, so the artifact step still runs after it.
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: packages/coding.sh
+    env:
+      # A model holds every state it has reached: refold-model at bound 2 takes about 6.5 GB of heap.
+      # The runner has 16 GB.
+      NODE_OPTIONS: --max-old-space-size=12288
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        working-directory: .
+        run: npm ci --workspace packages/coding.sh
+
+      # The inputs reach the shell through env, never pasted into the script, and must be whole
+      # numbers (or random, for the seed) before they go to GITHUB_ENV. An empty knob counts as
+      # unset: each file keeps its NIGHTLY value.
+      - name: Knobs
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          IN_BOUND: ${{ inputs.bound }}
+          IN_RUNS: ${{ inputs.runs }}
+          IN_SEED: ${{ inputs.seed }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          seed=${IN_SEED:-$RUN_NUMBER}
+          bound=$IN_BOUND
+          runs=$IN_RUNS
+          if [ "$EVENT" = pull_request ]; then
+            bound=1
+            runs=200
+          fi
+          case "$seed" in
+            random) ;;
+            "" | *[!0-9]*) echo "::error::The seed must be a whole number or random."; exit 1 ;;
+          esac
+          case "$bound$runs" in
+            *[!0-9]*) echo "::error::The bound and the runs must be whole numbers."; exit 1 ;;
+          esac
+          echo "seed $seed"
+          {
+            echo "CODING_SH_PROP_SEED=$seed"
+            echo "CODING_SH_MODEL_BOUND=$bound"
+            echo "CODING_SH_PROP_RUNS=$runs"
+          } >> "$GITHUB_ENV"
+
+      # Each file has 20 minutes and the step 60: a file that hangs is stopped and named in the
+      # summary, and the rest still run.
+      - name: Verify
+        timeout-minutes: 60
+        run: npm run verify:deep -- --out "$RUNNER_TEMP/verify-deep" --minutes 20
+
+      - name: Keep the output
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: verify-deep-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verify-deep
+          retention-days: 14
+          if-no-files-found: ignore

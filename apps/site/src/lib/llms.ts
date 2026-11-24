@@ -63,7 +63,7 @@ export function llmsText(): string {
 
 > ${SITE.description}
 
-Also written coding shell, coding sh or codingsh (the \`.sh\` reads as "shell"); the CLI runs as \`coding.sh\` or \`codingsh\`. One tool.
+Also written coding shell, coding sh or codingsh (the \`.sh\` reads as "shell"); the CLI runs as \`coding.sh\` or \`codingsh\`. One tool, and one npm package, \`coding.sh\`: with npx, \`codingsh\` runs as \`npx -p coding.sh codingsh\`.
 
 Status: v${VERSION}, ${LICENSE} licensed. coding.sh is new: commands and file formats can still change between releases. Source: ${REPO_URL}
 

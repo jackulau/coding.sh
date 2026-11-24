@@ -2,8 +2,10 @@
 // file path, a benchmark name) is quoted by the page's one quoting function, shq(), and the
 // command itself is named for the shell by forShell(): codingsh on Windows.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 
@@ -61,11 +63,11 @@ test("shq leaves plain words alone and quotes anything a shell would read", () =
 test("a command whose value no quoting makes safe in every shell is shown but not copied", async () => {
   const { f, copied, toasts } = page({ platform: "MacIntel" });
   // PowerShell ends a single-quoted string at a curly quote; cmd.exe runs what follows &.
-  for (const v of ["x’; calc; ’", "it's", "a&calc", "a|b", "x\u0015y", "a\nb"]) {
+  for (const v of ["x’; calc; ’", "it's", "a&calc", "a|b", "x\u0015y", "x\u0085y", "a\nb"]) {
     await f.copy(f.shCmd("coding.sh eval new", v));
   }
   assert.deepEqual(copied, []);
-  assert.equal(toasts.length, 6);
+  assert.equal(toasts.length, 7);
   assert.match(toasts[0]!, /^Not copied/);
   await f.copy(f.shCmd("coding.sh eval new", "team/chat 1"));
   assert.deepEqual(copied, ["coding.sh eval new 'team/chat 1'"]);
@@ -111,6 +113,105 @@ test("on Windows each command the page shows or copies starts with codingsh, whi
     assert.equal(plain(f.workNext("`coding.sh show a`, then `claude --resume a`")), "<coding.sh show a>, then <claude --resume a>");
     assert.equal(f.indexText("index updated 40m ago; run coding.sh ingest"), "index updated 40m ago; run coding.sh ingest");
   }
+});
+
+test("on Windows a value goes in double quotes, and a value PowerShell, cmd or Git Bash would still read is shown but not copied", async () => {
+  const { f, copied, toasts } = page({ platform: "Win32" });
+  for (const v of ["team/chat-1", "a1b2c3d4-e5f6", "C:/work/demo/a.ts", "x=1", "--step", "3"]) assert.equal(f.shq(v), v);
+  // cmd.exe reads no single quotes, PowerShell drops a word that starts with @, and Git Bash
+  // drops a backslash outside quotes.
+  assert.equal(f.shq("team/chat 1"), '"team/chat 1"');
+  assert.equal(f.shq("@abc"), '"@abc"');
+  assert.equal(f.shq("a,b"), '"a,b"');
+  assert.equal(f.shq("src\\a.ts"), '"src\\a.ts"');
+  assert.equal(f.shq("it's"), '"it\'s"');
+  // A leading - unless the value is a plain flag: PowerShell splits -a.b in two, and through
+  // npm's codingsh.ps1 it also splits -a:b and drops a bare --.
+  for (const v of ["-a.b", "-a:b", "--", "-1", "--x=1"]) assert.equal(f.shq(v), `"${v}"`);
+  for (const v of ["-g", "--no-color"]) assert.equal(f.shq(v), v);
+  assert.equal(f.shCmd("coding.sh replay", "s1", "--with", "C:\\work\\my file.ts"), 'codingsh replay s1 --with "C:\\work\\my file.ts"');
+  const ok = ["team/chat 1", "it's", "C:\\work\\my file.ts", "x\u2019y"];
+  for (const v of ok) await f.copy(f.shCmd("coding.sh eval new", v));
+  assert.deepEqual(copied, ok.map((v) => `codingsh eval new "${v}"`));
+  const before = toasts.length;
+  // In double quotes PowerShell reads $ and `, Git Bash reads $, ` and !, and cmd.exe reads %.
+  // When PowerShell runs a .cmd file (npm's codingsh.cmd typed by name, or with no codingsh.ps1
+  // beside it), it passes a word with no space without its quotes, so cmd.exe also reads
+  // & | < > ^ there. A backslash before the closing quote escapes it, Git Bash reads two
+  // backslashes as one, and Windows PowerShell drops an empty value.
+  const refused = ['a"b', "\u201cq\u201d", "x\u201dy", "x\u201ey", "$x", "a`b", "a!b", "50%", "a&calc", "a|b", "a<b", "a>b", "a^b", "x\u0015y", "x\u0085y", "a\nb", "C:\\dir\\", "\\\\server\\share", ""];
+  for (const v of refused) await f.copy(f.shCmd("coding.sh eval new", v));
+  assert.equal(copied.length, ok.length);
+  const notCopied = toasts.slice(before);
+  assert.equal(notCopied.length, refused.length);
+  for (const t of notCopied) assert.match(t, /^Not copied: .*PowerShell, cmd or Git Bash/);
+});
+
+// Values the shell tests below pass as the page quotes them on Windows: each must reach the
+// program as it is.
+const ROUTE_VALUES = ["team/chat 1", "it's", "C:\\work\\my file.ts", "@abc", "a,b", "src\\a.ts", "(x)", "a;b", "{y}", "#z", "x=1", "3", "-a.b", "-a:b", "--", "--step", "-g", "x\u2019y", "caf\u00e9 \u65e5\u672c"];
+
+/** A temp folder with argv.cjs, which prints its arguments as JSON, and npm-style shims that run it. */
+function argvDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "csh-copyquote-"));
+  // Non-ASCII goes out as \u escapes: PowerShell reads a program's output in the console's code page.
+  writeFileSync(join(dir, "argv.cjs"), String.raw`console.log(JSON.stringify(process.argv.slice(2)).replace(/[^\x20-\x7e]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")));` + "\n");
+  // npm's codingsh.cmd hands its arguments to node with %*, and its codingsh.ps1 with $args.
+  writeFileSync(join(dir, "shim.cmd"), `@"${process.execPath}" "%~dp0argv.cjs" %*\r\n`);
+  writeFileSync(join(dir, "shim.ps1"), `\ufeff& "${process.execPath}" "$PSScriptRoot\\argv.cjs" $args\r\n`);
+  return dir;
+}
+
+/** Each line a program printed, read back as JSON. */
+function printed(r: ReturnType<typeof spawnSync>): unknown[] {
+  assert.equal(r.status, 0, `${r.stderr}${r.stdout}`);
+  return String(r.stdout).trim().split(/\r?\n/).map((l) => JSON.parse(l));
+}
+
+test("PowerShell and cmd hand a program each value as the page quotes it, also through .cmd and .ps1 files like npm's codingsh shims", { skip: process.platform !== "win32" && "PowerShell and cmd.exe: Windows" }, () => {
+  const { f } = page({ platform: "Win32" });
+  const args = ROUTE_VALUES.map((v) => f.shq(v)).join(" ");
+  const dir = argvDir();
+  try {
+    const node = process.execPath;
+    const shim = join(dir, "shim.cmd");
+    // -EncodedCommand hands PowerShell the line as typed. Typing codingsh in PowerShell runs
+    // npm's codingsh.ps1, or its codingsh.cmd when that is typed by name or has no .ps1 beside it.
+    const ps = `& '${node}' argv.cjs ${args}; & '${shim}' ${args}; & '${join(dir, "shim.ps1")}' ${args}`;
+    const opts = { cwd: dir, encoding: "utf8" as const, timeout: 60_000 };
+    const viaPs = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], opts);
+    assert.deepEqual(printed(viaPs), [ROUTE_VALUES, ROUTE_VALUES, ROUTE_VALUES]);
+    const viaCmd = spawnSync("cmd.exe", ["/d", "/s", "/c", `""${node}" argv.cjs ${args} & "${shim}" ${args}"`], { ...opts, windowsVerbatimArguments: true });
+    assert.deepEqual(printed(viaCmd), [ROUTE_VALUES, ROUTE_VALUES]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Git for Windows' own bash.exe, by its path: a bare `bash` on Windows can be WSL's.
+const GIT_BASH = join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe");
+
+test("Git Bash hands a program each value as the page quotes it on Windows", { skip: (process.platform !== "win32" || !existsSync(GIT_BASH)) && "Git Bash: Git for Windows" }, () => {
+  const { f } = page({ platform: "Win32" });
+  const dir = argvDir();
+  try {
+    // The line goes in a file, so only bash reads its quotes; npm's codingsh sh shim runs node with "$@".
+    writeFileSync(join(dir, "run.sh"), `'${process.execPath.replace(/\\/g, "/")}' argv.cjs ${ROUTE_VALUES.map((v) => f.shq(v)).join(" ")}\n`);
+    const r = spawnSync(GIT_BASH, ["run.sh"], { cwd: dir, encoding: "utf8", timeout: 60_000 });
+    assert.deepEqual(printed(r), [ROUTE_VALUES]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("on Windows the empty Experiments page gives exp run a task file, since PowerShell and cmd change JSON typed into an argument", () => {
+  // The one copied command with JSON in an argument: its Windows form comes first.
+  const inline = [...script.matchAll(/cmdBlock\("coding\.sh [^"\n]*'\{/g)];
+  assert.equal(inline.length, 1);
+  const before = script.slice(inline[0]!.index! - 400, inline[0]!.index);
+  assert.match(before, /IS_WIN\s+\? \[cmdBlock\("coding\.sh exp run -d <dataset> --task task\.json", "Copy experiment command"\)/);
+  assert.match(before, /h\("code", null, "\{\\"kind\\":\\"command\\",\\"command\\":\\"<cmd>\\"\}"\)/);
+  assert.match(before, /\]\s+: $/);
 });
 
 test("no copied command is built by joining a value onto a coding.sh string", () => {

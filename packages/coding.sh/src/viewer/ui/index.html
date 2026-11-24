@@ -2224,7 +2224,9 @@ function toast(msg) {
 }
 async function copy(text, what) {
   if (unsafeCmds.has(text)) {
-    toast("Not copied: a value in this command holds a quote, a control character or & | < >, which no one quoting is safe for in every shell.");
+    toast(IS_WIN
+      ? "Not copied: a value in this command is empty or holds a character that PowerShell, cmd or Git Bash could still read in double quotes."
+      : "Not copied: a value in this command holds a quote, a control character or & | < >, which no one quoting is safe for in every shell.");
     return;
   }
   try {
@@ -2234,16 +2236,29 @@ async function copy(text, what) {
     toast("Copy failed. Select the text and copy it manually.");
   }
 }
-// One shell word: plain words as they are, anything else in single quotes. Copied commands get
-// pasted into a shell, and session ids, paths and names are not ours to trust.
+// One shell word: plain words as they are, anything else quoted. Copied commands get pasted into
+// a shell, and session ids, paths and names are not ours to trust. Off Windows a value goes in
+// single quotes. cmd.exe does not read those, so on Windows it goes in double quotes, which
+// PowerShell, cmd and Git Bash all read. There a backslash (Git Bash drops it), a leading @
+// (PowerShell drops the word) or a comma also needs them, and so does a leading - unless the
+// value is a plain flag like --step: PowerShell splits -a.b in two, and through npm's
+// codingsh.ps1 it also splits -a:b and drops a bare --.
 function shq(s) {
   s = String(s);
+  if (IS_WIN) return /^[A-Za-z0-9_+=:.\/-]+$/.test(s) && (s[0] !== "-" || /^--?[A-Za-z][A-Za-z0-9-]*$/.test(s)) ? s : '"' + s + '"';
   return /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
 }
-// Single quotes hold a value in sh and PowerShell, but PowerShell also ends them at a curly
-// quote, cmd.exe ignores them, and a control character acts before any shell reads it. A
-// command with such a value is shown but never copied.
+// A value no quoting holds: its command is shown but never copied. Off Windows: a straight or
+// curly single quote (PowerShell ends single quotes at a curly one too), & | < > (cmd.exe ignores
+// single quotes) and control characters, which act before any shell reads them. On Windows, in
+// double quotes: a straight or curly double quote; $, ` and ! (PowerShell or Git Bash read them);
+// % (cmd.exe reads it in double quotes); & | < > ^ (when PowerShell runs a .cmd file, such as
+// npm's codingsh.cmd typed by name or with no codingsh.ps1 beside it, it passes a word with no
+// space without its quotes, and cmd.exe reads these); control characters; a backslash that ends
+// the value (a program reads it as escaping the closing quote) or doubles (Git Bash reads \\ as
+// one); and an empty value, which Windows PowerShell drops.
 const PASTE_UNSAFE = /[\u0000-\u001f\u007f-\u009f'\u2018-\u201b&|<>]/;
+const PASTE_UNSAFE_WIN = /[\u0000-\u001f\u007f-\u009f"\u201c-\u201e$`!%&|<>^]|\\\\|\\$|^$/;
 const unsafeCmds = new Set();
 // The page cannot see the user's shell. On Windows npm installs a `codingsh` command that Git
 // Bash, PowerShell and cmd all run, while PowerShell and cmd resolve `coding.sh` to npm's sh
@@ -2260,7 +2275,7 @@ function indexText(text) {
 // A command for the clipboard: the fixed command words, then each value quoted.
 function shCmd(command, ...args) {
   const cmd = [forShell(command), ...args.map(shq)].join(" ");
-  if (args.some((a) => PASTE_UNSAFE.test(String(a)))) unsafeCmds.add(cmd);
+  if (args.some((a) => (IS_WIN ? PASTE_UNSAFE_WIN : PASTE_UNSAFE).test(String(a)))) unsafeCmds.add(cmd);
   return cmd;
 }
 function copyBtn(getText, label, what, text) {
@@ -7414,7 +7429,12 @@ async function showExperiments(seq) {
     body.append(h("div", { class: "panel empty" },
       h("h2", { text: "No experiments yet" }),
       h("p", { text: "Run a dataset against your agent or API, or turn a captured session into an eval task and run it under one or more harness bundles. Pass rates show up here." }),
-      cmdBlock("coding.sh exp run -d <dataset> --task '{\"kind\":\"command\",\"command\":\"<cmd>\"}'", "Copy experiment command"),
+      // PowerShell drops the double quotes inside an argument, and cmd keeps single quotes as part of
+      // it, so on Windows the task goes in a file, which --task also takes.
+      IS_WIN
+        ? [cmdBlock("coding.sh exp run -d <dataset> --task task.json", "Copy experiment command"),
+          h("p", { class: "meta" }, "task.json holds ", h("code", null, "{\"kind\":\"command\",\"command\":\"<cmd>\"}"), ".")]
+        : cmdBlock("coding.sh exp run -d <dataset> --task '{\"kind\":\"command\",\"command\":\"<cmd>\"}'", "Copy experiment command"),
       cmdBlock("coding.sh eval new <sessionId>", "Copy eval command"),
       h("p", { class: "meta" }, "Open any session to copy its exact command.")));
   }
