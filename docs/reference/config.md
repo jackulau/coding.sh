@@ -113,6 +113,20 @@ hooks).
   where it stopped in the spool.
 - For transcripts it starts again at the top of each file it missed part of, so it can get a
   transcript event twice. A sink added later gets the transcripts still on disk the same way.
+- From the spool, a sink gets each event once, also one that two spool lines carry or that a
+  transcript import sent first.
+- When a hook and a transcript both record a prompt, a reply, a session start or end, or a
+  compaction, a sink gets the copy of whichever stored it first.
+- A sink can get both copies when an import runs beside a spool ingest, on any store: each looks
+  for the other's copies of a session once, when it first reads that session.
+- A sink catching up on spool lines ingest already stored also gets the hook's copies in them, so
+  it can get both: after a failed send, a crash before the send, or when added later or renamed.
+- A run that crashes or stalls between storing events and sending them leaves them for the next run
+  to send. After a crash, a stall or a failed send, a sink can get an event again.
+- On Postgres and ClickHouse, a sink can also get an event twice when a transcript import stores it
+  while a spool ingest is storing it.
+- A sink that keeps events by id keeps one copy of an event it gets twice, but not of a hook's and a
+  transcript's copies, which have their own ids.
 - A sink with `since` sends no session that started before that time, not even the events the
   session adds after it. `coding.sh init --remote` sets it to the time it first connects.
 - What a sink leaves out counts as handled, so removing `since` later does not send it. To send

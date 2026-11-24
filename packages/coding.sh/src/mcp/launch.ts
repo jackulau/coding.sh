@@ -24,7 +24,7 @@ export function runningCli(argv1: string | undefined = process.argv[1]): string 
   return /^cli\.m?js$/.test(basename(entry)) ? entry : undefined;
 }
 
-/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded at `pointer`. */
+/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
 export function ingestCli(pointer: string): string | undefined {
   const argv1 = process.argv[1];
   if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
