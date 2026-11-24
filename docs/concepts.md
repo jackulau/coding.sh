@@ -152,8 +152,8 @@ change of state notifies. See the [CLI reference](https://coding.sh/docs/cli/ale
 One input to test, with the answer you expect when you know it.
 
 - In the viewer: open a model call in the playground and choose "Save as case".
-- In the CLI: `coding.sh dataset add <name> --case '{"input":"2+2","expected":"4"}'`, or
-  `--session <id>` to keep a session's prompt as a case.
+- In the CLI: `coding.sh dataset add <name> --case '{"input":"2+2","expected":"4"}'`, or `--case`
+  with a path to a JSON file, or `--session <id>` to keep a session's prompt as a case.
 
 ### Dataset
 
