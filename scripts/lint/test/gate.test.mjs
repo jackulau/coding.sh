@@ -158,6 +158,13 @@ test("the lint step runs the allowlist check and the site step requires the dist
   assert.ok(Number(text) >= 2);
 });
 
+test("the gate typechecks with the package's own script and runs nothing through npx", () => {
+  // In a checkout with no node_modules, `npx tsc` fetches and runs an unrelated package named tsc.
+  const runs = buildSteps(REPO).flatMap((s) => (s.list ? s.list({ root: REPO }) : []));
+  assert.deepEqual(runs.filter((c) => c.cmd === "npx"), []);
+  assert.ok(runs.some((c) => c.cmd === "npm" && c.args.join(" ") === "run typecheck" && c.cwd === "packages/coding.sh"));
+});
+
 test("the site step builds, checks and budgets the site with the star count CI uses", () => {
   const site = buildSteps(REPO).find((s) => s.name === "site");
   const list = site.list({});
