@@ -46,6 +46,7 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "cost-prop": { runs: 10000 },
   "fold-prop": { runs: 5000 },
   "hook-imports": {},
+  "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
   model: {},
