@@ -721,7 +721,9 @@ describe("session usage rollup", () => {
         // Estimated: the bill replaces the $4. Reported: the wrapper keeps its $4, and the bill is left out with the call.
         assert.deepEqual(r.usage, { inputTokens: 10, costUsd: estimated ? 5 : 4 }, label);
         assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: estimated ? 4 : 5 }, label);
-        assert.deepEqual(buildSession([wrapper, inner, gw]).stats.usage, r.usage, label);
+        const s = buildSession([wrapper, inner, gw]);
+        assert.deepEqual(s.stats.usage, r.usage, label);
+        assert.deepEqual(s.stats.duplicateUsage, r.duplicate, label);
       }
     }
   });
@@ -734,6 +736,104 @@ describe("session usage rollup", () => {
     assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 5 });
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: 4 });
     assert.deepEqual(buildSession([wrapper, inner, gw]).stats.usage, r.usage);
+  });
+
+  // A gateway companion billing `x` for generation `g`: its usage holds the bill less the call's own cost, and is left out at 0.
+  const bill = (call: AgentEvent, x: number, g?: string) => {
+    const rest = x - (call.usage?.costUsd ?? 0);
+    const payload: Record<string, unknown> = { gateway: "vercel", billedCostUsd: x };
+    if (g) payload.generationId = g;
+    const o: Partial<AgentEvent> = { source: "gateway", parentId: call.id };
+    if (rest) o.usage = { costUsd: rest };
+    return ev("span", payload, o);
+  };
+
+  // A billed wrapper with no usage took only its own bill, so the bills of the calls nested in it went missing.
+  it("a billed wrapper adds the bills of the calls nested in it, except a bill for its own generation", () => {
+    const wrapper = llm("w", undefined, undefined);
+    const a = llm("a", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true });
+    const b = llm("b", "w", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true });
+    // b's bill is for the wrapper's generation: one request the gateway billed, seen on both spans.
+    const evs = [wrapper, a, b, bill(wrapper, 2, "gen_w"), bill(a, 1, "gen_a"), bill(b, 2, "gen_w")];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { inputTokens: 30, costUsd: 3 });
+    assert.deepEqual(r.duplicate, { calls: 2, tokens: 0, costUsd: 2 });
+    assert.deepEqual(buildSession(evs).stats.usage, r.usage);
+    // With no generation ids, every bill counts.
+    assert.deepEqual(rollupUsage([wrapper, a, b, bill(wrapper, 0.5), bill(a, 1), bill(b, 2)]).usage, { inputTokens: 30, costUsd: 3.5 });
+  });
+
+  it("a billed call with no usage nested in a billed wrapper adds its bill, at any depth", () => {
+    const wrapper = llm("w", undefined, undefined);
+    const inner = llm("k", "w", undefined);
+    const evs = [wrapper, inner, bill(wrapper, 2), bill(inner, 1)];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { costUsd: 3 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 });
+    const s = buildSession(evs);
+    assert.deepEqual(s.stats.usage, r.usage);
+    assert.deepEqual(s.stats.duplicateUsage, r.duplicate);
+    // An estimated call a level down counts its tokens, and the bills replace its estimate.
+    const deep = llm("j", "k", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true });
+    assert.deepEqual(rollupUsage([wrapper, inner, deep, bill(wrapper, 2, "gen_w"), bill(inner, 1, "gen_k")]).usage, { inputTokens: 10, costUsd: 3 });
+  });
+
+  // A billed wrapper with no usage skipped the replay and response id checks, and so did the calls nested in it.
+  it("a billed wrapper with no usage and the calls nested in it count once when replayed or repeated", () => {
+    // A durable engine replays a recorded step: the wrapper and the call inside it come again.
+    const w0 = llm("w0", undefined, undefined, { responseId: "gen_g" });
+    const k0 = llm("k0", "w0", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_1" });
+    const w1 = llm("w1", undefined, undefined, { replay: true, responseId: "gen_g" });
+    const k1 = llm("k1", "w1", { inputTokens: 10 }, { replay: true, responseId: "resp_1" });
+    const replayed = [w0, k0, bill(w0, 1, "gen_g"), w1, k1, bill(w1, 1, "gen_g")];
+    const r = rollupUsage(replayed);
+    assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 1 });
+    assert.deepEqual(r.duplicate, { calls: 3, tokens: 10, costUsd: 1.25 });
+    assert.deepEqual(buildSession(replayed).stats.usage, r.usage);
+    // A call nested in a billed wrapper with no usage repeats an earlier call's response id.
+    const first = llm("a", undefined, { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_2" });
+    const wrapper = llm("w", undefined, undefined);
+    const again = llm("b", "w", { inputTokens: 10 }, { responseId: "resp_2" });
+    const repeated = rollupUsage([first, wrapper, again, bill(wrapper, 1)]);
+    assert.deepEqual(repeated.usage, { inputTokens: 10, costUsd: 1.25, estimatedCostUsd: 0.25 });
+    assert.deepEqual(repeated.duplicate, { calls: 1, tokens: 10 });
+    // A billed copy with no usage and nothing nested in it has no tokens to check, so the copy after it that carries them counts.
+    const bare = llm("x", undefined, undefined, { responseId: "resp_3" });
+    const copy = llm("y", undefined, { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_3" }, { traceId: "t2" });
+    assert.deepEqual(rollupUsage([bare, copy, bill(bare, 1, "gen_h"), bill(copy, 1, "gen_h")]).usage, { inputTokens: 10, costUsd: 1 });
+  });
+
+  // Zeros counted as the wrapper's own token counts and hid its nested calls' tokens.
+  it("a billed wrapper whose usage is all zeros counts its nested calls' tokens", () => {
+    const wrapper = llm("w", undefined, { inputTokens: 0, outputTokens: 0 });
+    const inner = llm("k", "w", { inputTokens: 10, outputTokens: 5, costUsd: 1 }, { costEstimated: true });
+    const evs = [wrapper, inner, bill(wrapper, 5)];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { inputTokens: 10, outputTokens: 5, costUsd: 5 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: 1 });
+    assert.deepEqual(buildSession(evs).stats.usage, r.usage);
+    const cached = llm("c", undefined, { cacheReadTokens: 0, cacheWriteTokens: 0 });
+    assert.deepEqual(rollupUsage([cached, llm("d", "c", { cacheReadTokens: 7 }), bill(cached, 5)]).usage, { cacheReadTokens: 7, costUsd: 5 });
+  });
+
+  it("a bill of $0 counts as $0, above an estimate or below one", () => {
+    const wrapper = llm("w", undefined, undefined);
+    const inner = llm("k", "w", { inputTokens: 10, costUsd: 4 }, { costEstimated: true });
+    assert.deepEqual(rollupUsage([wrapper, inner, bill(wrapper, 0)]).usage, { inputTokens: 10, costUsd: 0 });
+    const estimated = llm("e", undefined, { inputTokens: 10, costUsd: 4 }, { costEstimated: true });
+    const free = llm("f", "e", undefined);
+    const evs = [estimated, free, bill(free, 0)];
+    assert.deepEqual(rollupUsage(evs).usage, { inputTokens: 10, costUsd: 0 });
+    assert.deepEqual(buildSession(evs).stats.usage, { inputTokens: 10, costUsd: 0 });
+  });
+
+  it("model calls nested in each other in a loop count under the first of them", () => {
+    const a = llm("a", "b", undefined);
+    const b = llm("b", "a", undefined);
+    const r = rollupUsage([a, b, bill(a, 1), bill(b, 2)]);
+    assert.deepEqual(r.usage, { costUsd: 3 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 });
+    assert.deepEqual(rollupUsage([llm("x", "y", { inputTokens: 5 }), llm("y", "x", { inputTokens: 5 })]), { usage: { inputTokens: 5 }, duplicate: { calls: 1, tokens: 5 } });
   });
 });
 
