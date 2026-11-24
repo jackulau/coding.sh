@@ -11,14 +11,14 @@
 // A knob set in the environment replaces the table's value for every file that reads that knob. An
 // empty one counts as unset. The property files share one seed: CODING_SH_PROP_SEED when it is set,
 // otherwise a random one. The seed is printed first. A file that runs past its time limit (--minutes,
-// default 40) is stopped and counts as failed. --out <dir> keeps each file's output, seed.txt and
-// summary.md there (default: a new temp folder). summary.md is written again after each file, and at
-// the end the summary also goes to $GITHUB_STEP_SUMMARY when that is set. A model past its default
-// bound can need several GB of heap: raise it with NODE_OPTIONS=--max-old-space-size=<MB>. Exits 1
-// when a file fails, 2 on a bad knob or argument.
+// default 40, at most 35791) is stopped and counts as failed. --out <dir> keeps each file's output,
+// seed.txt and summary.md there (default: a new temp folder). summary.md, and $GITHUB_STEP_SUMMARY
+// when that is set, are written again after each file. A model past its default bound can need
+// several GB of heap: raise it with NODE_OPTIONS=--max-old-space-size=<MB>, which the summary's
+// replay commands keep. Exits 1 when a file fails, 2 on a bad knob or argument.
 import { spawn } from "node:child_process";
 import { randomInt } from "node:crypto";
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -96,7 +96,10 @@ export function verifyFiles(dir: string = VERIFY): string[] {
     .sort();
 }
 
-/** A whole-number knob from `env`, or undefined when it is unset or empty. Throws on a value its tests would reject. */
+/**
+ * A whole-number knob from `env`, or undefined when it is unset or empty. Throws on any other value,
+ * and on runs of 0: a model refuses such a bound, and forAll would ignore such runs and run its own count.
+ */
 function knob(env: NodeJS.ProcessEnv, name: "CODING_SH_MODEL_BOUND" | "CODING_SH_PROP_RUNS"): number | undefined {
   const raw = env[name]?.trim();
   if (!raw) return undefined;
@@ -165,10 +168,19 @@ export function childEnv(env: NodeJS.ProcessEnv, vars: Record<string, string>): 
   return { ...out, ...vars };
 }
 
-/** The command that runs one file again with the same knobs, from packages/coding.sh. */
-export function replayCommand(f: FilePlan): string {
-  const vars = Object.entries(f.vars).map(([k, v]) => `${k}=${v} `).join("");
-  return `${vars}node --no-warnings --test ${/\s/.test(f.file) ? JSON.stringify(f.file) : f.file}`;
+/** `v` as one sh word: as it is when sh reads none of its characters, otherwise in single quotes. */
+function shWord(v: string): string {
+  return /^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The command that runs one file again with the same knobs, from packages/coding.sh. `nodeOptions` is
+ * the run's NODE_OPTIONS, which a model past its default bound can need for its heap.
+ */
+export function replayCommand(f: FilePlan, nodeOptions?: string): string {
+  const vars: [string, string][] = Object.entries(f.vars);
+  if (nodeOptions) vars.unshift(["NODE_OPTIONS", nodeOptions]);
+  return `${vars.map(([k, v]) => `${k}=${shWord(v)} `).join("")}node --no-warnings --test ${shWord(f.file)}`;
 }
 
 export interface FileResult extends FilePlan {
@@ -213,15 +225,20 @@ async function runFile(f: FilePlan, out: string, limitMs: number): Promise<FileR
   clearTimeout(timer);
   const ms = performance.now() - started;
   await new Promise<void>((done) => log.end(done));
-  const result = timedOut ? "timed out" : /heap out of memory/.test(tail) ? "out of memory" : code === 0 ? "pass" : "fail";
+  // A passing file can print those words: only a failed one ran out of heap.
+  const result = timedOut ? "timed out" : code === 0 ? "pass" : /heap out of memory/.test(tail) ? "out of memory" : "fail";
   return { ...f, result, ms };
 }
 
-/** The summary in Markdown: the seed, the knobs, each file's result and time, and how to replay a failure. */
-export function summary(p: Plan, results: readonly FileResult[], limitMinutes: number): string {
+/**
+ * The summary in Markdown: the seed, the knobs, each file's result and time, the files not run yet, and
+ * how to replay a failure. `results` are the first files of `p`, in order.
+ */
+export function summary(p: Plan, results: readonly FileResult[], limitMinutes: number, nodeOptions?: string): string {
   const given = Object.entries(p.given).map(([k, v]) => `\`${k}=${v}\``);
   const failed = results.filter((r) => r.result !== "pass");
   const total = results.reduce((sum, r) => sum + r.ms, 0);
+  const left = p.files.slice(results.length).map((f) => f.name);
   const lines = [
     "## Verify past the default bounds",
     "",
@@ -231,9 +248,9 @@ export function summary(p: Plan, results: readonly FileResult[], limitMinutes: n
     "| --- | --- | --- | --- |",
     ...results.map((r) => `| ${r.name} | ${Object.entries(r.vars).map(([k, v]) => `\`${k}=${v}\``).join(" ") || "none"} | ${r.result} | ${formatTime(r.ms)} |`),
     "",
-    `${results.length - failed.length} passed, ${failed.length} failed, in ${formatTime(total)}.`,
+    `${results.length - failed.length} passed, ${failed.length} failed, in ${formatTime(total)}.${left.length ? ` Not run yet: ${left.join(", ")}.` : ""}`,
   ];
-  if (failed.length) lines.push("", "To run a failed file again with the same knobs, from packages/coding.sh:", "", "```sh", ...failed.map(replayCommand), "```");
+  if (failed.length) lines.push("", "To run a failed file again with the same knobs, from packages/coding.sh:", "", "```sh", ...failed.map((r) => replayCommand(r, nodeOptions)), "```");
   return `${lines.join("\n")}\n`;
 }
 
@@ -250,7 +267,8 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
     return 0;
   }
   const minutes = Number(parsed.values.minutes ?? 40);
-  if (!(minutes > 0)) throw new UsageError(`--minutes must be a number above 0, not ${JSON.stringify(parsed.values.minutes)}`);
+  // Past 2^31 - 1 ms, about 35,791 minutes, setTimeout fires at once and every file would time out.
+  if (!(minutes > 0 && minutes * 60_000 <= 2 ** 31 - 1)) throw new UsageError(`--minutes must be a number above 0 and at most 35791, not ${JSON.stringify(parsed.values.minutes)}`);
   const p = plan(parsed.positionals.length ? parsed.positionals : verifyFiles(), env);
   console.log(`seed ${p.seed} (${p.seedFrom === "random" ? "picked at random" : "from CODING_SH_PROP_SEED"}); CODING_SH_PROP_SEED=${p.seed} runs the property files with it again`);
   const out = parsed.values.out ? resolve(parsed.values.out) : mkdtempSync(join(tmpdir(), "verify-deep-"));
@@ -258,8 +276,11 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
   writeFileSync(join(out, "seed.txt"), `${p.seed}\n`);
   console.log(`output in ${out}`);
   const groups = env.GITHUB_ACTIONS === "true";
+  // Each rewrite of the step summary keeps what it held before this run.
+  const step = env.GITHUB_STEP_SUMMARY;
+  const before = step && existsSync(step) ? readFileSync(step, "utf8") : "";
   const results: FileResult[] = [];
-  let md = summary(p, results, minutes);
+  let md = summary(p, results, minutes, env.NODE_OPTIONS);
   for (const f of p.files) {
     const head = `${f.name}${Object.keys(f.vars).length ? ` (${Object.entries(f.vars).map(([k, v]) => `${k}=${v}`).join(" ")})` : ""}`;
     console.log(groups ? `::group::${head}` : `== ${head}`);
@@ -268,10 +289,10 @@ export async function main(args: string[], env: NodeJS.ProcessEnv): Promise<numb
     console.log(`== ${f.name}: ${r.result} in ${formatTime(r.ms)}`);
     results.push(r);
     // Written after each file, so a run stopped from outside still says which files ran.
-    md = summary(p, results, minutes);
+    md = summary(p, results, minutes, env.NODE_OPTIONS);
     writeFileSync(join(out, "summary.md"), md);
+    if (step) writeFileSync(step, before + md);
   }
-  if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, md);
   console.log(`\n${md}\noutput in ${out}`);
   return results.every((r) => r.result === "pass") ? 0 : 1;
 }

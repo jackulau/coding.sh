@@ -5,7 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { KNOB_VARS, NIGHTLY, childEnv, formatTime, plan, replayCommand, verifyFiles } from "../../scripts/verify-deep.ts";
+import { KNOB_VARS, NIGHTLY, childEnv, formatTime, plan, replayCommand, summary, verifyFiles } from "../../scripts/verify-deep.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("../../scripts/verify-deep.ts", import.meta.url));
@@ -74,12 +74,22 @@ describe("scripts/verify-deep.ts", () => {
     }
   });
 
-  it("refuses a knob the tests would refuse, and a file it cannot find", () => {
+  it("refuses a bound or runs that are not whole numbers, runs of 0, a bad seed, and a file it cannot find", () => {
     assert.throws(() => plan(["lock-model"], { CODING_SH_MODEL_BOUND: "-1" }), /CODING_SH_MODEL_BOUND must be a whole number/);
     assert.throws(() => plan(["lock-model"], { CODING_SH_MODEL_BOUND: "1.5" }), /CODING_SH_MODEL_BOUND/);
     assert.throws(() => plan(["fold-prop"], { CODING_SH_PROP_RUNS: "0" }), /CODING_SH_PROP_RUNS must be a whole number above 0/);
     assert.throws(() => plan(["fold-prop"], { CODING_SH_PROP_SEED: "4294967296" }), /CODING_SH_PROP_SEED must be/);
     assert.throws(() => plan(["no-such-file"], {}), /no test file no-such-file/);
+  });
+
+  it("keeps the run's NODE_OPTIONS in each replay command, and quotes a word sh would read", () => {
+    const f = { name: "lock-model", file: "test/verify/lock-model.test.ts", vars: { CODING_SH_MODEL_BOUND: "2" } };
+    assert.equal(replayCommand(f, "--max-old-space-size=12288"), "NODE_OPTIONS=--max-old-space-size=12288 CODING_SH_MODEL_BOUND=2 node --no-warnings --test test/verify/lock-model.test.ts");
+    assert.equal(replayCommand(f, "--max-old-space-size=8192 --trace-gc"), "NODE_OPTIONS='--max-old-space-size=8192 --trace-gc' CODING_SH_MODEL_BOUND=2 node --no-warnings --test test/verify/lock-model.test.ts");
+    assert.equal(replayCommand({ ...f, file: "/tmp/it's here/a.test.ts" }), `CODING_SH_MODEL_BOUND=2 node --no-warnings --test '/tmp/it'\\''s here/a.test.ts'`);
+    const p = plan(["lock-model"], { CODING_SH_MODEL_BOUND: "2" });
+    const md = summary(p, [{ ...p.files[0]!, result: "out of memory", ms: 1000 }], 20, "--max-old-space-size=12288");
+    assert.match(md, /^NODE_OPTIONS=--max-old-space-size=12288 CODING_SH_MODEL_BOUND=2 node --no-warnings --test test\/verify\/lock-model\.test\.ts$/m);
   });
 
   it("runs a file without the knobs it does not read, and outside any test run", () => {
@@ -127,5 +137,42 @@ test("gets the knobs set in the environment", () => {
     assert.equal(r.code, 1, r.all);
     assert.match(r.summary, /\| never-ends \| `CODING_SH_PROP_SEED=\d+` \| timed out \| /);
     assert.equal(runScript({ "passes.test.ts": passes }, {}).code, 0);
+  });
+
+  it("refuses a time limit that is not a number above 0 and at most 35791 minutes, before any file runs", () => {
+    for (const minutes of ["0", "abc", "Infinity", "40000"]) {
+      const r = spawnSync(process.execPath, ["--no-warnings", SCRIPT, `--minutes=${minutes}`, "model"], { cwd: PKG, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 2, `${minutes}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /^verify:deep: --minutes must be a number above 0 and at most 35791/, minutes);
+      assert.doesNotMatch(r.stdout, /^seed /m, minutes);
+    }
+  });
+
+  it("writes the summary and the step summary again after each file, after what the step summary held before", () => {
+    // The second file runs after the first, so it finds the first one's row in both.
+    const first = `import { test } from "node:test"; test("passes", () => {});`;
+    const second = `import { test } from "node:test"; import assert from "node:assert/strict"; import { readFileSync } from "node:fs"; import { dirname, join } from "node:path";
+test("finds the first file in both summaries", () => {
+  const step = readFileSync(process.env.GITHUB_STEP_SUMMARY ?? "", "utf8");
+  assert.match(step, /^earlier step\\n## Verify past the default bounds\\n/);
+  assert.match(step, /\\| first-file \\| .* \\| pass \\| /);
+  assert.match(step, /1 passed, 0 failed, in .*\\. Not run yet: second-file\\.\\n/);
+  assert.equal(step, "earlier step\\n" + readFileSync(join(dirname(process.env.GITHUB_STEP_SUMMARY ?? ""), "out", "summary.md"), "utf8"));
+});`;
+    const r = runScript({ "first-file.test.ts": first, "second-file.test.ts": second }, {});
+    assert.equal(r.code, 0, r.all);
+    assert.match(r.summary, /2 passed, 0 failed, in /);
+    assert.doesNotMatch(r.summary, /Not run yet/);
+    assert.equal(r.step, `earlier step\n${r.summary}`);
+  });
+
+  it("counts a failed file that ran out of heap as out of memory, and a passing file that prints those words as a pass", () => {
+    const line = JSON.stringify("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory");
+    const crashes = `import { test } from "node:test"; test("crashes", () => { console.error(${line}); throw new Error("stopped"); });`;
+    const prints = `import { test } from "node:test"; test("prints", () => { console.log(${line}); });`;
+    const r = runScript({ "heap-crash.test.ts": crashes, "heap-words.test.ts": prints }, {});
+    assert.equal(r.code, 1, r.all);
+    assert.match(r.summary, /\| heap-crash \| .* \| out of memory \| /);
+    assert.match(r.summary, /\| heap-words \| .* \| pass \| /);
   });
 });
