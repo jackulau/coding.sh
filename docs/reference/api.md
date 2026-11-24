@@ -643,7 +643,8 @@ token count below 0 or not a finite number, as the estimate does. So do `stats.c
 `stats.inheritedTokens` and the context size the `no-progress` derail reads.
 
 When a call's input, cache read or cache write count is skipped, its size can be too low, so the
-derail does not measure the context's growth from that call.
+derail does not measure the context's growth from that call, and that call does not lower the size
+the context reached.
 
 **Agent and host.**
 

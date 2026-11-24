@@ -704,9 +704,10 @@ function npStep(p: NoProgress, x: Ev | undefined, c: Call | undefined, t: Derail
         return;
       case "llm":
         if (x.ctx !== undefined && p.len) {
-          // A partial size can be too low: as the start it would make growth that is not there.
+          // A partial size can be too low: as the start it would make growth that is not there, and as
+          // the latest it would hide growth that is.
           if (!x.partial) p.firstCtx ??= x.ctx;
-          p.lastCtx = x.ctx;
+          p.lastCtx = x.partial ? Math.max(p.lastCtx ?? 0, x.ctx) : x.ctx;
         }
         return;
     }
