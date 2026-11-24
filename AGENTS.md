@@ -26,7 +26,7 @@ or newer (CI checks it in the `runtime-floor` job). Run these from `packages/cod
 
 ```sh
 npm run check                                        # typecheck + every test
-npx tsc --noEmit -p .                                # typecheck only
+npm run typecheck                                    # typecheck only
 node --no-warnings --test 'test/**/*.test.ts'        # every test
 node --no-warnings --test test/core/waste.test.ts    # one file
 npm run build                                        # dist/cli.mjs, dist/hook.mjs, dist/schema.mjs
