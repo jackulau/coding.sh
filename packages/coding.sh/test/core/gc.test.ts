@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import { gc } from "../../src/core/gc.ts";
-import { ingest, sinkCursorKey } from "../../src/core/ingest.ts";
+import { ingest, sinkCursorKey, spoolInFlightKeys } from "../../src/core/ingest.ts";
 import type { Adapter, BlobStore } from "../../src/core/types.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { ageBlob, closeBlobs, fsBlobs, track } from "../store/_blobs.ts";
@@ -217,7 +217,7 @@ describe("gc", () => {
     assert.deepEqual(await run(halfPastMidnight), [true, true, false], "yesterday kept for the first hour of the new day");
   });
 
-  it("resets the cursors of the spool files it deletes, so a file recreated at the same path is read from the start", async () => {
+  it("resets the cursors and in-flight keys of the spool files it deletes, so a file recreated at the same path is read from the start", async () => {
     const t = setup();
     t.config.retention.keepSpoolDays = 0;
     t.config.sinks = [{ kind: "otlp", name: "otel", endpoint: "http://x", mode: "metadata" }];
@@ -230,10 +230,14 @@ describe("gc", () => {
     appendFileSync(file, spoolLine(4242, Date.now(), { session: "old", kind: "turn.end" }));
     await ingest(opts);
     await index.setCursor(sinkCursorKey("otel", "fake/2026-11-06.4242.jsonl"), statSync(file).size);
+    // The memory store has no transactions: the ingest left the file's in-flight keys at its end.
+    const keys = spoolInFlightKeys("fake/2026-11-06.4242.jsonl");
+    for (const key of keys) assert.equal(await index.getCursor(key), statSync(file).size);
     const g = await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false });
     assert.equal(g.spool.deleted, 1);
     assert.equal(await index.getCursor("fake/2026-11-06.4242.jsonl"), 0);
     assert.equal(await index.getCursor(sinkCursorKey("otel", "fake/2026-11-06.4242.jsonl")), 0);
+    for (const key of keys) assert.equal(await index.getCursor(key), 0);
     // pid 4242 reused later the same UTC day, with a longer line.
     appendFileSync(file, spoolLine(4242, Date.now() + 5000, { session: "new", kind: "user.message", text: "x".repeat(400) }));
     const r = await ingest(opts);

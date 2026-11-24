@@ -991,29 +991,66 @@ function drop(s: RetrievalState, key: string): void {
 }
 
 /**
- * The needles that some line holds, as `lines.some((l) => l.includes(n))` finds each, in one pass
- * over the lines (Aho–Corasick): a failed `cat` of many files is not a scan of the output per file.
+ * Text just before a match that ends in a file name character (POSIX's letters, digits, `.`, `_`
+ * and `-`, with any script's letters and digits): the match is part of a longer name, as `a.ts` is
+ * in `data.ts` and `.a.ts`.
  */
-function heldBy(needles: readonly string[], lines: readonly string[]): Set<string> {
+const NAME_BEFORE = /[\p{L}\p{M}\p{N}_.-]$/u;
+/**
+ * Text just after a match that starts with a file name character other than a dot, or with one dot
+ * and such a character: the match is part of a longer name, as `a.ts` is in `a.tsx` and
+ * `a.ts.orig`. Any other dot ends the name, as at the end of a sentence (`cannot read a.ts.`).
+ */
+const NAME_AFTER = /^\.?[\p{L}\p{M}\p{N}_-]/u;
+/** NAME_BEFORE's file name characters among the first 128 code units: ASCII letters and digits, `_`, `.` and `-`. */
+const ASCII_NAME = new Uint8Array(128);
+for (const c of "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") ASCII_NAME[c.charCodeAt(0)] = 1;
+/** Whether a name can start at code unit `j` of `text`: at its start, or after a character that is not a file name character. */
+function atEdge(text: string, j: number): boolean {
+  if (!j) return true;
+  const c = text.charCodeAt(j - 1);
+  return c < 128 ? !ASCII_NAME[c] : !NAME_BEFORE.test(text.slice(Math.max(0, j - 2), j));
+}
+/** The trie's mark for an edge, where a name can start: no UTF-16 code unit is -1. */
+const EDGE = -1;
+
+/**
+ * The needles that some line names whole, with no file name character just before the match and
+ * none just after it, apart from a dot that ends the name (see NAME_AFTER):
+ * `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
+ * pass over the lines (Aho–Corasick) finds every match: a failed `cat` of many files is not a scan
+ * of the output per file. The needles and the lines carry an EDGE mark wherever a name can start,
+ * and each needle starts with one, so every match starts at an edge. The needles that end at a
+ * match are walked only when the line names them whole, and a walk stops at the first one already
+ * held: the pass stays linear however often the lines name a file or hold it inside longer names.
+ */
+function namedIn(needles: readonly string[], lines: readonly string[]): Set<string> {
   const held = new Set<string>();
   if (!lines.length) return held;
-  // A trie of the needles by UTF-16 code unit, the unit `includes` compares; ends[s]: the needles that end at state s.
+  // A trie of the needles by UTF-16 code unit, with EDGE first and wherever a name can start inside
+  // one; ends[s]: the needles that end at state s.
   const next: Map<number, number>[] = [new Map()];
   const ends: string[][] = [[]];
+  const child = (s: number, c: number): number => {
+    let t = next[s]!.get(c);
+    if (t === undefined) {
+      t = next.length;
+      next[s]!.set(c, t);
+      next.push(new Map());
+      ends.push([]);
+    }
+    return t;
+  };
   for (const n of needles) {
-    // Every line holds "".
-    if (!n) held.add(n);
-    let s = 0;
+    // The path `/` has no base name, and a read of it always fails: any error line counts as naming it.
+    if (!n) {
+      held.add(n);
+      continue;
+    }
+    let s = child(0, EDGE);
     for (let i = 0; i < n.length; i++) {
-      const c = n.charCodeAt(i);
-      let t = next[s]!.get(c);
-      if (t === undefined) {
-        t = next.length;
-        next[s]!.set(c, t);
-        next.push(new Map());
-        ends.push([]);
-      }
-      s = t;
+      if (i && atEdge(n, i)) s = child(s, EDGE);
+      s = child(s, n.charCodeAt(i));
     }
     ends[s]!.push(n);
   }
@@ -1029,18 +1066,29 @@ function heldBy(needles: readonly string[], lines: readonly string[]): Set<strin
       order.push(t);
     }
   }
-  /** States whose needles, and their suffixes' needles, are in `held`. */
-  const done = new Uint8Array(next.length);
+  // out[s]: the nearest state on s's fail chain, s included, where a needle ends; 0 for none.
+  // below[o]: the next such state down o's chain.
+  const out = new Int32Array(next.length);
+  const below = new Int32Array(next.length);
+  for (const s of order) {
+    out[s] = ends[s]!.length ? s : out[fail[s]!]!;
+    below[s] = out[fail[s]!]!;
+  }
+  const step = (s: number, c: number): number => {
+    while (s && !next[s]!.has(c)) s = fail[s]!;
+    return next[s]!.get(c) ?? 0;
+  };
   for (const line of lines) {
     let s = 0;
     for (let i = 0; i < line.length; i++) {
-      const c = line.charCodeAt(i);
-      while (s && !next[s]!.has(c)) s = fail[s]!;
-      s = next[s]!.get(c) ?? 0;
-      for (let o = s; o && !done[o]; o = fail[o]!) {
-        done[o] = 1;
-        for (const n of ends[o]!) held.add(n);
-      }
+      if (atEdge(line, i)) s = step(s, EDGE);
+      s = step(s, line.charCodeAt(i));
+      // The needles that end here start at an edge and share the text after them: one check for all of them.
+      if (!out[s] || NAME_AFTER.test(line.slice(i + 1, i + 4))) continue;
+      // So a line that names a needle whole names every needle down its chain whole: a held needle's
+      // chain is held, and the walk stops at it. A state's needles are one text, repeated when two
+      // paths share a base name.
+      for (let o = out[s]!; o && !held.has(ends[o]![0]!); o = below[o]!) held.add(ends[o]![0]!);
     }
   }
   return held;
@@ -1051,10 +1099,10 @@ function settle(s: RetrievalState, e: AgentEvent, pending: Pending, failure: Too
   const p = e.payload;
   if (failure?.cls === "interrupted" || p.interrupted === true || (p.ok === false && !pending.shell)) for (const k of pending.keys) drop(s, k);
   else if (p.ok === false && pending.keys.length) {
-    // A shell line fails as a whole: a file counts as not read when an error line names it.
+    // A shell line fails as a whole: a file counts as not read when an error line names its base name whole.
     const lines = `${textOf(p.output)}\n${textOf(p.error)}`.split("\n").filter((l) => NOT_READ.test(l));
     const names = pending.keys.map((k) => posix.basename(k));
-    const named = heldBy(names, lines);
+    const named = namedIn(names, lines);
     for (let i = 0; i < names.length; i++) if (named.has(names[i]!)) drop(s, pending.keys[i]!);
   }
   if (pending.search && foundNothing(e, failure, pending)) s.empty++;

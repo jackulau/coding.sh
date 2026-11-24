@@ -1,5 +1,5 @@
 // Helpers shared by command modules (loaded only after dispatch).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ConfigEnvError, ConfigError } from "../core/config.ts";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
@@ -9,7 +9,7 @@ import type { EvalTask, IndexStore, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
-import { runningCli } from "../mcp/launch.ts";
+import { ingestCli } from "../mcp/launch.ts";
 import { StoreOwnerError, StoreVersionError, upgradeStoreCommand } from "../core/store-guard.ts";
 import { spoolSize } from "../core/ingest-health.ts";
 import { paths } from "../core/paths.ts";
@@ -336,19 +336,6 @@ export async function refolding(ctx: Context, env: NodeJS.ProcessEnv = process.e
     return (await ctx.index.listSessions({ limit: 1 })).length > 0;
   } catch {
     return false;
-  }
-}
-
-/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
-export function ingestCli(pointer: string): string | undefined {
-  const argv1 = process.argv[1];
-  if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
-  const running = runningCli();
-  if (running) return running;
-  try {
-    return readFileSync(pointer, "utf8").trim() || undefined;
-  } catch {
-    return undefined;
   }
 }
 
