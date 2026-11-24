@@ -12,7 +12,7 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
 import { ADAPTERS } from "../../src/adapters/index.ts";
-import { backfillT3, providerAgent, t3code, turnUsage } from "../../src/adapters/t3code.ts";
+import { backfillT3, providerAgent, t3code, turnUsage, V2_ACTIVITY } from "../../src/adapters/t3code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, childLinker, ingest, recomputeSession } from "../../src/core/ingest.ts";
 import { repoResolver } from "../../src/core/repo-state.ts";
@@ -336,6 +336,191 @@ describe("t3code adapter", () => {
         assert.deepEqual((await backfill(opts)).events, 0);
         assert.deepEqual(reads, [], `${label}: then none`);
       }
+    }
+  });
+});
+
+/** T3 Code's own indexes on its messages and turn items, as its migrations make them. */
+const T3_THREAD_INDEXES = `
+CREATE INDEX orchestration_v2_projection_messages_thread_created_idx ON orchestration_v2_projection_messages(thread_id, created_at, message_id);
+CREATE INDEX orchestration_v2_projection_turn_items_thread_run_idx ON orchestration_v2_projection_turn_items(thread_id, run_id);
+`;
+
+/** T3 Code's event log and its indexes, as its migrations make them. */
+const T3_EVENT_LOG = `
+CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, aggregate_kind TEXT NOT NULL, stream_id TEXT NOT NULL, stream_version INTEGER NOT NULL, event_type TEXT NOT NULL, occurred_at TEXT NOT NULL, command_id TEXT, causation_event_id TEXT, correlation_id TEXT, actor_kind TEXT NOT NULL, payload_json TEXT NOT NULL, metadata_json TEXT NOT NULL, application_event_version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX idx_orch_events_command_id ON orchestration_events(command_id);
+CREATE INDEX idx_orch_events_stream_sequence ON orchestration_events(aggregate_kind, stream_id, sequence);
+CREATE UNIQUE INDEX idx_orch_events_stream_version ON orchestration_events(aggregate_kind, stream_id, stream_version);
+CREATE INDEX idx_orchestration_events_agent_stream_sequence ON orchestration_events(stream_id, sequence) WHERE application_event_version = 2 AND aggregate_kind = 'thread';
+CREATE INDEX idx_orchestration_events_application_high_water ON orchestration_events(sequence) WHERE aggregate_kind = 'project' OR (application_event_version = 2 AND aggregate_kind = 'thread');
+CREATE INDEX idx_orchestration_events_application_sequence ON orchestration_events(application_event_version, sequence);
+CREATE INDEX orchestration_events_v2_created_threads_idx ON orchestration_events(stream_id) WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND event_type = 'thread.created';
+`;
+
+/** A thread's event, which T3 Code appends in the same transaction as each write to the thread's rows. */
+const appendEvent = (db: DatabaseSync, threadId: string, type: string, at: string) =>
+  db.prepare(`INSERT INTO orchestration_events (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json, application_event_version)
+    VALUES (lower(hex(randomblob(16))), 'thread', ?, (SELECT COALESCE(MAX(stream_version), 0) + 1 FROM orchestration_events WHERE aggregate_kind = 'thread' AND stream_id = ?), ?, ?, 'server', '{}', '{}', 2)`).run(threadId, threadId, type, at);
+
+/** A shell call as a T3 Code turn item holds it: running until it is done. */
+const shellCall = (id: string, started: string, done?: { at: string; output: string }) =>
+  J({ id, status: done ? "completed" : "running", title: "npm test", input: "npm test", output: done?.output, exitCode: done ? 0 : undefined, startedAt: started, completedAt: done?.at });
+
+const shellItem = (db: DatabaseSync, id: string, threadId: string, ordinal: number, started: string, done?: { at: string; output: string }) =>
+  db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, 'node-1', ?, NULL, NULL, ?, 'command_execution', ?, ?, ?)").run(
+    id, threadId, `run-${threadId}`, `pt-${threadId}`, ordinal, done ? "completed" : "running", done?.at ?? started, shellCall(id, started, done),
+  );
+
+describe("T3 Code threads a pass reads again", () => {
+  let env: TmpEnv;
+  let store: string;
+  /** What the index keeps of each thread a pass read: its size and time. */
+  let stamps: Map<string, string>;
+  const saved: Record<string, string | undefined> = {};
+  const write = (f: (db: DatabaseSync) => void) => {
+    const db = new DatabaseSync(store);
+    try {
+      f(db);
+    } finally {
+      db.close();
+    }
+  };
+  beforeEach(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+    store = join(env.home, ".t3", "userdata", "statev2.sqlite");
+    mkdirSync(dirname(store), { recursive: true });
+    stamps = new Map();
+    write((db) => {
+      db.exec(V2_SCHEMA + T3_THREAD_INDEXES + T3_EVENT_LOG);
+      db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+      for (const id of ["thr-a", "thr-b"]) {
+        thread(db, id, { provider: "grok", title: `Thread ${id}`, created: T(0) });
+        providerThread(db, `pt-${id}`, id, "grok", `grok-${id}`, 1);
+        db.prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, 1, 'grok', ?, 'completed', ?, ?, '{}', NULL)").run(`run-${id}`, id, `pt-${id}`, T(1), T(1));
+        db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, ?, 'node-1', 'user', 0, ?, ?, ?)").run(`${id}-m1`, id, `run-${id}`, T(1), T(1), J({ text: `Run the tests in ${id}` }));
+        shellItem(db, `${id}-i1`, id, 1, T(2), { at: T(2), output: "2 passing" });
+      }
+      // T3 Code sets a thread's updated_at to the time of each write it makes for the thread, so it holds the
+      // thread's newest time: here its provider thread's.
+      db.prepare("UPDATE orchestration_v2_projection_threads SET updated_at = ?").run(T(30));
+    });
+  });
+  afterEach(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  /** One pass, with the index's change check: the threads it reads, sorted, and their events. */
+  const pass = async () => {
+    const read: string[] = [];
+    const events = await collect(backfillT3(testCtx().ctx, {
+      changed: async (f) => {
+        // The store file's own check is left out: a write within one tick of its clock may leave its time as it was.
+        if (f.path.endsWith("#store")) return true;
+        const stamp = `${f.size} ${Math.floor(f.mtimeMs)}`;
+        if (stamps.get(f.path) === stamp) return false;
+        stamps.set(f.path, stamp);
+        read.push(f.path.slice(f.path.lastIndexOf("#") + 1));
+        return true;
+      },
+    }));
+    return { read: read.sort(), events };
+  };
+  const replies = (events: AgentEvent[]) => events.filter((e) => e.kind === "assistant.message").map((e) => e.payload.text);
+  const ends = (events: AgentEvent[]) => events.filter((e) => e.sessionId === "grok-thr-b" && e.kind === "tool.end").length;
+
+  it("reads again a thread that gains or loses messages or turn items, and no other", async () => {
+    assert.deepEqual((await pass()).read, ["thr-a", "thr-b"]);
+    assert.deepEqual((await pass()).read, []);
+    write((db) => shellItem(db, "thr-a-i2", "thr-a", 2, T(3), { at: T(3), output: "3 passing" }));
+    assert.deepEqual((await pass()).read, ["thr-a"]);
+    write((db) => db.prepare("DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'thr-b-m1'").run());
+    assert.deepEqual((await pass()).read, ["thr-b"]);
+    write((db) => db.prepare("DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'thr-a-i2'").run());
+    assert.deepEqual((await pass()).read, ["thr-a"]);
+    assert.deepEqual((await pass()).read, []);
+  });
+
+  it("reads again a thread whose message or turn item T3 Code finishes in place, by the thread's updated_at", async () => {
+    write((db) => {
+      db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES ('thr-a-m2', 'thr-a', 'run-thr-a', 'node-1', 'assistant', 1, ?, ?, ?)").run(T(3), T(3), J({ text: "The te" }));
+      shellItem(db, "thr-b-i2", "thr-b", 2, T(3));
+    });
+    const first = await pass();
+    assert.deepEqual(first.read, ["thr-a", "thr-b"]);
+    assert.deepEqual(replies(first.events), [], "a message still streaming is not read");
+    assert.equal(ends(first.events), 1, "a running command has no end yet");
+    // T3 Code updates each row where it is, and its thread's updated_at with it.
+    write((db) => {
+      db.prepare("UPDATE orchestration_v2_projection_messages SET streaming = 0, updated_at = ?, payload_json = ? WHERE message_id = 'thr-a-m2'").run(T(31), J({ text: "The tests pass." }));
+      const done = { at: T(31), output: "3 passing" };
+      db.prepare("UPDATE orchestration_v2_projection_turn_items SET status = 'completed', updated_at = ?, payload_json = ? WHERE turn_item_id = 'thr-b-i2'").run(T(31), shellCall("thr-b-i2", T(3), done));
+      db.prepare("UPDATE orchestration_v2_projection_threads SET updated_at = ? WHERE thread_id IN ('thr-a', 'thr-b')").run(T(31));
+    });
+    const second = await pass();
+    assert.deepEqual(second.read, ["thr-a", "thr-b"]);
+    assert.deepEqual(replies(second.events), ["The tests pass."]);
+    assert.equal(ends(second.events), 2);
+    assert.deepEqual((await pass()).read, []);
+  });
+
+  it("reads again a thread whose edit in place a command hides by writing back an older updated_at, by its newest event", async () => {
+    write((db) => {
+      for (const id of ["thr-a", "thr-b"]) appendEvent(db, id, "thread.created", T(0));
+      db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES ('thr-a-m2', 'thr-a', 'run-thr-a', 'node-1', 'assistant', 1, ?, ?, ?)").run(T(3), T(3), J({ text: "The te" }));
+      appendEvent(db, "thr-a", "message.updated", T(3));
+      shellItem(db, "thr-b-i2", "thr-b", 2, T(3));
+      appendEvent(db, "thr-b", "turn-item.updated", T(3));
+    });
+    const first = await pass();
+    assert.deepEqual(first.read, ["thr-a", "thr-b"]);
+    assert.deepEqual(replies(first.events), []);
+    assert.equal(ends(first.events), 1);
+    write((db) => {
+      // T3 Code finishes each row in place and sets its thread's updated_at...
+      db.prepare("UPDATE orchestration_v2_projection_messages SET streaming = 0, updated_at = ?, payload_json = ? WHERE message_id = 'thr-a-m2'").run(T(31), J({ text: "The tests pass." }));
+      appendEvent(db, "thr-a", "message.updated", T(31));
+      const done = { at: T(31), output: "3 passing" };
+      db.prepare("UPDATE orchestration_v2_projection_turn_items SET status = 'completed', updated_at = ?, payload_json = ? WHERE turn_item_id = 'thr-b-i2'").run(T(31), shellCall("thr-b-i2", T(3), done));
+      appendEvent(db, "thr-b", "turn-item.updated", T(31));
+      db.prepare("UPDATE orchestration_v2_projection_threads SET updated_at = ? WHERE thread_id IN ('thr-a', 'thr-b')").run(T(31));
+      // ...then a command that read each thread before those edits writes back the updated_at it read.
+      for (const id of ["thr-a", "thr-b"]) appendEvent(db, id, "thread.active-reordered", T(31));
+      db.prepare("UPDATE orchestration_v2_projection_threads SET updated_at = ? WHERE thread_id IN ('thr-a', 'thr-b')").run(T(30));
+    });
+    const second = await pass();
+    assert.deepEqual(second.read, ["thr-a", "thr-b"]);
+    assert.deepEqual(replies(second.events), ["The tests pass."]);
+    assert.equal(ends(second.events), 2);
+    assert.deepEqual((await pass()).read, []);
+    // T3 Code prunes old events but keeps each thread's newest, so pruning reads nothing again.
+    write((db) => db.prepare("DELETE FROM orchestration_events WHERE sequence NOT IN (SELECT MAX(sequence) FROM orchestration_events GROUP BY aggregate_kind, stream_id)").run());
+    assert.deepEqual((await pass()).read, []);
+  });
+
+  it("reads each thread's newest event with one seek in T3 Code's index", () => {
+    const db = new DatabaseSync(store, { readOnly: true });
+    try {
+      const plan = (db.prepare(`EXPLAIN QUERY PLAN ${V2_ACTIVITY.events}`).all() as { detail: string }[]).map((r) => r.detail);
+      assert.ok(plan.some((d) => d.startsWith("SEARCH e USING COVERING INDEX idx_orch_events_stream_sequence ")), plan.join(" | "));
+      assert.ok(!plan.some((d) => d.startsWith("SCAN e")), plan.join(" | "));
+    } finally {
+      db.close();
+    }
+  });
+
+  it("counts a thread's messages and turn items from T3 Code's indexes, without reading the rows", () => {
+    const db = new DatabaseSync(store, { readOnly: true });
+    try {
+      for (const sql of [V2_ACTIVITY.messages, V2_ACTIVITY.turnItems]) {
+        const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((r) => r.detail);
+        assert.ok(plan.some((d) => d.includes(" USING COVERING INDEX ")), `${sql} reads the table: ${plan.join(" | ")}`);
+      }
+    } finally {
+      db.close();
     }
   });
 });

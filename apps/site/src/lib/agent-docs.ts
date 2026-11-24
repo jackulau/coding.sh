@@ -2,6 +2,7 @@
 // /skill.md (the same workflow as a Claude Code-style skill). Commands here
 // match the CLI reference generated from the binary (/docs/cli).
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { SITE_URL, INSTALL_SH } from "../data/site";
 
@@ -9,8 +10,8 @@ const abs = (p: string) => new URL(p, SITE_URL).toString();
 
 /**
  * YYYY-MM-DD of the last commit to this file, dated the way src/lib/lastmod.mjs
- * dates pages: the build day while it has uncommitted edits or no git history.
- * Build-time only, run from apps/site.
+ * dates pages: the day the file was last written while it has uncommitted edits
+ * or no git history. Build-time only, run from apps/site.
  */
 function lastCommitDay(): string {
   const file = join(process.cwd(), "src/lib/agent-docs.ts");
@@ -21,8 +22,15 @@ function lastCommitDay(): string {
       return "";
     }
   };
+  const written = () => {
+    try {
+      return statSync(file).mtime;
+    } catch {
+      return new Date();
+    }
+  };
   const committed = git(["status", "--porcelain", "--", file]) ? "" : git(["log", "-1", "--format=%cI", "--", file]);
-  return (committed ? new Date(committed) : new Date()).toISOString().slice(0, 10);
+  return (committed ? new Date(committed) : written()).toISOString().slice(0, 10);
 }
 
 /** YAML frontmatter shared by every agent-facing Markdown page. */
