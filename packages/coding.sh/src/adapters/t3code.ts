@@ -633,9 +633,11 @@ const hasTable = (db: DatabaseSync, name: string): boolean => db.prepare("SELECT
 
 /**
  * What a v2 thread's change check reads besides its row: each query gives a thread a number `n` (a row count, or its
- * newest event's sequence) and, for rows that change in place, their newest time `t`. The check adds up the numbers.
- * T3 Code deletes no messages or turn items, and a thread's newest event sequence grows with each write to the
- * thread, so each write changes the sum.
+ * newest event's sequence) and, for rows that change in place, their newest time `t`. The check (`threadFile`) adds
+ * up the numbers, the thread's provider threads and the sizes of its transcripts. T3 Code deletes no messages or turn
+ * items, and a thread's newest event sequence grows with each write to the thread, so a write changes the sum unless
+ * another part falls by exactly as much before the next check: for example, a transcript's size drops to 0 when its
+ * file is deleted, or a provider thread moves to another thread.
  */
 export const V2_ACTIVITY = {
   // Counts only, which an index on thread_id answers. T3 Code sets a thread's updated_at with each message or turn
