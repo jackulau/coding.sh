@@ -634,7 +634,9 @@ counts once. The outer call keeps its own figures and takes the rest from the ca
 cost a nested call reported, even $0, beats an estimate on the outer call, and so does a cost a
 gateway billed for it.
 
-A call a gateway billed counts at the billed cost, without its nested calls' cost on top.
+A call a gateway billed counts at the billed cost, without its nested calls' cost on top. A gateway
+bill linked to two copies of one call, such as the proxy's copy and the agent's own record, counts
+once.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
 token count below 0 or not a finite number, as the estimate does.

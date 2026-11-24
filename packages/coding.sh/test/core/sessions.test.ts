@@ -660,6 +660,41 @@ describe("session usage rollup", () => {
     assert.deepEqual(r.usage, { inputTokens: 100, costUsd: 2 });
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.5 });
   });
+
+  // `gateway enrich` links one generation to each call that carries its id: the proxy's copy of a call and the agent's own record of it.
+  const billFor = (call: AgentEvent, own: number) =>
+    ev("span", { gateway: "vercel", generationId: "gen_x", billedCostUsd: 1.5 }, { source: "gateway", parentId: call.id, usage: { costUsd: 1.5 - own } });
+
+  it("a gateway generation linked to two copies of one call is billed once, by the companion of the copy that counts", () => {
+    for (const nested of [false, true]) {
+      const proxied = ev("llm.call", { responseId: "gen_x" }, { source: "proxy", usage: { inputTokens: 1000, costUsd: 1 } });
+      const wrapper = llm("w", undefined, { inputTokens: 1000, costUsd: 2 }, { costEstimated: true });
+      const own = llm("k", nested ? "w" : undefined, { inputTokens: 1000, costUsd: 1 }, { responseId: "gen_x" });
+      // The proxy's copy is left out of the totals, so its companion's bill is the copy that does not count.
+      const evs = [proxied, own, billFor(proxied, 1), billFor(own, 1)];
+      if (nested) evs.splice(1, 0, wrapper);
+      const s = buildSession(evs);
+      assert.equal(s.stats.usage?.costUsd, 1.5, nested ? "under an estimated wrapper" : "at the top");
+      // Whichever companion comes first.
+      assert.equal(buildSession([...evs.slice(0, -2), evs.at(-1)!, evs.at(-2)!].map((e, i) => ({ ...e, ts: 1 + i }))).stats.usage?.costUsd, 1.5);
+      // The wrapper's estimate and the bill's copy are what was left out.
+      if (nested) assert.deepEqual(s.stats.duplicateUsage, { calls: 1, tokens: 1000, costUsd: 2.5 });
+    }
+  });
+
+  it("a gateway generation linked to two counted calls adds its bill once", () => {
+    // The agent's record of one response at the top of one trace and nested in another. The call still counts twice, as
+    // before (the wrapper takes the nested call's cost though it repeats a counted response), but its bill's 0.5 counts once.
+    const root = ev("llm.call", { responseId: "gen_x" }, { traceId: "t2", spanId: "r", usage: { inputTokens: 1000, costUsd: 1 } });
+    const wrapper = llm("w", undefined, { inputTokens: 1000, costUsd: 2 }, { costEstimated: true });
+    const own = llm("k", "w", { inputTokens: 1000, costUsd: 1 }, { responseId: "gen_x" });
+    const r = rollupUsage([root, wrapper, own, billFor(root, 1), billFor(own, 1)]);
+    assert.equal(r.usage.costUsd, 1 + 1 + 0.5);
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 1000, costUsd: 2.5 });
+    // A companion with no generation id keeps the rule before generations: each counted call's companion counts.
+    const plain = (call: AgentEvent) => ev("span", { gateway: "vercel", billedCostUsd: 1.5 }, { source: "gateway", parentId: call.id, usage: { costUsd: 0.5 } });
+    assert.equal(rollupUsage([root, wrapper, own, plain(root), plain(own)]).usage.costUsd, 1 + 1 + 0.5 + 0.5);
+  });
 });
 
 describe("the estimate by token type (stats.usage.estimatedCostByTokenType)", () => {
