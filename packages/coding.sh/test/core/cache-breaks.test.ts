@@ -160,6 +160,10 @@ describe("cache breaks", () => {
     assert.deepEqual(lost([call(0, 99_960), fresh(100_000, -50_000), call(0, 60_000)]), [["e2", 100_000]]);
     reset();
     assert.deepEqual(lost([call(0, 99_960), fresh(100_000, Number.NaN)]), [["e2", 100_000]]);
+    // With 120,000 fresh input tokens the break loses at most the 100,000 tokens cached before.
+    // Before, the -50,000 read made the loss larger than that: 120,000.
+    reset();
+    assert.deepEqual(lost([call(0, 99_960), fresh(120_000, -50_000)]), [["e2", 100_000]]);
     // claude-sonnet-4-5 bills a prompt over 200,000 tokens at long-context rates: the valid counts pick the rate.
     const sonnet = { model: "claude-sonnet-4-5" };
     const near = (a: number | undefined, b: number) => assert.ok(a !== undefined && Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
