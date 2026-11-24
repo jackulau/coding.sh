@@ -138,12 +138,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
       // Between its lock holds, a re-parse ingests what hooks and reads left waiting (another ingest running: skip).
-      const onWake = async () => {
-        await ctx.ingest({ lock: { waitMs: 0 } }).catch((e: unknown) => {
-          if (!(e instanceof LockBusyError)) throw e;
-        });
-      };
-      return reparse({ onWake, ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      return reparse({ onWake: wakeIngest(ctx), ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
     },
     async reparseDue() {
       const [{ reparseDue }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
@@ -162,4 +157,16 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     },
   };
   return ctx;
+}
+
+/**
+ * An ingest of what hooks and reads left waiting while a run held the store (the onWake of a re-parse, and of
+ * `usage --reprice`): it takes the ingest lock only if it is free now, and skips when another ingest holds it.
+ */
+export function wakeIngest(ctx: Pick<Context, "ingest">): () => Promise<void> {
+  return async () => {
+    await ctx.ingest({ lock: { waitMs: 0 } }).catch((e: unknown) => {
+      if (!(e instanceof LockBusyError)) throw e;
+    });
+  };
 }
