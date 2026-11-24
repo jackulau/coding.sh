@@ -15,6 +15,9 @@ import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts
 import { FakeBlobs } from "./fakes.ts";
 
 const chrome = findChrome();
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding.sh";
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 
 interface Stub {
@@ -126,7 +129,7 @@ describe("Review page in a browser", { skip: chrome ? false : "no Chrome/Chromiu
   test("with no queue, the empty state names the create command", async () => {
     const p = await open("#/review", { queues: [] });
     assert.equal(await p.eval("document.querySelector('.review-body .empty h2').textContent"), "No review queues yet");
-    assert.equal(await p.eval("document.querySelector('.review-body .cmd code').textContent"), "coding.sh review create <name> --where <query> --config <config>");
+    assert.equal(await p.eval("document.querySelector('.review-body .cmd code').textContent"), `${CLI} review create <name> --where <query> --config <config>`);
     assert.deepEqual(p.errors, []);
   });
 

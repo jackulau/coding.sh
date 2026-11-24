@@ -68,9 +68,10 @@ installs an extensionless sh script named `coding.sh`, and PowerShell and cmd pi
 `codingsh` is the same CLI, from the same npm package, `coding.sh`. In Git Bash, `coding.sh`
 works. Run in PowerShell or cmd, the next steps and error hints commands print
 name `codingsh`, `--json` included, and `update` names `npm install -g coding.sh`
-to reinstall. `status` does too for a stopped ingest's hint, the MCP `status` tool's update
-`command` names the bin for the shell that started the server, and on Windows the viewer's update
-pill copies `codingsh update`.
+to reinstall. `status` does too for a stopped ingest's hint, and the MCP `status` tool's update
+`command` names the bin for the shell that started the server. In a browser on Windows, the
+commands the viewer page shows and copies name `codingsh` (`npx -p coding.sh codingsh` for
+`npx coding.sh`). Errors the server sends, such as the page for a missing token, still name `coding.sh`.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
