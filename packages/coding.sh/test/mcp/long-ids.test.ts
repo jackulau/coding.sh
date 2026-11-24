@@ -31,6 +31,9 @@ const COLLIDE_A = "t3code-thread%3Acollide-442967";
 const COLLIDE_B = "t3code-thread%3Acollide-1705744";
 /** What every printed reference is made of: no character any of bash, PowerShell or cmd needs quoted. */
 const TYPABLE = /^[A-Za-z0-9_][A-Za-z0-9._:/-]*$/;
+/** The CLI a next step names. The sandbox sets no MSYSTEM or SHELL: on Windows that is PowerShell or cmd, which run codingsh. */
+const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+const BIN_RE = BIN.replace(".", "\\.");
 
 type Extra = NonNullable<Parameters<typeof mkSession>[2]>;
 const t3 = (id: string, startAgo: number, extra: Extra = {}): Session => mkSession(id, now - startAgo, { agent: "t3code", cwd: "/work/demo", endedAt: now - startAgo + 5 * MIN, ...extra });
@@ -162,12 +165,12 @@ describe("work names a failed thread by its alias", () => {
     const item = w.items.find((i: { id: string }) => i.id === workItemId(LONG_A));
     assert.ok(item, JSON.stringify(w.items.map((i: { id: string; sessionId: string }) => [i.id, i.sessionId])));
     assert.equal(item.bucket, "failed");
-    assert.equal(item.next, `\`coding.sh show ${ALIAS_A}\``);
+    assert.equal(item.next, `\`${BIN} show ${ALIAS_A}\``);
     assert.equal(item.causeShortId, ALIAS_A);
     assert.equal(item.causeSessionId, LONG_A);
     assert.equal(item.sessionId, LONG_A);
     const claude = w.items.find((i: { id: string }) => i.id === workItemId(PARENT));
-    assert.equal(claude.next, `\`coding.sh show 36d2966a\`, then \`claude --resume ${PARENT}\``, "an ordinary id prints its prefix");
+    assert.equal(claude.next, `\`${BIN} show 36d2966a\`, then \`claude --resume ${PARENT}\``, "an ordinary id prints its prefix");
     for (const i of w.items) {
       if (i.causeShortId !== undefined) assert.match(i.causeShortId, TYPABLE);
       assert.ok(i.next.length < 120, i.next);
@@ -180,12 +183,12 @@ describe("work names a failed thread by its alias", () => {
     const j = await runCmd(work, sb, { json: true });
     assert.equal(j.error, undefined, j.error?.message);
     const item = j.json.items.find((i: { id: string }) => i.id === workItemId(LONG_B));
-    assert.equal(item.next, `\`coding.sh show ${ALIAS_B}\``);
+    assert.equal(item.next, `\`${BIN} show ${ALIAS_B}\``);
     assert.equal(item.causeShortId, ALIAS_B);
     const t = await runCmd(work, sb, {});
     assert.equal(t.error, undefined, t.error?.message);
-    assert.match(t.stdout, new RegExp(`coding\\.sh show ${ALIAS_A}\``));
-    assert.match(t.stdout, new RegExp(`coding\\.sh show ${ALIAS_B}\``));
+    assert.match(t.stdout, new RegExp(`\`${BIN_RE} show ${ALIAS_A}\``));
+    assert.match(t.stdout, new RegExp(`\`${BIN_RE} show ${ALIAS_B}\``));
     assert.doesNotMatch(t.stdout, /%3A/, "no long id in the text");
     const s = cli(["show", item.causeShortId, "--json"]);
     assert.equal(s.status, 0, s.stderr);
