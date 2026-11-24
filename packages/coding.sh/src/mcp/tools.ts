@@ -12,7 +12,7 @@ import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstFirst, 
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
-import { nextStepBin } from "../cli/next-steps.ts";
+import { codeSpansForShell, nextStepBin } from "../cli/next-steps.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
   clip,
@@ -44,7 +44,7 @@ import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
+import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type WorkItem } from "../core/work.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 import { maskStoreUrl } from "../core/store-url.ts";
@@ -500,6 +500,13 @@ async function workItemById(ctx: Context, id: string, since: number, sinceText: 
 }
 
 /**
+ * The item with each command in its next step named as the hints name the CLI (nextStepBin of the
+ * server's env): `codingsh` in PowerShell or cmd. Called once the item's files are settled, since
+ * settling them can rewrite the step.
+ */
+const forShell = (i: WorkItem, env: NodeJS.ProcessEnv): WorkItem => ({ ...i, next: codeSpansForShell(i.next, env) });
+
+/**
  * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
  * A stale index judges waits and stalls as of its last ingest, as the CLI does.
  */
@@ -517,15 +524,16 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     // One item, shaped as an item of a page; limit and cursor do not apply.
     const { item, sessions } = await workItemById(ctx, id, since, strArg(a, "since") ?? "7d", stale?.at ?? now);
     await settleWorkFiles(ctx.index, [item], sessions, stale?.at ?? now);
-    const one: Obj = { since: iso(since), items: [workItemJson(item)] };
+    const one: Obj = { since: iso(since), items: [workItemJson(forShell(item, ctx.env))] };
     if (stale) one.asOf = iso(stale.at);
     return () => ({ ...one, ...indexField(age) });
   }
   const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work), shortId: await shortIds(ctx) });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
   await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
+  const shown = { ...queue, items: queue.items.map((i) => forShell(i, ctx.env)) };
   return (limit: number): Obj => {
-    const doc = workJson(queue, { since, limit: offset + limit, truncated });
+    const doc = workJson(shown, { since, limit: offset + limit, truncated });
     const items = (doc.items as Obj[]).slice(offset);
     const page: Obj = { ...doc, items };
     if (offset + limit < queue.items.length) page.nextCursor = String(offset + limit);
@@ -1707,9 +1715,9 @@ function toolDefs(): PagedTool[] {
           work: {
             ...queue.counts,
             needYou: needYou(queue),
-            items: queue.items.slice(0, STATUS_WORK_ROWS).map(workItemJson),
+            items: queue.items.slice(0, STATUS_WORK_ROWS).map((i) => workItemJson(forShell(i, ctx.env))),
             more: queue.items.length > STATUS_WORK_ROWS ? queue.items.length - STATUS_WORK_ROWS : undefined,
-            rest: queue.items.length > STATUS_WORK_ROWS ? "coding.sh work --json" : undefined,
+            rest: queue.items.length > STATUS_WORK_ROWS ? `${bin} work --json` : undefined,
             truncated: truncated || undefined,
           },
           hints,

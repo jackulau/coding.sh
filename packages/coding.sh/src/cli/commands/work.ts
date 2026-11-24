@@ -9,7 +9,7 @@ import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from 
 import { BUCKET_LABELS, BUCKETS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
-import { ago, CliError, localTime, plural, usd } from "../output.ts";
+import { ago, CliError, localTime, plural, usd, type Output } from "../output.ts";
 import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -68,11 +68,12 @@ async function list(c: CommandContext): Promise<number> {
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
     await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
+    const shown: WorkQueue = { ...q, items: q.items.map((i) => forShell(out, i)) };
     if (out.json) {
-      out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
+      out.data({ ...workJson(shown, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog, stale });
+    printQueue(c, shown, { limit, all, stages, window: w, truncated, backlog, stale });
     return 0;
   });
 }
@@ -187,6 +188,13 @@ export function nextText(next: string, now = Date.now()): string {
   return m ? `snoozed until ${localTime(Date.parse(m[1]!), now)}` : next;
 }
 
+/**
+ * The item with each command in its next step named as the user's shell runs it, in the text view
+ * and --json alike: `codingsh` in PowerShell or cmd (Output.inlineCommands). Called once the item's
+ * files are read, since settling them can rewrite the step.
+ */
+const forShell = (out: Output, i: WorkItem): WorkItem => ({ ...i, next: out.inlineCommands(i.next) });
+
 /** "review · change", or the stage alone while the kind is not known. */
 const stageTag = (i: Pick<WorkItem, "stage" | "kind">): string => (i.kind ? `${i.stage} · ${i.kind}` : i.stage);
 
@@ -272,7 +280,7 @@ function ambiguousItemError(ref: string, { ambiguous: shown, more }: { ambiguous
 
 function idArg(c: CommandContext): string {
   const id = c.positionals[0]?.trim();
-  if (!id) throw new UsageError(`Missing argument <ID>. Usage: coding.sh work ${c.action} <id>`, { reason: "missing_argument" });
+  if (!id) throw new UsageError(`Missing argument <ID>. Usage: ${c.out.command(`coding.sh work ${c.action} <id>`)}`, { reason: "missing_argument" });
   return id;
 }
 
@@ -284,10 +292,11 @@ async function show(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
     const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
-    const { item, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
+    const { item: found, sessions, shortId } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
     // As of the last ingest when the index is old, as the list judges the item: a review item's reason counts from then.
-    const files = new Set(await workFiles(ctx.index, item, sessions, stale?.at));
+    const files = new Set(await workFiles(ctx.index, found, sessions, stale?.at));
+    const item = forShell(out, found);
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
@@ -356,7 +365,7 @@ async function show(c: CommandContext): Promise<number> {
     } else {
       out.row("Sessions", `${shortId(item.primaryId)}${children.length ? ` and ${plural(children.length, "child", "children")}` : ""}`, "none", true);
       for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
-      if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: coding.sh tree ${shortId(item.primaryId)}`, "faint"));
+      if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: ${out.command(`coding.sh tree ${shortId(item.primaryId)}`)}`, "faint"));
     }
     out.row("Next", nextText(item.next), "none", true);
     return 0;
@@ -393,7 +402,7 @@ async function ack(c: CommandContext): Promise<number> {
     // What the item shows now: the next cause, if it has one.
     const { item: after } = await findItem(c, ctx, item.id, overlay, asOf);
     if (out.json) {
-      out.data({ id: item.id, acked: true, bucket: cause.bucket, fingerprint: cause.fingerprint, now: workItemJson(after) });
+      out.data({ id: item.id, acked: true, bucket: cause.bucket, fingerprint: cause.fingerprint, now: workItemJson(forShell(out, after)) });
       return 0;
     }
     out.ok(`Acknowledged ${item.id} (${BUCKET_LABELS[cause.bucket].toLowerCase()})`);
@@ -406,7 +415,7 @@ async function snooze(c: CommandContext): Promise<number> {
   const { out } = c;
   const ref = idArg(c);
   const raw = c.positionals[1];
-  if (!raw) throw new UsageError("Missing argument <DURATION>. Usage: coding.sh work snooze <id> <duration>", { reason: "missing_argument", suggestion: `coding.sh work snooze ${ref} 2h` });
+  if (!raw) throw new UsageError(`Missing argument <DURATION>. Usage: ${out.command("coding.sh work snooze <id> <duration>")}`, { reason: "missing_argument", suggestion: `coding.sh work snooze ${ref} 2h` });
   const ms = parseAge(raw, "<DURATION>");
   windowOf(c);
   return withContext(c, async (ctx) => {

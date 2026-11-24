@@ -15,6 +15,9 @@ import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts
 import { FakeBlobs, event, session } from "./fakes.ts";
 
 const chrome = findChrome();
+// The browser is this machine's Chrome, and the page names the CLI for its platform (forShell in
+// index.html): codingsh on Windows, coding.sh elsewhere.
+const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 
 const HOUR = 3600e3;
@@ -134,6 +137,6 @@ describe("viewer QA round 5 fixes in a browser", { skip: chrome ? false : "no Ch
     assert.equal(await p.eval(`${card}.querySelector('.work-age').textContent`), `${age} ago`);
     const next = `${card}.querySelector('.work-next')`;
     assert.doesNotMatch(await p.eval(`${next}.textContent`), /`/);
-    assert.match(await p.eval(`${next}.querySelector('code').textContent`), /^coding\.sh show failed-3\S*$/);
+    assert.match(await p.eval(`${next}.querySelector('code').textContent`), new RegExp(`^${CLI} show failed-3\\S*$`));
   });
 });
