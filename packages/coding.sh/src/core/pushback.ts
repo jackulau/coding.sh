@@ -10,7 +10,7 @@
 // - undo: take the work out ("undo that", "revert your changes", "remove that", "put it back").
 // - redo: do it again ("try again", "redo it", "start over", "I don't like it").
 // - broken: the work does not work ("still failing", "that didn't work", "you broke the build",
-//   "same error").
+//   "same error", "you made it worse", "nothing changed").
 // A prompt that matches two kinds takes the first in that order. Other corrections ("you forgot
 // the docs", "why did you delete that?") name no kind. "no", "wait", "stop" or "actually" alone
 // name none either: "no problem", "wait for the build" and "actually, also add a test" are not
@@ -77,8 +77,8 @@ const any = (parts: string[]): RegExp => new RegExp(parts.join("|"), "i");
 
 const KIND_PATTERNS: [PushbackKind, RegExp][] = [
   ["intent", any([
-    String.raw`\bnot what (?:i|we) (?:meant|asked|wanted|said|requested|intended|had in mind|discussed|agreed|described)\b`,
-    String.raw`\byou (?:misunderstood|misread|got (?:it|me|that) wrong)\b`,
+    String.raw`\bnot what (?:i|we)(?:'m| am|'re| are| was| were)? (?:meant|mean|asked|asking|wanted|want|said|requested|intended|had in mind|discussed|agreed|described|expected|expecting|looking for|needed(?! to\b)|need(?! to\b))\b`,
+    String.raw`\byou (?:misunderstood|misread|misinterpreted|misheard|got (?:it|me|that) wrong)\b`,
     String.raw`\bi (?:didn'?t|did not|never) (?:ask(?:ed)? (?:for|you)|want(?:ed)? (?:you|that|this|it|a|an|the|those|these)|(?:say|said) (?:that|this|to|you|it)|mean(?:t)? (?:that|this|it|the))\b`,
     LEAD + String.raw`i (?:meant|said)\b(?! to (?:mention|say|ask|add)\b)`,
     LEAD + String.raw`(?:that'?s|that is|this is) not it\b`,
@@ -117,8 +117,11 @@ const KIND_PATTERNS: [PushbackKind, RegExp][] = [
     GUARD + String.raw`(?<!\bi (?:\w+ )?)\b(?:didn'?t|did not) (?:work(?! on\b)|fix|help|solve|change anything|do anything)\b`,
     GUARD + String.raw`\b(?:it|that|this|they) (?:still )?(?:doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not) (?:work|working|fixed|compile|compiling)\b` + NOT_YET,
     GUARD + String.raw`\b(?:it'?s|it is|that'?s|that is|this is) (?:still )?not (?:working|fixed|compiling)\b` + NOT_YET,
+    LEAD + String.raw`(?:still )?(?:doesn'?t|does not|not|isn'?t|is not) (?:work|working)\b(?=\s*(?:[.!?,;:]|$|(?:for me|either|now|at all)\b))`,
     GUARD + String.raw`\byou(?:'ve| have| just)? (?:broke|broken)\b` + SPLIT,
     GUARD + String.raw`\b(?:that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:broke|has broken|have broken)\b` + SPLIT,
+    GUARD + String.raw`\b(?:you(?:'ve| have)?|that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:just )?(?:made|has made|have made) (?:it|things|this|that|everything|the \w+) worse\b`,
+    GUARD + String.raw`\bnothing (?:has |have )?changed\b(?=\s*(?:[.!?,;:]|$))`,
     GUARD + String.raw`\b(?:get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws|throwing|threw|shows|showing|showed|gives|giving|gave|returns|returning|returned)\s+(?:the\s+)?same (?:error|errors|failure|failures|exception|crash|problem|issue)\b` + SAME_AS,
     LEAD + String.raw`(?:the )?same (?:error|errors|failure|failures|exception|crash)\b` + SAME_AS,
     GUARD + String.raw`\bsame (?:error|errors|failure|exception|crash) (?:as before|again)\b`,

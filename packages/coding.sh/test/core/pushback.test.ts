@@ -34,6 +34,9 @@ describe("pushbackKind", () => {
       "you edited the wrong file",
       "Wrong file, it's src/a.ts",
       "that's not it",
+      "you misinterpreted the task",
+      "This is not what I want",
+      "that's not what I'm asking for",
     ],
     undo: [
       "undo that",
@@ -83,6 +86,10 @@ describe("pushbackKind", () => {
       "Same error as before",
       "still not working",
       "it fails again",
+      "you made it worse",
+      "Nothing changed.",
+      "Doesn't work",
+      "nope, not working",
     ],
   };
   for (const kind of PUSHBACK_KINDS) {
@@ -143,6 +150,7 @@ describe("pushbackKind", () => {
       "Make the handler return the same error as v1",
       "Same error handling as bar.ts, please",
       "I don't like this library, but we must use it. Wrap it.",
+      "Nothing changed in the API, so skip the docs",
     ]) {
       assert.equal(pushbackKind(t), undefined, t);
     }

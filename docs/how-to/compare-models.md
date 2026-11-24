@@ -69,7 +69,7 @@ that row.
 | Pushback: intent | The agent did something else: "not what I meant", "you misunderstood", "you edited the wrong file". |
 | Pushback: undo | Take the work out: "undo that", "revert your changes", "put it back". |
 | Pushback: redo | Do it again: "try again", "start over", "I don't like it". |
-| Pushback: broken | The work does not work: "still failing", "that didn't work", "you broke the build". |
+| Pushback: broken | The work does not work: "still failing", "that didn't work", "you broke the build", "you made it worse". |
 | Cancelled turns | The turns you stopped, out of the turns whose capture records a stopped turn ([below](#what-each-row-reads)). |
 | Median turn | How long a turn ran, from your prompt to the end of its last work, with the quartiles. It has an interval from 6 turns on. |
 | Failed file edits | File edit calls that failed, out of all of them. |
