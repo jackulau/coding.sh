@@ -89,12 +89,23 @@ jobs:
           python-version: "3.12"
 
       # A tag can be pushed on any commit. Only a commit that main already holds has been
-      # through a pull request and the full suite.
+      # through a pull request and the full suite. A request to the compare API is tried up to 5
+      # times, 5 s apart, so one failed request does not stop the release. gh prints each error,
+      # and 5 failures stop it with an error of their own, not "not on main". That error says what
+      # a 404 for no common ancestor means: the tag's commit shares no history with main.
       - name: Tag points at a commit on main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          for try in 1 2 3 4 5; do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status) || status=
+            [ -z "$status" ] || break
+            [ "$try" = 5 ] || { echo "The compare API failed on try $try of 5; trying again in 5 s."; sleep 5; }
+          done
+          if [ -z "$status" ]; then
+            echo "::error::the compare API failed 5 times (gh's errors are above), so tag $GITHUB_REF_NAME was not checked against main. An HTTP 404 that says 'No common ancestor' means the tag's commit shares no history with main."
+            exit 1
+          fi
           case "$status" in
             identical|behind) ;;
             *)

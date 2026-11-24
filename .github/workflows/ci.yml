@@ -52,8 +52,12 @@ jobs:
         with:
           fetch-depth: 2
 
+      # `shell: bash` adds pipefail, so a failing scripts/ci-changes.mjs fails this step: on the
+      # default shell the step took tee's status and passed. The gated jobs still run unless it
+      # printed code=false.
       - name: Docs or code
         id: diff
+        shell: bash
         env:
           EVENT: ${{ github.event_name }}
         run: |
@@ -236,7 +240,13 @@ jobs:
       # here puts that nav through the build, the site tests and the perf budget.
       SITE_GITHUB_STARS: "1234"
     steps:
+      # Full history, as the Site workflow fetches: a page's date (the sitemap <lastmod>, a docs
+      # page's dateModified) is the last commit to its source, as in the deploy. A shallow checkout
+      # dates every page at the merge commit, and those digits alone have put a page over its
+      # weight budget in one build and not the other. It adds about 1 s to the checkout.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -609,14 +619,27 @@ jobs:
       # About 11 minutes after a hosted Windows runner boots, its Storage Service reads the disk at
       # 25-47 MB/s for 30 s or more, and the Volume Shadow Copy service starts. A viewer page that
       # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
-      # do not use the service, so it is stopped before anything else, and disabled so that nothing
-      # starts it again. The step fails if the service cannot be stopped.
+      # do not use the service, so it is stopped before anything else. It is disabled first, so
+      # that nothing starts it while it stops or after. A stop failed in 2 of the first 1232 jobs
+      # (the service refused it once, and once it was not stopping 2 s later), so a stop is tried
+      # up to 5 times, 5 s apart. The step fails if the service is still not stopped, and after 3
+      # minutes, since Stop-Service waits for as long as the service takes to stop.
       - name: Stop the Storage Service
+        timeout-minutes: 3
         shell: pwsh
         run: |
-          Stop-Service -Name StorSvc -Force
           Set-Service -Name StorSvc -StartupType Disabled
-          Get-Service -Name StorSvc | ForEach-Object { "Storage Service: $($_.Status), start type $($_.StartType)" }
+          foreach ($try in 1..5) {
+            try { Stop-Service -Name StorSvc -Force -ErrorAction Stop; break }
+            catch { "::warning title=Storage Service::Try $try of 5 to stop it failed: $_" }
+            if ($try -lt 5) { Start-Sleep -Seconds 5 }
+          }
+          $service = Get-Service -Name StorSvc
+          "Storage Service: $($service.Status), start type $($service.StartType)"
+          if ($service.Status -ne 'Stopped') {
+            "::error title=Storage Service not stopped::StorSvc is $($service.Status) after 5 tries to stop it."
+            exit 1
+          }
 
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v5
@@ -674,7 +697,10 @@ jobs:
           node dist/cli.mjs --version
           node dist/cli.mjs --help > /dev/null
 
-      # install.sh in Git Bash, into a throwaway npm prefix and home, then init + doctor.
+      # install.sh in Git Bash, into a throwaway npm prefix and home, then init + doctor. The pack
+      # is a plain assignment, so a failed npm pack stops the step (the job's bash has pipefail).
+      # Inside an `export` its status would be lost, and install.sh would get the package folder
+      # as the tarball. A pack that names no file stops the step too.
       - name: Installer (Git Bash)
         if: matrix.shard == 1
         env:
@@ -684,7 +710,9 @@ jobs:
         run: |
           T=$(cygpath -u "$RUNNER_TEMP")
           mkdir -p "$T/home/.claude" "$T/npm-global"
-          export CODING_SH_TARBALL="$PWD/packages/coding.sh/$(cd packages/coding.sh && npm pack --silent | tail -n 1)"
+          tgz=$(cd packages/coding.sh && npm pack --silent | tail -n 1)
+          export CODING_SH_TARBALL="$PWD/packages/coding.sh/$tgz"
+          [ -f "$CODING_SH_TARBALL" ] || { echo "::error::npm pack printed no tarball name"; exit 1; }
           export npm_config_prefix="$(cygpath -w "$T/npm-global")" PATH="$T/npm-global:$PATH"
           export HOME="$T/home" USERPROFILE="$(cygpath -w "$T/home")" CODING_SH_HOME="$T/home/.coding.sh"
           sh install.sh
