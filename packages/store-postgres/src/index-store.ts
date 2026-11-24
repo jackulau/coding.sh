@@ -17,6 +17,7 @@ import {
   type DatasetListing,
   type DatasetVersionInfo,
   type EvalTask,
+  type EventCost,
   type ExperimentResult,
   type FacetCount,
   type HarnessBundle,
@@ -329,10 +330,9 @@ export class PgIndexStore implements IndexStore {
    * payload and usage are text and are edited in JS, as in the ClickHouse store: a jsonb cast
    * would reject the escaped U+0000 a stored payload may hold. One transaction holds each
    * touched session's rebuildSession lock, so a concurrent rebuild sees all the new costs or none.
+   * An entry with `clear` removes usage.costUsd, costEstimated and the three price tags instead.
    */
-  async setEventCosts(
-    costs: { id: string; costUsd: number; pricedAs?: string; priceTier?: string; costByTokenType?: { input: number; output: number; cacheRead: number; cacheWrite: number } }[],
-  ): Promise<number> {
+  async setEventCosts(costs: EventCost[]): Promise<number> {
     if (!costs.length) return 0;
     const byId = new Map(costs.map((c) => [c.id, c]));
     const ids = [...byId.keys()].sort();
@@ -350,10 +350,18 @@ export class PgIndexStore implements IndexStore {
         );
         if (!rows.length) continue;
         const payloads: string[] = [];
-        const usages: string[] = [];
+        const usages: (string | null)[] = [];
         for (const r of rows) {
           const cost = byId.get(r.id)!;
           const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...rest } = parse<Record<string, unknown>>(r.payload) ?? {};
+          if (cost.clear) {
+            // No price backs the estimate any more: the event goes back to having no cost.
+            const { costEstimated: _est, ...payload } = rest;
+            const { costUsd: _cost, ...usage } = parse<Record<string, unknown>>(r.usage) ?? {};
+            payloads.push(JSON.stringify(payload));
+            usages.push(r.usage === null ? null : JSON.stringify(usage));
+            continue;
+          }
           const payload: Record<string, unknown> = { ...rest, costEstimated: true };
           if (cost.pricedAs) payload.pricedAs = cost.pricedAs;
           if (cost.priceTier) payload.priceTier = cost.priceTier;

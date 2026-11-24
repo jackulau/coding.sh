@@ -255,17 +255,27 @@ export interface ScoreFilter {
   limit?: number;
 }
 
-/** A price-table cost for one stored event (IndexStore.setEventCosts). */
-export interface EventCost {
-  id: string;
-  costUsd: number;
-  /** The sibling model whose price was used, when the event's own model has no row. */
-  pricedAs?: string;
-  /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
-  priceTier?: string;
-  /** The estimate split by token type (`payload.costByTokenType`). */
-  costByTokenType?: CostByTokenType;
-}
+/**
+ * A price-table cost for one stored event (IndexStore.setEventCosts), or, with
+ * `clear`, the removal of an estimate that no price backs any more.
+ */
+export type EventCost =
+  | {
+      id: string;
+      costUsd: number;
+      /** The sibling model whose price was used, when the event's own model has no row. */
+      pricedAs?: string;
+      /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
+      priceTier?: string;
+      /** The estimate split by token type (`payload.costByTokenType`). */
+      costByTokenType?: CostByTokenType;
+      clear?: undefined;
+    }
+  | {
+      id: string;
+      /** Removes the estimate: `usage.costUsd` and `payload.costEstimated`, `pricedAs`, `priceTier` and `costByTokenType`. */
+      clear: true;
+    };
 
 /** One session as metrics read it (IndexStore.metricRows): fields absent when the session has no value. */
 export interface MetricRow {
@@ -435,7 +445,8 @@ export interface IndexStore {
    * Sets an estimated cost on stored events in place (`usage.costUsd`,
    * `payload.costEstimated = true`, and `payload.pricedAs`, `payload.priceTier` and
    * `payload.costByTokenType` when given, removed when not); ids and everything else stay. Used by the reprice pass over events
-   * stored before local pricing or under older prices. Returns how many it found.
+   * stored before local pricing or under older prices. An entry with `clear` removes the estimate instead: `usage.costUsd`
+   * and those four payload fields. Returns how many it found.
    */
   setEventCosts?(costs: EventCost[]): Promise<number>;
 

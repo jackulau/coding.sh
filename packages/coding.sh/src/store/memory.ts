@@ -161,13 +161,25 @@ export class MemoryIndexStore implements IndexStore {
 
   async setEventCosts(costs: EventCost[]): Promise<number> {
     let found = 0;
-    for (const { id, costUsd, pricedAs, priceTier, costByTokenType } of costs) {
-      const r = this.events.get(id);
+    for (const c of costs) {
+      const r = this.events.get(c.id);
       if (!r) continue;
       const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...rest } = r.event.payload;
-      const payload: Record<string, unknown> = { ...rest, costEstimated: true, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) };
-      if (costByTokenType) payload.costByTokenType = { ...costByTokenType };
-      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload };
+      if (c.clear) {
+        // No price backs the estimate any more: the event goes back to having no cost.
+        const { costEstimated: _est, ...payload } = rest;
+        const event = { ...r.event, payload };
+        if (event.usage) {
+          const { costUsd: _cost, ...usage } = event.usage;
+          event.usage = usage;
+        }
+        r.event = event;
+      } else {
+        const { costUsd, pricedAs, priceTier, costByTokenType } = c;
+        const payload: Record<string, unknown> = { ...rest, costEstimated: true, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) };
+        if (costByTokenType) payload.costByTokenType = { ...costByTokenType };
+        r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload };
+      }
       found++;
     }
     return found;

@@ -19,14 +19,15 @@
 // - A session's token counts and cost are the sums over the calls it counts, plus its latest usage
 //   snapshot. A call that repeats an earlier call's responseId, or replays one, counts once. A wrapper
 //   span over a call with the same tokens counts once, with its own values, except that a cost the
-//   nested call reported beats the wrapper's estimate. The estimated part is the sum of the estimates
-//   counted, and its splits by token type and by tier add up to it. What was left out is the duplicate
-//   count, tokens and cost.
+//   nested call reported, 0 included, beats the wrapper's estimate, $0 included. The estimated part
+//   is the sum of the estimates counted, and its splits by token type and by tier add up to it. What
+//   was left out is the duplicate count, tokens and cost.
 //
 // Calls are drawn over every model in the built-in table, with provider prefixes, dated and variant
 // suffixes, family fallbacks and an unknown model; prompts near each long-context threshold; and the
-// service tiers, speeds and geographies adapters record. Gateway companions are left out: they carry
-// what a gateway billed minus the call's own cost, which can be negative.
+// service tiers, speeds and geographies adapters record. A session's calls are drawn over a
+// `[prices]` row of 0 too, so a wrapper's estimate can be $0. Gateway companions are left out: they
+// carry what a gateway billed minus the call's own cost, which can be negative.
 //
 // The last test shows each check fails on a mutant of the table, the pricer, the estimate or the fold.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200 per call, 100 per session);
@@ -52,9 +53,13 @@ interface Subject {
   fold: (events: AgentEvent[]) => Session;
   /** Table keys calls are drawn from. */
   keys: readonly string[];
+  /** A key drawn often, whose row prices every call at $0. */
+  free?: string;
 }
 
 const REAL: Subject = { prices: pricesFor(), price: priceEvent, fold: (events) => buildSession(events), keys: Object.keys(pricesFor()) };
+/** The real table plus a `[prices]` row of 0, as a config sets for a free or self-hosted model. */
+const SESSION: Subject = { ...REAL, prices: { ...REAL.prices, "free-model": { input: 0, output: 0 } }, keys: [...REAL.keys, "free-model"], free: "free-model" };
 
 // ---------------------------------------------------------------- the table
 
@@ -149,13 +154,16 @@ const GEOS = [undefined, "us", "global", "eu", "US"];
 /** A reported cost: $0.000001 to $5. */
 const COST: Gen<number> = gen.map(gen.int(1, 5_000_000), (n) => n / 1e6);
 
-function modelGen(keys: readonly string[]): Gen<string> {
+/** A model name: a table key, the same with a prefix or a suffix, a name with no row of its own, or `free`, drawn often. */
+function modelGen(keys: readonly string[], free?: string): Gen<string> {
+  const often = free ? [[3, gen.constant(free)] as const] : [];
   return gen.frequency(
     [8, gen.pick(keys)],
     [1, gen.map(gen.pick(keys), (k) => `openai/${k}`)],
     [1, gen.map(gen.pick(keys), (k) => `${k}-20260101`)],
     [1, gen.map(gen.pick(keys), (k) => `${k.toUpperCase()}-thinking`)],
     [1, gen.pick(ODD_MODELS)],
+    ...often,
   );
 }
 
@@ -176,7 +184,7 @@ function callGen(s: Subject, reported = false): Gen<Call> {
       const hi = Math.max(x, y);
       const write = total - hi;
       return gen.record<Call>({
-        model: modelGen(s.keys),
+        model: modelGen(s.keys, s.free),
         input: gen.map(gen.bool, (absent) => maybe(lo, absent)),
         cacheRead: gen.map(gen.bool, (absent) => maybe(hi - lo, absent)),
         cacheWrite: gen.map(gen.bool, (absent) => maybe(write, absent)),
@@ -408,8 +416,7 @@ function sessionEvents(s: Subject, c: SessionCase): { events: AgentEvent[]; grou
     if (c.spans) {
       call.traceId = "trace";
       call.spanId = `s${i}`;
-      // A reported cost of 0 inside a wrapper is left out.
-      if (sc.wrap && sc.rid === undefined && !sc.replay && sc.call.reported !== 0) {
+      if (sc.wrap && sc.rid === undefined && !sc.replay) {
         wrapper = callEvent({ ...sc.call, reported: sc.wrapperReports ? (sc.call.reported ?? sc.wrapperCost) : undefined }, `w${i}`, call.ts - 3);
         wrapper.traceId = "trace";
         wrapper.spanId = `w${i}`;
@@ -472,7 +479,7 @@ function expected(groups: readonly Group[], snapshot: AgentEvent | undefined): E
         leaveOut(call);
       }
       const own = wrapper.usage?.costUsd;
-      const callReported = carries(call) && !isEstimate(call) && costOf(call) > 0;
+      const callReported = carries(call) && call.usage?.costUsd !== undefined && !isEstimate(call);
       if (own !== undefined && !(isEstimate(wrapper) && callReported)) count(wrapper, own, isEstimate(wrapper) ? own : 0, wrapper.payload.priceTier);
       else count(wrapper, costOf(call), isEstimate(call) ? costOf(call) : 0, call.payload.priceTier);
       continue;
@@ -584,20 +591,21 @@ test("a call whose estimate would not be a finite number gets none", () => {
 });
 
 test("a session's tokens and cost are the sums over the calls it counts, and what it left out is the duplicate", async (t) => {
-  const seen = { calls: 0, leftOut: 0, wrapped: 0, estimated: 0 };
+  const seen = { calls: 0, leftOut: 0, wrapped: 0, free: 0, estimated: 0 };
   await forAll(
-    sessionGen(REAL),
+    sessionGen(SESSION),
     (c) => {
-      checkSession(REAL, c);
-      const { groups } = sessionEvents(REAL, c);
+      checkSession(SESSION, c);
+      const { groups } = sessionEvents(SESSION, c);
       seen.calls += groups.length;
       seen.wrapped += groups.filter((g) => g.wrapper && carries(g.wrapper) && carries(g.call)).length;
+      seen.free += groups.filter((g) => g.wrapper && isEstimate(g.wrapper) && costOf(g.wrapper) === 0 && carries(g.wrapper) && costOf(g.call) > 0 && !isEstimate(g.call)).length;
       seen.estimated += groups.filter((g) => isEstimate(g.call)).length;
       seen.leftOut += expected(groups, undefined).leftOut.calls;
     },
     { runs: SESSION_RUNS, label: "session cost" },
   );
-  t.diagnostic(`${seen.calls} calls: ${seen.estimated} estimated, ${seen.wrapped} under a wrapper, ${seen.leftOut} left out`);
+  t.diagnostic(`${seen.calls} calls: ${seen.estimated} estimated, ${seen.wrapped} under a wrapper (${seen.free} with a cost reported under an estimate of $0), ${seen.leftOut} left out`);
 });
 
 test("each check fails on a mutant of the table, the pricer, the estimate or the fold", async (t) => {
@@ -710,6 +718,19 @@ test("each check fails on a mutant of the table, the pricer, the estimate or the
         }),
       ),
   };
+  // The fold as it was before: a wrapper's estimate of $0 beat the cost a nested call reported, as a $0 the wrapper reported does.
+  const zeroEstimateKept: Subject = {
+    ...SESSION,
+    fold: (events) =>
+      buildSession(
+        events.map((e) => {
+          if (e.payload.costEstimated !== true || e.usage?.costUsd !== 0) return e;
+          const payload = { ...e.payload };
+          delete payload.costEstimated;
+          return { ...e, payload };
+        }),
+      ),
+  };
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
     ["cost, gpt-6-luna output at -0.5", () => failure(callGen(only("gpt-6-luna", negative)), (c) => checkCall(only("gpt-6-luna", negative), c), "negative"), /the cost is negative/],
     ["parts, a pricer with no output part", () => failure(callGen(noOutputPart), (c) => checkCall(noOutputPart, c), "no output part"), /do not add up to the cost/],
@@ -722,6 +743,7 @@ test("each check fails on a mutant of the table, the pricer, the estimate or the
     ["session, a fold that drops the last call", () => failure(sessionGen(lastCallDropped), (c) => checkSession(lastCallDropped, c), "last call dropped"), /add up to|left out/],
     ["session, a fold that ignores response ids", () => failure(sessionGen(noResponseIds), (c) => checkSession(noResponseIds, c), "no response ids"), /add up to/],
     ["session, a fold that ignores parent spans", () => failure(sessionGen(noParents), (c) => checkSession(noParents, c), "no parent spans"), /add up to/],
+    ["session, a fold where a wrapper's estimate of $0 beats a nested call's reported cost", () => failure(sessionGen(zeroEstimateKept), (c) => checkSession(zeroEstimateKept, c), "zero estimate kept"), /add up to/],
   ];
   for (const [label, run, why] of mutants) {
     const f = await run();
