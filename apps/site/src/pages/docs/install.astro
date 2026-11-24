@@ -54,6 +54,10 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
     <code>npx coding.sh init</code> works too, or <code>{INSTALL_CMD_WIN}</code> on Windows. The MCP server it registers then runs from
     the npx cache, so install globally if you want it to survive <code>npm cache clean</code>.
   </p>
+  <p>
+    On Windows, type <code>npx -p coding.sh codingsh</code> for <code>npx coding.sh</code>, and in PowerShell and cmd, <code>codingsh</code>
+    for an installed <code>coding.sh</code>: there, <code>coding.sh</code> opens npm's sh script instead of running it.
+  </p>
 
   <h2 id="options">Script options</h2>
   <p>Set these on the <code>sh</code> side of the pipe:</p>
@@ -79,8 +83,7 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
     <li><strong>git</strong>, for the repository snapshots that <code>coding.sh run</code> and repo-replay evals take.</li>
     <li>
       <strong>Windows:</strong> run the script from Git Bash, which comes with <a href="https://gitforwindows.org">Git for Windows</a>. Eval
-      commands need its <code>sh</code> too. In PowerShell and cmd, type <code>codingsh</code> instead of <code>coding.sh</code>. Under WSL,
-      coding.sh works as it does on Linux.
+      commands need its <code>sh</code> too. Under WSL, coding.sh works as it does on Linux.
     </li>
   </ul>
 
@@ -111,7 +114,7 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
   <p>
     <code>uninstall</code> restores each agent config file as it was before <code>init</code>, if nothing else has edited it since. Otherwise
     it removes only the coding.sh entries. Your recorded sessions stay until you delete <code>~/.coding.sh</code>. In PowerShell, type
-    <code>codingsh</code> for <code>coding.sh</code>, and delete the data with <code>Remove-Item -Recurse -Force ~\.coding.sh</code>.
+    <code>codingsh uninstall</code> for <code>coding.sh uninstall</code>, and delete the data with <code>Remove-Item -Recurse -Force ~\.coding.sh</code>.
   </p>
 
   <details class="more" id="source">
