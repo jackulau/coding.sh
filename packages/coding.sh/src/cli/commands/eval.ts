@@ -38,10 +38,10 @@ import type { Context } from "../../core/context.ts";
 /** By id or unique name. */
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
 
-/** Text that ends where a package runner names its package: npx, pnpx, bunx, bun x, npm exec, pnpm dlx and the like (with flags other than -p and --package between), -p or --package. */
-const PACKAGE_RUNNER = /(?:\b(?:npx|pnpx|bunx|x|exec|dlx)(?:[ \t]+-(?!-?p(?:ackage)?\b)-?(?:[A-Za-z][\w-]*(?:=\S*)?)?)*[ \t]+|(?<![\w-])-p[ \t]+|--package(?:=|[ \t]+))$/;
+/** Text that ends where a package runner names its package: npx, pnpx, bunx, npm exec or x, bun x, pnpm or yarn dlx (with flags other than -p and --package between), -p or --package. A bare x or exec is no runner. */
+const PACKAGE_RUNNER = /(?:\b(?:npx|pnpx|bunx|(?:npm|bun)[ \t]+x|npm[ \t]+exec|(?:pnpm|yarn)[ \t]+dlx)(?:[ \t]+-(?!-?p(?:ackage)?\b)-?(?:[A-Za-z][\w-]*(?:=\S*)?)?)*[ \t]+|(?<![\w-])-p[ \t]+|--package(?:=|[ \t]+))$/;
 /** Text that ends where a package runner whose package -p or --package named runs a bin: the next word. */
-const RUNNER_BIN = /\b(?:npx|pnpx|bunx|x|exec|dlx)(?:[ \t]+(?:-p[ \t]+\S+|--package(?:=|[ \t]+)\S+|-{1,2}[A-Za-z][\w-]*(?:=\S*)?|--))*[ \t]+$/;
+const RUNNER_BIN = /\b(?:npx|pnpx|bunx|(?:npm|bun)[ \t]+x|npm[ \t]+exec|(?:pnpm|yarn)[ \t]+dlx)(?:[ \t]+(?:-p[ \t]+\S+|--package(?:=|[ \t]+)\S+|-{1,2}[A-Za-z][\w-]*(?:=\S*)?|--))*[ \t]+$/;
 
 /**
  * A note or message that names coding.sh commands mid-sentence ("…, then coding.sh eval validate
@@ -51,17 +51,18 @@ const RUNNER_BIN = /\b(?:npx|pnpx|bunx|x|exec|dlx)(?:[ \t]+(?:-p[ \t]+\S+|--pack
  * followed by one of the CLI's commands as a whole word (a path, the product's name) stays as it
  * is, and so does one after npx or another package runner: there it names the npm package, and
  * codingsh in its place would name a package that is not ours. After -p or --package the runner's
- * next word is the bin it runs, named `codingsh` on Windows, where npx runs it through cmd, and
- * left as it is elsewhere.
+ * next word is the bin it runs, named `codingsh` on Windows, where npx runs it through cmd from any
+ * shell, Git Bash included, and left as it is elsewhere.
  */
 export function commandsForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const bin = nextStepBin(env, platform);
-  if (bin === "coding.sh") return text;
+  if (bin === "coding.sh" && platform !== "win32") return text;
   return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)(?![\w-]|\.\w)( --(?= |$))?/g, (m, name: string, dashes: string | undefined, at: number) => {
     if (!findCommand(name)) return m;
     const before = text.slice(Math.max(0, at - 120), at);
     if (PACKAGE_RUNNER.test(before)) return m;
     if (RUNNER_BIN.test(before)) return platform === "win32" ? `codingsh ${name}${dashes ?? ""}` : m;
+    if (bin === "coding.sh") return m;
     return name === "run" && dashes ? runCommand(env, "", platform).trimEnd() : `${bin} ${name}${dashes ?? ""}`;
   });
 }

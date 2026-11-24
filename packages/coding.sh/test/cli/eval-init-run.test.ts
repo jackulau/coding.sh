@@ -100,6 +100,15 @@ describe("commandsForShell", () => {
     const text = "npx  coding.sh doctor, npx\tcoding.sh init and npx -y\tcoding.sh ui";
     assert.equal(commandsForShell(text, {}, "win32"), text);
   });
+  it("takes x and exec for a runner only after npm or bun", () => {
+    const text = "Then exec coding.sh doctor, or x coding.sh init; npm x coding.sh ui and bun x coding.sh sessions stay.";
+    assert.equal(commandsForShell(text, {}, "win32"), "Then exec codingsh doctor, or x codingsh init; npm x coding.sh ui and bun x coding.sh sessions stay.");
+  });
+  it("names the bin npx -p runs codingsh in Git Bash on Windows too, since npx runs it through cmd there", () => {
+    const text = "npx -y -p coding.sh coding.sh init, npx coding.sh doctor or coding.sh ui";
+    assert.equal(commandsForShell(text, { MSYSTEM: "MINGW64" }, "win32"), "npx -y -p coding.sh codingsh init, npx coding.sh doctor or coding.sh ui");
+    assert.equal(commandsForShell(text, { SHELL: "/usr/bin/bash" }, "linux"), text);
+  });
 });
 
 describe("eval init + eval run: cases", () => {
