@@ -707,6 +707,34 @@ describe("session usage rollup", () => {
     const plain = (call: AgentEvent) => ev("span", { gateway: "vercel", billedCostUsd: 1.5 }, { source: "gateway", parentId: call.id, usage: { costUsd: 0.5 } });
     assert.equal(rollupUsage([root, wrapper, own, plain(root), plain(own)]).usage.costUsd, 1 + 1 + 0.5 + 0.5);
   });
+
+  // A nested call with no usage of its own was not seen as nested, so its bill added to its wrapper's cost.
+  it("a nested call a gateway billed with no usage of its own replaces its wrapper's estimate, and goes with it under a reported cost", () => {
+    // No usage, an empty one, and a reported $0 with no tokens: none carries usage, and the gateway billed each $5.
+    for (const own of [undefined, {}, { costUsd: 0 }] as AgentEvent["usage"][]) {
+      for (const estimated of [true, false]) {
+        const wrapper = llm("w", undefined, { inputTokens: 10, costUsd: 4 }, estimated ? { costEstimated: true } : {});
+        const inner = llm("k", "w", own);
+        const gw = ev("span", { gateway: "vercel", billedCostUsd: 5 }, { source: "gateway", parentId: inner.id, usage: { costUsd: 5 } });
+        const label = `${estimated ? "an estimated" : "a reported"} wrapper over ${JSON.stringify(own)}`;
+        const r = rollupUsage([wrapper, inner, gw]);
+        // Estimated: the bill replaces the $4. Reported: the wrapper keeps its $4, and the bill is left out with the call.
+        assert.deepEqual(r.usage, { inputTokens: 10, costUsd: estimated ? 5 : 4 }, label);
+        assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: estimated ? 4 : 5 }, label);
+        assert.deepEqual(buildSession([wrapper, inner, gw]).stats.usage, r.usage, label);
+      }
+    }
+  });
+
+  it("a wrapper a gateway billed with no usage of its own counts its nested calls' tokens at the bill, without their cost on top", () => {
+    const wrapper = llm("w", undefined, undefined);
+    const inner = llm("k", "w", { inputTokens: 10, costUsd: 4 }, { costEstimated: true });
+    const gw = ev("span", { gateway: "vercel", billedCostUsd: 5 }, { source: "gateway", parentId: wrapper.id, usage: { costUsd: 5 } });
+    const r = rollupUsage([wrapper, inner, gw]);
+    assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 5 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: 4 });
+    assert.deepEqual(buildSession([wrapper, inner, gw]).stats.usage, r.usage);
+  });
 });
 
 describe("the estimate by token type (stats.usage.estimatedCostByTokenType)", () => {
