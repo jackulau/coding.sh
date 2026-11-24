@@ -51,8 +51,8 @@ show up, work down this list:
 6. **Is it older than `init`?** `init` imports past transcripts unless you passed `--no-import`.
    Run `coding.sh ingest --backfill --since 30d`. Running it again adds nothing new.
 7. **Is its id `latest` or `last`?** Those words open your newest session. `sessions`, `tree`,
-   `search`, `status`, `work`, `blame` and `attribution` print such a session by its `x_` alias,
-   which opens it, and so do the next steps that name it.
+   `search`, `status`, `work`, `blame`, `attribution` and next steps print such a session by its
+   `x_` alias, which opens it.
 
 Some agents need one step of their own before a hook fires. doctor prints these under the agent's
 row:
