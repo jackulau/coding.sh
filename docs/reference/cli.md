@@ -24,7 +24,7 @@ Every command accepts these.
 - stdout carries the answer only. Progress, warnings and errors go to stderr.
 - With `--json`, a command prints one JSON document on stdout. An error is one JSON line on stderr:
   `{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}`.
-  `next` holds up to two lines: the step, then the command to run. The reasons are listed in [Troubleshooting](../troubleshooting.md).
+  `next` holds up to two lines: usually the step, then the command to run. An error for a missing key starts with the line that sets it. The reasons are listed in [Troubleshooting](../troubleshooting.md).
   When that step deletes or overwrites data, cannot be undone, or spends money, the error also has `askUser: true`
   and the text says the user must approve it first, unless a person runs the command at a terminal ([Troubleshooting](../troubleshooting.md#errors-by-reason)).
   An agent that reads such an error asks the user instead of running the step.
