@@ -997,8 +997,9 @@ function drop(s: RetrievalState, key: string): void {
  */
 const NAME_BEFORE = /[\p{L}\p{M}\p{N}_.-]$/u;
 /**
- * Text just after a match that starts with a file name character, or with a dot and one: the match
- * is part of a longer name, as `a.ts` is in `a.tsx` and `a.ts.orig`. A dot alone ends a sentence.
+ * Text just after a match that starts with a file name character other than a dot, or with one dot
+ * and such a character: the match is part of a longer name, as `a.ts` is in `a.tsx` and
+ * `a.ts.orig`. Any other dot ends the name, as at the end of a sentence (`cannot read a.ts.`).
  */
 const NAME_AFTER = /^\.?[\p{L}\p{M}\p{N}_-]/u;
 /** NAME_BEFORE's file name characters among the first 128 code units: ASCII letters and digits, `_`, `.` and `-`. */
@@ -1014,8 +1015,9 @@ function atEdge(text: string, j: number): boolean {
 const EDGE = -1;
 
 /**
- * The needles that some line names whole, with no file name character just before or after the
- * match: `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
+ * The needles that some line names whole, with no file name character just before the match and
+ * none just after it, apart from a dot that ends the name (see NAME_AFTER):
+ * `cat: src/a.ts: No such file` names `a.ts`, `cat: data.ts: No such file` does not. One
  * pass over the lines (Aho–Corasick) finds every match: a failed `cat` of many files is not a scan
  * of the output per file. The needles and the lines carry an EDGE mark wherever a name can start,
  * and each needle starts with one, so every match starts at an edge. The needles that end at a

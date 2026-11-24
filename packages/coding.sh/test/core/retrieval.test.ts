@@ -376,6 +376,8 @@ describe("Session.stats.retrieval", () => {
     assert.equal(failed("cat c++.ts a.ts", "cat: c++.ts: No such file or directory"), 1);
     assert.equal(failed("cat icon@2x.png a.ts", "cat: icon@2x.png: No such file or directory"), 1);
     assert.equal(failed("cat 'my notes.md' a.ts", "cat: 'my notes.md': No such file or directory"), 1);
+    // A name that ends a longer name, after a character that is not a file name character, is named whole too.
+    assert.equal(failed("cat b.ts a+b.ts c.ts", "cat: a+b.ts: No such file or directory"), 1);
   });
 
   it("a failed `cat` of 5,000 files, its error naming each missing one, is folded in linear time", () => {
