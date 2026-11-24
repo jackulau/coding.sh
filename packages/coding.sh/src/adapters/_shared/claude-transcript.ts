@@ -28,7 +28,7 @@
 // to a few lines. Such a call has no durationMs, ttftMs or tokensPerSec; it is
 // stamped at its first block. The full transcript's copy, with the same id, has them.
 import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
-import { tierValue } from "../../core/pricing.ts";
+import { billableUsage, promptTokens, tierValue } from "../../core/pricing.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
@@ -321,9 +321,10 @@ export class ClaudeTranscriptConverter {
     const call = held.findLast((h) => isForkCall(h.entry, id));
     const m = obj(isObj(call?.entry) ? call.entry.message : undefined);
     const use = arr(m.content).map(obj).find((b) => b.type === "tool_use" && b.id === id);
-    const u = anthropicUsage(m.usage);
+    // The counts as an estimate bills them: one below 0 or not a finite number adds nothing.
+    const u = billableUsage(anthropicUsage(m.usage));
     // The context the fork starts with: that call's prompt and its output.
-    const inherited = u ? (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0) : 0;
+    const inherited = promptTokens(u) + (u.outputTokens ?? 0);
     const ts = toMs(e.timestamp, this.lastTs);
     this.lastTs = Math.max(this.lastTs, ts);
     this.begin(e, ts, lineNo);
