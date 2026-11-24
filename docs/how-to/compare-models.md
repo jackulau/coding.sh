@@ -131,9 +131,9 @@ pushback.
   the real uncertainty is larger.
 - Tiny counts can still read as clear: 0 of 4 against 1 of 1 gives +100.0pp, with an interval of
   +6.7 to +100.0pp. Check the counts before you trust a difference.
-- Pushback is read from the words of your next prompt, its first 400 characters. Other corrections,
-  such as "you forgot the docs" or "no, use the other helper", name no kind and do not count. A
-  model whose misses draw those words scores better than one whose misses draw "still failing".
+- Pushback comes from the first 400 characters of your next prompt. Other corrections, such as "you
+  forgot the docs", do not count, so a model whose misses draw those words scores better than one
+  whose misses draw "still failing".
 - A prompt about work outside the agent's last turn, such as "roll back the prod deploy to v1.2",
   names no kind. The kinds come from matching words, so some prompts are still read wrong.
 - A turn's time includes the time it waited on you, such as at a permission prompt.
