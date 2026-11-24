@@ -266,13 +266,16 @@ const tokensTotal = (s: Session): number | undefined => {
   return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
 };
 
-/** A text key read from a session.start payload field (`alone`: it matches the start event, whatever else the group asks). */
-function startKey(name: string, field: string, doc: string, example: string): KeyDef {
+/**
+ * A text key read from session.start payload fields; it matches when any of them does (`alone`: it
+ * matches the start event, whatever else the group asks).
+ */
+function startKey(name: string, fields: readonly string[], doc: string, example: string): KeyDef {
   return {
     name, level: "event", type: "text", doc, example, alone: true,
-    sql: [`(CASE WHEN e.kind = 'session.start' AND json_type(e.payload, '$.${field}') = 'text' THEN json_extract(e.payload, '$.${field}') END)`],
+    sql: fields.map((f) => `(CASE WHEN e.kind = 'session.start' AND json_type(e.payload, '$.${f}') = 'text' THEN json_extract(e.payload, '$.${f}') END)`),
     present: "e.kind = 'session.start'",
-    get: (e) => [e.kind === "session.start" && typeof e.payload?.[field] === "string" ? e.payload[field] : undefined],
+    get: (e) => fields.map((f) => (e.kind === "session.start" && typeof e.payload?.[f] === "string" ? e.payload[f] : undefined)),
   };
 }
 
@@ -368,10 +371,11 @@ const KEY_LIST: KeyDef[] = [
     get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined, e.kind === "error" && typeof e.payload?.message === "string" ? e.payload.message : undefined],
   },
   { name: "event.duration", level: "event", type: "number", unit: "ms", doc: "Event duration (30s, 2m)", example: "event.duration>30s", sql: ["e.duration_ms"], get: (e) => [num(e.durationMs)] },
-  // Read from the session's start event (payload.user, .environment, .release: OTel and Langfuse trace attributes).
-  startKey("user", "user", "User the app named (langfuse.user.id, user.id or enduser.id)", "user:alice"),
-  startKey("env", "environment", "Deployment environment (langfuse.environment or deployment.environment.name)", "env:production"),
-  startKey("release", "release", "Release or app version (langfuse.release or service.version)", "release:v1.4.*"),
+  // Read from the session's start event (payload.user, .environment, .release: OTel and Langfuse trace
+  // attributes; payload.userId: the user id given to the SDKs' trace()).
+  startKey("user", ["user", "userId"], "User the app named (the SDKs' trace() user id, langfuse.user.id, user.id or enduser.id)", "user:alice"),
+  startKey("env", ["environment"], "Deployment environment (langfuse.environment or deployment.environment.name)", "env:production"),
+  startKey("release", ["release"], "Release or app version (langfuse.release or service.version)", "release:v1.4.*"),
 ];
 
 export const KEYS: ReadonlyMap<string, KeyDef> = new Map(KEY_LIST.map((k) => [k.name, k]));

@@ -203,6 +203,10 @@ describe("SQL and the scan fallback agree", () => {
     const want: [string, string[]][] = [
       ["user:u1", ["s1"]],
       ["-user:u1", ["s5", "s4", "s3", "s2"]],
+      // The SDKs' trace({userId}) records payload.userId on the start event.
+      ["user:u3", ["s3"]],
+      ["user:u1,u3", ["s3", "s1"]],
+      ["-user:u3", ["s5", "s4", "s2", "s1"]],
       // The start event and the Bash call are two events of s1: both match.
       ["user:u1 tool:Bash", ["s1"]],
       ["user:u1 tool:Bash ok:false", ["s1"]],
