@@ -18,7 +18,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import type { Session } from "../../schema/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { list, oneLine, shellQuote, str } from "../common.ts";
-import { cliCommand, envLine } from "../next-steps.ts";
+import { cliCommand, envLine, envRef } from "../next-steps.ts";
 import { clean, CliError, duration, plural, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -71,9 +71,9 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
   const { point, rc, edits } = prepared;
   if (!hasReplayAuth(rc.provider, c.env)) {
     const key = REPLAY_KEY_ENV[rc.provider];
-    throw new CliError(`--fork calls the ${rc.provider === "anthropic" ? "Anthropic" : "OpenAI"} API, and $${key} is not set`, {
+    throw new CliError(`--fork calls the ${rc.provider === "anthropic" ? "Anthropic" : "OpenAI"} API, and ${envRef(c.env, key)} is not set`, {
       reason: "missing_api_key",
-      next: [`${envLine(c.env, key, "...")}${rc.provider === "anthropic" ? `   # or a subscription token in $${REPLAY_OAUTH_ENV}` : ""}`],
+      next: [`${envLine(c.env, key, "...")}${rc.provider === "anthropic" ? `   # or a subscription token in ${envRef(c.env, REPLAY_OAUTH_ENV)}` : ""}`],
     });
   }
   for (const e of edits) if (e.how === "absent") out.warn(`${e.path}: not in the stored request, so the fork goes without it already`);

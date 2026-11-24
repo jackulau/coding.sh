@@ -12,7 +12,7 @@ import { gatewayFlag, GATEWAYS, isGatewayId, type GatewayId } from "../../integr
 import type { Session } from "../../core/types.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, resolveSession, str, withContext, readIngest } from "../common.ts";
-import { cliCommand, envLine } from "../next-steps.ts";
+import { cliCommand, envLine, envRef } from "../next-steps.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -41,7 +41,7 @@ export async function run(c: CommandContext): Promise<number> {
 
   switch (c.action) {
     case "status": {
-      const configured = detectGatewaySetups(env, c.cwd).filter((f) => !only || f.gateway === only);
+      const configured = detectGatewaySetups(env, c.cwd, (n) => envRef(env, n)).filter((f) => !only || f.gateway === only);
       const counts = await withContext(c, async (ctx) => {
         const per: Partial<Record<GatewayId, number>> = {};
         for (const g of configs) per[g.id] = (await ctx.index.listSessions({ flag: gatewayFlag(g.id), limit: 1000 })).filter((s) => s.agent !== GATEWAY_AGENT).length;
@@ -53,8 +53,8 @@ export async function run(c: CommandContext): Promise<number> {
       if (c.flags.credits === true) {
         const targets = configs.filter((g) => GATEWAYS[g.id].credits && (only || g.apiKey));
         if (!targets.length || targets.some((g) => !g.apiKey)) {
-          const need = (targets.length ? targets : configs.filter((g) => GATEWAYS[g.id].credits)).map((g) => `$${g.apiKeyEnv}`);
-          throw new CliError(`--credits needs a key in ${need.join(" or ")}`, { reason: "missing_key" });
+          const need = targets.length ? targets : configs.filter((g) => GATEWAYS[g.id].credits);
+          throw new CliError(`--credits needs a key in ${need.map((g) => envRef(env, g.apiKeyEnv)).join(" or ")}`, { reason: "missing_key", next: need.map((g) => envLine(env, g.apiKeyEnv, "...")) });
         }
         for (const g of targets) {
           const r = lookupClient(g);
@@ -164,7 +164,7 @@ async function drainEnrich(c: CommandContext, g: GatewayConfig, ids: string[], s
   const dryRun = c.flags["dry-run"] === true;
   const base = cliProxyBaseUrl(g.baseUrl, env);
   const read = !dryRun && !offline;
-  if (read && !g.apiKey) throw new CliError(`Reading CLIProxyAPI's usage queue needs its management key in $${g.apiKeyEnv}`, { reason: "missing_key", next: [envLine(env, g.apiKeyEnv, "..."), cliCommand(env, ["gateway", "enrich", "--gateway", g.id])] });
+  if (read && !g.apiKey) throw new CliError(`Reading CLIProxyAPI's usage queue needs its management key in ${envRef(env, g.apiKeyEnv)}`, { reason: "missing_key", next: [envLine(env, g.apiKeyEnv, "..."), cliCommand(env, ["gateway", "enrich", "--gateway", g.id])] });
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
     const sessions = ids.length ? await Promise.all(ids.map((id) => resolveSession(ctx, id))) : await ctx.index.listSessions({ since: parseSince(since ?? "30d"), limit });

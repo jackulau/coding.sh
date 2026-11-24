@@ -34,7 +34,7 @@ import { gateHeadline } from "../../stats/gate.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, gateFlags, jsonArg, list, num, readIngest, str } from "../common.ts";
 import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
-import { cliCommand } from "../next-steps.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import { infraKinds, infraKindsText } from "../../jobs/retry.ts";
 import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
 import { CliError, plural } from "../output.ts";
@@ -882,10 +882,11 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     // Every uncached case would fail on the missing key and the run would read "not enough evidence": stop before it.
     const missing = est.uncached ? missingModelKey(continuationTask(setup, a), c.env) : undefined;
     if (missing) {
-      // CliError keeps two next lines: the subscription hint goes in the message.
+      // CliError keeps two next lines: the line that sets the key, with the way that needs none as
+      // its comment, and that command. The subscription hint goes in the message.
       throw new CliError(
         `exp ab replays your sessions against the model API: set ${missing} (${est.uncached} of ${est.calls} model calls are not cached), or log in to Claude Code (${LOGIN_HINT["claude-code"]}) or Codex (${LOGIN_HINT.codex}) and exp ab replays them on that subscription`,
-        { reason: "missing_key", next: ["Or commit the edit and compare the sessions before and after it:", "coding.sh improve check"] },
+        { reason: "missing_key", next: [`${envLine(c.env, missing, "...")}   # or commit the edit and compare the sessions before and after it:`, "coding.sh improve check"] },
       );
     }
     if (est.uncached) readyCli(setup, c.env, (l) => out.warn(l));

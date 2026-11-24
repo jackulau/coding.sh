@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { cliCommand, envLine } from "../../src/cli/next-steps.ts";
+import { cliCommand, envLine, envRef } from "../../src/cli/next-steps.ts";
 import { loadConfig } from "../../src/core/config.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { recorderFor } from "../../src/proxy/index.ts";
@@ -182,8 +182,9 @@ describe("replay and exp replay: what they print", () => {
     const r = await cli(["replay", SESSION, "--step", String(tool), "--fork", "--with", "CLAUDE.md=my fixed.md"]);
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.equal(up.seen.length, before, "no key: no request");
-    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
-    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # or a subscription token in $CLAUDE_CODE_OAUTH_TOKEN`;
+    // The message and the note name each variable as the user's shell reads it: `$env:NAME` in PowerShell or cmd.
+    assert.ok(r.stderr.includes(`API, and ${envRef(env, "ANTHROPIC_API_KEY")} is not set`), r.stderr);
+    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # or a subscription token in ${envRef(env, "CLAUDE_CODE_OAUTH_TOKEN")}`;
     assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
   });
 
@@ -193,10 +194,10 @@ describe("replay and exp replay: what they print", () => {
     const r = await cli(args);
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.equal(up.seen.length, before, "no key: no request");
-    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
+    assert.ok(r.stderr.includes(`with your own key, and ${envRef(env, "ANTHROPIC_API_KEY")} is not set`), r.stderr);
     const dry = cliCommand(env, [...args, "--dry-run"]);
     assert.ok(lines(r.stderr).includes(`    See the cost first: ${dry}`), `expected "See the cost first: ${dry}" in:\n${r.stderr}`);
-    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # the agent's own login is never stored, so it can't be reused; a subscription token in $CLAUDE_CODE_OAUTH_TOKEN works too`;
+    const set = `${envLine(env, "ANTHROPIC_API_KEY", "...")}   # the agent's own login is never stored, so it can't be reused; a subscription token in ${envRef(env, "CLAUDE_CODE_OAUTH_TOKEN")} works too`;
     assert.ok(lines(r.stderr).includes(`    ${set}`), `expected "${set}" in:\n${r.stderr}`);
   });
 

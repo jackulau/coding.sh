@@ -24,7 +24,7 @@ import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../i
 import { gatewayFlag, GATEWAYS, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
-import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
+import { cliCommand, envRef, nextStepBin, runCommand } from "../next-steps.ts";
 import { version } from "../meta.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -480,7 +480,7 @@ export async function run(c: CommandContext): Promise<number> {
   // Where the agent's recent sessions ran: project-level hooks are looked for there.
   const cwdsByAgent: Record<string, string[]> = {};
   // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
-  const gatewaySetups = detectGatewaySetups(env, c.cwd);
+  const gatewaySetups = detectGatewaySetups(env, c.cwd, (n) => envRef(env, n));
   const gatewayConfigs = allGatewayConfigs(env);
   // Tagged sessions are counted for Vercel and every gateway an agent routes through or has a key,
   // so "routes claude-code via cliproxyapi" sits next to the sessions tagged gateway:cliproxyapi.
