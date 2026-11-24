@@ -506,7 +506,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   //
   // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
   // each of their events the index holds, also a live copy that the copy check now leaves out
-  // because an import stored its own copy after the crashed or stalled run stored the line's:
+  // because an import stored its own copy after the crashed or stalled run stored the line's (the
+  // index holds the line's own copy, not only the import's under the same id):
   // - A store without transactions makes its writes one at a time, so a run can crash between its
   //   puts and its cursor writes. Before the puts, each file's two in-flight keys are set, after a
   //   fence each, to how far this run read, and never below the larger one a run before it left.
@@ -551,13 +552,14 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     const from = await index.getCursor(key);
     let seen = sentIds.get(sink);
     if (!seen) sentIds.set(sink, (seen = new Set()));
-    // A suspect line also sends the live copies its copy check left out that the index holds: an
-    // import stored its own copy after a run that crashed or stalled stored the line's.
+    // A suspect line also sends the live copies its copy check left out when the index holds the
+    // line's own copy: an import stored its own copy after a run that crashed or stalled stored the
+    // line's. A transcript row under the line's id is the import's copy, which the import sent.
     const held = new Map<string, Promise<Set<string>>>();
     const isHeld = async (e: AgentEvent) => {
       const k = `${e.sessionId}\u0000${e.kind}`;
       let ids = held.get(k);
-      if (!ids) held.set(k, (ids = index.listEvents(e.sessionId, { kinds: [e.kind] }).then((es) => new Set(es.map((s) => s.id)))));
+      if (!ids) held.set(k, (ids = index.listEvents(e.sessionId, { kinds: [e.kind] }).then((es) => new Set(es.flatMap((s) => (isBackfill(s) ? [] : [s.id]))))));
       return (await ids).has(e.id);
     };
     const pick = async (l: LineEvents): Promise<AgentEvent[]> => {

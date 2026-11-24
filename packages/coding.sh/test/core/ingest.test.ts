@@ -24,7 +24,7 @@ after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 const seenSources: (undefined | { file: string; offset: number })[] = [];
 /** raw.hook = name → awaited inside normalize (to act mid-run). */
 const hooks: Record<string, () => Promise<void> | void> = {};
-/** raw = { session, kind, text?, blob?, ...payload } → one event; raw.events = n → n events. */
+/** raw = { session, kind, text?, blob?, id?, ...payload } → one event, with raw.id as its id if set; raw.events = n → n events. */
 const fakeAdapter: Adapter = {
   id: "fake",
   displayName: "Fake",
@@ -41,9 +41,9 @@ const fakeAdapter: Adapter = {
     const n = typeof raw.events === "number" ? raw.events : 1;
     const out: AgentEvent[] = [];
     for (let i = 0; i < n; i++) {
-      const { session, kind, blob, events: _n, hook: _h, ...payload } = raw;
+      const { session, kind, blob, events: _n, hook: _h, id: rawId, ...payload } = raw;
       const e: AgentEvent = {
-        id: ctx.id(line.agent, String(session), line.ts, line.event, i),
+        id: typeof rawId === "string" ? rawId : ctx.id(line.agent, String(session), line.ts, line.event, i),
         v: 0,
         sessionId: String(session),
         ts: line.ts + i,
@@ -883,6 +883,33 @@ describe("ingest", () => {
   it("after a run died between storing a hook's compaction and moving its cursor, sends it when an import paired it with one compaction and stored the next", async () => {
     const compact = (id: string, ts: number): AgentEvent => ({ id, v: 0, sessionId: "s", ts, agent: "fake", kind: "context.compact", payload: {} });
     await crashThenImport({ kind: "context.compact" }, (ts) => [compact("t-c1", ts + 30_000), compact("t-c2", ts + 60_000)]);
+  });
+
+  it("after a run died between storing a hook line and moving its cursor, sends no hook copy of a start an import stored and sent under the same id", async () => {
+    const t = setup();
+    const src = "fake/2026-11-06.1.jsonl";
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const sink = new RecordingSink("remote", "full");
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    // The import comes first, under the id the hook's copy gets too, as when a hook reads the same transcript.
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield { id: "X", v: 0, sessionId: "s", ts: 1_700_000_000_500, agent: "fake", kind: "session.start", payload: { from: "transcript" } };
+      },
+    };
+    assert.equal((await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] })).events, 1);
+    // The copy check leaves the hook's start out; the run stores the line after it and dies at its cursor write.
+    t.write(t.line({ session: "s", kind: "session.start", id: "X", from: "hook" }), t.line({ session: "s", kind: "notification" }));
+    dieAtCursorWrite(t.index, src, 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    await ingest(opts);
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual(sink.events.filter((e) => e.id === "X").map((e) => e.payload.from), ["transcript"], "the sink keeps the start the store holds");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("s")).map((e) => e.id).sort(), "the sink holds what the store holds");
   });
 
   it("sends a sink the lines a holder that lost the lock committed after this run read their cursor, when this run dies before its next checkpoint", async () => {
