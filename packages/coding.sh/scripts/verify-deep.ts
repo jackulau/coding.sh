@@ -48,6 +48,7 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "hook-imports": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
+  "metadata-prop": { runs: 10000 },
   model: {},
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
