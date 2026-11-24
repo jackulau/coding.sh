@@ -51,8 +51,13 @@ export async function run(c: CommandContext): Promise<number> {
       // Credits: the named gateway, else every gateway with a credits API and a key.
       const credits: Partial<Record<GatewayId, Credits>> = {};
       if (c.flags.credits === true) {
+        if (only && !GATEWAYS[main.id].credits) {
+          const ids = Object.values(GATEWAYS).filter((d) => d.credits).map((d) => d.id);
+          throw new UsageError(`${GATEWAYS[main.id].name} has no credits API. --credits works with --gateway ${ids.join(" or ")}`, { reason: "invalid_argument" });
+        }
         const targets = configs.filter((g) => GATEWAYS[g.id].credits && (only || g.apiKey));
         if (!targets.length || targets.some((g) => !g.apiKey)) {
+          // One line per gateway with a credits API (Vercel and OpenRouter today): CliError keeps two.
           const need = targets.length ? targets : configs.filter((g) => GATEWAYS[g.id].credits);
           throw new CliError(`--credits needs a key in ${need.map((g) => envRef(env, g.apiKeyEnv)).join(" or ")}`, { reason: "missing_key", next: need.map((g) => envLine(env, g.apiKeyEnv, "...")) });
         }

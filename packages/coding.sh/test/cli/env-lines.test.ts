@@ -94,6 +94,15 @@ describe("coding.sh gateway status", () => {
     if (!NO_USER_SHELL) assert.deepEqual(runEnvLines(plain.next, ["AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY"]), { AI_GATEWAY_API_KEY: "...", OPENROUTER_API_KEY: "..." });
   });
 
+  it("--credits with a gateway that has no credits API says so, and names the ones that have one", () => {
+    const r = runSync(["gateway", "status", "--credits", "--gateway", "litellm", "--json"], tmpHome().env);
+    assert.equal(r.status, 2, r.stderr);
+    const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
+    assert.ok(line, r.stderr);
+    const doc = JSON.parse(line) as { reason: string; message: string };
+    assert.deepEqual([doc.reason, doc.message], ["invalid_argument", "LiteLLM proxy has no credits API. --credits works with --gateway vercel or openrouter"]);
+  });
+
   it("and doctor name the key a Codex provider reads as the user's shell reads it", () => {
     const h = tmpHome();
     const codexHome = join(h.root, "codex");
