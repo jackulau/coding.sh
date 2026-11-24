@@ -51,6 +51,13 @@ random one. It ends with each file's knobs, result and time, and the command tha
 failed file. A model at bound 2 can take 3 GB of heap. If Node runs out of memory, set
 `NODE_OPTIONS=--max-old-space-size=8192`.
 
+The Verify deep workflow (`.github/workflows/verify-deep.yml`) runs it every night with the table's
+knobs. On a pull request that changes `test/verify`, `test/_model.ts`, `test/_prop.ts`,
+`scripts/verify-deep.ts` or the workflow, it runs each model at bound 1 and each property file with
+200 runs. A manual run can set the bound, the runs and the seed. The seed is the run number unless
+one is given. The job summary gives the knobs, the seed and each file's time. A failed run keeps
+each file's output and the seed as an artifact.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout

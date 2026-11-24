@@ -1,6 +1,7 @@
 // Runs the formal models and property tests in test/verify past their default bounds, one file at a
 // time: each model at a raised CODING_SH_MODEL_BOUND, each property file with more
-// CODING_SH_PROP_RUNS. Run it from packages/coding.sh:
+// CODING_SH_PROP_RUNS. The nightly workflow (.github/workflows/verify-deep.yml) runs it, and so can
+// you, from packages/coding.sh:
 //
 //   npm run verify:deep                                   every file with its NIGHTLY knobs
 //   npm run verify:deep -- lock-model fold-prop           some files, by name or by path
