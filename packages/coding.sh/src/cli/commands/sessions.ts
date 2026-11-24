@@ -125,8 +125,8 @@ export async function run(c: CommandContext): Promise<number> {
     const hiddenChildren = topOnly ? await childCount(ctx.index, scoped, base) : 0;
     const hiddenRuns = organicOnly ? await runCount(ctx.index, scoped, filter) : 0;
     if (out.json) {
-      // Rows are a digest; --fields picks from the whole session (stats.phases, each derail's event).
-      const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true }), fields)) : sessions.map((s) => sessionJson(s));
+      // Rows are a digest; --fields picks from the whole session (stats.phases, the turn times, each derail's event).
+      const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true, turnDurations: true }), fields)) : sessions.map((s) => sessionJson(s));
       const doc: Record<string, unknown> = { sessions: rows, total: listing.total };
       if (listing.capped) doc.totalCapped = true;
       if (listing.hidden) doc.hiddenEmpty = listing.hidden;

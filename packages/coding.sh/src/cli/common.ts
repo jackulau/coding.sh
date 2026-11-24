@@ -712,6 +712,8 @@ export interface SessionJsonKeep {
   derailEvents?: boolean;
   /** `stats.phases`: for --fields, which picks from the whole session. */
   phases?: boolean;
+  /** Each model's turn times (`stats.turnsByModel.<model>.durationsMs`, up to 500): for `show` and --fields. */
+  turnDurations?: boolean;
 }
 
 /**
@@ -738,14 +740,19 @@ export function tidyNumbers<T>(v: T, key = ""): T {
 
 /**
  * A session for --json. List and tree rows are a digest: `stats.phases` is left out (`show --json`
- * has the phases at its top level) and a derail says what happened and when, without the event
- * it started at. Every other stat is as stored, with float noise taken out (tidyNumbers).
+ * has the phases at its top level), so is each model's list of turn times, and a derail says what
+ * happened and when, without the event it started at. Every other stat is as stored, with float
+ * noise taken out (tidyNumbers).
  */
 export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<string, unknown> {
   const { phases, derails, ...rest } = tidyNumbers(s.stats);
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
+  // The turn times grow with the session, as phases do: a row keeps each model's counts.
+  if (rest.turnsByModel && !keep.turnDurations) {
+    stats.turnsByModel = Object.fromEntries(Object.entries(rest.turnsByModel).map(([model, { durationsMs: _d, ...t }]) => [model, t]));
+  }
   const out: Record<string, unknown> = { id: s.id, agent: s.agent };
   // The host app that drove the agent (T3 Code): absent for a session no host drove.
   if (s.host) out.host = s.host;
