@@ -144,7 +144,7 @@ cd ~/coding-sh && git checkout main && git pull
 - [ ] Local gates pass:
       ```sh
       cd packages/coding.sh
-      npx tsc -p tsconfig.json --noEmit
+      npm run typecheck
       npm test
       npm run build
       npm pack --dry-run  # expect only dist/*.mjs, dist/types, README.md, LICENSE, package.json

@@ -13,6 +13,7 @@
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/cache-breaks.ts";
 import type { CacheBreakCause, CacheIdleKind, CostByTokenType } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
+import { wakeIngest } from "../../core/context.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
 import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
@@ -152,7 +153,8 @@ export async function run(c: CommandContext): Promise<number> {
   if (attributed && c.flags.cache === true) throw new UsageError(`--cache reads each session's prompt-cache tokens and does not split them by ${ATTRIBUTED_NOUN[by as AttributedGroup]}: use --cache with --by agent, model, agent-model, day or repo`, { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const repriced = c.flags.reprice === true ? await repriceStored(ctx.index, ctx.config.pricing, { force: true }) : undefined;
+    // Between its stretches the pass ingests what hooks and reads leave waiting, as the read above would (not into a store named by --store).
+    const repriced = c.flags.reprice === true ? await repriceStored(ctx.index, ctx.config.pricing, { force: true, onWake: ctx.storeOverridden ? undefined : wakeIngest(ctx) }) : undefined;
     if (attributed) {
       const scan: ScanQuery = { since, topLevel: false };
       if (agent) scan.agent = agent;

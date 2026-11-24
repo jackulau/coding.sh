@@ -14,6 +14,8 @@ import { expandHome } from "../core/paths.ts";
 import { pricesFor } from "../core/pricing.ts";
 import { deferReprice, priceStamp, REPRICE_CURSOR, repriceLock, repriceStored } from "../core/reprice.ts";
 import { version } from "../cli/meta.ts";
+import { ingestCli } from "../mcp/launch.ts";
+import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { ownerGuard } from "../core/store-guard.ts";
 import { createHttpSink } from "../sinks/http.ts";
 import { createOtlpSink } from "../sinks/otlp.ts";
@@ -143,7 +145,7 @@ export interface OpenIndexOptions {
    * pass runs on the open.
    */
   defer?: boolean;
-  /** The environment that decides whether background ingests run (default process.env). */
+  /** The environment that decides whether background ingests run, and that one the pass starts runs with (default process.env). */
   env?: NodeJS.ProcessEnv;
 }
 
@@ -169,8 +171,10 @@ export async function openIndexStore(url: string, config: Config, o: OpenIndexOp
       throw err;
     }
     // A pass on a store other processes open holds the lock the refold of this home holds
-    // (core/reparse.ts), so two processes never run one at once.
-    if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"));
+    // (core/reparse.ts), so two processes never run one at once, and, on a store without
+    // transactions, the home's ingest lock around each session's writes. What hooks and reads
+    // leave waiting meanwhile goes to a background ingest the pass starts between its holds.
+    if (store.setEventCosts && scheme !== "memory" && rest !== ":memory:") repriceLock(store, join(config.home, "reparse.lock"), join(config.home, "spool", ".ingest.lock"), ingestKick(config, o.env ?? process.env));
     // Never fails the open: a cursor that can't be read or written now is tried again on a later open.
     await repriceOnOpen(store, url, config, o).catch(() => {});
     return store;
@@ -204,6 +208,17 @@ async function repriceOnOpen(store: IndexStore, url: string, config: Config, o: 
     ran = (err as Error).name !== "LockBusyError";
   }
   if (ran) repriceTook(Date.now() - started);
+}
+
+/**
+ * Starts a background ingest of the home's spool, as a hook does at a session end (true: one started), for a
+ * pass that found the wake marker set (core/reprice.ts). None with CODING_SH_NO_AUTO_INGEST=1 or in an eval
+ * run, as from the hook, and none for a store CODING_SH_STORE_URL or CODING_SH_BLOB_URL names: a process
+ * with those reads its store as is and never ingests this machine's spool into it.
+ */
+function ingestKick(config: Config, env: NodeJS.ProcessEnv): (() => boolean) | undefined {
+  if (env.CODING_SH_NO_AUTO_INGEST === "1" || env.CODING_SH_RUN_ID || env.CODING_SH_STORE_URL?.trim() || env.CODING_SH_BLOB_URL?.trim()) return undefined;
+  return () => !!spawnBackgroundIngest(ingestCli(join(config.home, "bin", "cli-path")), env);
 }
 
 /**

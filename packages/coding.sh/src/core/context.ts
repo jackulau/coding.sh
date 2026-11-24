@@ -108,8 +108,19 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     storeOverridden: !!(storeUrlOverride(env) || env.CODING_SH_BLOB_URL?.trim()),
     async ingest(o = {}) {
       // Lazy: adapters and ingest are only loaded by commands that need them.
-      const [{ ingest }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
-      const r = await ingest({ ...o, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      const [{ ingest }, { ADAPTERS }, { spawnBackgroundIngest }, { ingestCli }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts"), import("../spool/kick.ts"), import("../mcp/launch.ts")]);
+      // The last pass ended with the wake-up marker back: what a hook appended during it goes to a
+      // background ingest, as the hook's own kick would have started. Not with CODING_SH_NO_AUTO_INGEST=1,
+      // and not for a store from --store or CODING_SH_STORE_URL, which no automatic ingest writes to.
+      const onPassesExhausted = (): void => {
+        if (env.CODING_SH_NO_AUTO_INGEST === "1" || ctx.storeOverridden) return;
+        try {
+          spawnBackgroundIngest(ingestCli(p.cliPointer), env);
+        } catch {
+          // the marker stays set: the next hook or read starts an ingest
+        }
+      };
+      const r = await ingest({ ...o, onPassesExhausted, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
       // An ingest ran, so whatever stopped the hook's is over, unless the blob store stopped this one too.
       if (r.storeWriteFailed === undefined) clearIngestStopped(p.ingestStopped);
       return r;
@@ -127,12 +138,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
       // Between its lock holds, a re-parse ingests what hooks and reads left waiting (another ingest running: skip).
-      const onWake = async () => {
-        await ctx.ingest({ lock: { waitMs: 0 } }).catch((e: unknown) => {
-          if (!(e instanceof LockBusyError)) throw e;
-        });
-      };
-      return reparse({ onWake, ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      return reparse({ onWake: wakeIngest(ctx), ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
     },
     async reparseDue() {
       const [{ reparseDue }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
@@ -151,4 +157,16 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     },
   };
   return ctx;
+}
+
+/**
+ * An ingest of what hooks and reads left waiting while a run held the store (the onWake of a re-parse, and of
+ * `usage --reprice`): it takes the ingest lock only if it is free now, and skips when another ingest holds it.
+ */
+export function wakeIngest(ctx: Pick<Context, "ingest">): () => Promise<void> {
+  return async () => {
+    await ctx.ingest({ lock: { waitMs: 0 } }).catch((e: unknown) => {
+      if (!(e instanceof LockBusyError)) throw e;
+    });
+  };
 }

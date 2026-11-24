@@ -629,6 +629,18 @@ fast, long-context or US-only rates (`batch+long-context` for both). `payload.co
 its estimate by token type at the same rates, so the parts add up to `usage.costUsd`. A reported or
 gateway-billed cost has no split.
 
+A model call nested in another of the same trace (a framework's span around the provider's call)
+counts once. The outer call keeps its own figures and takes the rest from the calls nested in it. A
+cost a nested call reported, even $0, beats an estimate on the outer call, and so does a cost a
+gateway billed for it.
+
+A call a gateway billed counts at the billed cost, without its nested calls' cost on top. A gateway
+bill linked to two copies of one call, such as the proxy's copy and the agent's own record, counts
+once.
+
+Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
+token count below 0 or not a finite number, as the estimate does.
+
 **Agent and host.**
 
 | Field | Meaning |
@@ -799,7 +811,8 @@ Limits:
 - A command coding.sh does not know as a reader (`awk`, a script) is not a read.
 - `cat a b c` is one read of three files.
 - A search that was stopped, or whose output was cut, is never empty.
-- A failed or stopped read names no file, nor does a path that is a variable or a glob. A failed shell line keeps its files unless an error names one.
+- A failed or stopped read names no file, nor does a path that is a variable or a glob.
+- A failed shell line keeps a file unless an error names its base name whole: an error about `data.ts` keeps `a.ts`, and one about `lib/a.ts` also drops `src/a.ts`.
 - A `cd` in a subshell moves the rest of the line too.
 - A `git show` path resolves from the call's directory, not the repository root.
 - Case counts past the drive letter: `A.ts` and `a.ts` are two files.
