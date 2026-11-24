@@ -2,8 +2,9 @@
 //
 // --background is what the hook starts at session end: it takes the ingest
 // lock without waiting and exits 0 quietly when another ingest holds it, or
-// took it over mid-run (that one re-runs for the hook's wake-up marker, and
-// the next read's lazy ingest picks up anything else). It also re-parses
+// took it over mid-run (that one re-runs for the hook's wake-up marker, or
+// after its last pass starts another background ingest for it, and the next
+// read's lazy ingest picks up anything else). It also re-parses
 // sessions stored by an older adapter parse, once per upgrade (core/reparse.ts).
 // Nobody sees its output, so when it fails (a store this coding.sh can't open)
 // it leaves the marker `status`, the status line and `doctor` print as "ingest

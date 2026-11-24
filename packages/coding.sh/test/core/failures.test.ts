@@ -75,6 +75,23 @@ describe("classifyToolFailure", () => {
     assert.equal(shellCommandOf("Bash", "rg foo"), "rg foo");
     assert.equal(shellCommandOf("Read", "a.txt"), undefined);
   });
+
+  it("reads Antigravity's run_command line", () => {
+    const input = { CommandLine: "rg -n needle src", Cwd: "/work/demo" };
+    assert.equal(shellCommandOf("run_command", input), "rg -n needle src");
+    assert.equal(classifyToolFailure("run_command", input, "", 1).cls, "benign", "a search that found nothing");
+    assert.deepEqual(classifyToolFailure("run_command", input, "", 1), classifyToolFailure("Bash", { command: "rg -n needle src" }, "", 1));
+  });
+
+  it("reads a bare command string from every shell tool, and Droid's Execute as Bash from its command key", () => {
+    for (const tool of ["Bash", "run_command", "shell_command", "powershell", "local_shell_call", "command_execution", "sh", "command"]) assert.equal(shellCommandOf(tool, "rg foo"), "rg foo", tool);
+    // A bare string sent to exec is a Codex code-mode cell, which is JavaScript, not a command.
+    assert.equal(shellCommandOf("exec", 'text(await tools.exec_command({ cmd: "rg foo" }))'), undefined);
+    // The name `execute` alone is too generic to be a shell (it may run a query): a bare string is not its command.
+    assert.equal(shellCommandOf("Execute", "rg foo"), undefined);
+    const input = { command: "rg -n needle src" };
+    assert.deepEqual(classifyToolFailure("Execute", input, "", 1), classifyToolFailure("Bash", input, "", 1));
+  });
 });
 
 let t = 0;
@@ -104,6 +121,13 @@ describe("sessions fold", () => {
     assert.equal(s.stats.toolCalls, 6);
     const [phase] = sessionOutline(events).phases;
     assert.equal(phase!.toolErrors, 1, "a phase counts real failures too");
+  });
+
+  it("reads Antigravity's run_command line: a search that found nothing is benign, a failed build is real", () => {
+    const agy = (id: string, CommandLine: string) => [ev("tool.start", { tool: "run_command", toolUseId: id, input: { CommandLine, Cwd: "/work/demo" } }), ev("tool.end", { tool: "run_command", toolUseId: id, ok: false, output: "Exit code 1" })];
+    const s = buildSession([...agy("a1", "rg -n needle src"), ...agy("a2", "npm run build")]);
+    assert.equal(s.stats.toolErrors, 1);
+    assert.equal(s.stats.benignToolErrors, 1);
   });
 
   it("leaves the new stats absent when every failure is real", () => {

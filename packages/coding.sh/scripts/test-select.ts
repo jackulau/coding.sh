@@ -25,8 +25,8 @@ import { testFiles } from "./test-shards.ts";
 
 export type Selection = { all: true; why: string } | { all: false; files: string[]; why: string[] };
 
-/** Test files every narrowed run keeps: the one that lists test/, and the checks of these rules. */
-export const ALWAYS = ["test/scripts/test-select.test.ts", "test/scripts/test-shards.test.ts"];
+/** Test files every narrowed run keeps: the ones that list test/ and test/verify, and the checks of these rules. */
+export const ALWAYS = ["test/scripts/test-select.test.ts", "test/scripts/test-shards.test.ts", "test/scripts/verify-deep.test.ts"];
 
 const CODE = /\.(ts|mts|cts|mjs|cjs|js)$/;
 /** npm, tsc and pip read these wherever they are, so no rule can place them. */

@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import type { AgentEvent } from "../schema/index.ts";
 import { failureState, foldFailure, type FailureState, type ToolFailure } from "./failures.ts";
+import { commandField } from "./shell-tools.ts";
 
 export const DERAIL_FLAGS = {
   /** The same tool call (tool + input) over and over with nothing changing in between. */
@@ -259,16 +260,11 @@ function stable(v: unknown): string {
     .join(",")}}`;
 }
 
+/** The command of a tool input: a bare string, or the first command key (core/shell-tools.ts), an argv array joined with spaces. */
 function commandOf(input: unknown): string | undefined {
   if (typeof input === "string") return input;
-  if (!input || typeof input !== "object") return undefined;
-  const o = input as Record<string, unknown>;
-  for (const k of ["command", "cmd", "script"]) {
-    const v = o[k];
-    if (typeof v === "string") return v;
-    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(" ");
-  }
-  return undefined;
+  const c = commandField(input);
+  return typeof c === "string" ? c : c?.join(" ");
 }
 
 const hash = (s: string): string => createHash("sha1").update(s).digest("base64");

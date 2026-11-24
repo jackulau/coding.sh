@@ -8,21 +8,33 @@
 //
 // Sinks replay from their own cursors by re-normalizing spool lines, so an
 // offline remote never blocks local capture and catches up when it returns.
+// A sink gets each event once while no run crashes or stalls and no send
+// fails: a line new to the index leaves out the events the index already had,
+// which the line or import that stored them sends. After a fault, the lines
+// the faulty run may have stored and not sent go out with every event, so a
+// sink can get one of their events again (the comment above insertedIds in
+// ingestLocked lists the cases).
 //
 // Transcript import (backfill) sends to the sinks too: the events it stores,
 // in batches of the sink's size, with the rows of their sessions as they are
 // once the import has folded them (see "backfill → sinks" below).
 //
 // One ingest at a time: a lockfile in the spool dir (core/lock.ts, with stale
-// detection) keeps two processes from reading the same range and sending it
-// to the sinks twice. The holder checks it still owns the lock before every
-// cursor write and sink send, and stops with LockLostError otherwise.
+// detection). The holder checks it still owns the lock before every cursor
+// write and sink send, and stops with LockLostError otherwise. That keeps two
+// processes from reading the same range unless one stalls past the stale
+// limit (core/lock.ts names the windows); then both can send it to a sink, and
+// the index still keeps one copy of each event: event ids are deterministic
+// and puts are idempotent.
 //
 // No lost wakeups: the hook touches `spool/.ingest.pending` after appending an
 // end event and before looking at the lock (spool/kick.ts). The holder clears
 // the marker before each pass and, after releasing, runs another pass when it
-// is back (bounded), so a session that ended mid-ingest is never left waiting
-// for an unrelated trigger.
+// is back, up to MAX_PASSES. When the last pass ends with the marker back, it
+// calls onPassesExhausted, where core/context.ts starts a background ingest,
+// so a session that ended mid-ingest is not left waiting for an unrelated
+// trigger. A run stopped by its deadline or signal leaves the marker for
+// whoever ingests next.
 //
 // Order: spool files are read oldest first (listSpoolFiles), and cursors move
 // at run-level checkpoints, so a tool.end read before its tool.start (another
@@ -119,6 +131,8 @@ const MAX_PASSES = 3;
 
 export const sinkCursorKey = (sink: string, source: string): string => `sink:${sink}:${source}`;
 export const sinkRetryKey = (sink: string): string => `sink:${sink}#retryAt`;
+/** A spool file's two in-flight keys, kept on a store without transactions: how far the last run to store its lines had read (see insertedIds in ingestLocked). */
+export const spoolInFlightKeys = (source: string): [string, string] => [`inflight:a:${source}`, `inflight:b:${source}`];
 
 export interface IngestOptions {
   config: Config;
@@ -146,6 +160,11 @@ export interface IngestOptions {
   onProgress?: (p: { filesPending: number }) => void;
   /** Also fold sessions that have events but no row, and rows tagged fold:error (repairSessions), under the lock. */
   repair?: boolean;
+  /**
+   * Called when the last pass ends with the wake-up marker back: a hook touched it during that pass
+   * and, seeing the lock held, started no ingest. core/context.ts starts a background ingest here.
+   */
+  onPassesExhausted?: () => void;
 }
 
 export interface IngestError {
@@ -192,6 +211,8 @@ interface LineEvents {
   events: AgentEvent[];
   /** The line was read for the index too (not only to catch a sink up): its events were put in this run. */
   stored?: boolean;
+  /** Every event of a stored line whose copy check left some out of `events`: a suspect line sends those the index holds. */
+  all?: AgentEvent[];
 }
 
 export interface CaptureProfile {
@@ -303,6 +324,8 @@ async function ingestSpool(opts: IngestOptions): Promise<IngestResult> {
     if (total.pendingFiles || opts.signal?.aborted) break;
     // Checked after release: a hook that saw the lock held touched the marker before it looked.
     if (!existsSync(marker)) break;
+    // The last pass, and the marker is back: hand it to a new ingest rather than run more passes here.
+    if (pass === MAX_PASSES - 1) opts.onPassesExhausted?.();
   }
   return total!;
 }
@@ -469,24 +492,89 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   };
   const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
-  // An agent can hand the same event over in two lines (Claude Code: the parent's Agent-tool
-  // PostToolUse and the helper's own SubagentStop). The index keeps one copy by id; a sink
-  // gets one too: a line new to the index sends only the events it inserted (a copy of an
-  // event stored earlier is sent by the line that stored it, now or when the sink catches
-  // up), and an id already sent in this run is not sent again (a replay for a sink that is
-  // behind reads both lines).
+  // One event can come in two or three lines: Claude Code hands a helper's events over twice (the
+  // parent's Agent-tool PostToolUse and the helper's own SubagentStop), and hooks in two settings
+  // files spool one firing twice (firingKey gives both copies the same ids). A transcript import
+  // can store and send an event before its line is read, under the same id or, for the kinds
+  // message-copies.ts matches, an id of its own. An id goes out to a sink at most once per pass
+  // (one ingestLocked call), a line new to the index leaves out the events its put found stored
+  // (repeats), and a live copy of what an import stored before this pass first read the session's
+  // copies goes to neither the index nor a sink. The line or import that stored them sent them,
+  // lies below the sink cursor, or is sent when the sink catches up. Each side reads a session's
+  // copies once, at its first lookup in the pass or the import, and an import does not take this
+  // lock: an import running beside this run can leave both copies in the index and the sinks, on
+  // any store.
+  //
+  // Except on suspect lines, the ones a crash or a stall may have stored and not sent. They send
+  // each of their events the index holds, also a live copy that the copy check now leaves out
+  // because an import stored its own copy after the crashed or stalled run stored the line's (the
+  // index holds the line's own copy, not only the import's under the same id):
+  // - A store without transactions makes its writes one at a time, so a run can crash between its
+  //   puts and its cursor writes. Before the puts, each file's two in-flight keys are set, after a
+  //   fence each, to how far this run read, and never below the larger one a run before it left.
+  //   A later run takes the lines from the local cursor up to the larger key as suspect. Two keys,
+  //   because a process that stalled past the stale limit carries on after another process took the
+  //   lock over until its next fence: it makes the write after the last fence it passed, and the
+  //   unfenced puts that follow that write. That write can lower a key: if it is key A, the fence
+  //   before key B fails and the stalled process puts nothing; if it is key B, its key A was written
+  //   before the takeover.
+  // - A store with transactions commits the puts and the cursors together, but a holder that
+  //   stalled can commit after the takeover and then not send. So the checkpoint reads each file's
+  //   cursor again in its transaction: the lines below a cursor that moved past where this run
+  //   started are suspect, and the cursor is set to the larger of the two, so that a later
+  //   checkpoint or run still finds them.
+  //
+  // So a sink can get an event twice only when a run crashes, a holder stalls, a send fails, a sink
+  // starts from lines below the local cursor, an older build's gc ran, or a transcript import runs
+  // beside this run:
+  // - a suspect line carries an event another line or an import sent;
+  // - a run crashes between a send and its sink-cursor write, and the next run sends those lines;
+  // - a holder that stalled past the stale limit sends lines that the process which took the lock
+  //   over sends too, or its late sink-cursor write moves the cursor back over lines that process
+  //   sent;
+  // - a sink catches up after a failed send or after a run died between its cursor writes and its
+  //   sends (the raw scrub, the end snapshots), or a sink new to the file (added later, or renamed)
+  //   reads it from the start, from lines that carry an event another line sent, or a live copy of
+  //   an event an import sent (lines below the local cursor send every event);
+  // - an import running beside this run stores its copy of a live event after this pass read the
+  //   session's copies, or this run stores its copy after the import read them (above);
+  // - an older build's gc left a deleted file's in-flight keys, and a new file at the same path
+  //   grows as long as the larger key: its lines below that key are suspect;
+  // - InsertedEvents reads the stored ids of a store with no putEventsReturningIds before the put,
+  //   and an import, which holds the sink lock and not this one, stores an event in between: the
+  //   put counts it as new, so both send it.
+  // On a store without transactions, a run of an older build that crashes between its puts and
+  // its cursor writes leaves no in-flight keys, and a sink misses the events of those lines.
   const insertedIds = new InsertedEvents();
   const sentIds = new Map<Sink, Set<string>>();
   let repeats = new Set<string>();
-  const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
+  const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number, suspect: number) => {
     const state = sinkStates.get(sink)!;
     if (state.failed) return;
     const key = sinkCursorKey(sink.name, file.source);
     const from = await index.getCursor(key);
     let seen = sentIds.get(sink);
     if (!seen) sentIds.set(sink, (seen = new Set()));
-    const once = (l: LineEvents): AgentEvent[] => l.events.filter((e) => !(l.stored && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
-    const lines = window.filter((l) => l.offset >= from).map((l) => ({ ...l, events: once(l) }));
+    // A suspect line also sends the live copies its copy check left out when the index holds the
+    // line's own copy: an import stored its own copy after a run that crashed or stalled stored the
+    // line's. A transcript row under the line's id is the import's copy, which the import sent.
+    const held = new Map<string, Promise<Set<string>>>();
+    const isHeld = async (e: AgentEvent) => {
+      const k = `${e.sessionId}\u0000${e.kind}`;
+      let ids = held.get(k);
+      if (!ids) held.set(k, (ids = index.listEvents(e.sessionId, { kinds: [e.kind] }).then((es) => new Set(es.flatMap((s) => (isBackfill(s) ? [] : [s.id]))))));
+      return (await ids).has(e.id);
+    };
+    const pick = async (l: LineEvents): Promise<AgentEvent[]> => {
+      if (!l.all || !l.stored || l.offset >= suspect) return l.events;
+      const kept = new Set(l.events);
+      const out: AgentEvent[] = [];
+      for (const e of l.all) if (kept.has(e) || (await isHeld(e))) out.push(e);
+      return out;
+    };
+    const once = (l: LineEvents, events: AgentEvent[]): AgentEvent[] => events.filter((e) => !(l.stored && l.offset >= suspect && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
+    const lines: LineEvents[] = [];
+    for (const l of window) if (l.offset >= from) lines.push({ ...l, events: once(l, await pick(l)) });
     const size = sinkBatchSize(config, sink);
     let i = 0;
     while (i < lines.length) {
@@ -522,6 +610,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   interface FileRun {
     file: SpoolFile;
     local: number;
+    /** The lines from the local cursor read at the file's turn up to here are suspect: they send even the events the put finds stored (see insertedIds). */
+    suspect: number;
     readPos: number;
     active: Sink[];
     window: LineEvents[];
@@ -562,6 +652,17 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     // as one transaction (when the store has them), so a crash leaves the index exactly
     // at the previous checkpoint and the next run re-reads from there.
     const inserted = await atomically(async () => {
+      if (!index.transaction) {
+        // Before the puts: a run that finds a key past the local cursor sends those lines' events even when the put finds them stored.
+        for (const f of open) {
+          if (f.readPos <= f.local) continue;
+          const to = Math.max(f.suspect, f.readPos);
+          for (const key of spoolInFlightKeys(f.file.source)) {
+            fence();
+            await index.setCursor(key, to);
+          }
+        }
+      }
       let n = 0;
       const fresh = new Set<string>();
       for (let i = 0; i < pending.length; i += PUT_BATCH) {
@@ -573,7 +674,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           for (const id of r.ids) fresh.add(id);
         }
       }
-      repeats = sinkStates.size ? new Set(pending.flatMap((e) => (fresh.has(e.id) ? [] : [e.id]))) : repeats;
+      if (sinkStates.size) repeats = new Set(pending.flatMap((e) => (fresh.has(e.id) ? [] : [e.id])));
       // Hook events in an agent's OTel trace (a traceparent): that trace's spans join their session.
       await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();
@@ -584,7 +685,14 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       for (const f of open) {
         if (f.readPos <= f.local) continue;
         fence();
-        await index.setCursor(f.file.source, f.readPos);
+        if (!index.transaction) {
+          await index.setCursor(f.file.source, f.readPos);
+          continue;
+        }
+        // Moved since this run read it: a holder that lost the lock committed the lines below it and may not have sent them.
+        const c = await index.getCursor(f.file.source);
+        f.suspect = Math.max(f.suspect, c);
+        await index.setCursor(f.file.source, Math.max(c, f.readPos));
       }
       return n;
     });
@@ -603,7 +711,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     }
     await snapshotEnded();
     for (const f of open) {
-      for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos);
+      for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos, f.suspect);
       f.window = [];
     }
     open = [];
@@ -652,7 +760,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       break;
     }
     let local = await index.getCursor(file.source);
-    if (local > file.size) {
+    const recreated = local > file.size;
+    if (recreated) {
       // Recreated at the same path (pid reuse after gc, say): start over for every consumer.
       error({ source: file.source, message: `cursor ${local} is past the end of the file (${file.size} bytes); re-reading from the start` });
       local = 0;
@@ -676,7 +785,15 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (start >= file.size) continue;
 
     readAny = true;
-    const fr: FileRun = { file, local, readPos: start, active, window: [], raws: [], scrub: false };
+    let suspect = local;
+    if (!index.transaction && !recreated && local < file.size) {
+      // A run that crashed between its puts and its cursor writes left the in-flight keys past the local cursor (see insertedIds).
+      const keys = spoolInFlightKeys(file.source);
+      const mark = Math.max(await index.getCursor(keys[0]), await index.getCursor(keys[1]));
+      // Past the end, they were a deleted file's (an older build's gc keeps them): this file's lines are all new.
+      if (mark <= file.size) suspect = Math.max(local, mark);
+    }
+    const fr: FileRun = { file, local, suspect, readPos: start, active, window: [], raws: [], scrub: false };
     open.push(fr);
     const keepWindow = active.length > 0;
     const reader = readSpoolFile(spoolDir, file.path, start, {
@@ -708,11 +825,16 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           // Outside the spool directory: never ours to rewrite.
         }
       }
+      // What the line stores and sends. A live event that copies what a transcript import stored first
+      // (a prompt, a reply, a session start or end, a compaction) stays out of the index and the sinks:
+      // the import sent its own copy. The import does the same with its copies of what the spool stored.
+      let kept = events;
       if (rec.offset >= fr.local) {
         result.lines++;
         windowLines++;
-        // A prompt a backfill already stored stays out of the local index (sinks still get it).
-        for (const e of events) if (!(await copies.isCopy(e))) pending.push(e);
+        kept = [];
+        for (const e of events) if (!(await copies.isCopy(e))) kept.push(e);
+        pending.push(...kept);
         for (const e of events) {
           touched.add(e.sessionId);
           if ((e.kind === "turn.end" || e.kind === "session.end") && !isBackfill(e) && !e.repo?.snapshot) {
@@ -720,7 +842,11 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           }
         }
       }
-      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events, stored: rec.offset >= fr.local });
+      if (keepWindow) {
+        const line: LineEvents = { offset: rec.offset, nextOffset: rec.nextOffset, events: kept, stored: rec.offset >= fr.local };
+        if (kept.length < events.length) line.all = events;
+        fr.window.push(line);
+      }
       // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
       if (windowEvents >= checkpointEvents) {
@@ -1722,6 +1848,13 @@ export class BackfillStop extends Error {
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
 export const backfillCursorKey = (agent: string, path: string, field: "size" | "mtime" | "since"): string => `backfill:${agent}:${path}#${field}`;
 
+/** A file a backfill read through, to mark read. `whole`: all of its events were imported, so its cursors record no window. */
+interface FileCursor {
+  agent: string;
+  file: BackfillFile;
+  whole: boolean;
+}
+
 /**
  * A sink's cursor for one transcript source: a file a backfill reports, else
  * the adapter. It holds the file's mtime (floored ms) once the sink has every
@@ -1817,7 +1950,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   const touched = new Set<string>();
   const since = opts.since ?? 0;
   // File cursors to commit once the events they cover are stored and their sessions recomputed.
-  const fileCursors: { agent: string; file: BackfillFile }[] = [];
+  const fileCursors: FileCursor[] = [];
   /** Changed files read so far (the deadline only defers files after the first). */
   let accepted = 0;
 
@@ -1842,11 +1975,11 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     await recomputeSessions(index, touched, { linker, repo, versionFor, onFoldError }, (id) => updated.add(id));
     touched.clear();
   };
-  /** Marks files read: mtime last, it is what says a file was read. */
-  const setFileCursors = async (list: { agent: string; file: BackfillFile }[]) => {
-    for (const { agent, file } of list) {
+  /** Marks files read: mtime last, it is what says a file was read. A file read whole records no window. */
+  const setFileCursors = async (list: FileCursor[]) => {
+    for (const { agent, file, whole } of list) {
       await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
-      await index.setCursor(backfillCursorKey(agent, file.path, "since"), since);
+      await index.setCursor(backfillCursorKey(agent, file.path, "since"), whole ? 0 : since);
       await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
     }
   };
@@ -2056,6 +2189,15 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     let cover: BackfillFile | undefined;
     /** The walk left a file it was asked about for lateness. */
     let left = false;
+    /**
+     * Files read whole although a window was given (`BackfillOpts.whole`): their cursors record no window.
+     * A store's cover always records the window: the walk may have cut other files by it.
+     */
+    const wholeFiles = new Set<BackfillFile>();
+    const whole = (f: BackfillFile) => {
+      if (reading && reading.path === f.path) wholeFiles.add(reading);
+    };
+    const cursorsOf = (list: BackfillFile[]): FileCursor[] => list.map((file) => ({ agent: adapter.id, file, whole: wholeFiles.has(file) }));
     /** Commits the files read through so far, with the sessions they touched. */
     const commitFiles = async () => {
       reading = undefined;
@@ -2063,7 +2205,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       await flush();
       await blobBatch?.flush();
       await recompute();
-      const done = files.map((file) => ({ agent: adapter.id, file }));
+      const done = cursorsOf(files);
       files = [];
       await inTransaction(index, async () => {
         await deferRepos();
@@ -2118,7 +2260,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
       return true;
     };
-    const adapterOpts = opts.since !== undefined ? { since: opts.since, changed } : { changed };
+    const adapterOpts = opts.since !== undefined ? { since: opts.since, changed, whole } : { changed };
     try {
       let stop = false;
       for await (const e of adapter.backfill(ctx, adapterOpts)) {
@@ -2162,13 +2304,13 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
         // cursors follow theirs, so a run killed before they are all in finds the store changed again.
         if (cover && !left) files.push(cover);
       }
-      for (const file of files) fileCursors.push({ agent: adapter.id, file });
+      fileCursors.push(...cursorsOf(files));
     } catch (err) {
       if (err instanceof BackfillStop) {
         // Not a failure: what was read is stored and its cursors are set, as at the end of a whole walk.
         await flush();
         await endSource();
-        for (const file of files) fileCursors.push({ agent: adapter.id, file });
+        fileCursors.push(...cursorsOf(files));
         continue;
       }
       await flush().catch(() => {});

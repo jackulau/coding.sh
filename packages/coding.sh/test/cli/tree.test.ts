@@ -17,6 +17,8 @@ import { fixFirstRole } from "../../src/cli/commands/tree.ts";
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
 const SID = "11111111-2222-4333-8444-555555555555";
 const SUB = `${SID}:sub:abc123`;
+/** What a tree line prints for SUB, whose id is over 40 characters: 8 characters of each part. */
+const SUB_REF = "11111111:sub:abc123";
 let root = "";
 let env: NodeJS.ProcessEnv;
 
@@ -54,9 +56,10 @@ describe("coding.sh tree", () => {
   test("from a session, shows the whole run with rolled-up totals and the node to fix first", () => {
     const r = run("tree", SID);
     assert.equal(r.status, 0, r.stderr);
-    // The top-level agent and its subagent, nested, both by full id.
+    // The top-level agent by full id and its subagent, nested, by the reference that opens it: its
+    // id is over 40 characters.
     assert.match(r.stdout, new RegExp(`${SID}\\b`));
-    assert.match(r.stdout, new RegExp(`└ ${SUB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(r.stdout, new RegExp(`^  └ ${SUB_REF}  `, "m"));
     // Rollup headline and the union of flags across the loop.
     assert.match(r.stdout, /1 subagent/);
     assert.match(r.stdout, /flags across the loop:.*premature-completion/);
@@ -74,7 +77,7 @@ describe("coding.sh tree", () => {
     const r = run("tree", SUB);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^in: 11111111 claude-code$/m, "one line names the top-level agent by short id");
-    assert.match(r.stdout, new RegExp(`^${SUB}  `, "m"), "the subagent is the tree's root line");
+    assert.match(r.stdout, new RegExp(`^${SUB_REF}  `, "m"), "the subagent is the tree's root line");
     assert.doesNotMatch(r.stdout, new RegExp(`^${SID}  `, "m"), "the top-level agent is not a node");
     assert.match(r.stdout, /0 subagents/);
     // The hint for the whole run names the subagent by a reference that opens it.

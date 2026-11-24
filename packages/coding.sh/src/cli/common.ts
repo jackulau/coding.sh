@@ -1,5 +1,5 @@
 // Helpers shared by command modules (loaded only after dispatch).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ConfigEnvError, ConfigError } from "../core/config.ts";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
@@ -9,7 +9,7 @@ import type { EvalTask, IndexStore, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
-import { runningCli } from "../mcp/launch.ts";
+import { ingestCli } from "../mcp/launch.ts";
 import { StoreOwnerError, StoreVersionError, upgradeStoreCommand } from "../core/store-guard.ts";
 import { spoolSize } from "../core/ingest-health.ts";
 import { paths } from "../core/paths.ts";
@@ -161,14 +161,14 @@ export interface IngestBacklog {
   pendingFiles: number;
   /** A background ingest was started, or another ingest holds the lock. */
   indexing: boolean;
-  /** A re-parse holds reparse.lock: the read did not ingest, the re-parse indexes the files between its steps. */
+  /** A re-parse or a repricing holds reparse.lock: the read did not ingest; that run has the files ingested between its steps where it can, else the next ingest does. */
   reparsing?: true;
 }
 
 /**
  * The machine-readable form of a read's backlog: `{ pending: { files, indexing } }` while
  * captures are still waiting to be indexed (the answer is partial), else nothing.
- * `reparsing: true` is there only while a re-parse runs.
+ * `reparsing: true` is there only while a re-parse or a repricing runs.
  */
 export function pendingField(b: IngestBacklog): { pending?: { files: number; indexing: boolean; reparsing?: true } } {
   return b.pendingFiles ? { pending: { files: b.pendingFiles, indexing: b.indexing, ...(b.reparsing ? { reparsing: true as const } : {}) } } : {};
@@ -214,14 +214,16 @@ export function readIngest(c: CommandContext): AutoIngestOptions {
  * cover exactly what was stored) and leaves the rest to a background ingest,
  * so a big backlog never blanks a read. Returns the source files still waiting.
  * While another ingest holds the lock, the spool files it has yet to read count as waiting.
- * While a re-parse runs, the read takes the lock only if it is free right now: the re-parse
- * holds it in short stretches and ingests between them what the wake marker says is waiting.
+ * While a re-parse or a repricing runs (each holds reparse.lock), the read takes the lock only if it
+ * is free right now: the run holds it in short stretches, or not at all (a repricing on SQLite), and
+ * has what the wake marker says is waiting ingested between them (core/reparse.ts, core/reprice.ts).
  */
 export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<IngestBacklog> {
   // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
   if (ctx.storeOverridden) return { pendingFiles: 0, indexing: false };
-  // A re-parse holds the store: a budgeted read leaves the spool to it (it ingests between its
-  // steps when the wake marker says something waits) and answers from what is indexed.
+  // A re-parse or a repricing holds the store: a budgeted read leaves the spool to it (it has what the
+  // wake marker says waits ingested between its steps where it can, else the next ingest does) and
+  // answers from what is indexed.
   if (o.budgetMs !== undefined && isLocked(ctx.paths.reparseLock)) return reparseBacklog(ctx, o);
   const deadline = o.budgetMs !== undefined ? Date.now() + o.budgetMs : undefined;
   let pending = 0;
@@ -248,7 +250,7 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
         try {
           writeFileSync(wakeMarker(ctx.paths.ingestLock), "", { mode: 0o600 });
         } catch {
-          // the re-parse ingests at its next hook's marker instead
+          // the re-parse or repricing has them ingested at the next hook's marker instead
         }
       }
     }
@@ -276,7 +278,7 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
   return { pendingFiles: pending, indexing };
 }
 
-/** The backlog while a re-parse runs: the spool files still waiting, and a wake marker so the re-parse picks them up. */
+/** The backlog while a re-parse or a repricing runs: the spool files still waiting, and a wake marker so that run has them ingested. */
 async function reparseBacklog(ctx: Context, o: AutoIngestOptions): Promise<IngestBacklog> {
   let pending = 0;
   if (existsSync(ctx.paths.spool)) {
@@ -287,9 +289,9 @@ async function reparseBacklog(ctx: Context, o: AutoIngestOptions): Promise<Inges
     try {
       writeFileSync(wakeMarker(ctx.paths.ingestLock), "", { mode: 0o600 });
     } catch {
-      // the re-parse ingests at its next hook's marker instead
+      // the re-parse or repricing has them ingested at the next hook's marker instead
     }
-    o.out?.note(`${plural(pending, "file")} not yet ingested; a re-parse is running and indexes them between its steps; showing what is indexed so far (--fresh waits for all)`);
+    o.out?.note(`${plural(pending, "file")} not yet ingested; a re-parse or repricing is running and has them ingested between its steps where it can; showing what is indexed so far (--fresh waits for all)`);
   }
   return { pendingFiles: pending, indexing: true, reparsing: true };
 }
@@ -336,19 +338,6 @@ export async function refolding(ctx: Context, env: NodeJS.ProcessEnv = process.e
     return (await ctx.index.listSessions({ limit: 1 })).length > 0;
   } catch {
     return false;
-  }
-}
-
-/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
-export function ingestCli(pointer: string): string | undefined {
-  const argv1 = process.argv[1];
-  if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
-  const running = runningCli();
-  if (running) return running;
-  try {
-    return readFileSync(pointer, "utf8").trim() || undefined;
-  } catch {
-    return undefined;
   }
 }
 

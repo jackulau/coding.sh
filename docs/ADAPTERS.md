@@ -61,6 +61,14 @@ over and the transcripts are not re-read on every read (an explicit `ingest --ba
 Imports key on the session id, so running `init` later never doubles a session. Codex does the same,
 but only for the narrow window after `init` while its hooks are untrusted or disabled (see below).
 
+**After a `--since` import.** `ingest --backfill --since 30d` imports each Claude Code transcript,
+Codex rollout and T3 Code session with activity inside the window whole. A later import skips each
+transcript, rollout or T3 Code thread read whole while it is unchanged. One with no window
+(`ingest --backfill`) also reads what the window left out. A T3 Code thread is read whole when the
+window cut none of its sessions. The import a read runs has no window for T3 Code, or for Claude Code
+until its hooks are installed; for Codex, while its hooks are untrusted or disabled, it starts at the
+install time.
+
 ## Test results
 
 A shell call whose output holds a test runner's summary also becomes a `test.result`: the runner,
@@ -205,8 +213,19 @@ order.
   session the OpenCode, Cursor or Pi adapter imports gets no launch from T3: T3's adapter doesn't read its
   prompts, so an agent's prompt there would count as the person's.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
-  haven't changed are skipped. The store isn't opened when nothing in it changed since an import that read
-  every changed thread, so threads an import left when it ran out of time are read by the next import.
+  haven't changed are skipped. A thread is read again when one of two things differs from the last import:
+  a total, or the newest of its times. In the v2 store the total adds up its provider threads, messages,
+  turn items, turns and requests (a request no longer pending counts twice), the sequence of its newest event
+  in T3's event log, and the sizes of the Claude Code and Codex transcripts it links. The times are the
+  `updated_at` of its row and its provider threads, when its turns start or end, its requests' `resolved_at`
+  (or `created_at` when that is empty), and when its transcripts were written. T3 Code moves a thread's
+  `updated_at` with each message or turn item it writes, and appends an event in the same transaction, so a
+  message or turn item it finishes in place counts too, even when a later command writes back an older
+  `updated_at`. In the v1 store the total adds up its provider threads, messages and activities and its
+  transcripts' sizes, and the times are its row's and provider threads' `updated_at`, its newest message's
+  `updated_at`, its newest activity's `created_at` and when its transcripts were written. The store isn't
+  opened when nothing in it changed since an import that read every changed thread, so threads an import left
+  when it ran out of time are read by the next import.
 - **Links lost by an older import:** a session another agent's adapter stored without its T3 link (an older
   `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
   The re-parse reads T3's store and adds the T3 rows such a session lacks. A T3 row it holds from an older

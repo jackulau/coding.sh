@@ -441,7 +441,7 @@ export function buildSteps(root = ROOT, opts = {}) {
     },
     {
       ...commands("coding.sh-check", () => [
-        { cmd: "npx", args: ["tsc", "--noEmit", "-p", "."], cwd: "packages/coding.sh" },
+        { cmd: "npm", args: ["run", "typecheck"], cwd: "packages/coding.sh" },
         { cmd: node, args: ["scripts/test-ci.mjs"], cwd: "packages/coding.sh" },
         { cmd: "npm", args: ["run", "check"], cwd: "packages/sdk" },
       ]),

@@ -27,6 +27,7 @@ import { join, posix } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { unifiedDiff } from "../adapters/_shared/heuristics.ts";
 import { patchTextOf } from "../adapters/_shared/tools.ts";
+import { commandLineOf, isShellTool } from "./shell-tools.ts";
 import { run } from "./git.ts";
 import type { Redactor } from "./redact.ts";
 import { shadowRepoPath } from "./snapshot.ts";
@@ -208,7 +209,12 @@ const PATCH = new Set(["apply_patch", "patch", "applypatch", "apply_diff"]);
 const DELETE = new Set(["delete_file", "delete", "deletefile", "remove_file"]);
 const READ = new Set(["read", "read_file", "readfile", "view", "view_file", "open_file", "file_read"]);
 const NOTEBOOK = new Set(["notebookedit", "notebook_edit", "edit_notebook"]);
-const SHELL = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell", "run_command", "execute", "user_bash", "exec", "run_in_terminal"]);
+/**
+ * Shell steps beyond the shell tools (core/shell-tools.ts): Pi's `user_bash` (a command the person
+ * typed), `exec` (Devin's shell; a Codex code-mode cell is a wrapper, which replay skips), `execute`
+ * (Droid's shell) and `run_in_terminal`.
+ */
+const REPLAY_SHELLS = new Set(["user_bash", "exec", "execute", "run_in_terminal"]);
 
 type Family = "write" | "edit" | "multi" | "patch" | "delete" | "read" | "notebook" | "shell" | "other";
 const EDITS = new Set<Family>(["write", "edit", "multi", "patch", "delete"]);
@@ -230,27 +236,13 @@ function familyOf(tool: string, input: unknown): Family {
   if (DELETE.has(t)) return "delete";
   if (READ.has(t)) return "read";
   if (NOTEBOOK.has(t)) return "notebook";
-  if (SHELL.has(t)) return "shell";
+  if (isShellTool(t) || REPLAY_SHELLS.has(t)) return "shell";
   if (patchTextOf(input) && /^\*\*\* Begin Patch/m.test(patchTextOf(input)!)) return "patch";
   return "other";
 }
 
 const PATH_KEYS = ["file_path", "filePath", "path", "absolute_path", "absolutePath", "AbsolutePath", "target_file", "targetFile", "TargetFile", "notebook_path", "file", "filename"];
 const pathOf = (input: unknown): string | undefined => (isObj(input) ? PATH_KEYS.map((k) => input[k]).find((v): v is string => typeof v === "string" && v !== "") : undefined);
-
-/** The command line of a shell call (string, argv array, `bash -lc` wrapper). */
-export function commandOf(input: unknown): string | undefined {
-  if (typeof input === "string") return input;
-  if (!isObj(input)) return undefined;
-  const c = input.command ?? input.cmd ?? input.CommandLine ?? input.commandLine ?? input.script;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    const parts = c.filter((x): x is string => typeof x === "string");
-    if (parts.length >= 3 && /(^|\/)(ba|z|)sh$/.test(parts[0]!) && /^-\w*c$/.test(parts[1]!)) return parts.slice(2).join(" ");
-    return parts.join(" ");
-  }
-  return undefined;
-}
 
 /** `cat <one file>` with nothing else on the line: its output is the file. */
 function catPath(command: string): string | undefined {
@@ -951,7 +943,7 @@ export class Replay {
       for (const m of text.matchAll(/^\*\*\* Move to: (.+)$/gm)) named(m[1]!.trim(), "add", cwd);
       for (const m of text.matchAll(/^diff --git a\/.+? b\/(.+)$/gm)) named(m[1]!, "modify", cwd);
     }
-    const command = fam === "shell" ? commandOf(input) : undefined;
+    const command = fam === "shell" ? commandLineOf(input) : undefined;
     if (command !== undefined && ok === true) {
       const cat = catPath(command);
       if (cat) named(cat, "read", cwd);
@@ -1079,7 +1071,7 @@ export class Replay {
           if (rc) push(path, { t: "read", content: rc.content, approxEol: rc.approxEol });
         }
       } else if (fam === "shell") {
-        const command = commandOf(inp.value);
+        const command = commandLineOf(inp.value);
         const cat = command !== undefined ? catPath(command) : undefined;
         if (cat && ok === true && outp?.text !== undefined && outp.complete && !looksLikeWrapperOutput(outp.text)) push(this.norm(cat, cwd), { t: "read", content: outp.text });
       } else if (fam === "write" || fam === "edit" || fam === "multi" || fam === "delete" || fam === "patch") {
@@ -1389,7 +1381,7 @@ export class Replay {
       const outText = typeof out === "string" ? out : out === undefined ? undefined : JSON.stringify(out);
       const blobRef = outputBlob(r.end, outText);
       if (r.step.kind === "shell") {
-        const command = commandOf(ops.input ?? r.start?.payload.input ?? r.rawInput) ?? "";
+        const command = commandLineOf(ops.input ?? r.start?.payload.input ?? r.rawInput) ?? "";
         const shell: ShellDetail = { command };
         if (r.step.ok !== undefined) shell.ok = r.step.ok;
         const code = exitCodeOf(r.end, outText);

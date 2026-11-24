@@ -418,7 +418,8 @@ async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, 
     const sub = SUBAGENT_FILE.exec(f.path);
     // Main transcripts sit directly in projects/<slug>/; any other .jsonl (workflow journals, …) is not a session.
     if (!sub && relative(root, f.path).split(/[\\/]/).length !== 2) continue;
-    if (opts.changed && !(await opts.changed(cursorView(f, TRANSCRIPT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
+    const view = cursorView(f, TRANSCRIPT_IDLE_MS);
+    if (opts.changed && !(await opts.changed(view))) continue; // unchanged since the last backfill (or since it went idle)
     // A copy of another session's subagent (fork, resumed or symlinked workflow run): the owner's file is stored instead.
     if (sub) {
       const owner = await copiedSubagentOwner(f.path);
@@ -438,6 +439,7 @@ async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, 
     // A transcript written inside the window is imported whole: cutting it at `since` would leave a session
     // without its first prompt, title or start time. (walkFiles already left out files last written before `since`.)
     yield* events;
+    opts.whole?.(view);
   }
 }
 

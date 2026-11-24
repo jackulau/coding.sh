@@ -2,8 +2,8 @@
 // session that wrote each line (src/attribution/blame.ts). Read-only on git.
 import { resolve } from "node:path";
 import { blameFile, parseBlameTarget } from "../../attribution/blame.ts";
-import { shortener } from "../../core/session-ref.ts";
-import { shortSessionId, str, withContext } from "../common.ts";
+import { printedRefs } from "../../core/session-ref.ts";
+import { str, withContext } from "../common.ts";
 import { cliCommand } from "../next-steps.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -33,20 +33,22 @@ export async function run(c: CommandContext): Promise<number> {
     out.print(`${b.path} at ${b.rev.slice(0, 8)}: ${by} of ${plural(b.rows.length, "line")} by ${plural(b.sessions.length, "agent session")}`);
     out.print();
     const width = String(b.rows.at(-1)?.line ?? 1).length;
-    // A subagent's short id names it, not its parent (a03d2f6b:sub:a7d49789).
-    const idWidth = Math.max(8, ...b.rows.map((row) => (row.sessionId ? shortSessionId(row.sessionId).length : 0)));
+    // Each line names its session by the shortest reference that opens it alone (a subagent's names
+    // the subagent, not its parent); the table prints an id whole unless it is long or needs quoting.
+    const refs = await printedRefs(ctx.index, { short: b.rows.flatMap((row) => (row.sessionId ? [row.sessionId] : [])), whole: b.sessions.map((s) => s.id) });
+    const idWidth = Math.max(8, ...b.rows.map((row) => (row.sessionId ? refs.short(row.sessionId).length : 0)));
     for (const row of b.rows) {
-      const who = row.sessionId ? `${shortSessionId(row.sessionId).padEnd(idWidth)} ${(row.agent ?? "").padEnd(11)}` : out.style("-".padEnd(idWidth + 12), "faint");
+      const who = row.sessionId ? `${refs.short(row.sessionId).padEnd(idWidth)} ${(row.agent ?? "").padEnd(11)}` : out.style("-".padEnd(idWidth + 12), "faint");
       out.print(`${String(row.line).padStart(width)}  ${row.commit.slice(0, 8)}  ${who}  ${row.text}`);
     }
     if (b.sessions.length) {
       out.print();
       out.table(
         ["SESSION", "AGENT", "MODEL", "LINES"],
-        b.sessions.map((s) => [s.id, s.agent, s.model ?? "-", String(s.lines)]),
+        b.sessions.map((s) => [refs.whole(s.id), s.agent, s.model ?? "-", String(s.lines)]),
       );
       // By a reference that opens it when pasted (core/session-ref.ts): an id can be `latest`, which opens the newest session.
-      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", (await shortener(ctx.index))(b.sessions[0]!.id)]));
+      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", refs.whole(b.sessions[0]!.id)]));
     }
     return 0;
   });

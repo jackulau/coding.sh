@@ -113,6 +113,31 @@ describe("rankEvalCandidates", () => {
     assert.ok(!c!.reasons.includes("+1 tests still failing"), c!.reasons.join(", "));
   });
 
+  it("reads the test command and the deploys through Antigravity's run_command and Droid's Execute, as through Bash", () => {
+    const shells: [string, (command: string) => Record<string, unknown>][] = [
+      ["Bash", (command) => ({ command })],
+      ["run_command", (command) => ({ CommandLine: command, Cwd: ROOT })],
+      ["Execute", (command) => ({ command })],
+    ];
+    for (const [tool, input] of shells) {
+      const id = `via-${tool}`;
+      const call = (n: number, command: string, ok: boolean) => [
+        ev(id, "tool.start", { tool, toolUseId: `${id}-${n}`, input: input(command) }),
+        ev(id, "tool.end", { tool, toolUseId: `${id}-${n}`, ok }),
+      ];
+      const start = [
+        ev(id, "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "snap" } }),
+        ev(id, "user.message", { text: "make sum.js add its two arguments" }),
+        ev(id, "tool.start", { tool: "Write", toolUseId: `${id}-w`, input: { file_path: "/work/demo/sum.js" } }),
+      ];
+      const [c] = rankEvalCandidates([{ session: session(id), events: [...start, ...call(1, `cd ${ROOT} && node test-sum.js`, false)] }], { now: NOW });
+      assert.equal(c!.verifierGuess, "node test-sum.js", tool);
+      assert.deepEqual(c!.reasons, ["+1 tests still failing", "+2 verifier guessable", "+1 last 7 days"], tool);
+      const [d] = rankEvalCandidates([{ session: session(id), events: [...start, ...call(1, "gh pr create --fill", true), ...call(2, "vercel deploy --prod", true)] }], { now: NOW });
+      assert.equal(d!.reject, "external-deliverable", tool);
+    }
+  });
+
   it("labels the compaction failure flag apart from the compacted-context penalty", () => {
     const id = "cmp";
     const s = session(id, { flags: ["compaction"] });

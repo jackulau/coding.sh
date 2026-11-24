@@ -288,6 +288,9 @@ describe("error results and the outputSchema", () => {
 });
 
 describe("status work rows", () => {
+  // The world's env sets no MSYSTEM or SHELL: on Windows that is PowerShell or cmd, which run codingsh.
+  const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+
   it(`lists the top ${STATUS_WORK_ROWS} items, counts the rest and names the command for them`, async () => {
     assert.equal(STATUS_WORK_ROWS, 5);
     const work = (await ok("status")).work as Obj;
@@ -295,10 +298,34 @@ describe("status work rows", () => {
     assert.equal(work.review, WORK + 1, "the seeded sessions and sess-a");
     assert.equal(items.length, STATUS_WORK_ROWS);
     assert.equal(work.more, WORK + 1 - STATUS_WORK_ROWS);
-    assert.equal(work.rest, "coding.sh work --json");
+    assert.equal(work.rest, `${BIN} work --json`);
     for (const i of items) for (const k of ["id", "bucket", "reason", "next", "rootId", "sessionId", "lastActivity"]) assert.ok(k in i, `item has ${k}`);
     const t = tools.find((x) => x.name === "status")!;
     assert.match(t.description, /top 5 items/);
     assert.match(t.description, /the work tool has the rest/);
+  });
+
+  it("each item's next step names the CLI as the rest and the hints do: the npx form under npx", async () => {
+    for (const i of ((await ok("status")).work as Obj).items as Obj[]) assert.ok(String(i.next).includes(`\`${BIN} work ack ${i.id}\``), String(i.next));
+    // Started with npx, `coding.sh` is not on PATH, on any platform.
+    const npx = createCodingShMcp({ env: { ...w.env, npm_command: "exec" }, cwd: w.repo, log: () => {}, now: () => w.now });
+    try {
+      const NPX = process.platform === "win32" ? "npx -p coding.sh codingsh" : "npx coding.sh";
+      const r = await call("status", {}, npx);
+      assert.notEqual(r.isError, true, r.content[0]?.text);
+      const work = r.structuredContent!.work as Obj;
+      assert.equal(work.rest, `${NPX} work --json`);
+      for (const i of work.items as Obj[]) assert.ok(String(i.next).includes(`\`${NPX} work ack ${i.id}\``), String(i.next));
+      const page = await call("work", { limit: 2 }, npx);
+      assert.notEqual(page.isError, true, page.content[0]?.text);
+      const listed = page.structuredContent!.items as Obj[];
+      assert.equal(listed.length, 2);
+      for (const i of listed) assert.ok(String(i.next).includes(`\`${NPX} work ack ${i.id}\``), String(i.next));
+      const one = await call("work", { id: String(listed[1]!.id) }, npx);
+      assert.notEqual(one.isError, true, one.content[0]?.text);
+      assert.equal((one.structuredContent!.items as Obj[])[0]!.next, listed[1]!.next);
+    } finally {
+      await npx.close();
+    }
   });
 });

@@ -51,8 +51,8 @@ show up, work down this list:
 6. **Is it older than `init`?** `init` imports past transcripts unless you passed `--no-import`.
    Run `coding.sh ingest --backfill --since 30d`. Running it again adds nothing new.
 7. **Is its id `latest` or `last`?** Those words open your newest session. `sessions`, `tree`,
-   `work`, `blame` and `attribution` print such a session by its `x_` alias, which opens it, and
-   so do the next steps that name it.
+   `search`, `status`, `work`, `blame` and `attribution` print such a session by its `x_` alias,
+   which opens it, and so do the next steps that name it.
 
 Some agents need one step of their own before a hook fires. doctor prints these under the agent's
 row:
@@ -219,7 +219,19 @@ coding.sh: index upgraded in 24.7s: migrate 1.2s, reprice 23.5s. The index as it
 - **Another command waits.** A command that opens the index while another process upgrades it
   waits and prints that process's progress (`waiting for another coding.sh (pid …)`).
 - **Stopped halfway.** The upgrade runs in one transaction. If it is stopped, the index stays as it
-  was and the next command starts it again.
+  was and the next command starts it again. A repricing stopped halfway is finished by the next.
+- **Repricing beside an ingest.** Events stored during a repricing stay in the totals: on SQLite
+  each session's costs and totals commit as one, and on other stores repricing holds the ingest
+  lock around them, a second at a time.
+- **New captures during a repricing.** Reads show what is indexed; the repricing has the rest
+  ingested between its steps where it can, else the next ingest does.
+- **Where it can't.** With `--store` or `--blobs`, or with `CODING_SH_STORE_URL` or
+  `CODING_SH_BLOB_URL` set, a repricing leaves new captures to the next ingest. `coding.sh serve`
+  uses a Postgres `DATABASE_URL` as `CODING_SH_STORE_URL` when that is unset.
+- **No background ingest.** A repricing also leaves them to the next ingest at an index open in an
+  eval run or with `CODING_SH_NO_AUTO_INGEST=1`, and when its background ingest never runs.
+- **A read-only home.** Where coding.sh can't make its lock file in the home, estimates wait to be
+  repriced by a command that can, and `coding.sh usage --reprice` fails with the reason.
 - **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished.
 
 If the command stops with `store_owned`, `store_version` or `store_newer` instead, see

@@ -1,6 +1,7 @@
 // init --proxy / uninstall --proxy against a temp HOME: what each agent's config
 // gets, conflicts refused, and uninstall leaving files byte-for-byte as before.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -304,7 +305,13 @@ command = "docs-mcp"
 describe("hook restart", () => {
   test("starts `proxy --background` on a session start while an agent is routed and no proxy runs", async () => {
     const calls: string[][] = [];
-    const spawn: KickSpawner = (_cmd, args) => (calls.push(args), { unref() {} });
+    const children: EventEmitter[] = [];
+    const spawn: KickSpawner = (_cmd, args) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), { unref() {} });
+      children.push(child);
+      return child;
+    };
     const cli = join(t.root, "cli.mjs");
     writeFile(cli, "");
     writeFile(join(t.dataHome, "bin", "cli-path"), `${cli}\n`);
@@ -317,6 +324,8 @@ describe("hook restart", () => {
     await writeProxyState({ pid: 2 ** 22 + 77, url: URL, host: "127.0.0.1", port: 4320, startedAt: Date.now(), upstreams: { anthropic: "", openai: "", chatgpt: "" } }, process.env);
     assert.equal(kickProxy("SessionStart", process.env, spawn), cli);
     assert.deepEqual(calls, [[cli, "proxy", "--background"]]);
+    // spawn returns the child first and reports a failure (node gone after an upgrade) as an 'error' event.
+    assert.doesNotThrow(() => children[0]!.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" })));
   });
 });
 

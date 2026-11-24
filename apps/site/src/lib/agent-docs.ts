@@ -2,6 +2,7 @@
 // /skill.md (the same workflow as a Claude Code-style skill). Commands here
 // match the CLI reference generated from the binary (/docs/cli).
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { SITE_URL, INSTALL_SH } from "../data/site";
 
@@ -9,8 +10,8 @@ const abs = (p: string) => new URL(p, SITE_URL).toString();
 
 /**
  * YYYY-MM-DD of the last commit to this file, dated the way src/lib/lastmod.mjs
- * dates pages: the build day while it has uncommitted edits or no git history.
- * Build-time only, run from apps/site.
+ * dates pages: the day the file was last written while it has uncommitted edits
+ * or no git history. Build-time only, run from apps/site.
  */
 function lastCommitDay(): string {
   const file = join(process.cwd(), "src/lib/agent-docs.ts");
@@ -21,8 +22,15 @@ function lastCommitDay(): string {
       return "";
     }
   };
+  const written = () => {
+    try {
+      return statSync(file).mtime;
+    } catch {
+      return new Date();
+    }
+  };
   const committed = git(["status", "--porcelain", "--", file]) ? "" : git(["log", "-1", "--format=%cI", "--", file]);
-  return (committed ? new Date(committed) : new Date()).toISOString().slice(0, 10);
+  return (committed ? new Date(committed) : written()).toISOString().slice(0, 10);
 }
 
 /** YAML frontmatter shared by every agent-facing Markdown page. */
@@ -53,8 +61,9 @@ and opens the viewer. Read it first: ${abs("/install")}. In a non-interactive sh
 curl -fsSL https://coding.sh/install | CODING_SH_YES=1 CODING_SH_NO_UI=1 sh
 \`\`\`
 
-On Windows, run the script in Git Bash. In PowerShell or cmd, install with \`npm install -g coding.sh\` and run
-\`codingsh\` wherever this page says \`coding.sh\`: there, \`coding.sh\` opens npm's sh script instead of running it.
+On Windows, run the script in Git Bash, and \`npx -p coding.sh codingsh\` for \`npx coding.sh\` in any shell. In PowerShell
+or cmd, install with \`npm install -g coding.sh\`, then type \`codingsh\` for an installed \`coding.sh\`: there, \`coding.sh\`
+opens npm's sh script instead of running it.
 
 ## 2. Install the capture hooks
 

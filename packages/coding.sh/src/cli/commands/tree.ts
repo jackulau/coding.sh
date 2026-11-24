@@ -6,11 +6,11 @@
 // agent processes that share a run id (CODING_SH_RUN_ID) groups into one run;
 // pass that id (or --run).
 import { costNote } from "../../core/pricing.ts";
-import { shortener } from "../../core/session-ref.ts";
 import { buildRunTree, buildSessionTree, buildSubtree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, shortSessionId, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
+import { printedRefs } from "../../core/session-ref.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -64,15 +64,18 @@ function treeJson(t: Tree, offset: number, limit: number) {
   return doc;
 }
 
-/** "└ 9f1c2e  reviewer  sonnet  12s  18 tools  $0.03  [premature-completion]  title", indented from the depth `base` of the printed root. */
-function printNode(out: Output, n: TreeNode, isRoot: boolean, base: number): void {
+/**
+ * "└ 9f1c2e  reviewer  sonnet  12s  18 tools  $0.03  [premature-completion]  title", indented from
+ * the depth `base` of the printed root, with the session named by `ref` (PrintedRefs whole).
+ */
+function printNode(out: Output, n: TreeNode, isRoot: boolean, base: number, ref: (id: string) => string): void {
   const s = n.session;
   const { costUsd, durationMs, toolCalls, toolErrors } = nodeSummary(s);
   const indent = "  ".repeat(n.depth - base);
   const branch = isRoot ? "" : "└ ";
   const role = n.depth === 0 ? s.agent : (s.parent?.type ?? s.agent);
   const parts = [
-    wholeRef(s.id),
+    ref(s.id),
     out.style(role, "bold"),
     s.model ?? "",
     durationMs !== undefined ? duration(durationMs) : "-",
@@ -83,12 +86,12 @@ function printNode(out: Output, n: TreeNode, isRoot: boolean, base: number): voi
   const flagText = flags.length ? out.style(`[${flags.join(" ")}]`, "yellow") : "";
   const title = oneLine(clean(s.title ?? ""), 48);
   out.print(`${indent}${branch}${parts.join("  ")}${flagText ? `  ${flagText}` : ""}${title ? `  ${out.style(title, "faint")}` : ""}`);
-  for (const c of n.children) printNode(out, c, false, base);
+  for (const c of n.children) printNode(out, c, false, base, ref);
 }
 
-/** "in: 1a2b3c4d claude-code › 5e6f7a8b Explore": the sessions above a subtree, from the top, by short id and role. */
-const ancestorsLine = (ancestors: readonly Session[]): string =>
-  `in: ${ancestors.map((a, depth) => `${shortSessionId(a.id)} ${depth === 0 ? a.agent : (a.parent?.type ?? "subagent")}`).join(" › ")}`;
+/** "in: 1a2b3c4d claude-code › 5e6f7a8b Explore": the sessions above a subtree, from the top, by short reference (PrintedRefs short) and role. */
+const ancestorsLine = (ancestors: readonly Session[], ref: (id: string) => string): string =>
+  `in: ${ancestors.map((a, depth) => `${ref(a.id)} ${depth === 0 ? a.agent : (a.parent?.type ?? "subagent")}`).join(" › ")}`;
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -102,14 +105,14 @@ export async function run(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
 
     let tree: Tree | undefined;
-    let label: string;
+    // A run's label; a session's tree is labelled by its root (treeLabel).
+    let label: string | undefined;
     if (!forceRun) {
       // Try the argument as a session first; fall back to a run id.
       try {
         const s = await resolveSession(ctx, arg);
         // The tree under the session; --all, the whole tree from its top-level agent.
         tree = whole ? await buildSessionTree(ctx.index, s.id) : await buildSubtree(ctx.index, s.id);
-        label = tree && tree.roots[0] ? treeLabel(tree.roots[0]!.session) : wholeRef(s.id);
       } catch (e) {
         tree = await buildRunTree(ctx.index, arg);
         if (!tree) throw notFoundWithBacklog(e, backlog); // neither a session nor a run: surface the session error
@@ -134,9 +137,12 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
 
+    // Every stored id is read only when a printed id needs a shorter reference: an ancestor on the
+    // in: line, or a node whose id is long, needs quoting or is latest or last.
+    const refs = await printedRefs(ctx.index, { whole: tree.flat.map((n) => n.session.id), short: (tree.ancestors ?? []).map((a) => a.id) });
     const t = tree.totals;
     const subagents = t.sessions - tree.roots.length;
-    out.print(out.style(label!, "bold"));
+    out.print(out.style(label ?? treeLabel(tree.roots[0]!.session, refs.whole), "bold"));
     const headline = [
       tree.runId ? `${plural(tree.roots.length, "agent")}, ${plural(subagents, "subagent")}` : `${plural(subagents, "subagent")}`,
       t.wallMs !== undefined ? duration(t.wallMs) : null,
@@ -151,23 +157,21 @@ export async function run(c: CommandContext): Promise<number> {
     if (t.flags.length) out.print(`  ${out.style(`flags across the loop: ${t.flags.join(", ")}`, "yellow")}`);
     out.print();
 
-    if (tree.ancestors?.length) out.print(out.style(ancestorsLine(tree.ancestors), "faint"));
-    for (const r of tree.roots) printNode(out, r, true, r.depth);
+    if (tree.ancestors?.length) out.print(out.style(ancestorsLine(tree.ancestors, refs.short), "faint"));
+    for (const r of tree.roots) printNode(out, r, true, r.depth, refs.whole);
 
-    // The next steps name a session by a reference that opens it when pasted (core/session-ref.ts): an
-    // id can hold a space or be `latest`. The Fix first line names it as the id column does, to find its row.
-    let short: ((id: string) => string) | undefined;
-    const ref = async (id: string) => (short ??= await shortener(ctx.index))(id);
+    // The Fix first line and the next steps name a session as the id column does (refs.whole), by a
+    // reference that opens it when pasted (core/session-ref.ts): an id can hold a space or be `latest`.
     const worst = worstNode(tree.roots);
     if (worst) {
       out.print();
       const w = worst.session;
       const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
-      out.print(`  ${which} ${wholeRef(w.id)}: ${worstFirst(w.flags).join(", ")}`);
-      out.next("Open it", `coding.sh show ${await ref(w.id)}`);
+      out.print(`  ${which} ${refs.whole(w.id)}: ${worstFirst(w.flags).join(", ")}`);
+      out.next("Open it", `coding.sh show ${refs.whole(w.id)}`);
     }
-    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${await ref(tree.roots[0]!.session.id)} --all`);
+    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${refs.whole(tree.roots[0]!.session.id)} --all`);
     return 0;
   }, { create: false });
 }
@@ -182,7 +186,7 @@ export function fixFirstRole(depth: number, type: string | undefined): string {
   return t && t.toLowerCase() !== "subagent" ? `subagent ${t}` : "subagent";
 }
 
-/** A short label for a tree's root: its title, else its id (wholeRef). */
-function treeLabel(s: Session): string {
-  return s.title ? oneLine(clean(s.title), 70) : wholeRef(s.id);
+/** A short label for a tree's root: its title, else its id as `ref` prints it (PrintedRefs whole). */
+function treeLabel(s: Session, ref: (id: string) => string): string {
+  return s.title ? oneLine(clean(s.title), 70) : ref(s.id);
 }

@@ -26,7 +26,8 @@ import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, mode
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
 import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
-import { normalizeTracePath } from "./shell-diff.ts";
+import { driveOf, onDrive, traceRoot, underTraceRoot } from "./shell-diff.ts";
+import { commandField } from "./shell-tools.ts";
 import { shellCallFiles } from "./shell-files.ts";
 import { foldRetrieval, markRetrievalEdit, retrievalOf, retrievalState, type RetrievalState } from "./retrieval.ts";
 
@@ -96,6 +97,12 @@ export function billedCallOf(e: AgentEvent): string | undefined {
   return num(e.payload?.billedCostUsd) !== undefined || num(e.usage?.costUsd) !== undefined ? e.parentId : undefined;
 }
 
+/** The gateway generation a billing companion carries (`payload.gateway` and `payload.generationId`), as one key. */
+const generationOf = (e: AgentEvent): string | undefined => {
+  const id = e.payload?.generationId;
+  return billedCallOf(e) && typeof id === "string" && id ? `${String(e.payload?.gateway ?? "")}\u0000${id}` : undefined;
+};
+
 /** A model call logged by `coding.sh proxy`. */
 const isProxyCall = (e: AgentEvent): boolean => e.kind === "llm.call" && e.source === "proxy";
 
@@ -122,21 +129,20 @@ const VERIFY_COMMAND = new RegExp(
 );
 
 /**
- * Extracts a shell command from common tool input shapes across agents. A REPL
- * cell (`{code}`, no command key) gives the shell commands its code runs
- * (core/cells.ts), joined with " && ", or undefined when it runs none.
+ * Extracts a shell command from common tool input shapes across agents: the
+ * first command key (core/shell-tools.ts; Antigravity's `run_command` names it
+ * `CommandLine`), an argv array joined with spaces. A REPL cell (`{code}`, no
+ * command key) gives the shell commands its code runs (core/cells.ts), joined
+ * with " && ", or undefined when it runs none.
  */
 export function commandOf(input: unknown): string | undefined {
   if (typeof input === "string") return input;
   if (typeof input !== "object" || input === null) return undefined;
-  const o = input as Record<string, unknown>;
-  for (const k of ["command", "cmd", "script", "commandLine"]) {
-    const v = o[k];
-    if (typeof v === "string") return v;
-    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(" ");
-  }
-  if (typeof o.code === "string") {
-    const cmds = shellCommandsInCode(o.code);
+  const c = commandField(input);
+  if (c !== undefined) return typeof c === "string" ? c : c.join(" ");
+  const code = (input as Record<string, unknown>).code;
+  if (typeof code === "string") {
+    const cmds = shellCommandsInCode(code);
     if (cmds.length) return cmds.join(" && ");
   }
   return undefined;
@@ -274,15 +280,19 @@ export const isBackfillEvent = (e: AgentEvent): boolean => e.source !== undefine
 
 const TOKEN_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const;
 
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+/** A token count as the totals take it: a finite number not below 0, else undefined, so it is skipped (pricing bills it as 0). */
+const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+
 function addUsage(sum: Usage, u: Usage | undefined): void {
   if (!u) return;
-  for (const k of [...TOKEN_KEYS, "costUsd"] as const) {
-    const v = u[k];
-    if (typeof v === "number" && Number.isFinite(v)) sum[k] = (sum[k] ?? 0) + v;
+  for (const k of TOKEN_KEYS) {
+    const v = count(u[k]);
+    if (v !== undefined) sum[k] = (sum[k] ?? 0) + v;
   }
+  const cost = num(u.costUsd);
+  if (cost !== undefined) sum.costUsd = (sum.costUsd ?? 0) + cost;
 }
-
-const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 /** Estimated USD by `payload.priceTier`. */
 type Tiers = Record<string, number>;
@@ -320,6 +330,18 @@ const MAX_PARENT_HOPS = 64;
 const carriesUsage = (e: AgentEvent): boolean =>
   e.kind === "llm.call" && !!e.usage && [...TOKEN_KEYS, "costUsd" as const].some((k) => (num(e.usage![k]) ?? 0) > 0);
 
+/** A counted call with its nested calls folded in (rollupUsage). */
+interface Folded {
+  u: Usage;
+  est: number;
+  tiers: Tiers;
+  split: Split;
+  /** The cost it counts holds one the agent reported or a gateway billed, so it beats an estimate above it. */
+  reported: boolean;
+  /** The calls whose cost it counts: itself when it keeps its own, else what its nested calls count. A gateway companion of one counts with it. */
+  costFrom: readonly string[];
+}
+
 export interface UsageRollup {
   usage: Usage;
   duplicate?: DuplicateUsage;
@@ -327,11 +349,17 @@ export interface UsageRollup {
 
 /**
  * Session usage totals from its events (sorted by time). Plain sums, except:
+ * - a token count below 0 or not a finite number is skipped;
  * - only the latest usage snapshot counts (they are running totals);
  * - a model call nested inside another usage-carrying model call of the same
  *   trace (a wrapper span over a provider span) is not counted again: the
  *   outermost call takes, per field, its own value, else the sum over its
- *   nearest nested calls. A reported nested cost beats the wrapper's estimate;
+ *   nearest nested calls. A reported nested cost, even 0, beats the wrapper's estimate, even 0,
+ *   and so does a billed one: the gateway companion of a nested call whose cost the wrapper takes
+ *   counts with it. A billed call keeps its own cost, or none, not its nested calls';
+ * - a gateway generation is billed once: when two companions carry one (`payload.gateway` and
+ *   `payload.generationId`), as when the proxy's copy of a call and the agent's own record of it
+ *   were both linked to it, the companion of a counted call holds the bill, else the first;
  * - a model call repeating an earlier call's `payload.responseId` counts once;
  * - `estimatedCostUsd` is the part of `costUsd` computed from the price table
  *   (`payload.costEstimated`), unless a gateway companion billed that call
@@ -380,11 +408,11 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   // The estimate of a call by token type, from its `payload.costByTokenType`.
   const splitOfEvent = (e: AgentEvent): Split => splitEstimate(e, estimatedOf(e));
   // A call's usage with its nested calls folded in: own value per field, else the nested sum.
-  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number; tiers: Tiers; split: Split } => {
+  const fold = (c: AgentEvent, depth = 0): Folded => {
     const kids = depth < MAX_PARENT_HOPS ? (children.get(c) ?? []).map((k) => fold(k, depth + 1)) : [];
     const u: Usage = {};
     for (const k of TOKEN_KEYS) {
-      const own = num(c.usage?.[k]);
+      const own = count(c.usage?.[k]);
       if (own !== undefined) u[k] = own;
       else if (kids.some((x) => x.u[k] !== undefined)) u[k] = kids.reduce((s, x) => s + (x.u[k] ?? 0), 0);
     }
@@ -392,11 +420,13 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const ownEst = estimatedOf(c);
     const kidCost = kids.some((x) => x.u.costUsd !== undefined) ? kids.reduce((s, x) => s + (x.u.costUsd ?? 0), 0) : undefined;
     const kidEst = kids.reduce((s, x) => s + x.est, 0);
-    // A billed call keeps its own cost: its gateway companion holds billed minus that cost.
-    const kidsReported = kidCost !== undefined && kidCost - kidEst > 0;
-    if (own !== undefined && (ownEst === 0 || !kidsReported || billed.has(c.id))) {
-      u.costUsd = own;
-      return { u, est: ownEst, tiers: tiersOf(c), split: splitEstimate(c, ownEst) };
+    // Whether a nested call reported, not how much: a reported 0 (a free model) counts, and so does a part too small to show beside the estimates.
+    const kidsReported = kids.some((x) => x.reported);
+    // The call keeps its own cost when it reported it, or when no nested call reported one: its estimate, even 0, loses to theirs.
+    // A billed call keeps its own cost, or none: its gateway companion holds billed minus that cost.
+    if (billed.has(c.id) || (own !== undefined && (c.payload?.costEstimated !== true || !kidsReported))) {
+      if (own !== undefined) u.costUsd = own;
+      return { u, est: ownEst, tiers: tiersOf(c), split: splitEstimate(c, ownEst), reported: billed.has(c.id) || c.payload?.costEstimated !== true, costFrom: [c.id] };
     }
     if (kidCost !== undefined) u.costUsd = kidCost;
     const tiers: Tiers = {};
@@ -406,7 +436,7 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
         addTiers(tiers, k.tiers);
         addSplit(split, k.split);
       }
-    return { u, est: kidCost !== undefined ? kidEst : 0, tiers, split };
+    return { u, est: kidCost !== undefined ? kidEst : 0, tiers, split, reported: kidsReported, costFrom: kids.flatMap((k) => k.costFrom) };
   };
 
   const usage: Usage = {};
@@ -416,12 +446,13 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   let snapshot: AgentEvent | undefined;
   const responses = new Set<string>();
   const dropped = new Set<string>();
+  const usageCalls = new Set<string>();
   let raw = 0;
   let rawCost = 0;
   let counted = 0;
   let countedCost = 0;
   let calls = 0;
-  const tokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (num(u[k]) ?? 0), 0);
+  const tokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (count(u[k]) ?? 0), 0);
   for (const e of sorted) {
     if (isUsageSnapshot(e)) {
       // Latest snapshot wins; equal times keep the larger (running totals only grow).
@@ -429,6 +460,7 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
       continue;
     }
     if (!carriesUsage(e)) continue;
+    usageCalls.add(e.id);
     raw += tokens(e.usage!);
     rawCost += num(e.usage!.costUsd) ?? 0;
     const rid = typeof e.payload?.responseId === "string" && e.payload.responseId ? e.payload.responseId : undefined;
@@ -440,11 +472,37 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     }
     if (rid) responses.add(rid);
   }
+  // The counted calls with nested calls, folded first, so a companion knows whether the call it billed is in a count.
+  const folds = new Map<AgentEvent, Folded>();
+  const costed = new Set<string>();
+  for (const e of sorted) {
+    if (!children.has(e) || dropped.has(e.id)) continue;
+    const f = fold(e);
+    folds.set(e, f);
+    for (const id of f.costFrom) costed.add(id);
+  }
+  // The companion that holds each generation's bill: the first whose call is counted, then the first whose call is in
+  // the events with no usage (its companion holds the whole bill), else the first.
+  const isCounted = (id: string): boolean => usageCalls.has(id) && (!dropped.has(id) || costed.has(id));
+  const billOf = new Map<string, AgentEvent>();
+  if (billed.size) {
+    const present = new Set<string>();
+    for (const e of sorted) if (e.kind === "llm.call") present.add(e.id);
+    // 2: a counted call. 1: a call with no usage. 0: a call left out, such as a proxy's copy of a call the agent's own
+    // capture recorded, whose companion holds only the bill minus the copy's own cost.
+    const rank = (id: string): number => (isCounted(id) ? 2 : present.has(id) && !usageCalls.has(id) ? 1 : 0);
+    for (const e of sorted) {
+      const g = generationOf(e);
+      if (!g || (dropped.has(e.parentId!) && !costed.has(e.parentId!))) continue;
+      const held = billOf.get(g);
+      if (!held || rank(e.parentId!) > rank(held.parentId!)) billOf.set(g, e);
+    }
+  }
   for (const e of sorted) {
     if (isUsageSnapshot(e)) continue;
     if (carriesUsage(e)) {
       if (dropped.has(e.id)) continue;
-      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e), tiers: tiersOf(e), split: splitOfEvent(e) };
+      const f = folds.get(e) ?? { u: e.usage!, est: estimatedOf(e), tiers: tiersOf(e), split: splitOfEvent(e) };
       addUsage(usage, f.u);
       estimated += f.est;
       addTiers(byTier, f.tiers);
@@ -453,8 +511,10 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
       countedCost += num(f.u.costUsd) ?? 0;
       continue;
     }
-    // A gateway companion of a call that was not counted goes with it.
-    if (isEnrichment(e) && e.parentId && dropped.has(e.parentId)) {
+    // A gateway companion of a call that was not counted goes with it, unless the call that took its cost was counted.
+    // A second companion of one generation is a copy of its bill.
+    const g = generationOf(e);
+    if (isEnrichment(e) && e.parentId && ((dropped.has(e.parentId) && !costed.has(e.parentId)) || (g !== undefined && billOf.get(g) !== e))) {
       rawCost += num(e.usage?.costUsd) ?? 0;
       continue;
     }
@@ -523,7 +583,7 @@ const simpleTiers = (e: AgentEvent): Tiers => {
   return est > 0 && typeof t === "string" && t ? { [t]: est } : {};
 };
 const simpleSplit = (e: AgentEvent): Split => splitEstimate(e, simpleEstimate(e));
-const usageTokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (num(u[k]) ?? 0), 0);
+const usageTokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (count(u[k]) ?? 0), 0);
 
 function foldUsage(s: UsageState, e: AgentEvent): void {
   if (isUsageSnapshot(e)) {
@@ -562,7 +622,7 @@ const usageOf = (s: UsageState): UsageRollup => usageResult(s);
  */
 export const isUsageSnapshot = (e: AgentEvent): boolean => e.kind === "notification" && e.payload.type === "usage-summary";
 
-const tokenTotal = (u: Usage | undefined): number => (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cacheReadTokens ?? 0) + (u?.cacheWriteTokens ?? 0);
+const tokenTotal = (u: Usage | undefined): number => TOKEN_KEYS.reduce((s, k) => s + (count(u?.[k]) ?? 0), 0);
 
 
 /**
@@ -590,7 +650,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 43; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's; stats.prs, the pull requests a session opened, merged, closed or linked (SessionState.prs, foldPrs); llm-error, a last failed model call the session never got past (FlagState.llmError); the tools:unseen tag, a session whose source records model calls only (FlagState.sight). 39: stats.prs links a PR URL in a call's output only for a push or a gh pr command whose own PR it is, not every URL a compound command printed (release notes), and a view's --repo is not the session's repo. 40: stats.prs caps only the PRs a session linked at PRS_MAX; the ones it opened, merged or closed stay (up to PRS_ALL_MAX), so an orchestrator's early merges are kept. 41: stats.prs.own, a PR the session pushed to or linked to its own thread (HOST_PR_LINK), so an item whose PR another session merged leaves review (core/work.ts prsOfItem). 42: stats.retrieval, the reads, searches and web calls of a session's tool calls and the files it read and then edited (core/retrieval.ts, SessionState.retrieval). 43: stats.waits, how often and how long the session waited on the person and how often the person steered (core/wait-stats.ts, SessionState.waits); a host link's launch (T3 Code: a thread a person started is interactive) is the session's launch (SessionState.hostLaunch); a host's marker makes the transcript prompt it names an agent's (HOST_AGENT_PROMPT, WaitStatsState.marks), opens no outline phase (core/outline.ts) and moves no stall gap (core/derail.ts); a hook's permission prompt joins a host request asked up to 5 s before it, and a request joins an open prompt, only when the request's kind fits the call's tool (OpenWait.requestKind).
+export const SESSION_FOLD_VERSION = 47; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's; stats.prs, the pull requests a session opened, merged, closed or linked (SessionState.prs, foldPrs); llm-error, a last failed model call the session never got past (FlagState.llmError); the tools:unseen tag, a session whose source records model calls only (FlagState.sight). 39: stats.prs links a PR URL in a call's output only for a push or a gh pr command whose own PR it is, not every URL a compound command printed (release notes), and a view's --repo is not the session's repo. 40: stats.prs caps only the PRs a session linked at PRS_MAX; the ones it opened, merged or closed stay (up to PRS_ALL_MAX), so an orchestrator's early merges are kept. 41: stats.prs.own, a PR the session pushed to or linked to its own thread (HOST_PR_LINK), so an item whose PR another session merged leaves review (core/work.ts prsOfItem). 42: stats.retrieval, the reads, searches and web calls of a session's tool calls and the files it read and then edited (core/retrieval.ts, SessionState.retrieval). 43: stats.waits, how often and how long the session waited on the person and how often the person steered (core/wait-stats.ts, SessionState.waits); a host link's launch (T3 Code: a thread a person started is interactive) is the session's launch (SessionState.hostLaunch); a host's marker makes the transcript prompt it names an agent's (HOST_AGENT_PROMPT, WaitStatsState.marks), opens no outline phase (core/outline.ts) and moves no stall gap (core/derail.ts); a hook's permission prompt joins a host request asked up to 5 s before it, and a request joins an open prompt, only when the request's kind fits the call's tool (OpenWait.requestKind). 44: shell writes through Antigravity's run_command and Droid's Execute (an exec or execute call with a command line) count in filesChanged and stats.retrieval, and the waste stats see both as shell calls; a shell call's reads and writes resolve against its Cwd (run_command) or dir_path (Gemini), and a Git Bash /c/x path is C:/x (onDrive); view_file_outline and view_code_item are reads, a file list piped into xargs rm is not; a search that printed only grep's warnings, counts of zero from a pipeline whose last command counts (RetrievalCall.count) or the lines a literal echo prints (RetrievalCall.echoed) is empty; commandOf, derail.ts and failures.ts read CommandLine (run_command), so the waste stats, the derail checks, failure classes, stats.memoryUse and flag details see the command. 45: every reader of a shell command uses one list of shell tools and command keys (core/shell-tools.ts): test-tamper and unapproved-action read run_command's CommandLine, a shell diff's origin (core/shell-diff.ts) is traced to the command of Execute, Devin's exec or run_command as of Bash, and test-tamper keeps only shell calls' commands for it; failure classes and stats.prs read a bare command string from shell_command, local_shell_call, command_execution and powershell too, and no longer from exec, which is a Codex code-mode cell. 46: a failed shell line drops a file from stats.retrieval only when an error line names its base name whole, not inside a longer name such as data.ts for a.ts (retrieval.ts namedIn). 47: a nested call that reported a cost, even 0, beats its wrapper's estimate, even 0 (rollupUsage tracks whether a nested call reported, and whether the wrapper's cost is an estimate, not the amounts); stats.usage, stats.duplicateUsage and phase tokens skip a token count below 0 or not a finite number; a gateway companion of a nested call whose cost its wrapper takes counts with it, and a billed call keeps its own cost, or none (Folded.costFrom); a gateway generation two companions carry is billed once, by the companion of a counted call.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -1263,16 +1323,26 @@ export function addLlmError(prev: LlmErrors | undefined, payload: Record<string,
  * The key a changed file counts under in stats.filesChanged (and `coding.sh work show`, `show`):
  * the path resolved against the folder the event ran in, then relative to the session's cwd, so
  * one file edited while the agent's folder changed counts once. A path outside the session's cwd
- * stays absolute.
+ * stays absolute. On a Windows drive, `C:\x`, `c:/x` and Git Bash's `/c/x` are one key (onDrive).
  */
 export function changeKey(path: string, eventCwd: string | undefined, sessionCwd: string | undefined): string {
-  const k = normalizeTracePath(path, eventCwd ?? sessionCwd);
-  if (!eventCwd || !sessionCwd) return k;
-  // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
-  // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
-  if (/^(?:[A-Za-z]:)?\//.test(k)) return normalizeTracePath(k, sessionCwd);
+  return changeKeyer(eventCwd, sessionCwd)(path);
+}
+
+/** changeKey for the paths of one event: the two folders are read once, not once per path. */
+export function changeKeyer(eventCwd: string | undefined, sessionCwd: string | undefined): (path: string) => string {
+  const root = traceRoot(eventCwd ?? sessionCwd);
+  const drive = driveOf(root);
+  if (!eventCwd || !sessionCwd) return (path) => underTraceRoot(onDrive(path, drive), root);
+  const sessionRoot = traceRoot(sessionCwd);
+  const sessionDrive = driveOf(sessionRoot);
   const base = eventCwd.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalizeTracePath(`${base}/${k}`, sessionCwd);
+  return (path) => {
+    const k = underTraceRoot(onDrive(path, drive), root);
+    // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a
+    // subfolder) can still be inside the session's: key it relative to that, or the file counts twice.
+    return underTraceRoot(onDrive(/^(?:[A-Za-z]:)?\//.test(k) ? k : `${base}/${k}`, sessionDrive), sessionRoot);
+  };
 }
 
 /**

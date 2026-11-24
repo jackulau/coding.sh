@@ -1,23 +1,22 @@
 // A model of the ingest lock, checked with test/_model.ts. Contenders run acquireLock with waitMs 0, as a
-// background ingest does (cli/commands/ingest.ts:86), hold the lock through a fenced write, and release
-// it. Any of them can crash between two steps, or stall past the stale limit.
+// background ingest does (cli/commands/ingest.ts), hold the lock through a fenced write, and release it.
+// Any of them can crash between two steps, or stall past the stale limit.
 //
 // Each step is one in core/lock.ts (paths under packages/coding.sh/src):
-// - acquireLock (:250-263): tryCreate the lock with O_EXCL (:210-232), or else inspect it (:118-130). A
-//   missing file is free (try again); a dead holder on this host, or an mtime past staleMs, is stale
-//   (break it); anything else is held, which with waitMs 0 ends the attempt as busy.
-// - breakStale (:183-198): take the guard `<lock>.break` with O_EXCL. When another process has it,
-//   judge the guard: stale (a dead holder, or older than 10 s) is removed with removeIfSame and the
-//   attempt starts over; held is busy. Under the guard, judge the lock again and remove it with
-//   removeIfSame when it is still stale. Then remove the guard if it still carries our nonce: a read,
-//   then a remove.
-// - removeIfSame (:150-173): rename the file aside. When it is the file judged (inode, mtime and
-//   content), remove it. Otherwise link it back, which fails when a new file took the name, and remove
-//   the aside name. Renaming and comparing are one step here, and so are linking and removing: no other
-//   process uses the aside name.
-// - Holding: assertHeld (:288-292) passes while the lock file carries our nonce, and the write it
-//   guards is a separate step. The heartbeat (:272-284) reads the lock, then touches whatever file is
-//   there. release (:293-300) reads the lock, then removes it.
+// - acquireLock: tryCreate the lock with O_EXCL, or else inspect it. A missing file is free (try again);
+//   a dead holder on this host, or an mtime past staleMs, is stale (break it); anything else is held,
+//   which with waitMs 0 ends the attempt as busy.
+// - breakStale: take the guard `<lock>.break` with O_EXCL. When another process has it, judge the
+//   guard: stale (a dead holder, or older than 10 s) is removed with removeIfSame and the attempt starts
+//   over; held is busy. Under the guard, judge the lock again and remove it with removeIfSame when it is
+//   still stale. Then remove the guard if it still carries our nonce: a read, then a remove.
+// - removeIfSame: rename the file aside. When it is the file judged (inode, mtime and content), remove
+//   it. Otherwise link it back, which fails when a new file took the name, and remove the aside name.
+//   Renaming and comparing are one step here, and so are linking and removing: no other process uses
+//   the aside name.
+// - Holding: assertHeld passes while the lock file carries our nonce, and the write it guards is a
+//   separate step. The heartbeat reads the lock, then touches whatever file is there. release reads the
+//   lock, then removes it.
 // A crash leaves the process's files behind with a dead pid, which a contender on the same host judges
 // stale at once. A stall ages the file the process holds past its limit (10 s for the guard, staleMs
 // for the lock); a process holds one of the two at a time. A file no live process refreshes can age
@@ -25,23 +24,30 @@
 //
 // Checked: without a stall, one process holds the lock, one breaker works under the guard, no holder
 // loses its lock, only a dead process's lock file is removed, and a run leaves only a crashed process's
-// files. With stalls, each stall lets in at most one more holder. Two mutants show the guard and the
-// second judgment are both needed.
+// files. With stalls, each stall lets in at most one more holder, and the windows the header of
+// core/lock.ts names are reached: a release that stalls between its read and its remove removes the
+// lock a peer took, a holder that never stalled loses its lock, and a breaker that stalls under the
+// guard lets a second one work beside it. Two mutants show the guard and the second judgment are both
+// needed.
 //
 // Left out: hosts that share the folder (the mtime decides there, as after a stall); a torn lock file
-// from a crash between create and write (judged by its mtime alone, so stale only after staleMs); a file
-// replaced between the stat and the read of one inspect (the same race as a replacement between the
-// judgment and the rename); file systems without hard links, where the link back always fails; the exit
-// handler (:237-246, the same read and remove as release); and waiting with waitMs above 0, which gives
-// more attempts, like more rounds here.
+// from a crash between create and write (judged by its mtime alone, so stale only after staleMs); a
+// file replaced between the stat and the read of one inspect, which are one step here (that judgment
+// matches no file, so removeIfSame renames the new file aside and links it back, the same moment as
+// after a stalled release: the new file's owner can fail a fence meanwhile); file systems without hard
+// links, where the link back always fails; the exit handler (releaseAllOnExit, the same read and remove
+// as release); and waiting with waitMs above 0, which gives more attempts, like more rounds here.
 //
 // Bounds: three contenders with one attempt each, one crash, and no stall or one: 1,433 and 37,635
 // states. Three is the fewest where one holder dies and two contenders race to break its lock, and one
 // stall is the fewest that lets in a second holder. CODING_SH_MODEL_BOUND=n gives each contender n more
-// attempts, so a process that lost its lock can contend again; at 1 the run with a stall has 591,195
-// states and takes about 20 s. A second stall would check that two stalls let in at most two more
-// holders. A holder beats once per hold, where the code beats every interval: each later beat repeats
-// the first one's race, a read and then a touch of whatever file is there, so it can refresh a
+// attempts, so a process that lost its lock can contend again, and allows n more crashes. It also adds a
+// run with n + 1 stalls and one attempt each. With three processes every invariant holds trivially
+// after two stalls, so that run checks that no state gets stuck and that the shortest way to three
+// holders takes two stalls. At 1 the run with one stall has 617,586 states (about 8 s) and the one with
+// two stalls 236,077; at 2 the run with one stall has 2,342,064 (about 45 s) and the one with three
+// stalls 711,165. A holder beats once per hold, where the code beats every interval: each later beat
+// repeats the first one's race, a read and then a touch of whatever file is there, so it can refresh a
 // successor's lock again.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -220,7 +226,7 @@ function lockModel(cfg: Config): Model<Lk> {
       me.seen = { id: l.id, mt: l.mt };
       me.pc = cfg.mutant === "remove without the guard" ? "remove" : "guard";
     });
-    // The mutant: docs/design/state-machines.md M3, `rmSync(lock)` once isStale said so.
+    // The mutant: the lock before the guard, which removed the file with rmSync once isStale said so.
     step("removes the lock", "remove", () => true, (d, me) => {
       if (d.lock) removed(d, d.lock);
       d.lock = null;
@@ -400,14 +406,14 @@ function lockModel(cfg: Config): Model<Lk> {
   };
 }
 
-function roundsFrom(env: NodeJS.ProcessEnv): number {
+function boundFrom(env: NodeJS.ProcessEnv): number {
   const raw = env.CODING_SH_MODEL_BOUND ?? "0";
   const extra = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(extra)) throw new Error(`CODING_SH_MODEL_BOUND must be a whole number, not ${raw}`);
-  return 1 + extra;
+  return extra;
 }
 
-const rounds = roundsFrom(process.env);
+const extra = boundFrom(process.env);
 
 function run(t: { diagnostic: (m: string) => void }, cfg: Config, model = lockModel(cfg)): CheckResult<Lk> {
   const t0 = performance.now();
@@ -426,7 +432,7 @@ function reaches(cfg: Config, name: string, at: (s: Lk) => boolean): CheckResult
 }
 
 test("without a stall one process holds the lock, and a crashed holder's lock is broken once", (t) => {
-  const cfg: Config = { procs: 3, rounds, crashes: 1, stalls: 0 };
+  const cfg: Config = { procs: 3, rounds: 1 + extra, crashes: 1 + extra, stalls: 0 };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -444,7 +450,7 @@ test("without a stall one process holds the lock, and a crashed holder's lock is
 });
 
 test("with one stall two processes can hold the lock, and never three", (t) => {
-  const cfg: Config = { procs: 3, rounds, crashes: 1, stalls: 1 };
+  const cfg: Config = { procs: 3, rounds: 1 + extra, crashes: 1 + extra, stalls: 1 };
   const r = run(t, cfg);
   assert.equal(r.ok, true);
   assert.equal(r.complete, true);
@@ -452,6 +458,27 @@ test("with one stall two processes can hold the lock, and never three", (t) => {
   const two = reaches(cfg, "two holders", (s) => holders(s) === 2).violation?.trace;
   assert.ok(two, "a stall lets a second process take the lock");
   assert.ok(actionsOf(two).some((a) => a.endsWith("stalls past the stale limit")));
+});
+
+test("a stall opens the windows core/lock.ts names", () => {
+  // One attempt each, whatever the bound: a second attempt gives the same windows by other shortest traces.
+  const cfg: Config = { procs: 3, rounds: 1, crashes: 1, stalls: 1 };
+  // A release that stalls between its read and its remove removes the lock a peer took meanwhile.
+  const removed = reaches(cfg, "a holder's lock removed", (s) => s.brokeLive).violation?.trace;
+  assert.ok(removed, "a holder's lock is removed after a stall");
+  const names = actionsOf(removed);
+  const remover = /^(p\d) removes the lock it released$/.exec(names.at(-1) ?? "")?.[1];
+  assert.ok(remover, names.at(-1));
+  const read = names.indexOf(`${remover} releases and finds its lock`);
+  assert.ok(read >= 0 && names.indexOf(`${remover} stalls past the stale limit`) > read, "it stalled inside release");
+  // A breaker that judged the stalled holder's file renames a peer's fresh lock aside, and the peer loses it.
+  const lost = reaches(cfg, "a holder that never stalled loses its lock", (s) => s.procs.some((x) => !x.dead && x.lost && !x.stalled)).violation?.trace;
+  assert.ok(lost, "a holder that never stalled loses its lock");
+  assert.ok(actionsOf(lost).some((a) => a.endsWith("renames another file aside")));
+  // A breaker that stalls under the guard has its guard judged stale and taken over.
+  const breaking = reaches(cfg, "two breakers", (s) => breakers(s) === 2).violation?.trace;
+  assert.ok(breaking, "two processes work under the guard after a stall");
+  assert.ok(actionsOf(breaking).some((a) => a.endsWith("judges the guard stale")));
 });
 
 test("each check the code makes on purpose breaks an invariant when left out", (t) => {
@@ -464,4 +491,17 @@ test("each check the code makes on purpose breaks an invariant when left out", (
     assert.equal(v.invariant, invariant, mutant);
     assert.ok(actionsOf(v.trace).some((a) => a.endsWith("crashes")), mutant);
   }
+});
+
+// One attempt each: more attempts and more stalls together pass ten million states. With three
+// processes every invariant holds trivially after two stalls, so this run checks for stuck states and
+// for how a third holder gets in.
+test("with more stalls no state gets stuck, and the shortest way to three holders takes two stalls", { skip: extra === 0 && "the bound adds the stalls" }, (t) => {
+  const cfg: Config = { procs: 3, rounds: 1, crashes: 1, stalls: 1 + extra };
+  const r = run(t, cfg);
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, true);
+  const three = reaches(cfg, "three holders", (s) => holders(s) === 3).violation?.trace;
+  assert.ok(three, "two stalls let in two more holders");
+  assert.equal(actionsOf(three).filter((a) => a.endsWith("stalls past the stale limit")).length, 2);
 });

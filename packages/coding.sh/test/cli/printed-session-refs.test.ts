@@ -535,8 +535,8 @@ describe("show and tree name the session by a reference that opens it in their n
 // session record the viewer sends.
 const page = readFileSync(new URL("../../src/viewer/ui/index.html", import.meta.url), "utf8");
 const script = page.slice(page.indexOf("<script"), page.lastIndexOf("</script>"));
-// The constants shCmd() reads.
-const pageConsts = script.slice(script.indexOf("const PASTE_UNSAFE = "), script.indexOf("\n", script.indexOf("const unsafeCmds = ")));
+// The constants shCmd() and forShell() read, PASTE_UNSAFE to IS_WIN.
+const pageConsts = script.slice(script.indexOf("const PASTE_UNSAFE = "), script.indexOf("\n", script.indexOf("const IS_WIN = ")));
 
 /** The page's definition of function `name`: its one line, or through the closing brace at the start of a line. */
 function pageFunction(name: string): string {
@@ -568,12 +568,12 @@ function pageSessionCommands(): { call: string; words: string[] }[] {
   return found;
 }
 
-/** The command `call` builds for the session `record`, with the page's functions it calls. */
-function pageCommand(call: string, record: unknown): string {
+/** The command `call` builds for the session `record` in a browser whose navigator is `nav`, with the page's functions it calls. */
+function pageCommand(call: string, record: unknown, nav: { platform: string }): string {
   const named = new Set([...call.matchAll(/([A-Za-z_$][\w$]*)\(/g)].map((m) => m[1]!));
   const helpers = [...named].filter((name) => name !== "shCmd" && script.includes(`function ${name}(`)).map(pageFunction);
-  const code = [pageConsts, pageFunction("shq"), pageFunction("shCmd"), ...helpers, `(${call})`].join("\n");
-  return runInNewContext(code, { session: record, s: record, n: 3, withs: [], String, Set });
+  const code = [pageConsts, pageFunction("shq"), pageFunction("forShell"), pageFunction("shCmd"), ...helpers, `(${call})`].join("\n");
+  return runInNewContext(code, { session: record, s: record, n: 3, withs: [], String, Set, navigator: nav });
 }
 
 /** The page's path for a session record (sessionRecordPath). */
@@ -635,12 +635,16 @@ describe("the viewer's copied commands name the session by a reference that open
     const commands = pageSessionCommands();
     assert.ok(commands.filter((c) => c.words[0] === "eval").length >= 2 && commands.some((c) => c.words[0] === "replay"), JSON.stringify(commands));
     const wrong: string[] = [];
-    for (const id of ids) {
-      const record = await getJson(viewer.port, recordPath(id), viewer.token);
-      for (const { call, words } of commands) {
-        const line = pageCommand(call, record);
-        const got = await opens(sb, refIn(line, ...words));
-        if (got !== id) wrong.push(`${line} opens ${got}, not ${id}`);
+    // On Windows the page names the command codingsh and quotes a value in double quotes (forShell, shq).
+    for (const nav of [{ platform: "Linux x86_64" }, { platform: "Win32" }]) {
+      for (const id of ids) {
+        const record = await getJson(viewer.port, recordPath(id), viewer.token);
+        for (const { call, words } of commands) {
+          const line = pageCommand(call, record, nav);
+          assert.match(line, nav.platform === "Win32" ? /^codingsh / : /^coding\.sh /, line);
+          const got = await opens(sb, refIn(line, ...words));
+          if (got !== id) wrong.push(`${nav.platform}: ${line} opens ${got}, not ${id}`);
+        }
       }
     }
     assert.deepEqual(wrong, []);

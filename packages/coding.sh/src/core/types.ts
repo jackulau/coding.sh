@@ -255,17 +255,27 @@ export interface ScoreFilter {
   limit?: number;
 }
 
-/** A price-table cost for one stored event (IndexStore.setEventCosts). */
-export interface EventCost {
-  id: string;
-  costUsd: number;
-  /** The sibling model whose price was used, when the event's own model has no row. */
-  pricedAs?: string;
-  /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
-  priceTier?: string;
-  /** The estimate split by token type (`payload.costByTokenType`). */
-  costByTokenType?: CostByTokenType;
-}
+/**
+ * A price-table cost for one stored event (IndexStore.setEventCosts), or, with
+ * `clear`, the removal of an estimate that no price backs any more.
+ */
+export type EventCost =
+  | {
+      id: string;
+      costUsd: number;
+      /** The sibling model whose price was used, when the event's own model has no row. */
+      pricedAs?: string;
+      /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
+      priceTier?: string;
+      /** The estimate split by token type (`payload.costByTokenType`). */
+      costByTokenType?: CostByTokenType;
+      clear?: undefined;
+    }
+  | {
+      id: string;
+      /** Removes the estimate: `usage.costUsd` and `payload.costEstimated`, `pricedAs`, `priceTier` and `costByTokenType`. */
+      clear: true;
+    };
 
 /** One session as metrics read it (IndexStore.metricRows): fields absent when the session has no value. */
 export interface MetricRow {
@@ -435,7 +445,8 @@ export interface IndexStore {
    * Sets an estimated cost on stored events in place (`usage.costUsd`,
    * `payload.costEstimated = true`, and `payload.pricedAs`, `payload.priceTier` and
    * `payload.costByTokenType` when given, removed when not); ids and everything else stay. Used by the reprice pass over events
-   * stored before local pricing or under older prices. Returns how many it found.
+   * stored before local pricing or under older prices. An entry with `clear` removes the estimate instead: `usage.costUsd`
+   * and those four payload fields. Returns how many it found.
    */
   setEventCosts?(costs: EventCost[]): Promise<number>;
 
@@ -783,6 +794,14 @@ export interface BackfillOpts {
    * Adapters that never call it are re-read in full on every run.
    */
   changed?(file: BackfillFile): Promise<boolean>;
+  /**
+   * Called for a file `changed` let through once all of its events were
+   * yielded although `since` was given (a session with activity inside the
+   * window is imported whole). Its cursors then record no window, so a later
+   * backfill with a wider window, or none, skips the file while it is
+   * unchanged. Without the call the wider window reads it again.
+   */
+  whole?(file: BackfillFile): void;
   /**
    * Called for a source file skipped because it copies another session's
    * (Claude Code: a subagent transcript copied into another session's dir).

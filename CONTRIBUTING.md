@@ -43,6 +43,21 @@ failing property prints the command that replays it (`CODING_SH_PROP_SEED=<seed>
 `CODING_SH_PROP_SEED=random` tries new cases, `CODING_SH_PROP_RUNS=1000` runs more of them, and
 `CODING_SH_MODEL_BOUND=1` raises each model's bounds by one.
 
+`npm run verify:deep` in `packages/coding.sh` runs the files in `test/verify` one at a time, with
+the knobs in the `NIGHTLY` table of `scripts/verify-deep.ts`: each model at a raised bound and each
+property file with more runs. A knob you set replaces the table's value, and file names after `--`
+run only those files. It prints the seed first: `CODING_SH_PROP_SEED` when you set it, otherwise a
+random one. It ends with each file's knobs, result and time, and the command that replays each
+failed file. A model at bound 2 can take 6.5 GB of heap. If Node runs out of memory, set
+`NODE_OPTIONS=--max-old-space-size=8192`.
+
+The Verify deep workflow (`.github/workflows/verify-deep.yml`) runs it every night with the table's
+knobs. On a pull request that changes `test/verify`, `test/_model.ts`, `test/_prop.ts`,
+`scripts/verify-deep.ts` or the workflow, it runs each model at bound 1 and each property file with
+200 runs. A manual run can set the bound, the runs and the seed. The seed is the run number unless
+one is given. The job summary gives the knobs, the seed and each file's time. A failed run keeps
+each file's output and the seed as an artifact.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout

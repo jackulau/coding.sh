@@ -4,30 +4,55 @@
 // strings, no I/O.
 import { posix } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
+import { commandLineOf, isShellCall } from "./shell-tools.ts";
+
+// The checks before each replace skip it when it would change nothing: a session's fold keys every path it reads.
+const unprivate = (x: string) => (x.startsWith("/private/") ? x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "") : x);
+/** Forward slashes. */
+export const slashed = (x: string): string => (x.includes("\\") ? x.replace(/\\/g, "/") : x);
+
+/** A cwd as normalizeTracePath compares a path with it: forward slashes, no trailing slash, no macOS `/private`. */
+export function traceRoot(cwd: string | undefined): string | undefined {
+  return cwd ? unprivate(slashed(cwd).replace(/\/+$/, "")) : undefined;
+}
+
+/** normalizeTracePath against a root from traceRoot: for many paths under one cwd, the cwd read once. */
+export function underTraceRoot(p: string, root: string | undefined): string {
+  let s = unprivate(slashed(p));
+  if (root && (s === root || (s.startsWith(root) && s.charCodeAt(root.length) === 47))) s = s.slice(root.length + 1);
+  return s.startsWith("./") ? s.replace(/^(?:\.\/)+/, "") : s;
+}
 
 /** Repo-relative, forward slashes, no leading "./". macOS `/private/var/…` and `/var/…` are one root. */
 export function normalizeTracePath(p: string, cwd?: string): string {
-  const unprivate = (x: string) => x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "");
-  let s = unprivate(p.replace(/\\/g, "/"));
-  const root = cwd ? unprivate(cwd.replace(/\\/g, "/").replace(/\/+$/, "")) : undefined;
-  if (root && (s === root || s.startsWith(`${root}/`))) s = s.slice(root.length + 1);
-  return s.replace(/^(?:\.\/)+/, "");
+  return underTraceRoot(p, traceRoot(cwd));
 }
 
-/** The shell command of a tool call's input, unless it is a patch passed as `command` (Codex apply_patch). */
+/** The drive letter of a Windows folder (`C:\x`, `c:/x`), or undefined. */
+export function driveOf(dir: string | undefined): string | undefined {
+  return dir && /^[A-Za-z]:/.test(dir) ? dir[0] : undefined;
+}
+
+/**
+ * A path as a folder on `drive` (driveOf) names it: Git Bash's `/c/x` as `c:/x`, then the folder's
+ * own drive letter in the folder's case and any other in upper case, so `/c/x`, `c:\x` and `C:\x`
+ * are one path. Unchanged without a drive, where `/c/x` is a POSIX path.
+ */
+export function onDrive(p: string, drive: string | undefined): string {
+  if (!drive) return p;
+  if (p[0] === "/") p = p.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+  if (!/^[A-Za-z]:/.test(p)) return p;
+  const d = p[0]!.toLowerCase() === drive.toLowerCase() ? drive : p[0]!.toUpperCase();
+  return d === p[0] ? p : d + p.slice(1);
+}
+
+/**
+ * The shell command of a tool call's input (commandLineOf: every command key, `bash -lc` unwrapped),
+ * unless it is a patch passed as `command` (Codex apply_patch).
+ */
 export function shellCommand(tool: string | undefined, input: unknown): string | undefined {
   if (tool && /patch/i.test(tool)) return undefined;
-  let cmd: string | undefined;
-  if (typeof input === "string") cmd = input;
-  else if (input && typeof input === "object") {
-    const o = input as Record<string, unknown>;
-    for (const k of ["command", "cmd", "script", "commandLine"]) {
-      const v = o[k];
-      if (typeof v === "string") cmd = v;
-      else if (Array.isArray(v) && v.every((x) => typeof x === "string")) cmd = (v.length >= 3 && /(^|\/)(ba|z|)sh$/.test(v[0] as string) && /^-\w*c$/.test(v[1] as string) ? v.slice(2) : v).join(" ");
-      if (cmd !== undefined) break;
-    }
-  }
+  const cmd = commandLineOf(input);
   if (cmd === undefined || /^\s*(?:\*\*\* Begin Patch|diff --git )/.test(cmd)) return undefined;
   return cmd;
 }
@@ -50,6 +75,47 @@ export function globRe(glob: string): RegExp {
 }
 
 const WORD = /'[^']*'|"(?:\\.|[^"\\])*"|[^\s'"]+/g;
+/** A `'…'` word or a run of unquoted text, at one index (sticky). */
+const PLAIN_WORD = /'[^']*'|[^\s'"]+/y;
+/** A `"` and the escaped or plain text after it, up to the next unescaped `"` (sticky). */
+const QUOTED = /"(?:\\.|[^"\\])*/y;
+
+/**
+ * The words of a segment, as `seg.match(WORD)` finds them. A `"` whose string never closes makes
+ * that regex scan to the end again at every escaped `"` after it; here one scan rules out every
+ * `"` it passed.
+ */
+function wordsOf(seg: string): string[] {
+  // Without a `\"` no scan runs past a `"`: the scans that fail cover separate stretches, and the regex is linear.
+  if (!seg.includes('\\"')) return seg.match(WORD) ?? [];
+  const out: string[] = [];
+  /** A `"` before this index opens no string: an earlier scan ran past it without finding the close. */
+  let unclosed = 0;
+  for (let i = 0; i < seg.length; ) {
+    if (seg[i] === '"') {
+      if (i >= unclosed) {
+        QUOTED.lastIndex = i;
+        const end = i + QUOTED.exec(seg)![0].length;
+        if (seg[end] === '"') {
+          out.push(seg.slice(i, end + 1));
+          i = end + 1;
+          continue;
+        }
+        unclosed = end;
+      }
+      i++;
+      continue;
+    }
+    PLAIN_WORD.lastIndex = i;
+    const m = PLAIN_WORD.exec(seg);
+    if (m) {
+      out.push(m[0]);
+      i += m[0].length;
+    } else i++;
+  }
+  return out;
+}
+
 const unquote = (w: string) => (w.length >= 2 && (w[0] === "'" || w[0] === '"') && w.endsWith(w[0]) ? w.slice(1, -1) : w);
 const pathLike = (w: string) => w !== "" && !w.startsWith("-") && !w.includes("$") && /^[\w.@~+/*[\]{},:-]+$/.test(w) && /[./]/.test(w) && w !== "." && w !== "..";
 
@@ -84,6 +150,51 @@ export interface SimpleCommand {
 }
 
 /**
+ * The directory a run of `cd`s leads to, each step as `posix.join(dir, to)` gives it, or `to` as
+ * written when there is no directory yet or `to` is absolute. A step costs the length of `to`,
+ * not of the directory: the segments are kept on a stack, and each directory string extends the
+ * one for the segment before it, so a `cd a && cd a && …` chain stays linear. The step it returns
+ * takes `to` and returns the directory after it.
+ */
+function cdChain(): (to: string) => string {
+  let dir: string | undefined;
+  /** The directory as written, until a step joins something to it (it is not normalized until then). */
+  let written: string | undefined;
+  let absolute = false;
+  const segs: string[] = [];
+  /** heads[n]: the first n segments as a path, the root `/` included when absolute. */
+  const heads: string[] = [""];
+  const add = (path: string) => {
+    for (const s of path.split("/")) {
+      if (s === "" || s === ".") continue;
+      if (s === "..") {
+        if (segs.length && segs[segs.length - 1] !== "..") {
+          segs.pop();
+          continue;
+        }
+        // Nothing is above the root; a relative path keeps its leading `..`.
+        if (absolute) continue;
+      }
+      segs.push(s);
+      heads[segs.length] = segs.length > 1 ? `${heads[segs.length - 1]}/${s}` : absolute ? `/${s}` : s;
+    }
+  };
+  return (to) => {
+    if (dir === undefined || /^(?:\/|[A-Za-z]:\/|~)/.test(to)) return (dir = written = to);
+    if (written !== undefined) {
+      absolute = written.startsWith("/");
+      segs.length = 0;
+      add(written);
+      written = undefined;
+    }
+    add(to);
+    const slash = to.endsWith("/");
+    const head = heads[segs.length] as string;
+    return (dir = segs.length ? (slash ? `${head}/` : head) : absolute ? "/" : slash ? "./" : ".");
+  };
+}
+
+/**
  * The simple commands of a shell command line: split on `&&`, `||`, `;`, `|`,
  * `&` and newlines, heredoc bodies skipped, each as its unquoted words.
  * Best effort: no subshells or quoting across segments.
@@ -91,29 +202,28 @@ export interface SimpleCommand {
 export function simpleCommands(command: string): SimpleCommand[] {
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
+  let cd: ((to: string) => string) | undefined;
   const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
-    const words = (seg.match(WORD) ?? []).map(unquote);
+    const words = wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.
     const rest: string[] = [];
     const redirects: SimpleCommand["redirects"] = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i] as string;
-      const r = /^\d*(>>?)(.*)$/.exec(w);
+      const r = w.includes(">") ? /^\d*(>>?)(.*)$/.exec(w) : null;
       if (r) {
         const target = r[2] || words[++i];
         if (target) redirects.push({ path: target, append: r[1] === ">>" });
       } else rest.push(w);
     }
-    while (rest.length && (/^[A-Za-z_]\w*=/.test(rest[0] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[0] as string))) rest.shift();
-    const name = rest[0] ?? "";
-    const cmd = name.replace(/^.*\//, "");
-    const args = rest.slice(1);
+    let k = 0;
+    while (k < rest.length && (/^[A-Za-z_]\w*=/.test(rest[k] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[k] as string))) k++;
+    const name = rest[k] ?? "";
+    const cmd = name.includes("/") ? name.replace(/^.*\//, "") : name;
+    const args = rest.slice(k + 1);
     out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
-    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) {
-      const to = args[0].replace(/\\/g, "/");
-      dir = dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(to) ? posix.join(dir, to) : to;
-    }
+    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
   }
   return out;
 }
@@ -184,7 +294,6 @@ export function shellWrites(command: string): ShellWrite[] {
   return out;
 }
 
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -215,7 +324,7 @@ export function commandOrigin(command: string, path: string, cwd?: string): Excl
 /** commandOrigin of a file.change, or "edit" when an edit tool (not a shell) made it. `start` is the call's tool.start. */
 export function shellDiffOrigin(change: AgentEvent, start: AgentEvent | undefined, cwd?: string): ShellDiffOrigin {
   const tool = str(change.payload.tool) ?? str(start?.payload.tool);
-  if (!tool || !SHELL_TOOLS.has(tool.toLowerCase())) return "edit";
+  if (!tool || !isShellCall(tool, start?.payload.input)) return "edit";
   const command = start ? shellCommand(str(start.payload.tool), start.payload.input) : undefined;
   if (command === undefined) return "unattributed";
   return commandOrigin(command, normalizeTracePath(str(change.payload.path) ?? "", cwd), cwd);
