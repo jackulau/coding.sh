@@ -97,6 +97,7 @@
     "test": "node --no-warnings --import ./scripts/test-temp-root.mjs --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test",
+    "verify:deep": "node --no-warnings scripts/verify-deep.ts",
     "prepack": "node scripts/pack-manifest.mjs --prepack",
     "postpack": "node scripts/pack-manifest.mjs --postpack",
     "prepublishOnly": "npm run check && npm run build"
