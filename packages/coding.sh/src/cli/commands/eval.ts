@@ -38,23 +38,30 @@ import type { Context } from "../../core/context.ts";
 /** By id or unique name. */
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
 
-/** Text that ends where a package runner names its package: npx, pnpx, bunx, bun x, npm exec, pnpm dlx and the like (flags included), -p or --package. */
-const PACKAGE_RUNNER = /(?:\b(?:npx|pnpx|bunx|x|exec|dlx)(?: +-{1,2}[\w-]+(?:=\S*)?)* |(?<![\w-])-p |--package[= ])$/;
+/** Text that ends where a package runner names its package: npx, pnpx, bunx, bun x, npm exec, pnpm dlx and the like (with flags other than -p and --package between), -p or --package. */
+const PACKAGE_RUNNER = /(?:\b(?:npx|pnpx|bunx|x|exec|dlx)(?:[ \t]+-(?!-?p(?:ackage)?\b)-?(?:[A-Za-z][\w-]*(?:=\S*)?)?)*[ \t]+|(?<![\w-])-p[ \t]+|--package(?:=|[ \t]+))$/;
+/** Text that ends where a package runner whose package -p or --package named runs a bin: the next word. */
+const RUNNER_BIN = /\b(?:npx|pnpx|bunx|x|exec|dlx)(?:[ \t]+(?:-p[ \t]+\S+|--package(?:=|[ \t]+)\S+|-{1,2}[A-Za-z][\w-]*(?:=\S*)?|--))*[ \t]+$/;
 
 /**
  * A note or message that names coding.sh commands mid-sentence ("…, then coding.sh eval validate
  * <task>"), with each command named as the user's shell runs it: nextStepBin (`codingsh` in
  * PowerShell or cmd, the npx form under npx), and `run "--"` where PowerShell would drop a bare
  * `--`. out.next and out.command rewrite only a leading `coding.sh`. A `coding.sh` that is not
- * followed by one of the CLI's commands (a path, the product's name) stays as it is, and so does
- * one after npx or another package runner: there it names the npm package, and codingsh in its
- * place would name a package that is not ours.
+ * followed by one of the CLI's commands as a whole word (a path, the product's name) stays as it
+ * is, and so does one after npx or another package runner: there it names the npm package, and
+ * codingsh in its place would name a package that is not ours. After -p or --package the runner's
+ * next word is the bin it runs, named `codingsh` on Windows, where npx runs it through cmd, and
+ * left as it is elsewhere.
  */
 export function commandsForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const bin = nextStepBin(env, platform);
   if (bin === "coding.sh") return text;
-  return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)( --(?= |$))?/g, (m, name: string, dashes: string | undefined, at: number) => {
-    if (!findCommand(name) || PACKAGE_RUNNER.test(text.slice(Math.max(0, at - 120), at))) return m;
+  return text.replace(/(?<![\w.@/\\-])coding\.sh ([a-z][\w-]*)(?![\w-]|\.\w)( --(?= |$))?/g, (m, name: string, dashes: string | undefined, at: number) => {
+    if (!findCommand(name)) return m;
+    const before = text.slice(Math.max(0, at - 120), at);
+    if (PACKAGE_RUNNER.test(before)) return m;
+    if (RUNNER_BIN.test(before)) return platform === "win32" ? `codingsh ${name}${dashes ?? ""}` : m;
     return name === "run" && dashes ? runCommand(env, "", platform).trimEnd() : `${bin} ${name}${dashes ?? ""}`;
   });
 }

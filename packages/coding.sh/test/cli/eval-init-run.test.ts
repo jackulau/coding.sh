@@ -86,6 +86,20 @@ describe("commandsForShell", () => {
       assert.equal(commandsForShell(text, env, platform), text, `${platform} ${JSON.stringify(env)}`);
     }
   });
+  it("names the bin a runner runs after -p or --package: codingsh on Windows, where npx runs it through cmd", () => {
+    const text = "npm exec --package=coding.sh -- coding.sh doctor, npx --package=coding.sh --yes coding.sh doctor and npx -y -p coding.sh coding.sh init";
+    const win = "npm exec --package=coding.sh -- codingsh doctor, npx --package=coding.sh --yes codingsh doctor and npx -y -p coding.sh codingsh init";
+    assert.equal(commandsForShell(text, {}, "win32"), win);
+    assert.equal(commandsForShell(text, { npm_command: "exec" }, "win32"), win);
+    assert.equal(commandsForShell(text, { npm_command: "exec" }, "linux"), text);
+  });
+  it("reads the command as a whole word: one at a sentence's end counts, and init.ts is not init", () => {
+    assert.equal(commandsForShell("Then run coding.sh doctor. Edit coding.sh init.ts after.", {}, "win32"), "Then run codingsh doctor. Edit coding.sh init.ts after.");
+  });
+  it("reads spaces and tabs between a runner's words as one space", () => {
+    const text = "npx  coding.sh doctor, npx\tcoding.sh init and npx -y\tcoding.sh ui";
+    assert.equal(commandsForShell(text, {}, "win32"), text);
+  });
 });
 
 describe("eval init + eval run: cases", () => {
