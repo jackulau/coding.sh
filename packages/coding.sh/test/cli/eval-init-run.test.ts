@@ -80,6 +80,35 @@ describe("commandsForShell", () => {
     const text = "The coding.sh hook bin is missing; ~/.coding.sh/spool and ./coding.sh build stay, as does coding.sh.";
     assert.equal(commandsForShell(text, {}, "win32"), text);
   });
+  it("leaves the coding.sh a package runner names alone: it is the npm package, and npx codingsh is not ours", () => {
+    const text = "or npx coding.sh init, npx -y coding.sh doctor, pnpm dlx coding.sh ui, bun x coding.sh show, npm exec -- coding.sh sessions, npm exec --registry=https://registry.npmjs.org/ -- coding.sh init, npx -p coding.sh init or npm exec --package=coding.sh init";
+    for (const [env, platform] of [[{}, "win32"], [{ npm_command: "exec" }, "win32"], [{ npm_command: "exec" }, "linux"]] as const) {
+      assert.equal(commandsForShell(text, env, platform), text, `${platform} ${JSON.stringify(env)}`);
+    }
+  });
+  it("names the bin a runner runs after -p or --package: codingsh on Windows, where npx runs it through cmd", () => {
+    const text = "npm exec --package=coding.sh -- coding.sh doctor, npx --package=coding.sh --yes coding.sh doctor and npx -y -p coding.sh coding.sh init";
+    const win = "npm exec --package=coding.sh -- codingsh doctor, npx --package=coding.sh --yes codingsh doctor and npx -y -p coding.sh codingsh init";
+    assert.equal(commandsForShell(text, {}, "win32"), win);
+    assert.equal(commandsForShell(text, { npm_command: "exec" }, "win32"), win);
+    assert.equal(commandsForShell(text, { npm_command: "exec" }, "linux"), text);
+  });
+  it("reads the command as a whole word: one at a sentence's end counts, and init.ts is not init", () => {
+    assert.equal(commandsForShell("Then run coding.sh doctor. Edit coding.sh init.ts after.", {}, "win32"), "Then run codingsh doctor. Edit coding.sh init.ts after.");
+  });
+  it("reads spaces and tabs between a runner's words as one space", () => {
+    const text = "npx  coding.sh doctor, npx\tcoding.sh init and npx -y\tcoding.sh ui";
+    assert.equal(commandsForShell(text, {}, "win32"), text);
+  });
+  it("takes x and exec for a runner only after npm or bun", () => {
+    const text = "Then exec coding.sh doctor, or x coding.sh init; npm x coding.sh ui and bun x coding.sh sessions stay.";
+    assert.equal(commandsForShell(text, {}, "win32"), "Then exec codingsh doctor, or x codingsh init; npm x coding.sh ui and bun x coding.sh sessions stay.");
+  });
+  it("names the bin npx -p runs codingsh in Git Bash on Windows too, since npx runs it through cmd there", () => {
+    const text = "npx -y -p coding.sh coding.sh init, npx coding.sh doctor or coding.sh ui";
+    assert.equal(commandsForShell(text, { MSYSTEM: "MINGW64" }, "win32"), "npx -y -p coding.sh codingsh init, npx coding.sh doctor or coding.sh ui");
+    assert.equal(commandsForShell(text, { SHELL: "/usr/bin/bash" }, "linux"), text);
+  });
 });
 
 describe("eval init + eval run: cases", () => {

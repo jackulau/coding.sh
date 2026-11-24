@@ -24,6 +24,20 @@ export function nextStepBin(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = 
 }
 
 /**
+ * Text with commands in backticks, such as a work item's next step, as the
+ * user's shell runs them: each backticked command that starts with
+ * `coding.sh ` names nextStepBin. A backticked path or other command, text
+ * outside backticks, and text with an odd backtick (no span to trust, as the
+ * viewer reads it) stay as they are.
+ */
+export function codeSpansForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  const bin = nextStepBin(env, platform);
+  const parts = text.split("`");
+  if (bin === "coding.sh" || parts.length % 2 === 0) return text;
+  return parts.map((p, i) => (i % 2 === 1 && p.startsWith("coding.sh ") ? bin + p.slice("coding.sh".length) : p)).join("`");
+}
+
+/**
  * One argument of a printed command, quoted so the user's shell passes it on
  * unchanged. sh gets shellQuote. PowerShell and cmd (windowsShell) get it bare
  * when both pass it on as is, else in double quotes, which both strip and cmd

@@ -21,6 +21,8 @@ const CHILDREN = 300;
 const child = (n: number): string => `${PARENT}:sub:a${createHash("sha256").update(`agent-${n}`).digest("hex").slice(0, 16)}`;
 const TWIN_A = "7c3e9d10-aaaa-4000-8000-000000000001";
 const TWIN_B = "7c3e9d10-bbbb-4000-8000-000000000002";
+/** The CLI a next step names, as a pattern. The sandbox sets no MSYSTEM or SHELL: on Windows that is PowerShell or cmd, which run codingsh. */
+const BIN_RE = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 
 type Extra = NonNullable<Parameters<typeof mkSession>[2]>;
 const sess = (id: string, startAgo: number, extra: Extra = {}): Session => mkSession(id, now - startAgo, { cwd: "/work/demo", ...extra });
@@ -141,7 +143,7 @@ describe("printed ids are the shortest that resolve", () => {
     assert.ok(item, JSON.stringify(st.work.items));
     assert.equal(item.bucket, "failed");
     const prefix = PARENT.slice(0, SHORT_ID_MIN);
-    assert.match(item.next, new RegExp(`^\`coding\\.sh show ${prefix}\`, then \`claude --resume ${PARENT}\`$`), "the agent's own resume command keeps the full id");
+    assert.match(item.next, new RegExp(`^\`${BIN_RE} show ${prefix}\`, then \`claude --resume ${PARENT}\`$`), "the agent's own resume command keeps the full id");
     assert.equal(item.causeSessionId, PARENT);
     assert.equal(item.causeShortId, prefix);
     assert.equal(item.sessionId, PARENT);
@@ -165,8 +167,8 @@ describe("work show", () => {
     assert.equal(sub.json?.id, workItemId(PARENT), "a subagent's id finds the run it is in");
     const t = await runCmd(work, sb, { action: "show", positionals: [prefix] });
     assert.equal(t.error, undefined, t.error?.message);
-    assert.match(t.stdout, new RegExp(`coding\\.sh show ${prefix}\``));
-    assert.match(t.stdout, new RegExp(`coding\\.sh tree ${prefix}\\b`));
+    assert.match(t.stdout, new RegExp(`\`${BIN_RE} show ${prefix}\``));
+    assert.match(t.stdout, new RegExp(`${BIN_RE} tree ${prefix}\\b`));
     assert.doesNotMatch(t.stdout.replace(`claude --resume ${PARENT}`, ""), new RegExp(PARENT), "no full id but the agent's resume command");
   });
 
