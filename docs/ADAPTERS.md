@@ -440,8 +440,10 @@ Apps in production don't use an adapter. They send data over the network to `cod
 
 - OTel logs are for an agent whose hooks don't record to this store. Where both do, each prompt is
   stored twice, once from the hook and once from the log, because the two carry different prompt
-  ids. Devin CLI's logs (scope `ai.devin.local.events`) add a session's start and end as
-  notifications.
+  ids.
+- Turns (`stats.turnsByModel`) count such a prompt once. They take the prompt from the hook or the
+  transcript. A prompt from OTel logs or spans counts only until the session has one of those.
+- Devin CLI's logs (scope `ai.devin.local.events`) add a session's start and end as notifications.
 - A span or a log record named `weights.edit` with `coding_sh.weights.*` attributes is stored as
   the weight edit event the SDKs send (`notification`, `payload.kind: "weights.edit"`); the
   attributes are listed in [reference/api.md](reference/api.md).

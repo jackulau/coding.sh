@@ -11,8 +11,12 @@ import { codex } from "../../src/adapters/codex.ts";
 import { toMetadata } from "../../src/core/redact.ts";
 import { buildSession, byTime, foldSession, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import { CANCEL_AGENTS } from "../../src/core/turn-stats.ts";
+import { decodeLogsJson } from "../../src/otel/json.ts";
+import { mapLogs } from "../../src/otel/map.ts";
 import { KNOWN_AGENTS, type AgentEvent, type EventKind, type Session } from "../../src/schema/index.ts";
 import { collect, FIXTURES, testCtx, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
+import { fixture } from "../otel/_encode.ts";
+import { MemBlobs } from "../otel/_memstore.ts";
 
 const T0 = 1_790_000_000_000;
 let n = 0;
@@ -136,6 +140,90 @@ describe("replies and pushback", () => {
   test("a prompt the person sends while the turn runs (a steer) starts the next turn", () => {
     const events = [begin(0), prompt(0), llm(1, "model-a"), prompt(3, "also handle timeouts"), llm(4, "model-a"), turnEnd(8)];
     assert.deepEqual(turns(events), { "model-a": { turns: 2, replied: 1, durationsMs: [1_000, 5_000] } });
+  });
+});
+
+describe("prompts the OTLP export copies", () => {
+  // Three turns whose prompts the agent's own capture records. The OTLP logs copy each prompt under
+  // another id, 50 ms before or after it, with its text or with none (the export's default).
+  const otelLog = { source: "otel-log" } as const;
+  const said = [
+    [0, "add a retry to the fetch helper"],
+    [20, "try again"],
+    [40, "now update the docs"],
+  ] as const;
+  const shifted = (e: AgentEvent, ms: number): AgentEvent => ({ ...e, ts: e.ts + ms });
+  type Copies = (sec: number, text: string) => AgentEvent[];
+  const copy = (ms: number, withText: boolean): Copies => (sec, text) => [shifted(ev(sec, "user.message", withText ? { text } : { promptLength: text.length }, otelLog), ms)];
+  const session = (source: string, copies: Copies = () => []) => [
+    begin(-1),
+    ...said.flatMap(([sec, text]) => [prompt(sec, text, { source }), ...copies(sec, text), llm(sec + 1, "model-a"), turnEnd(sec + 5)]),
+  ];
+  const alone = { "model-a": { turns: 3, replied: 2, pushback: { redo: 1 }, durationsMs: [5_000, 5_000, 5_000] } };
+  // The hooks were installed after the first turn: its prompt comes only from the export.
+  const late = (withText: boolean) => {
+    const [first, ...rest] = said;
+    return [
+      begin(-1),
+      ...copy(0, withText)(...first),
+      llm(1, "model-a"),
+      turnEnd(5),
+      ...rest.flatMap(([sec, text]) => [...copy(-50, withText)(sec, text), prompt(sec, text, { source: "hook" }), llm(sec + 1, "model-a"), turnEnd(sec + 5)]),
+    ];
+  };
+  // That turn counts, though the export cannot show its stop.
+  const lateTurns = { "model-a": { ...alone["model-a"], cancelNotRecorded: 1 } };
+
+  test("a prompt the session's own capture records counts once, its copy before or after it, with text or none", () => {
+    assert.deepEqual(turns(session("hook")), alone);
+    for (const ms of [-50, 50]) {
+      for (const withText of [true, false]) {
+        const label = `copy ${ms} ms, ${withText ? "with" : "no"} text`;
+        assert.deepEqual(turns(session("hook", copy(ms, withText))), alone, `hooks, ${label}`);
+        assert.deepEqual(turns(session("transcript", copy(ms, withText))), alone, `transcript, ${label}`);
+      }
+    }
+  });
+
+  test("the copies count while the session has no prompt from its own capture, and stop once one comes", () => {
+    const exportedOnly = [begin(-1), ...said.flatMap(([sec, text]) => [prompt(sec, text, otelLog), llm(sec + 1, "model-a"), turnEnd(sec + 5)])];
+    // The export cannot show a stop.
+    assert.deepEqual(turns(exportedOnly), { "model-a": { ...alone["model-a"], cancelNotRecorded: 3 } });
+    // The first hook prompt takes over the turn its copy opened. When the copy had no text, the prompt answers the turn before.
+    assert.deepEqual(turns(late(true)), lateTurns);
+    assert.deepEqual(turns(late(false)), lateTurns);
+    // A copy more than COPY_SLACK_MS before the prompt is another prompt.
+    assert.equal(turns(session("hook", copy(-6_000, true)))!["model-a"]!.turns, 4);
+  });
+
+  test("a fold saved partway (node:v8) and continued gives the same turns", () => {
+    const events = byTime(late(false));
+    for (let cut = 1; cut < events.length; cut++) {
+      let s = sessionState();
+      for (const e of events.slice(0, cut)) foldSession(s, e);
+      s = deserialize(serialize(s));
+      for (const e of events.slice(cut)) foldSession(s, e);
+      assert.deepEqual(sessionOf(s).stats.turnsByModel, lateTurns, `saved after ${cut} events`);
+    }
+  });
+
+  test("the copy the OTLP log mapper makes of Claude Code's user_prompt starts no turn", async () => {
+    const blobs = new MemBlobs();
+    const logs = (await mapLogs(decodeLogsJson(fixture("claude-code-logs.json")), { maxInlineBytes: 4096, blob: (d) => blobs.put(d) })).events;
+    const [exportedPrompt, ...more] = logs.filter((e) => e.kind === "user.message");
+    assert.ok(exportedPrompt && !more.length);
+    assert.equal(exportedPrompt.source, "otel-log");
+    // The same session's start, prompt and turn end from the hooks, around the logs' model and tool calls.
+    const own = { sessionId: exportedPrompt.sessionId, source: "hook" } as const;
+    const last = Math.max(...logs.map((e) => e.ts));
+    const hooks = [
+      { ...begin(0, { entrypoint: "cli" }, own), ts: exportedPrompt.ts - 1_000 },
+      { ...prompt(0, "fix the failing test", own), ts: exportedPrompt.ts + 50 },
+      { ...turnEnd(0, {}, own), ts: last + 100 },
+    ];
+    const expected = { "claude-sonnet-4-5": { turns: 1, durationsMs: [last + 100 - (exportedPrompt.ts + 50)] } };
+    assert.deepEqual(turns([...hooks, ...logs.filter((e) => e !== exportedPrompt)]), expected);
+    assert.deepEqual(turns([...hooks, ...logs]), expected);
   });
 });
 

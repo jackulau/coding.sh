@@ -6,7 +6,10 @@
 // says who sent a prompt: an agent's prompt (a task notification, a delegated result, a prompt a
 // host marked as an agent's) goes on with the turn, harness markup is no prompt, and a prompt in a
 // subagent's thread is its parent's. A prompt the person sent while the turn ran (a steer) starts
-// the next turn.
+// the next turn. A prompt from the agent's OTLP export (otel-log, otel-span) copies one its own
+// capture records, with another id. Once the session has a prompt from its own capture, a copy
+// starts no turn. A prompt from its own capture within COPY_SLACK_MS after a copy takes over the
+// turn the copy opened.
 // - model: the one that made most of the turn's main-thread model calls (the one called first wins
 //   a tie), counting the agent's own calls, else the copies its OTLP logs carry, else the proxy's;
 //   the session's model when the turn made none.
@@ -64,13 +67,18 @@ const STOPPED = new Map<string, (p: Record<string, unknown>) => boolean>([
 /** Agents whose captures record a turn the person stopped: the scorecard counts cancelled turns only in their sessions. */
 export const CANCEL_AGENTS: ReadonlySet<string> = new Set(["claude-code", ...STOPPED.keys()]);
 
+/** An event from the agent's OTLP export. Its prompt copies the one the agent's own capture records, under another id. */
+const exported = (e: AgentEvent): boolean => e.source === "otel-log" || e.source === "otel-span";
+
+/** How long after a prompt's OTLP copy the same prompt from the session's own capture may come and take over the copy's turn. */
+const COPY_SLACK_MS = 5_000;
+
 /**
  * A Claude Code prompt whose turn cannot show a stop. The stop is a prompt's text, which the transcript
  * records and the hooks read from it at the next Stop: metadata mode keeps no prompt text, and the
  * OTLP export sends no such prompt.
  */
-const stopUnseen = (e: AgentEvent): boolean =>
-  e.agent === "claude-code" && (typeof e.payload.text !== "string" || e.source === "otel-log" || e.source === "otel-span");
+const stopUnseen = (e: AgentEvent): boolean => e.agent === "claude-code" && (typeof e.payload.text !== "string" || exported(e));
 
 type CallKind = "edit" | "shell";
 
@@ -102,11 +110,18 @@ interface OpenTurn {
   endUnseen?: true;
   /** The session was resumed after its last work: nothing more counts in it. */
   idle?: true;
+  /**
+   * Its prompt is an OTLP copy, and no prompt from the session's own capture has come yet. `unanswered`:
+   * the tally the turn before counted in, when the copy had no text to answer it.
+   */
+  copy?: { unanswered?: string };
 }
 
 /** What the fold keeps. Serializable (node:v8): maps, plain objects and arrays. */
 export interface TurnStatsState {
   turn?: OpenTurn;
+  /** A main-thread prompt came from the session's own capture: OTLP copies of prompts start no turn. */
+  ownPrompts?: true;
   /** Closed turns by model, "" for a turn that made no model call (the session's model, in turnsByModelOf). */
   byModel: Map<string, ModelTurns>;
   edits: { calls: number; failed: number };
@@ -146,12 +161,27 @@ export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): v
   if (e.kind === "tool.start" || e.kind === "tool.end") foldCall(s, e, o);
   const t = s.turn;
   if (e.kind === "user.message") {
+    if (!o.by) return;
+    const copy = exported(e);
+    if (copy && s.ownPrompts) return;
+    if (!copy) s.ownPrompts = true;
     if (o.by === "person") {
-      if (t) close(s, t, str(e.payload.text));
+      const text = str(e.payload.text);
+      if (!copy && t?.copy && e.ts - t.at <= COPY_SLACK_MS) {
+        // The prompt the copy that opened the turn copied: the turn is its own, and it answers the turn before when the copy had no text.
+        const m = t.copy.unanswered === undefined ? undefined : s.byModel.get(t.copy.unanswered);
+        if (m) answer(m, text);
+        delete t.copy;
+        delete t.notRecorded;
+        delete t.endUnseen;
+        t.at = e.ts;
+        captured(t, e);
+        return;
+      }
+      const before = t ? close(s, t, text) : undefined;
       s.turn = { at: e.ts, own: new Map(), otel: new Map(), proxy: new Map() };
-      if (!CANCEL_AGENTS.has(e.agent) || stopUnseen(e)) s.turn.notRecorded = true;
-      // No hook fires when the person stops a turn: the stop prompt comes with the next Stop's transcript window.
-      else if (e.agent === "claude-code" && e.source === "hook") s.turn.endUnseen = true;
+      if (copy) s.turn.copy = before !== undefined && !text?.trim() ? { unanswered: before } : {};
+      captured(s.turn, e);
     } else if (o.by === "interrupt" && t && !t.idle) {
       t.cancelled = true;
       delete t.endUnseen;
@@ -212,12 +242,25 @@ function count(m: ModelTurns, t: OpenTurn): void {
   if (ms > 0 && m.durations.length < SAMPLES_MAX) m.durations.push(ms);
 }
 
-/** The person's next prompt closed the turn: it counts, and the prompt is its reply. */
-function close(s: TurnStatsState, t: OpenTurn, reply: string | undefined): void {
+/** Whether the capture that holds a turn's prompt shows the person stopping the turn, and whether its end is still to come. */
+function captured(t: OpenTurn, e: AgentEvent): void {
+  if (!CANCEL_AGENTS.has(e.agent) || stopUnseen(e)) t.notRecorded = true;
+  // No hook fires when the person stops a turn: the stop prompt comes with the next Stop's transcript window.
+  else if (e.agent === "claude-code" && e.source === "hook") t.endUnseen = true;
+}
+
+/** The person's next prompt closed the turn: it counts, and the prompt is its reply. Returns the tally it counted in. */
+function close(s: TurnStatsState, t: OpenTurn, reply: string | undefined): string {
   const key = turnModel(t);
   let m = s.byModel.get(key);
   if (!m) s.byModel.set(key, (m = noTurns()));
   count(m, t);
+  answer(m, reply);
+  return key;
+}
+
+/** Counts the person's prompt as the reply to a turn in `m`, and how it pushed back. A prompt with no text is no reply. */
+function answer(m: ModelTurns, reply: string | undefined): void {
   if (!reply?.trim()) return;
   m.replied++;
   const kind = pushbackKind(reply);
