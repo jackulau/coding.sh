@@ -9,7 +9,7 @@
 // - Color precedence: --no-color, NO_COLOR, FORCE_COLOR, then per-stream TTY.
 import { cutToWidth, padToWidth, textWidth } from "../core/width.ts";
 import { UsageError } from "./args.ts";
-import { commandsForShell, nextStepBin } from "./next-steps.ts";
+import { codeSpansForShell, nextStepBin } from "./next-steps.ts";
 
 export const LABEL_WIDTH = 16;
 
@@ -276,9 +276,9 @@ export class Output {
     return bin === "coding.sh" ? line : bin + line.slice("coding.sh".length);
   }
 
-  /** Text with commands in backticks, such as a work item's next step, as the user's shell runs them (commandsForShell). */
+  /** Text with commands in backticks, such as a work item's next step, as the user's shell runs them (codeSpansForShell). */
   inlineCommands(text: string): string {
-    return commandsForShell(text, this.env, this.platform);
+    return codeSpansForShell(text, this.env, this.platform);
   }
 
   // ------------------------------------------------------------ progress

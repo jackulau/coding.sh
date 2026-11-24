@@ -12,7 +12,7 @@ import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstFirst, 
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
-import { commandsForShell, nextStepBin } from "../cli/next-steps.ts";
+import { codeSpansForShell, nextStepBin } from "../cli/next-steps.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
   clip,
@@ -500,16 +500,16 @@ async function workItemById(ctx: Context, id: string, since: number, sinceText: 
 }
 
 /**
- * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
- * A stale index judges waits and stalls as of its last ingest, as the CLI does.
- */
-/**
  * The item with each command in its next step named as the hints name the CLI (nextStepBin of the
  * server's env): `codingsh` in PowerShell or cmd. Called once the item's files are settled, since
  * settling them can rewrite the step.
  */
-const forShell = (i: WorkItem, env: NodeJS.ProcessEnv): WorkItem => ({ ...i, next: commandsForShell(i.next, env) });
+const forShell = (i: WorkItem, env: NodeJS.ProcessEnv): WorkItem => ({ ...i, next: codeSpansForShell(i.next, env) });
 
+/**
+ * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
+ * A stale index judges waits and stalls as of its last ingest, as the CLI does.
+ */
 async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const ctx = await c.store();
   const now = c.now();

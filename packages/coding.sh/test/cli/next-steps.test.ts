@@ -11,7 +11,7 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as init from "../../src/cli/commands/init.ts";
 import * as uninstall from "../../src/cli/commands/uninstall.ts";
 import { checkFailed, reinstallCommand, runUpdate, type UpdateDeps } from "../../src/cli/commands/update.ts";
-import { cliCommand, commandsForShell, nextStepBin, quoteArg, rerunWithYes, runCommand } from "../../src/cli/next-steps.ts";
+import { cliCommand, codeSpansForShell, nextStepBin, quoteArg, rerunWithYes, runCommand } from "../../src/cli/next-steps.ts";
 import { CliError } from "../../src/cli/output.ts";
 import type { CommandModule } from "../../src/cli/types.ts";
 import { resolveWindowsCommand } from "../../src/core/spawn.ts";
@@ -122,7 +122,7 @@ describe("commands in backticks, as in a work item's next step", () => {
   const step = "review: `git -C /work/demo diff`, then `coding.sh work ack w1a2b3c`";
 
   test("in PowerShell and cmd, each one that runs coding.sh names codingsh; other commands, paths and prose stay", () => {
-    const win = (s: string) => commandsForShell(s, {}, "win32");
+    const win = (s: string) => codeSpansForShell(s, {}, "win32");
     assert.equal(win(step), "review: `git -C /work/demo diff`, then `codingsh work ack w1a2b3c`");
     assert.equal(win("`coding.sh show s1`, then `claude --resume s1`"), "`codingsh show s1`, then `claude --resume s1`");
     // A file named coding.sh is a path, not a command; text outside backticks is prose.
@@ -135,10 +135,10 @@ describe("commands in backticks, as in a work item's next step", () => {
   });
 
   test("under npx it is the npx form; Git Bash, Cygwin, Linux and macOS keep coding.sh", () => {
-    assert.equal(commandsForShell(step, { npm_command: "exec" }, "win32"), step.replace("`coding.sh ", "`npx -p coding.sh codingsh "));
-    assert.equal(commandsForShell(step, { npm_command: "exec" }, "linux"), step.replace("`coding.sh ", "`npx coding.sh "));
+    assert.equal(codeSpansForShell(step, { npm_command: "exec" }, "win32"), step.replace("`coding.sh ", "`npx -p coding.sh codingsh "));
+    assert.equal(codeSpansForShell(step, { npm_command: "exec" }, "linux"), step.replace("`coding.sh ", "`npx coding.sh "));
     for (const [env, platform] of [[{ MSYSTEM: "MINGW64" }, "win32"], [{ SHELL: "/usr/bin/bash" }, "win32"], [{}, "linux"], [{}, "darwin"]] as const) {
-      assert.equal(commandsForShell(step, env, platform), step, `${platform} ${JSON.stringify(env)}`);
+      assert.equal(codeSpansForShell(step, env, platform), step, `${platform} ${JSON.stringify(env)}`);
     }
   });
 });

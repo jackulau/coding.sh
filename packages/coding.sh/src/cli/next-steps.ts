@@ -30,7 +30,7 @@ export function nextStepBin(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = 
  * outside backticks, and text with an odd backtick (no span to trust, as the
  * viewer reads it) stay as they are.
  */
-export function commandsForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+export function codeSpansForShell(text: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const bin = nextStepBin(env, platform);
   const parts = text.split("`");
   if (bin === "coding.sh" || parts.length % 2 === 0) return text;
