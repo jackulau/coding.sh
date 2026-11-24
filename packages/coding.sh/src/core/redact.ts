@@ -759,43 +759,92 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   if (pii.size) rules.push(...piiRules(PII_KINDS.filter((k) => pii.has(k))));
   rules.push(...patternRules(opts.patterns ?? []));
 
-  const string = (s: string, tally?: RedactionTally): string => {
-    if (!tally) return apply(s);
+  const string = (s: string, tally?: RedactionTally, only?: RuleFilter): string => {
+    if (!tally) return apply(s, undefined, only);
     let placeholders: Record<string, number> | undefined;
     const out = apply(s, (kind, m) => {
       if (kind === "private-key" ? !isPlaceholderPrivateKey(m) : !isPlaceholderSecret(m)) return;
       placeholders ??= {};
       placeholders[kind] = (placeholders[kind] ?? 0) + 1;
-    });
+    }, only);
     if (out !== s) tallyChange(tally, s, out, placeholders);
     else if (!tally.preexisting && s.includes("[redacted:")) tally.preexisting = true;
     return out;
   };
 
-  const apply = (s: string, onMatch?: OnMatch): string => {
+  const apply = (s: string, onMatch?: OnMatch, only?: RuleFilter): string => {
     let out = s;
     let lower: string | undefined;
-    for (const r of rules) {
+    // `only`, from a text that holds `s`, skips the rules it holds no needle of until a rule
+    // changes `s`. On that text itself it is the whole needle check.
+    let live = only?.live;
+    let exact = only !== undefined && only.text === s;
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i]!;
       // On the text as the rules before left it: a marker they wrote can hold a needle.
       const need = needles.get(r);
-      if (need && !holdsAny(need.fold ? (lower ??= out.toLowerCase()) : out, need.any)) continue;
+      if (need) {
+        if (live && !live[i]) continue;
+        if (!exact && !holdsAny(need.fold ? (lower ??= out.toLowerCase()) : out, need.any)) continue;
+      }
       const next = applyRule(r, out, onMatch);
       if (next === out) continue;
       out = next;
       lower = undefined;
+      live = undefined;
+      exact = false;
     }
     return out;
   };
 
   const value = <T>(v: T, tally?: RedactionTally): T => walk(v, tally ? (x) => string(x, tally) : apply, 0, tally) as T;
 
-  return {
+  /** Which rules `text` holds a needle of, as apply checks them (a rule without needles always runs). */
+  const filter = (text: string): RuleFilter => {
+    const live = new Uint8Array(rules.length);
+    let lower: string | undefined;
+    for (let i = 0; i < rules.length; i++) {
+      const need = needles.get(rules[i]!);
+      live[i] = !need || holdsAny(need.fold ? (lower ??= text.toLowerCase()) : text, need.any) ? 1 : 0;
+    }
+    return { live, text };
+  };
+
+  const redactor: Redactor = {
     rules,
-    string,
+    string: (s, tally) => string(s, tally),
     value,
     event: (e, tally) => ({ ...e, payload: value(e.payload, tally) }),
   };
+  passes.set(redactor, {
+    filter,
+    string,
+    // A string redactArgv rewrote, and a subtree too deep to walk, are new text: the full check.
+    value: (v, tally, only) => walk(v, (x) => string(x, tally, only), 0, tally, (x) => string(x, tally)),
+  });
+  return redactor;
 }
+
+/**
+ * The rules a text can match by their needles (RuleNeedles): `live[i]` for `rules[i]`. Taken on a
+ * value's JSON text, it holds for every string in the value: no needle holds a character that JSON
+ * escapes (`"`, `\`, a control character, a lone surrogate), so the text holds every needle a string
+ * holds, lower-cased or not. A rule that changes a string makes new text (a marker can hold a
+ * needle), so apply drops the filter from then on.
+ */
+interface RuleFilter {
+  live: Uint8Array;
+  text: string;
+}
+
+/** A redactor's passes with the rules limited by a RuleFilter, for redactBlobValue. */
+interface FilteredPasses {
+  filter(text: string): RuleFilter;
+  string(s: string, tally: RedactionTally, only: RuleFilter): string;
+  value(v: unknown, tally: RedactionTally, only: RuleFilter): unknown;
+}
+
+const passes = new WeakMap<Redactor, FilteredPasses>();
 
 /** `s` with one rule applied. */
 function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
@@ -859,7 +908,12 @@ const JSON_STRING_DEPTH = 3;
  */
 export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
   if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
-  const docs = mapStrings(v, (s) => {
+  return r.value(documentsRedacted(r, v, tally, level), tally);
+}
+
+/** `v` with each string that holds a JSON document redacted as that document: redactForBlob's first step. */
+function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number): unknown {
+  return mapStrings(v, (s) => {
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
@@ -873,13 +927,32 @@ export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, le
     for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     return clean;
   });
-  return r.value(docs, tally);
 }
 
-/** The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too. */
+/**
+ * The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too.
+ * `v` is JSON data (what JSON.parse returns). For an object, the rules are first limited to those
+ * whose needles its JSON text holds (RuleFilter): each string's own check is then needed only for
+ * those, and the text pass needs none while the walk changed nothing. The output is the same.
+ */
 export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally): string {
-  const clean = redactForBlob(r, v, tally);
-  return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
+  const p = passes.get(r);
+  if (!p || typeof v !== "object" || v === null) {
+    const clean = redactForBlob(r, v, tally);
+    return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
+  }
+  const docs = documentsRedacted(r, v, tally, 0);
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(docs);
+  } catch {
+    // not serializable: the walk and the serializing below report it as before
+  }
+  const only = text === undefined ? undefined : p.filter(text);
+  const clean = only ? p.value(docs, tally, only) : r.value(docs, tally);
+  if (typeof clean === "string") return clean;
+  const out = JSON.stringify(clean) ?? "";
+  return only && out === only.text ? p.string(out, tally, only) : r.string(out, tally);
 }
 
 // Redaction hits found in blob content, by blob ref (the content hash): the event
@@ -946,15 +1019,16 @@ export function redactArgv<T>(args: readonly T[]): T[] {
   return out;
 }
 
-function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally): unknown {
+/** `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text. */
+function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact): unknown {
   if (typeof v === "string") return redact(v);
   if (v === null || typeof v !== "object") return v;
-  if (depth > 64) return tooDeep(v, redact, tally);
+  if (depth > 64) return tooDeep(v, full, tally);
   // Arrays may be argv (wrapper session.start args, tool command vectors).
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
     if (tally) for (let i = 0; i < argv.length; i++) if (argv[i] !== v[i] && typeof v[i] === "string") tallyChange(tally, v[i] as string, argv[i] as string);
-    return argv.map((x) => walk(x, redact, depth + 1, tally));
+    return argv.map((x, i) => walk(x, x === v[i] ? redact : full, depth + 1, tally, full));
   }
   if (v instanceof Uint8Array) return v;
   const out: Record<string, unknown> = {};
@@ -963,7 +1037,7 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")
-      : walk(x, redact, depth + 1, tally);
+      : walk(x, redact, depth + 1, tally, full);
     Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
   }
   return out;
