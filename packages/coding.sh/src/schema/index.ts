@@ -381,7 +381,8 @@ export interface TurnTally {
   cancelled?: number;
   /**
    * Turns whose capture does not record a turn the person stopped (docs/ADAPTERS.md): an agent that
-   * records none, or a T3 Code thread built from T3 Code's own store. Absent when none.
+   * records none, a T3 Code thread built from T3 Code's own store, or a Claude Code turn whose prompt
+   * has no text (metadata mode) or came from its OpenTelemetry export. Absent when none.
    */
   cancelNotRecorded?: number;
   /** How long turns ran (ms), from the prompt to the end of the turn's last work, for up to 500 turns. Absent when none did any work. */

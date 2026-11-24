@@ -16,7 +16,8 @@
 //   prompt; Codex, OpenCode, Cursor and Pi say so on the turn's end (STOPPED). CANCEL_AGENTS names
 //   the agents that record it. A turn whose prompt another agent's capture holds counts in
 //   cancelNotRecorded instead, never in cancelled: a T3 Code thread built from T3 Code's own store
-//   has only T3 Code's events, whatever agent the thread ran.
+//   has only T3 Code's events, whatever agent the thread ran. So does a Claude Code turn whose prompt
+//   has no text (capture.mode = "metadata") or came from its OTLP export (stopUnseen).
 // - durationsMs: from the prompt to the end of the turn's last work (a model call, a tool call, a
 //   message, a turn end the agent recorded, the person stopping it), on every thread, with the time
 //   it waited on the person (a permission prompt) or on a background task. A transcript's
@@ -61,6 +62,13 @@ const STOPPED = new Map<string, (p: Record<string, unknown>) => boolean>([
 /** Agents whose captures record a turn the person stopped: the scorecard counts cancelled turns only in their sessions. */
 export const CANCEL_AGENTS: ReadonlySet<string> = new Set(["claude-code", ...STOPPED.keys()]);
 
+/**
+ * A Claude Code prompt that cannot show the turn's stop. The stop is a prompt's text, which its hooks
+ * and transcript record: metadata mode keeps no prompt text, and its OTLP export sends no such prompt.
+ */
+const stopUnseen = (e: AgentEvent): boolean =>
+  e.agent === "claude-code" && (typeof e.payload.text !== "string" || e.source === "otel-log" || e.source === "otel-span");
+
 type CallKind = "edit" | "shell";
 
 /** One model's closed turns. */
@@ -85,7 +93,7 @@ interface OpenTurn {
   proxy: Map<string, number>;
   /** The person stopped it. */
   cancelled?: true;
-  /** Its prompt came from the capture of an agent that does not record a stop (not in CANCEL_AGENTS). */
+  /** Its prompt came from the capture of an agent that does not record a stop (not in CANCEL_AGENTS), or cannot show it (stopUnseen). */
   notRecorded?: true;
   /** The session was resumed after its last work: nothing more counts in it. */
   idle?: true;
@@ -136,7 +144,7 @@ export function foldTurnStats(s: TurnStatsState, e: AgentEvent, o: TurnFacts): v
     if (o.by === "person") {
       if (t) close(s, t, str(e.payload.text));
       s.turn = { at: e.ts, own: new Map(), otel: new Map(), proxy: new Map() };
-      if (!CANCEL_AGENTS.has(e.agent)) s.turn.notRecorded = true;
+      if (!CANCEL_AGENTS.has(e.agent) || stopUnseen(e)) s.turn.notRecorded = true;
     } else if (o.by === "interrupt" && t && !t.idle) {
       t.cancelled = true;
       t.end = Math.max(t.end ?? e.ts, e.ts);

@@ -8,6 +8,7 @@ import { after, before, describe, test } from "node:test";
 import { deserialize, serialize } from "node:v8";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
+import { toMetadata } from "../../src/core/redact.ts";
 import { buildSession, byTime, foldSession, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import { CANCEL_AGENTS } from "../../src/core/turn-stats.ts";
 import { KNOWN_AGENTS, type AgentEvent, type EventKind, type Session } from "../../src/schema/index.ts";
@@ -143,6 +144,19 @@ describe("cancelled turns", () => {
     const events = [begin(0), prompt(0), llm(2, "model-a"), prompt(9, "[Request interrupted by user]"), prompt(30, "use the other approach")];
     // The open turn made no call: it goes to the session's model, which model-a is.
     assert.deepEqual(turns(events), { "model-a": { turns: 2, replied: 1, cancelled: 1, durationsMs: [9_000] } });
+  });
+
+  test("Claude Code: a prompt with no text (metadata mode) or from its OTLP export cannot show a stop, so the turn's stop is not recorded", () => {
+    const events = [begin(0), prompt(0), llm(2, "model-a"), prompt(9, "[Request interrupted by user]"), prompt(30, "use the other approach")];
+    // With no text the interrupt reads as the person's prompt: it opens a turn, and no turn can say it was stopped.
+    assert.deepEqual(turns(events.map(toMetadata)), { "model-a": { turns: 3, cancelNotRecorded: 3, durationsMs: [2_000] } });
+    const otelLog = { source: "otel-log" } as const;
+    const exported = [begin(0), prompt(0, "add a retry to the fetch helper", otelLog), llm(2, "model-a"), turnEnd(5), prompt(10, "that didn't work", otelLog)];
+    assert.deepEqual(turns(exported), { "model-a": { turns: 2, replied: 1, pushback: { broken: 1 }, cancelNotRecorded: 2, durationsMs: [5_000] } });
+    // Codex says so on the turn's end, which metadata mode keeps.
+    const codexEv = { agent: "codex" } as const;
+    const codexEvents = [begin(0, { launch: "cli" }, codexEv), prompt(0, "fix test_div", codexEv), llm(1, "gpt-5", codexEv), turnEnd(4, { status: "interrupted" }, codexEv), prompt(10, "use pytest.approx", codexEv)];
+    assert.deepEqual(turns(codexEvents.map(toMetadata)), { "gpt-5": { turns: 2, cancelled: 1, durationsMs: [4_000] } });
   });
 
   test("Codex: a turn the person interrupted is cancelled; one another turn replaced is not", () => {

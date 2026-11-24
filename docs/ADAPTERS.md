@@ -148,8 +148,10 @@ Other agents mark none, or coding.sh has no capture that shows how they mark one
 from T3 Code's own store marks none either, whatever agent ran it: coding.sh reads only whether
 each of its turns completed. Those turns count in `stats.turnsByModel.<model>.cancelNotRecorded`,
 and `coding.sh stats --scorecard` leaves them out of its cancelled row and names the capture they
-came from (`t3code` for a thread built from T3 Code's store). With `capture.mode = "metadata"` a
-Claude Code stop has no text, so it counts as the person's next prompt, not as a stopped turn.
+came from (`t3code` for a thread built from T3 Code's store). A Claude Code stop is a prompt's
+text, so a Claude Code turn whose prompt has no text (`capture.mode = "metadata"`) or came from its
+OpenTelemetry export counts there too, under `claude-code`. In metadata mode the stop itself counts
+as the person's next prompt.
 
 ## Replay
 

@@ -103,6 +103,8 @@ for the build" and "actually, also add a test" are not pushback.
   `claude-code`, `codex`, `opencode`, `cursor` and `pi`. A column with only other turns says
   `not recorded`, never 0.
 - A thread built from T3 Code's own store records no stopped turns, whatever agent ran it.
+- A `claude-code` stop is a prompt's text. Its turns record no stops when the prompt has no text
+  (`capture.mode = "metadata"`) or came from its OpenTelemetry export.
 - The notes under the table say which sessions and turns a row left out.
 
 ## Narrow it down
@@ -129,8 +131,8 @@ for the build" and "actually, also add a test" are not pushback.
   names no kind. The kinds come from matching words, so some prompts are still read wrong.
 - A turn's time includes the time it waited on you, such as at a permission prompt.
 - Each session keeps up to 500 turn times per model.
-- With `capture.mode = "metadata"` no prompt text is stored, so there are no pushback rows. A
-  `claude-code` turn you stopped is not seen as stopped, and the stop counts as a prompt.
+- With `capture.mode = "metadata"` no prompt text is stored, so there are no pushback rows. An
+  agent's prompt then reads as yours and adds a turn, and so does a `claude-code` stop.
 
 ## Run two models on the same tasks
 
