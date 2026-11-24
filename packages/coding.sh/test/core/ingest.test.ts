@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import type { Adapter, BlobBatch, BlobStore, Config, OpenSession, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, recomputeSessions, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, recomputeSessions, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, spoolInFlightKeys, storeEnrichment } from "../../src/core/ingest.ts";
 import { paths } from "../../src/core/paths.ts";
 import type { RepoResolver } from "../../src/core/repo-state.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
@@ -24,7 +24,7 @@ after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 const seenSources: (undefined | { file: string; offset: number })[] = [];
 /** raw.hook = name → awaited inside normalize (to act mid-run). */
 const hooks: Record<string, () => Promise<void> | void> = {};
-/** raw = { session, kind, text?, blob?, ...payload } → one event; raw.events = n → n events. */
+/** raw = { session, kind, text?, blob?, id?, ...payload } → one event, with raw.id as its id if set; raw.events = n → n events. */
 const fakeAdapter: Adapter = {
   id: "fake",
   displayName: "Fake",
@@ -41,9 +41,9 @@ const fakeAdapter: Adapter = {
     const n = typeof raw.events === "number" ? raw.events : 1;
     const out: AgentEvent[] = [];
     for (let i = 0; i < n; i++) {
-      const { session, kind, blob, events: _n, hook: _h, ...payload } = raw;
+      const { session, kind, blob, events: _n, hook: _h, id: rawId, ...payload } = raw;
       const e: AgentEvent = {
-        id: ctx.id(line.agent, String(session), line.ts, line.event, i),
+        id: typeof rawId === "string" ? rawId : ctx.id(line.agent, String(session), line.ts, line.event, i),
         v: 0,
         sessionId: String(session),
         ts: line.ts + i,
@@ -663,6 +663,51 @@ describe("ingest", () => {
     assert.equal(existsSync(join(t.env.CODING_SH_HOME, "spool", ".ingest.pending")), false, "marker consumed");
   });
 
+  /** An ingest during which `ending` sessions end one after another: each one's hook appends a line to a new file (read by the next pass) and kicks. */
+  async function endingDuringPasses(ending: number) {
+    const t = setup();
+    const dir = join(t.env.CODING_SH_HOME, "spool", "fake");
+    for (let i = 1; i <= ending; i++) {
+      hooks[`end${i}`] = () => {
+        const raw: Record<string, unknown> = { session: `S${i + 1}`, kind: "turn.end" };
+        if (i < ending) raw.hook = `end${i + 1}`; // the next session ends while this line is read
+        appendFileSync(join(dir, `2026-11-06.${i + 1}.jsonl`), t.line(raw, { pid: i + 1 }));
+        assert.equal(kickIngest("Stop", t.env, () => assert.fail("must not spawn while the lock is held")), undefined);
+      };
+    }
+    t.write(t.line({ session: "S1", kind: "turn.end", hook: "end1" }));
+    let handedOff = 0;
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, onPassesExhausted: () => void handedOff++ };
+    try {
+      const r = await ingest(opts);
+      return { t, r, handedOff, opts, marker: join(t.env.CODING_SH_HOME, "spool", ".ingest.pending") };
+    } finally {
+      for (let i = 1; i <= ending; i++) delete hooks[`end${i}`];
+    }
+  }
+
+  it("hands the wake-up marker to a new ingest when a session ends during each of its three passes", async () => {
+    const { t, r, handedOff, opts, marker } = await endingDuringPasses(3);
+    // Three passes read S1, S2 and S3. S4 ended during the last one: its hook saw the lock held and started nothing.
+    assert.equal(r.lines, 3);
+    assert.equal(await t.index.getSession("S4"), undefined);
+    assert.equal(handedOff, 1, "the ingest asks for another one");
+    assert.equal(existsSync(marker), true, "the marker stays for it");
+    // The ingest the callback starts.
+    const next = await ingest({ ...opts, onPassesExhausted: () => assert.fail("nothing ended during this one") });
+    assert.equal(next.lines, 1);
+    assert.ok(await t.index.getSession("S4"), "S4 ingested");
+    assert.equal(existsSync(marker), false, "marker consumed");
+  });
+
+  it("asks for no other ingest when its last pass ends with the marker gone", async () => {
+    const { t, r, handedOff, marker } = await endingDuringPasses(2);
+    assert.equal(r.lines, 3);
+    assert.ok(await t.index.getSession("S3"), "the third pass read the session that ended during the second");
+    assert.equal(handedOff, 0);
+    assert.equal(existsSync(marker), false);
+  });
+
   it("stops before writing a cursor or sending to a sink once its lock was broken by a peer", async () => {
     const t = setup();
     const lockPath = join(t.env.CODING_SH_HOME, "spool", ".ingest.lock");
@@ -710,6 +755,198 @@ describe("ingest", () => {
     assert.equal(r.lines, 1);
     assert.equal(sink.events.length, 1, "the sink gets the new content");
     assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
+  });
+
+  it("ignores in-flight keys past the end of a new file, as an older build's gc left them: a copy of a sent event is not sent again", async () => {
+    const t = setup();
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    const line = t.line({ session: "s", kind: "notification" });
+    t.write(line);
+    await ingest(opts);
+    assert.equal(sink.events.length, 1);
+    // A second hook process spools the same firing to a file of its own, at a path whose in-flight
+    // keys an older build's gc kept from a longer file. The memory store has no transactions, so the keys count.
+    const other = "fake/2026-11-06.2.jsonl";
+    writeFileSync(join(t.env.CODING_SH_HOME, "spool", other), line);
+    for (const key of spoolInFlightKeys(other)) await t.index.setCursor(key, 10_000);
+    const r = await ingest(opts);
+    assert.deepEqual([r.lines, r.events], [1, 0]);
+    assert.equal(sink.events.length, 1, "the copy sends nothing");
+  });
+
+  it("sends a sink the events of a line that an earlier run stored and died before moving the line's cursor", async () => {
+    const t = setup();
+    t.write(t.line({ session: "s", kind: "notification", events: 2 }));
+    const src = "fake/2026-11-06.1.jsonl";
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    // The memory store has no transactions, like Postgres: the events are in when the run dies at the cursor write after them.
+    const realSet = t.index.setCursor.bind(t.index);
+    t.index.setCursor = async (key, offset) => (key === src ? Promise.reject(new Error("killed")) : realSet(key, offset));
+    await assert.rejects(() => ingest(opts), /killed/);
+    assert.equal((await t.index.listEvents("s")).length, 2, "the events were stored");
+    assert.equal(sink.events.length, 0, "and not sent");
+    t.index.setCursor = realSet;
+    const r = await ingest(opts);
+    assert.equal(r.events, 0, "nothing new to the index");
+    assert.equal(sink.events.length, 2, "the next run sends the events the index already had");
+    assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
+  });
+
+  /** Makes the memory store's write of `src`'s cursor fail at its nth call from now, as a run that dies there. */
+  const dieAtCursorWrite = (index: MemoryIndexStore, src: string, n: number) => {
+    const realSet = MemoryIndexStore.prototype.setCursor.bind(index);
+    let writes = 0;
+    index.setCursor = async (key, offset) => (key === src && ++writes === n ? Promise.reject(new Error("killed")) : realSet(key, offset));
+  };
+
+  it("sends a sink the lines a run stored and died before moving their cursor, when the next run dies part way through them too", async () => {
+    const t = setup();
+    for (let i = 0; i < 4; i++) t.write(t.line({ session: "s", kind: "notification" }));
+    const src = "fake/2026-11-06.1.jsonl";
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    // The memory store has no transactions, like Postgres. The first run stores the four events and dies at the cursor write after them.
+    dieAtCursorWrite(t.index, src, 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    assert.equal(sink.events.length, 0);
+    // The next run commits a line per checkpoint, sends the first line, and dies at its second cursor write.
+    dieAtCursorWrite(t.index, src, 2);
+    await assert.rejects(() => ingest({ ...opts, checkpointEvents: 1 }), /killed/);
+    assert.equal(sink.events.length, 1);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    await ingest(opts);
+    const stored = (await t.index.listEvents("s")).map((e) => e.id).sort();
+    assert.equal(stored.length, 4);
+    assert.deepEqual(sink.events.map((e) => e.id).sort(), stored, "the sink gets each event once");
+  });
+
+  it("after a run died between storing a line and moving its cursor, sends no later copy of the line's events", async () => {
+    const t = setup();
+    const line = t.line({ session: "s", kind: "notification" });
+    t.write(line);
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    dieAtCursorWrite(t.index, "fake/2026-11-06.1.jsonl", 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    await ingest(opts);
+    assert.equal(sink.events.length, 1, "the next run sends the line the dead run stored");
+    // The same line again, as a second hook command spools one firing: the same event id, on a line no run stored before.
+    t.write(line);
+    const r = await ingest(opts);
+    assert.deepEqual([r.lines, r.events], [1, 0]);
+    assert.equal(sink.events.length, 1, "the copy sends nothing");
+  });
+
+  /**
+   * A run stores `hook` and dies at its cursor write; an import then stores and sends `transcript`,
+   * which the copy check does not take for a copy of what the spool stored, though the re-read
+   * takes the hook's event for a copy of it. The sink must still get the hook's event.
+   */
+  const crashThenImport = async (hook: Record<string, unknown>, transcript: (ts: number) => AgentEvent[]) => {
+    const t = setup();
+    t.write(t.line({ session: "s", ...hook }), t.line({ session: "s", kind: "notification" }));
+    const src = "fake/2026-11-06.1.jsonl";
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const sink = new RecordingSink("remote", "full");
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    dieAtCursorWrite(t.index, src, 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    const live = (await t.index.listEvents("s")).find((e) => e.kind === hook.kind)!;
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield* transcript(live.ts);
+      },
+    };
+    const bf = await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] });
+    assert.equal(bf.events, 1, "the import stores one transcript event");
+    assert.equal((await ingest(opts)).events, 0, "nothing new to the index");
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("s")).map((e) => e.id).sort(), "the sink holds what the store holds");
+    assert.ok(ids.includes(live.id), "the hook's event the dead run stored reaches the sink");
+  };
+
+  it("after a run died between storing a hook's session start and moving its cursor, sends it when an import stored a start that links a parent", async () => {
+    await crashThenImport({ kind: "session.start" }, (ts) => [{ id: "t-start", v: 0, sessionId: "s", ts: ts - 500, agent: "fake", kind: "session.start", payload: { parentSessionId: "p" } }]);
+  });
+
+  it("after a run died between storing a hook's compaction and moving its cursor, sends it when an import paired it with one compaction and stored the next", async () => {
+    const compact = (id: string, ts: number): AgentEvent => ({ id, v: 0, sessionId: "s", ts, agent: "fake", kind: "context.compact", payload: {} });
+    await crashThenImport({ kind: "context.compact" }, (ts) => [compact("t-c1", ts + 30_000), compact("t-c2", ts + 60_000)]);
+  });
+
+  it("after a run died between storing a hook line and moving its cursor, sends no hook copy of a start an import stored and sent under the same id", async () => {
+    const t = setup();
+    const src = "fake/2026-11-06.1.jsonl";
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    const sink = new RecordingSink("remote", "full");
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    // The import comes first, under the id the hook's copy gets too, as when a hook reads the same transcript.
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield { id: "X", v: 0, sessionId: "s", ts: 1_700_000_000_500, agent: "fake", kind: "session.start", payload: { from: "transcript" } };
+      },
+    };
+    assert.equal((await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] })).events, 1);
+    // The copy check leaves the hook's start out; the run stores the line after it and dies at its cursor write.
+    t.write(t.line({ session: "s", kind: "session.start", id: "X", from: "hook" }), t.line({ session: "s", kind: "notification" }));
+    dieAtCursorWrite(t.index, src, 1);
+    await assert.rejects(() => ingest(opts), /killed/);
+    delete (t.index as Partial<MemoryIndexStore>).setCursor;
+    await ingest(opts);
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual(sink.events.filter((e) => e.id === "X").map((e) => e.payload.from), ["transcript"], "the sink keeps the start the store holds");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("s")).map((e) => e.id).sort(), "the sink holds what the store holds");
+  });
+
+  it("sends a sink the lines a holder that lost the lock committed after this run read their cursor, when this run dies before its next checkpoint", async () => {
+    const t = setup();
+    t.write(t.line({ session: "s", kind: "notification", hook: "stale" }));
+    for (let i = 0; i < 5; i++) t.write(t.line({ session: "s", kind: "notification" }));
+    const src = "fake/2026-11-06.1.jsonl";
+    const dbPath = join(t.root, "index.db");
+    const index = await SqliteIndexStore.open(dbPath);
+    // A holder that stalled past the lock's stale limit, in another process: its own connection, and a lock it no longer holds.
+    const late = await SqliteIndexStore.open(dbPath);
+    try {
+      const sink = new RecordingSink("remote", "full");
+      t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+      const opts = { config: t.config, index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+      // After this run read the file's cursor, the stalled holder commits the first three lines and their cursor, and sends nothing.
+      hooks.stale = async () => {
+        delete hooks.stale;
+        const r = await ingest({ config: t.config, index: late, blobs: t.blobs, adapters, env: t.env, lock: false, checkpointEvents: 3, deadline: 0 });
+        assert.deepEqual([r.lines, r.events], [3, 3]);
+      };
+      // This run commits a line per checkpoint, sends the first line, and dies at its second checkpoint (SQLite rolls it back).
+      const realSet = index.setCursor.bind(index);
+      let writes = 0;
+      index.setCursor = async (key, offset) => (key === src && ++writes === 2 ? Promise.reject(new Error("killed")) : realSet(key, offset));
+      await assert.rejects(() => ingest({ ...opts, checkpointEvents: 1 }), /killed/);
+      assert.equal(sink.events.length, 1);
+      index.setCursor = realSet;
+      await ingest(opts);
+      const stored = (await index.listEvents("s")).map((e) => e.id).sort();
+      assert.equal(stored.length, 6);
+      assert.deepEqual(sink.events.map((e) => e.id).sort(), stored, "the sink gets each event once");
+    } finally {
+      delete hooks.stale;
+      await late.close();
+      await index.close();
+    }
   });
 });
 
@@ -879,6 +1116,51 @@ describe("transcript import sends to the sinks (qa:server-7)", () => {
     } finally {
       await h.close();
     }
+  });
+
+  it("a Claude Code session imported before its spool is read: the sink holds what the store holds, each event once", async () => {
+    const h = await claudeHome(true);
+    try {
+      const bf = await h.transcripts();
+      assert.ok(bf.events > 0);
+      const sp = await h.spool();
+      assert.ok(sp.lines > 0);
+      assert.deepEqual(sp.sinks, [{ name: "team", sent: sp.events, ok: true }], "the spool sends what it stored, not its copies of what the import stored");
+      const ids = h.sink.events.map((e) => e.id);
+      assert.equal(new Set(ids).size, ids.length, "no event twice");
+      const stored: string[] = [];
+      for (const s of await h.index.listSessions()) for (const e of await h.index.listEvents(s.id)) stored.push(e.id);
+      assert.deepEqual([...ids].sort(), stored.sort(), "the sink holds what the store holds");
+      await assertSinkHasSession(h.index, h.sink, SID);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a prompt two hooks spool after an import stored it reaches the sink once, as the import's copy", async () => {
+    const t = setup();
+    t.config.sinks = [sinkConfig("team")];
+    const sink = new RecordingSink("team", "full");
+    const at = 1_700_000_100_000;
+    const historian: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield { id: "t1", v: 0, sessionId: "p", ts: at, agent: "fake", kind: "user.message", payload: { text: "Fix the bug" } };
+      },
+    };
+    await backfill({ config: t.config, index: t.index, blobs: t.blobs, adapters: [historian], env: t.env, sinks: [sink] });
+    // Hooks in two settings files spool the prompt twice under one id, and two ingest runs read the copies.
+    const prompt = t.line({ session: "p", kind: "user.message", text: "Fix the bug" }, { ts: at + 100, event: "UserPromptSubmit" });
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    for (const i of [1, 2]) {
+      t.write(prompt, t.line({ session: "p", kind: "notification", i }));
+      await ingest(opts);
+    }
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event twice");
+    assert.deepEqual(sink.events.filter((e) => e.kind === "user.message").map((e) => e.source), ["transcript"], "the sink holds the prompt once, as the import's copy");
+    assert.deepEqual([...ids].sort(), (await t.index.listEvents("p")).map((e) => e.id).sort(), "the sink holds what the store holds");
   });
 
   it("a home with transcripts only sends its sessions", async () => {
@@ -1258,7 +1540,7 @@ describe("gateway enrichment stored while a session is folded (qa:proxy-6)", () 
   });
 });
 
-describe("a helper's events reach each sink once", () => {
+describe("a helper's events handed over in two lines", () => {
   // Claude Code hands a helper's events over twice: the parent's PostToolUse(Agent) and the helper's own SubagentStop.
   const spoolLines = (): string[] => {
     const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8").split("\n").filter(Boolean);
@@ -1314,7 +1596,7 @@ describe("a helper's events reach each sink once", () => {
     }
   });
 
-  it("the two lines in two runs", async () => {
+  it("the two lines in two runs: the second run sends none of the helper's events again", async () => {
     const h = await home();
     try {
       const lines = spoolLines();
@@ -1324,6 +1606,31 @@ describe("a helper's events reach each sink once", () => {
       h.write(lines.at(-1)!);
       await h.run(sink);
       await assertOnce(h, sink);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("the parent's line spooled twice by hooks in two settings files and read by a third run: each event reaches the sink once", async () => {
+    const h = await home();
+    try {
+      const lines = spoolLines();
+      // The same firing spooled by the second hook command a few ms later (normalize.ts firingKey: same event ids).
+      const post = JSON.parse(lines.at(-1)!) as { ts: number; pid?: number };
+      const copy = JSON.stringify({ ...post, ts: post.ts + 5, pid: (post.pid ?? 0) + 1 });
+      h.write(...lines.slice(0, -1));
+      const sink = new RecordingSink("team", "full");
+      await h.run(sink);
+      h.write(lines.at(-1)!);
+      await h.run(sink);
+      h.write(copy);
+      const r = await h.run(sink);
+      assert.deepEqual([r.lines, r.events], [1, 0], "the copy carries only stored events");
+      const counts = new Map<string, number>();
+      for (const e of sink.events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+      const most = Math.max(...counts.values());
+      assert.equal(most, 1, `an event reached the sink ${most} times`);
+      assert.deepEqual([...counts.keys()].sort(), await h.stored(), "the sink got what the index stored");
     } finally {
       await h.close();
     }
