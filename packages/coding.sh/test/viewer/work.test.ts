@@ -56,9 +56,15 @@ function req(port: number, path: string, opts: { method?: string; headers?: Reco
 const KEYS = ["counts", "needYou", "hidden", "noPromptSignal", "items", "more", "groups", "truncated"];
 const pick = (doc: Record<string, unknown>) => Object.fromEntries(KEYS.filter((k) => k in doc).map((k) => [k, doc[k]]));
 
+/**
+ * The CLI names each next step for the user's shell (`codingsh` in PowerShell or cmd), and the API
+ * gives it as `coding.sh` on every platform. The CLI side is read as on Linux, where the two agree.
+ */
+const CLI_PLATFORM = "linux";
+
 /** `work show <id> --json`, less what only the CLI gives: an old index's time and the ingest backlog. */
 async function showJson(sb: Sandbox, id: string): Promise<Record<string, unknown>> {
-  const r = await runCmd(work, sb, { action: "show", positionals: [id], json: true });
+  const r = await runCmd(work, sb, { action: "show", positionals: [id], json: true, platform: CLI_PLATFORM });
   assert.equal(r.error, undefined, r.error?.stack);
   const { indexUpdatedAt: _, asOf: __, pending: ___, ...doc } = r.json as Record<string, unknown>;
   return doc;
@@ -73,7 +79,7 @@ describe("viewer /api/work", () => {
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     req(v.port, path, { method: "POST", token: v.token, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   const cli = async (flags: Record<string, FlagValue> = {}) => {
-    const r = await runCmd(work, sb, { json: true, flags });
+    const r = await runCmd(work, sb, { json: true, flags, platform: CLI_PLATFORM });
     assert.equal(r.error, undefined, r.error?.stack);
     return r.json as Record<string, unknown>;
   };
