@@ -47,7 +47,8 @@ export async function run(c: CommandContext): Promise<number> {
         ["SESSION", "AGENT", "MODEL", "LINES"],
         b.sessions.map((s) => [refs.whole(s.id), s.agent, s.model ?? "-", String(s.lines)]),
       );
-      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", b.sessions[0]!.id]));
+      // By a reference that opens it when pasted (core/session-ref.ts): an id can be `latest`, which opens the newest session.
+      out.next("Open the session that wrote the most of it", cliCommand(c.env, ["show", refs.whole(b.sessions[0]!.id)]));
     }
     return 0;
   });

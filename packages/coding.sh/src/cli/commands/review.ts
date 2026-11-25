@@ -5,6 +5,7 @@
 // a time with one score config. done writes a human score through addScore, the path
 // `coding.sh score add` takes, so a value that does not fit the config is refused (exit 2).
 import { QueryError } from "../../query/where.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { cliError as scoreCliError, readValue } from "../../scores/cli.ts";
 import { completeItem, configValues, createQueue, listQueues, nextItem, queueStatus, ReviewError, skipItem, type NextItem } from "../../scores/review.ts";
 import { addScore, listScoreConfigs, ScoreError, whoami } from "../../scores/scores.ts";
@@ -142,13 +143,15 @@ async function next(c: CommandContext): Promise<number> {
       out.next("See its counts", `coding.sh review status ${name}`);
       return 0;
     }
+    // The session by a reference that opens it when pasted (core/session-ref.ts): a full id can need quoting, or be `latest`.
+    const session = (await shortener(ctx.index))(it.targetId);
     out.print(`Item ${it.item} of ${name} (${plural(it.pending, "pending item")})`);
-    out.print(`  session  ${it.targetId}`);
+    out.print(`  session  ${session}`);
     if (it.agent) out.print(`  agent    ${it.agent}`);
     if (it.title) out.print(`  title    ${it.title.replace(/[\r\n\t]+/g, " ").slice(0, 120)}`);
     if (it.flags.length) out.print(`  flags    ${it.flags.join(", ")}`);
     if (it.assignee) out.print(`  for      ${it.assignee}`);
-    out.next("Read it", `coding.sh show ${shellQuote(it.targetId)}`);
+    out.next("Read it", `coding.sh show ${shellQuote(session)}`);
     out.next(`Score it (${it.config}: ${it.values})`, it.command);
     return 0;
   }, { create: false });
@@ -172,7 +175,8 @@ async function done(c: CommandContext): Promise<number> {
       out.data({ item: r.item, score: r.score, next: shown(c, after) });
       return 0;
     }
-    out.ok(`Scored item ${r.item.id} of ${name}: ${r.score.name} = ${String(r.score.value)} on session ${r.item.targetId}`);
+    const session = (await shortener(ctx.index))(r.item.targetId);
+    out.ok(`Scored item ${r.item.id} of ${name}: ${r.score.name} = ${String(r.score.value)} on session ${session}`);
     if (after) out.next(`Next: item ${after.item} (${after.config}: ${configValues(configs.find((x) => x.name === after.config))})`, `coding.sh review next ${name}`);
     else out.note(`Review queue ${name} is done`);
     return 0;

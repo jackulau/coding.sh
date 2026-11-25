@@ -598,6 +598,10 @@ One session, the same shape as a list row without `childCount`. Percent-encode t
 whose weights checkpoint an experiment ran also has `checkpointExperiments`: a list of
 `{sha256, experiments: [{id, name}]}`. A key scoped to a project does not get it.
 
+From `coding.sh ui`, the record also has `shortId`: the shortest reference that opens the session
+from the CLI. The page's copied commands use it. `coding.sh serve` and `coding.sh ui --store` leave
+it out, and the commands use the whole id.
+
 A missing session is a 404; with `?missing=null` it is a 200 with the body `null`, which the viewer uses so
 the browser logs no error for an id it cannot find.
 
