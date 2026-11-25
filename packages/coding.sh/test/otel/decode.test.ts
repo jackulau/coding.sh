@@ -181,6 +181,19 @@ describe("OTLP/JSON quirks", () => {
     assert.equal(start(1767225600000000000), "1767225600000000000");
   });
 
+  it("keeps a double past what a number holds as its protojson string, from JSON as from protobuf", () => {
+    // JSON.parse reads 1e400 as Infinity, and protobuf carries NaN. JSON has no such number, so each is kept as text.
+    const json = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"kind":1e400,"status":{"code":-1e400},"attributes":[{"key":"big","value":{"doubleValue":1e400}},{"key":"low","value":{"doubleValue":-1e400}}]}]}]}]}`;
+    const s = decodeTraceJson(JSON.parse(json))[0]!.scopeSpans[0]!.spans[0]!;
+    assert.deepEqual(s.attributes, { big: "Infinity", low: "-Infinity" });
+    assert.deepEqual([s.kind, s.status.code], [0, 0]);
+    for (const [d, text] of [[NaN, "NaN"], [Infinity, "Infinity"], [-Infinity, "-Infinity"]] as const) {
+      const span = new ProtoWriter().message(9, (k) => k.string(1, "d").message(2, (v) => v.double(4, d))).finish();
+      const req = new ProtoWriter().message(1, (rs) => rs.message(2, (ss) => ss.bytes(2, span))).finish();
+      assert.equal(decodeTraceRequest(req)[0]!.scopeSpans[0]!.spans[0]!.attributes.d, text);
+    }
+  });
+
   it("rejects non-object bodies and non-array resourceSpans", () => {
     assert.throws(() => decodeTraceJson([]), OtlpDecodeError);
     assert.throws(() => decodeTraceJson("x"), OtlpDecodeError);

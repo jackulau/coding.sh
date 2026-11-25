@@ -872,7 +872,9 @@ class Draft {
   }
 
   set(key: string, v: unknown): this {
-    if (v !== undefined && v !== null && v !== "") this.payload[key] = v;
+    // A number past what a double holds is no JSON value: stored, it would read back as null.
+    if (v === undefined || v === null || v === "" || (typeof v === "number" && !Number.isFinite(v))) return this;
+    this.payload[key] = v;
     return this;
   }
 

@@ -87,10 +87,10 @@ function int64(v: unknown): number | string | null {
 }
 
 function double(v: unknown): number | string | null {
-  if (typeof v === "number") return v;
+  // NaN/Infinity aren't JSON values; keep them as their protojson strings. JSON.parse reads 1e400 as Infinity.
+  if (typeof v === "number") return Number.isFinite(v) ? v : String(v);
   if (typeof v === "string") {
     const n = Number(v);
-    // NaN/Infinity aren't JSON values; keep them as their protojson strings.
     return Number.isFinite(n) ? n : v;
   }
   return null;
@@ -103,9 +103,9 @@ function uint(v: unknown): number {
 
 /** Enum field: integer, numeric string, or its proto name ("SPAN_KIND_CLIENT"). */
 function enumValue(v: unknown, names: readonly string[], prefix: string): number {
-  if (typeof v === "number") return Math.trunc(v);
+  if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : 0;
   if (typeof v === "string") {
-    if (/^\d+$/.test(v)) return Number(v);
+    if (/^\d+$/.test(v)) return Number.isFinite(Number(v)) ? Number(v) : 0;
     const i = names.indexOf(v.toUpperCase().replace(prefix, ""));
     if (i >= 0) return i;
   }
