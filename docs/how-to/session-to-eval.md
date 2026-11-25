@@ -117,8 +117,8 @@ pass@3  100.0%  a task counts when any of 3 trials passes
 pass^3  0.0%  a task counts only when all 3 trials pass
 
 task                                passed         first failure
-----------------------------------  ------  -----  ---------------------------
-fix-passallk-in-packages-coding-sh     2/3  flaky  coding.sh show 5de09222-506
+----------------------------------  ------  -----  -----------------------
+fix-passallk-in-packages-coding-sh     2/3  flaky  coding.sh show 5de09222
 
 flaky: fix-passallk-in-packages-coding-sh. These pass some trials and fail others; pass^3 counts them as failures.
 1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
@@ -134,7 +134,7 @@ Verifier output of failed runs (8 lines from the first failing test):
     │       at Test.runInAsyncScope (node:async_hooks:227:14)
     │       at Test.run (node:internal/test_runner/test:1397:25)
     │       at Test.start (node:internal/test_runner/test:1257:17)
-captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session a921c754-42cd-4265-98f7-26b9fec9eddb)
+captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session a921c754)
 harness claude-code-project (1 file) · experiment exp_01M803KK8N8F234W5AZK438E4X
 ```
 

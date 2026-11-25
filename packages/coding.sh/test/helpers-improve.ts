@@ -25,8 +25,9 @@ export interface PlannedSession {
 /**
  * Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`).
  * With `plan`, the sessions before and after are exactly those listed instead (`afterFlagged` is then ignored).
+ * With `ids`, a session is stored under the id given for its usual one (`after-1`, `before-0`, ...).
  */
-export async function improveWorld(root: string, name: string, opts: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number; cacheBreaks?: boolean; plan?: { before: PlannedSession[]; after: PlannedSession[] } }): Promise<World> {
+export async function improveWorld(root: string, name: string, opts: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number; cacheBreaks?: boolean; plan?: { before: PlannedSession[]; after: PlannedSession[] }; ids?: Record<string, string> }): Promise<World> {
   const o = opts;
   const elsewhere = o.elsewhere === true;
   const home = join(root, name, "home");
@@ -72,7 +73,8 @@ export async function improveWorld(root: string, name: string, opts: { afterFlag
   try {
     // Flags come from the events (ingest recomputes them): an edit with no check is no-verification.
     const at = elsewhere ? join(root, name, "other") : repo;
-    const put = (id: string, head: string, daysAgo: number, o: { edit: boolean; test: boolean; headless?: boolean }) => {
+    const put = (usual: string, head: string, daysAgo: number, o: { edit: boolean; test: boolean; headless?: boolean }) => {
+      const id = opts.ids?.[usual] ?? usual;
       const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
       // How `claude -p` says it started: the transcript's entrypoint.
       if (o.headless) steps.unshift(["session.start", { entrypoint: "sdk-cli" }]);
@@ -89,7 +91,8 @@ export async function improveWorld(root: string, name: string, opts: { afterFlag
       return putSession(ctx.index, ev);
     };
     if (o.plan) {
-      const planned = (id: string, head: string, daysAgo: number, p: PlannedSession) => {
+      const planned = (usual: string, head: string, daysAgo: number, p: PlannedSession) => {
+        const id = opts.ids?.[usual] ?? usual;
         const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
         if (p.headless) steps.unshift(["session.start", { entrypoint: "sdk-cli" }]);
         for (let i = 0; i < (p.reads ?? 1); i++) steps.push(["tool.start", { tool: "Read", toolUseId: `${id}-r${i}`, input: { file_path: join(repo, `src/f${i}.js`) } }], ["tool.end", { tool: "Read", toolUseId: `${id}-r${i}`, ok: true, output: "x" }]);

@@ -336,11 +336,14 @@ export const NEEDS_MODEL = "needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude C
 export const abCommand = (behavior: string, provider: ModelProvider | undefined): string =>
   `coding.sh exp ab --behavior ${behavior}${provider === "openai" || provider === "codex" ? ` --provider ${provider}` : ""}`;
 
-/** The commands that take one issue through the loop: look, edit, test, keep. `n` is its 1-based rank; `provider` undefined: no model API key. */
-export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider | undefined }): Step[] {
+/**
+ * The commands that take one issue through the loop: look, edit, test, keep. `n` is its 1-based rank; `provider` undefined: no model API key.
+ * `ref` names the example session by a reference that opens it when pasted (core/session-ref.ts shortener; default the id).
+ */
+export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider | undefined; ref?: (id: string) => string }): Step[] {
   const steps: Step[] = [];
   const ex = issue.examples[0];
-  if (ex) steps.push({ label: "See it happen", command: `coding.sh show ${ex.sessionId}` });
+  if (ex) steps.push({ label: "See it happen", command: `coding.sh show ${o.ref ? o.ref(ex.sessionId) : ex.sessionId}` });
   if (issue.quietSince) {
     steps.push({ label: `See whether ${issue.quietSince.commit} fixed it`, command: "coding.sh improve check" });
     return steps;
