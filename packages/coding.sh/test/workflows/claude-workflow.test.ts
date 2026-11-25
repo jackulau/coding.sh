@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -273,5 +273,71 @@ describe("findClaudeWorkflowDirs scan cache", () => {
     } finally {
       rmSync(r, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a run's script", () => {
+  // A run with a journal only, in a session dir of its own; each test adds a record or a copy.
+  const RID = "wf_script01";
+  const mk = (name: string) => {
+    const sessionDir = join(root, "script-src", name, SID);
+    const runDir = join(sessionDir, "subagents", "workflows", RID);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "journal.jsonl"), '{"type":"launched"}\n');
+    return { sessionDir, runDir };
+  };
+  const record = (sessionDir: string, r: Record<string, unknown>) => {
+    mkdirSync(join(sessionDir, "workflows"), { recursive: true });
+    writeFileSync(join(sessionDir, "workflows", `${RID}.json`), JSON.stringify(r));
+  };
+  const copy = (dir: string, text: string) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `demo-${RID}.js`), text);
+  };
+  const load = async (runDir: string) => (await loadClaudeWorkflowDir(runDir, { concurrencyCap: 1 })).sources;
+
+  it("is the record's own script, else the copy Claude Code keeps in the session dir", async () => {
+    const a = mk("record");
+    record(a.sessionDir, { script: "phase('From record')", scriptPath: "/work/demo/.claude/workflows/demo.js" });
+    copy(join(a.sessionDir, "workflows", "scripts"), "phase('From copy')");
+    assert.equal((await load(a.runDir)).script, "phase('From record')");
+    const b = mk("copy");
+    record(b.sessionDir, { scriptPath: "/work/demo/.claude/workflows/demo.js" });
+    copy(join(b.sessionDir, "workflows", "scripts"), "phase('From copy')");
+    const got = await load(b.runDir);
+    assert.equal(got.script, "phase('From copy')");
+    assert.equal(got.scriptPath, "/work/demo/.claude/workflows/demo.js");
+  });
+
+  it("does not read the file a record or journal names in scriptPath, which may have changed since the run", async () => {
+    const named = join(root, "script-src", "demo.js");
+    writeFileSync(named, "phase('Edited since the run')");
+    const a = mk("record-names");
+    record(a.sessionDir, { scriptPath: named });
+    const fromRecord = await load(a.runDir);
+    assert.equal(fromRecord.script, undefined);
+    assert.equal(fromRecord.scriptPath, named, "the path is kept as the run's");
+    const b = mk("journal-names");
+    writeFileSync(join(b.runDir, "journal.jsonl"), JSON.stringify({ type: "launched", scriptPath: named }) + "\n");
+    const fromJournal = await load(b.runDir);
+    assert.equal(fromJournal.script, undefined);
+    assert.equal(fromJournal.scriptPath, named);
+  });
+
+  it("reads the copy only when its real path is in the session dir", async () => {
+    // A junction needs no privilege on Windows; elsewhere "junction" makes a directory symlink.
+    const link = (sessionDir: string, target: string) => {
+      mkdirSync(join(sessionDir, "workflows"), { recursive: true });
+      symlinkSync(target, join(sessionDir, "workflows", "scripts"), "junction");
+    };
+    const other = mk("linked-other");
+    const shared = join(root, "script-src", "shared");
+    copy(shared, "phase('Shared')");
+    link(other.sessionDir, shared);
+    assert.equal((await load(other.runDir)).script, undefined);
+    const own = mk("linked-own");
+    copy(join(own.sessionDir, "kept"), "phase('Kept')");
+    link(own.sessionDir, join(own.sessionDir, "kept"));
+    assert.equal((await load(own.runDir)).script, "phase('Kept')");
   });
 });

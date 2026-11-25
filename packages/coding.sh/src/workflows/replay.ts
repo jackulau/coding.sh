@@ -17,7 +17,7 @@
 // It is a heuristic (a changed helper two calls away is not traced), so the
 // result says so. Inside a pipeline(), call order interleaves items across
 // stages, which the ordinal prefix captures as is.
-import type { Redactor } from "../core/redact.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import { argsHashOf } from "./sources/claude-workflow.ts";
 import { isAgentNode, workflowStats } from "./metrics.ts";
 import type { WorkflowStore } from "./store.ts";
@@ -224,7 +224,9 @@ export interface ReplayOpts {
 
 export async function replayWorkflow(o: ReplayOpts): Promise<{ prediction: CachePrediction; run?: WorkflowRun }> {
   const argsChanged = o.args !== undefined && (o.base.run.argsHash !== undefined ? argsHashOf(o.args) !== o.base.run.argsHash : o.baseArgs !== undefined && argsHashOf(o.args) !== argsHashOf(o.baseArgs));
-  const prediction = predictCacheHits(o.base.nodes, o.baseScript, o.editedScript, { argsChanged });
+  // A stored script is redacted (WorkflowStore.putRun), so both sides are compared redacted.
+  const r = o.redactor ?? createRedactor();
+  const prediction = predictCacheHits(o.base.nodes, r.string(o.baseScript), r.string(o.editedScript), { argsChanged });
   if (o.dryRun) return { prediction };
   const c: WorkflowCase = { id: o.base.run.caseId ?? "replay", workflow: o.base.run.name, split: "dev", args: o.args ?? o.baseArgs ?? {}, truth: { kind: "seeded-bugs", bugs: [] } };
   const env = { CODING_SH_WORKFLOW_RUN_ID: `replay-${o.base.run.id}-${Date.now()}`, CODING_SH_RUN_ID: `replay-${o.base.run.id}` };
