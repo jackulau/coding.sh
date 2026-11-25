@@ -497,7 +497,7 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** In a browser on Windows, the commands the viewer shows and copies name `codingsh`, which PowerShell and cmd run (`npx -p coding.sh codingsh` for `npx coding.sh`): copy buttons, empty states, the work queue, review items and the hint to ingest an old index. Before, only the update pill did; the rest named `coding.sh`, which fails there. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows))
 - **Install.** On Windows, the site, the quick start prompts, llms.txt and the docs give `npx -p coding.sh codingsh` for `npx coding.sh` next to each rule that says to type `codingsh` for `coding.sh`. Applied to `npx coding.sh`, the old rule asked npm for a package we don't publish. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows))
 - **Evals.** Help for `dataset add --case` and `bench new -g` says each takes a path to a JSON file as well as inline JSON. Both read a file before, but help named only JSON. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#case))
-- **Cost.** `coding.sh usage` marks a row with `~` when its estimated cost rounds to $0.0000, and prints the note that explains `~`. Before, a cheap estimated row read as a reported $0.0000. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#cost))
+- **Cost.** `coding.sh usage` marks a row with `~` whenever part of its cost is estimated, even when the estimate rounds to $0.0000, and prints the note that explains `~`. Before, such a row read as all reported. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 
 ## [0.1.7] - 2026-11-16
 
