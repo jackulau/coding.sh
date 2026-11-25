@@ -6,6 +6,7 @@
 // call sent again with a changed harness (replay-fork.ts).
 import { createRedactor } from "../../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay, type ReplayStep, type StepChange, type RangeFile } from "../../core/replay.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { UsageError, positiveInt } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
 import { fork } from "./replay-fork.ts";
@@ -47,10 +48,12 @@ export async function run(c: CommandContext): Promise<number> {
       printRange(out, replay, range.from, range.to, range.files, range.unchanged);
       return 0;
     }
+    // The next steps name the session by a reference that opens it when pasted (core/session-ref.ts):
+    // a full id can be `latest`, which opens the newest session, or start with a dash.
     if (step === undefined && file === undefined) {
       const index = replay.index();
       if (out.json) return out.data(index), 0;
-      printIndex(c, replay, s.title ?? s.id);
+      printIndex(c, replay, s.title ?? s.id, (await shortener(ctx.index))(s.id));
       return 0;
     }
     if (!total) throw new UsageError(noSteps(s));
@@ -61,7 +64,8 @@ export async function run(c: CommandContext): Promise<number> {
       printFile(out, view.file!, n);
       return 0;
     }
-    printStep(out, replay, view, c.env);
+    const touched = printStep(out, view);
+    if (touched) out.next("See the whole file at this step", cliCommand(c.env, ["replay", (await shortener(ctx.index))(s.id), "--step", String(view.step.n), "--file", touched]));
     return 0;
   }, { create: false });
 }
@@ -84,7 +88,8 @@ function noSteps(s: Session): string {
     : "This session has no steps to replay: it recorded no prompts, replies or tool calls";
 }
 
-function printIndex(c: CommandContext, replay: Replay, title: string): void {
+/** The step list. `ref` names the session in the next steps. */
+function printIndex(c: CommandContext, replay: Replay, title: string, ref: string): void {
   const { out } = c;
   const idx = replay.index();
   out.print(out.style(oneLine(clean(title), 100), "bold"));
@@ -94,7 +99,7 @@ function printIndex(c: CommandContext, replay: Replay, title: string): void {
   for (const st of idx.steps) out.print(stepLine(out, st, w));
   if (!idx.steps.length) {
     out.print(`${noSteps(replay.session)}.`);
-    out.next("See what it recorded", cliCommand(c.env, ["show", replay.session.id]));
+    out.next("See what it recorded", cliCommand(c.env, ["show", ref]));
     return;
   }
   const tree = replay.tree(idx.steps.length);
@@ -104,7 +109,7 @@ function printIndex(c: CommandContext, replay: Replay, title: string): void {
     for (const f of tree) out.print(`  ${treeMark(out, f.status)} ${f.path}  ${out.style(f.edits ? `${plural(f.edits, "change")}, last touched at step ${f.lastStep}` : `read at step ${f.lastStep}`, "faint")}`);
   }
   const firstEdit = idx.steps.find((s) => s.files?.some((f) => f.op !== "read"));
-  out.next("See what a step did", cliCommand(c.env, ["replay", replay.session.id, "--step", String(firstEdit?.n ?? 1)]));
+  out.next("See what a step did", cliCommand(c.env, ["replay", ref, "--step", String(firstEdit?.n ?? 1)]));
 }
 
 function treeMark(out: Output, status: string): string {
@@ -139,7 +144,8 @@ function printChange(out: Output, ch: StepChange | RangeFile): void {
   if (ch.why) out.print(out.style(`  Content after this unknown: ${ch.why}`, "yellow"));
 }
 
-function printStep(out: Output, replay: Replay, view: Awaited<ReturnType<Replay["at"]>>, env: NodeJS.ProcessEnv): void {
+/** One step. Returns the file it touched, if any, for the next step to show whole. */
+function printStep(out: Output, view: Awaited<ReturnType<Replay["at"]>>): string | undefined {
   const st = view.step;
   const head = `Step ${st.n} of ${view.steps}  ${st.kind}${st.tool ? ` (${st.tool})` : ""}`;
   out.print(out.style(head, "bold") + (st.ok !== undefined ? `  ${ok(out, st)}` : "") + (st.durationMs !== undefined ? `  ${duration(st.durationMs)}` : ""));
@@ -172,8 +178,7 @@ function printStep(out: Output, replay: Replay, view: Awaited<ReturnType<Replay[
     out.print(out.style(`Files as of step ${st.n}`, "bold"));
     for (const f of view.tree) out.print(`  ${treeMark(out, f.status)} ${f.path}${f.here ? out.style("  ← this step", "cyan") : ""}`);
   }
-  const touched = view.tree.find((f) => f.here && f.status !== "read") ?? view.tree.find((f) => f.here);
-  if (touched) out.next("See the whole file at this step", cliCommand(env, ["replay", replay.session.id, "--step", String(st.n), "--file", touched.path]));
+  return (view.tree.find((f) => f.here && f.status !== "read") ?? view.tree.find((f) => f.here))?.path;
 }
 
 function printFile(out: Output, f: NonNullable<Awaited<ReturnType<Replay["at"]>>["file"]>, n: number): void {

@@ -2278,6 +2278,9 @@ function shCmd(command, ...args) {
   if (args.some((a) => (IS_WIN ? PASTE_UNSAFE_WIN : PASTE_UNSAFE).test(String(a)))) unsafeCmds.add(cmd);
   return cmd;
 }
+// How a copied command names a session: the reference that opens it from the CLI, which the local
+// viewer sends as shortId (a full id can need quoting, or be `latest`), else its id.
+function sessionRef(s) { return s.shortId || s.id; }
 function copyBtn(getText, label, what, text) {
   return h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-label": label || "Copy", onclick: () => copy(typeof getText === "function" ? getText() : getText, what) }, text || "Copy");
 }
@@ -5841,7 +5844,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const ok = r.trials.filter((t) => !t.error).length;
       if (pv.recorded && ok) out.push(h("p", { class: "note" }, r.differ ? r.differ + " of " + plural(ok, "forked call") + " took another action than the recorded one." : "Every forked call took the recorded action."));
       const withs = r.edits.filter((e) => e.how !== "absent").flatMap((e) => ["--with", e.how === "removed" ? e.path + "=" : e.path]);
-      out.push(cmdBlock(shCmd("coding.sh replay", session.id.slice(0, 8), "--step", n, "--fork", ...withs, "--save-case", "forks"), "Keep this step as a regression case (with the edited files saved in the project)"));
+      out.push(cmdBlock(shCmd("coding.sh replay", sessionRef(session), "--step", n, "--fork", ...withs, "--save-case", "forks"), "Keep this step as a regression case (with the edited files saved in the project)"));
     }
     return out;
   }
@@ -5981,7 +5984,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     { group: "Session", label: "Find in steps", hint: "/", run: () => setTimeout(() => findInput.focus(), 0) },
     { group: "Session", label: "Chat or steps view", hint: "v", run: () => { setChat(!chatOn); setTimeout(() => (chatOn ? chat : tl).focus({ preventScroll: true }), 0); } },
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
-    { group: "Session", label: "Copy eval command", run: () => copy(shCmd("coding.sh eval new", session.id), "eval command") },
+    { group: "Session", label: "Copy eval command", run: () => copy(shCmd("coding.sh eval new", sessionRef(session)), "eval command") },
     { group: "Session", label: "Show or hide timing bars", hint: "w", run: () => toggleWf() },
     { group: "Session", label: "Replay step by step", hint: "R", run: () => enterReplay() },
   ];
@@ -6137,7 +6140,7 @@ function sessionHeader(s, labels, rel) {
   const waste = wasteFact(st);
   const fact = (dt, dd, title, cls) => dd ? h("div", { "data-fact": dt }, h("dt", null, dt), h("dd", { title, class: cls }, dd)) : null;
   const outcome = latestLabel(labels, "outcome");
-  const evalCmd = shCmd("coding.sh eval new", s.id);
+  const evalCmd = shCmd("coding.sh eval new", sessionRef(s));
   const kids = (rel && rel.children) || [];
   const parent = rel && rel.parent;
   const api_ = isApiSession(s);

@@ -23,7 +23,7 @@ Fix first
    6 of 47 sessions, low 27; latest 2h ago
    e.g. "Skip the site deploy when CLOUDFLARE_API_TOKEN is unset"
    Fix: Name the check in AGENTS.md. Add: "Run `npm test` before you say you are done, and say what it printed."
-   → See it happen: coding.sh show 8411007a-03a4-4965-88b6-7a5388f2685b
+   → See it happen: coding.sh show 8411007a
    → Add the line to your instructions file (uncommitted): coding.sh improve fix 1
    → Test the edit on the moments it went wrong: coding.sh exp ab --behavior unverified-claim
    → Commit it, then check new sessions against it: coding.sh improve check
