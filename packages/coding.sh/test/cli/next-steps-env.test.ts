@@ -1,13 +1,14 @@
 // Lines that set an environment variable, as `coding.sh proxy env` prints them: `export` in sh,
 // PowerShell's `$env:` in PowerShell or cmd, where an `export` line does not run. Run as printed,
 // through `eval` in sh and `Invoke-Expression` in PowerShell, each sets the value as given.
+// Messages name a variable the same way: `$NAME` in sh, `$env:NAME` in PowerShell or cmd.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { envLine } from "../../src/cli/next-steps.ts";
+import { envLine, envRef } from "../../src/cli/next-steps.ts";
 import { resolveWindowsCommand } from "../../src/core/spawn.ts";
 
 describe("a line that sets an environment variable", () => {
@@ -23,6 +24,17 @@ describe("a line that sets an environment variable", () => {
     assert.equal(envLine({}, "X", "it's $HOME `a`", "win32"), "$env:X = 'it''s $HOME `a`'");
     // PowerShell reads a curly single quote as a quote too.
     assert.equal(envLine({}, "X", "it’s", "win32"), "$env:X = 'it’’s'");
+  });
+});
+
+describe("an environment variable a message names", () => {
+  test("is $NAME in sh: Linux, macOS, Git Bash and Cygwin", () => {
+    for (const [env, platform] of [[{}, "linux"], [{}, "darwin"], [{ MSYSTEM: "MINGW64" }, "win32"], [{ SHELL: "/usr/bin/bash" }, "win32"]] as const) assert.equal(envRef(env, "ANTHROPIC_API_KEY", platform), "$ANTHROPIC_API_KEY");
+  });
+
+  test("is $env:NAME in PowerShell and cmd, the name envLine sets", () => {
+    assert.equal(envRef({}, "ANTHROPIC_API_KEY", "win32"), "$env:ANTHROPIC_API_KEY");
+    assert.equal(envLine({}, "ANTHROPIC_API_KEY", "...", "win32"), `${envRef({}, "ANTHROPIC_API_KEY", "win32")} = '...'`);
   });
 });
 

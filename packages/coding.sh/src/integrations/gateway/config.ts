@@ -229,7 +229,7 @@ function claudeFindings(env: NodeJS.ProcessEnv, cwd: string | undefined, behind:
   }
 }
 
-function codexFindings(env: NodeJS.ProcessEnv, behind: Map<string, string>, out: GatewayFinding[]): void {
+function codexFindings(env: NodeJS.ProcessEnv, behind: Map<string, string>, out: GatewayFinding[], envName: (name: string) => string): void {
   const file = join(env.CODEX_HOME || join(userHome(env), ".codex"), "config.toml");
   const text = readText(file);
   if (text === undefined) return;
@@ -253,7 +253,7 @@ function codexFindings(env: NodeJS.ProcessEnv, behind: Map<string, string>, out:
     const base = chained ?? p.base_url;
     const gateway = gatewayForUrl(base, env);
     if (!gateway) continue;
-    const keyEnv = typeof p.env_key === "string" ? `, key from $${p.env_key}` : "";
+    const keyEnv = typeof p.env_key === "string" ? `, key from ${envName(p.env_key)}` : "";
     out.push({ gateway, agent: "codex", where: file, detail: `model_providers.${name}.base_url → ${shortUrl(base as string)}${chained ? VIA_PROXY : ""}${keyEnv}`, active: selected.has(name) });
   }
 }
@@ -283,8 +283,10 @@ function piFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
 /**
  * Read-only scan of env and agent configs. `env` is the process env to inspect (names and URLs only).
  * A config that `init --proxy` pointed at the coding.sh proxy is read as the base URL the proxy goes on to.
+ * `envName` is how a detail names an environment variable: `$NAME`, unless the caller passes the
+ * form its user's shell reads (the CLI passes envRef, `$env:NAME` in PowerShell and cmd).
  */
-export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: string): GatewayFinding[] {
+export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: string, envName: (name: string) => string = (n) => `$${n}`): GatewayFinding[] {
   const out: GatewayFinding[] = [];
   for (const k of BASE_URL_VARS) {
     const v = env[k];
@@ -293,7 +295,7 @@ export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: 
   }
   const behind = chainedThroughProxy(env);
   claudeFindings(env, cwd, behind, out);
-  codexFindings(env, behind, out);
+  codexFindings(env, behind, out, envName);
   opencodeFindings(env, out);
   piFindings(env, out);
   return out;

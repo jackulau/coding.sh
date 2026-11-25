@@ -99,8 +99,11 @@ describe("gateway config (read-only scan, settings)", () => {
     assert.deepEqual(found.map((f) => f.agent).sort(), ["any", "claude-code", "codex", "opencode", "pi"]);
     const codex = found.find((f) => f.agent === "codex")!;
     assert.equal(codex.active, true, "selected by a profile");
-    assert.match(codex.detail, /model_providers\.vercel\.base_url → ai-gateway\.vercel\.sh\/codex\/v1, key from \$AI_GATEWAY_API_KEY/);
+    assert.match(codex.detail, /model_providers\.vercel\.base_url → ai-gateway\.vercel\.sh\/codex\/v1, key from \$AI_GATEWAY_API_KEY$/);
     assert.ok(!JSON.stringify(found).includes(SECRET));
+    // The caller names the variable as its user's shell reads it: the CLI passes envRef.
+    const named = detectGatewaySetups(env, project, (n) => `$env:${n}`).find((f) => f.agent === "codex")!;
+    assert.equal(named.detail, "model_providers.vercel.base_url → ai-gateway.vercel.sh/codex/v1, key from $env:AI_GATEWAY_API_KEY");
   });
 
   it("follows init --proxy to the base URL the coding.sh proxy goes on to", async () => {
