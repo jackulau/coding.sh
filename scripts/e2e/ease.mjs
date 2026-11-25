@@ -50,6 +50,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, posixShell, spawn, spawnSync } from "../../packages/coding.sh/src/core/spawn.ts";
+import { tempBase } from "./temp-base.ts";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const isWin = process.platform === "win32";
@@ -68,7 +69,7 @@ const JSON_OUT = argv.includes("--json");
 const KEEP = argv.includes("--keep");
 const log = (...a) => JSON_OUT || console.error(...a);
 
-const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-ease-")));
+const root = realpathSync(mkdtempSync(join(REAL ? tempBase(tmpdir()) : tmpdir(), "csh-ease-")));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A throwaway machine: HOME, npm prefix and cache, and a PATH with node, the prefix and (unless --real) a `claude` stub. */

@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CLI = join(REPO, "packages", "coding.sh", "dist", "cli.mjs");
@@ -33,7 +34,7 @@ if (!outDir) throw new Error("--out <dir> is required");
 if (!existsSync(CLI)) throw new Error(`${CLI} is missing: run npm run build in packages/coding.sh`);
 
 // Real path: both agents record the resolved cwd (/private/var/… on macOS), which the scrub must match.
-const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-harness-")));
+const root = realpathSync(mkdtempSync(join(tempBase(tmpdir()), "csh-harness-")));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
 const project = join(root, "demo");

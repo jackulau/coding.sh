@@ -578,10 +578,12 @@ function redactProseSecrets(s: string): string {
  * The local part only starts a match at the start of its run (the lookbehind), so a
  * long run of address characters without an "@" is scanned once, not once per
  * start. The last domain label is letters (`pkg@1.2.3` is a version), and an
- * `@2x.png` image name is not an address.
+ * `@2x.png` image name is not an address. That label is matched as the last
+ * label, not checked by a lookbehind at each end the matcher tries, so a long
+ * label is read a bounded number of times and the time is linear.
  */
 export function emailRules(): RedactRule[] {
-  return [{ kind: "email", pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!\d+x\.)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?<=\.[A-Za-z]{2,})(?![A-Za-z0-9-])/g }];
+  return [{ kind: "email", pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!\d+x\.)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])/g }];
 }
 
 // ---------------------------------------------------------------- PII pack
