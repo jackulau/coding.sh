@@ -44,6 +44,7 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // at bounds 3 and 6. About 20 seconds.
   "capture-model": { bound: 2 },
   "cost-prop": { runs: 10000 },
+  // About 35 seconds.
   "fold-prop": { runs: 5000 },
   "hook-imports": {},
   "lock-code": {},
