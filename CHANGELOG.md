@@ -513,6 +513,7 @@ grouped by area, with links to the docs for the details.
 - **Cost.** `coding.sh usage` marks a row with `~` whenever part of its cost is estimated, even when the estimate rounds to $0.0000, and prints the note that explains `~`. Before, such a row read as all reported. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 - **Capture.** Hook capture now reads the model calls of a Claude Code turn you stopped, which it missed before, and counts the turn as cancelled. A hook prompt takes the time on its transcript entry, so the turn's first model call stays in its turn. Claude Code sessions are parsed again once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around))
 - **Capture.** A Claude Code turn you stopped ends once in a transcript import, at the stop. Before, it ended again under the same id, at the next prompt or the end of the transcript, which `coding.sh doctor --conformance` reported as a duplicate id. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#check-what-the-adapters-read))
+- **CLI.** A printed sh command single-quotes a word that starts with `=`, which zsh reads as the path of a command, so the command failed in zsh. An `=` later in a word stays bare. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md))
 
 ## [0.1.7] - 2026-11-16
 
