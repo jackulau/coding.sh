@@ -11,7 +11,7 @@ import { facetCounts, findEvents, findSessions, searchWhere, sessionMatcher } fr
 import { FACET_KEYS, keyDocs, parseWhere, printWhere, QueryError, QueryUnsupported, scopesSubagents, withoutKey } from "../../src/query/where.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, SqliteIndexStore } from "../../src/store/sqlite.ts";
-import { T0 } from "./_seed.ts";
+import { event, session, T0 } from "./_seed.ts";
 import { fixture, QUERIES, REPO_NAMES, repoNameSessions } from "./_where-fixture.ts";
 
 const NOW = T0 + 3 * 86_400_000;
@@ -276,6 +276,48 @@ describe("SQL and the scan fallback agree", () => {
   });
 });
 
+describe("user: reads both start-event fields, on every start event of a session", () => {
+  // Both fields on one start event (an OTel user and an SDK user id), a user id that is not text,
+  // an SDK conversation with one start event per trace() turn, an empty start event, and none.
+  const sessions = ["both", "number", "turns", "empty", "none"].map((id, k) => session(id, { startedAt: T0 + k * 60_000 }));
+  const start = (sid: string, n: number, payload: Record<string, unknown>) => event(sid, n, { kind: "session.start", payload });
+  const events = [start("both", 0, { user: "alice", userId: "bob" }), start("number", 0, { userId: 17 }), start("turns", 0, { userId: "dave" }), start("turns", 5, { userId: "erin" }), start("empty", 0, {}), event("none", 1)];
+  const want: [string, string[]][] = [
+    ["user:alice", ["both"]],
+    ["user:bob", ["both"]],
+    ["user:alice,bob", ["both"]],
+    ["-user:bob", ["none", "empty", "turns", "number"]],
+    ["user:17", []],
+    ["-user:17", ["none", "empty", "turns", "number", "both"]],
+    ["user:dave", ["turns"]],
+    ["user:erin", ["turns"]],
+    ["-user:dave", ["none", "empty", "number", "both"]],
+    ["user:*", ["turns", "both"]],
+    ["-user:*", ["none", "empty", "number"]],
+  ];
+
+  test("SQL and the scan return the same sessions and events", async () => {
+    const sqlite = await SqliteIndexStore.open(":memory:");
+    const memory = new MemoryIndexStore();
+    try {
+      for (const st of [sqlite, memory] as IndexStore[]) {
+        await st.putEvents(events);
+        for (const s of sessions) await st.upsertSession(s);
+      }
+      const ids = async (st: IndexStore, q: string) => (await findSessions(st, p(q), {})).sessions.map((s) => s.id);
+      // Sorted: these start events share a time, and the two stores order equal times differently.
+      const eventIds = async (st: IndexStore, q: string) => (await findEvents(st, p(q), { limit: 100 })).items.map((e) => e.id).sort();
+      for (const [q, expected] of want) {
+        assert.deepEqual(await ids(sqlite, q), expected, `sqlite ${q}`);
+        assert.deepEqual(await ids(memory, q), expected, `scan ${q}`);
+        assert.deepEqual(await eventIds(sqlite, q), await eventIds(memory, q), `events ${q}`);
+      }
+    } finally {
+      await sqlite.close();
+    }
+  });
+});
+
 describe("event results and indexed keys (V-2, V-6)", () => {
   let sqlite: SqliteIndexStore;
   let memory: MemoryIndexStore;
@@ -295,7 +337,7 @@ describe("event results and indexed keys (V-2, V-6)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const EVENT_QUERIES = ["", "tool:Bash", "tool:Bash ok:false", "-tool:Bash", "ok:false", "kind:tool.end", "mcp:github", "-mcp:github", "error:enoent", "event.duration>1s", "agent:codex", "agent:codex kind:tool.end", "tool:Bash OR kind:llm.call", "migration", "repo:demo tool:Edit,Grep", "cost>1", "is:child"];
+  const EVENT_QUERIES = ["", "tool:Bash", "tool:Bash ok:false", "-tool:Bash", "ok:false", "kind:tool.end", "mcp:github", "-mcp:github", "error:enoent", "event.duration>1s", "agent:codex", "agent:codex kind:tool.end", "tool:Bash OR kind:llm.call", "migration", "repo:demo tool:Edit,Grep", "cost>1", "is:child", "user:u3", "user:u1,u3", "-user:u3", "user:u3 OR tool:Bash"];
 
   const all = async (st: IndexStore, q: string, limit: number) => {
     const ids: string[] = [];
