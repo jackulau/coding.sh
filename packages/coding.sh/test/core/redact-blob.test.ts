@@ -8,6 +8,8 @@ import { createRedactor, redactBlobValue, redactForBlob, redactionTally, SECRET_
 
 // Built from parts so no secret-looking literal sits in the source.
 const SECRET = ["wJalrXUtnFEMI", "/K7MDENG/bPxRfiCYEXAMPLEKEY"].join("");
+// The same without the "KEY" it ends in: no rule has a needle in it, so only a secret name before it marks it.
+const BARE = SECRET.replace("KEY", "");
 
 const redactor = createRedactor({ redact: ["secrets"] });
 const config = defaultConfig({ CODING_SH_HOME: "/work/demo/.coding.sh", HOME: "/home/user" });
@@ -141,6 +143,8 @@ describe("redactBlobValue copies only what redaction changes", () => {
       [new Date(0), "x"],
       { s: new String(token), n: new Number(3) },
       { toJSON: () => ({ other: token }), a: "plain" },
+      // toJSON reads the copy it is called on: the redacted one.
+      { a: `api_token\t=\t${BARE}`, toJSON(this: { a: string }) { return { b: this.a.slice("api_token".length) }; } },
       Object.assign(Object.create(null), { a: "plain", inner: Object.assign(Object.create(null), { b: "text" }) }),
       Object.assign(Object.create({ inherited: token }), { own: "plain" }),
       new Box(),
@@ -150,8 +154,35 @@ describe("redactBlobValue copies only what redaction changes", () => {
       const want = reference(v);
       const tally = redactionTally();
       const label = String(JSON.stringify(v)).slice(0, 120);
-      assert.equal(redactBlobValue(redactor, v, tally), want.text, label);
+      const out = redactBlobValue(redactor, v, tally);
+      assert.equal(out, want.text, label);
       assert.equal(JSON.stringify(tally), want.tally, label);
+      assert.ok(!out.includes(BARE), label);
+    }
+  });
+
+  it("reads a getter or a Proxy once, and redacts what that read gave", () => {
+    const given = `api_token\t=\t${SECRET}`;
+    let reads = 0;
+    // `given` on the first read, "plain" on any later one.
+    const read = () => (++reads === 1 ? given : "plain");
+    const cases: Array<[make: () => unknown, plain: unknown]> = [
+      [() => ({ a: token, get b() { return read(); } }), { a: token, b: given }],
+      [() => ({ x: [{ a: token, get b() { return read(); } }] }), { x: [{ a: token, b: given }] }],
+      [() => Object.defineProperty([token, "plain"], 1, { get: read, enumerable: true }), [token, given]],
+      [() => new Proxy({ a: token, b: "plain" }, { get: (t, k, rcv) => (k === "b" ? read() : Reflect.get(t, k, rcv)) }), { a: token, b: given }],
+      [() => new Proxy([token, "plain"], { get: (t, k, rcv) => (k === "1" ? read() : Reflect.get(t, k, rcv)) }), [token, given]],
+    ];
+    for (const [make, plain] of cases) {
+      const want = reference(plain);
+      const label = JSON.stringify(plain);
+      reads = 0;
+      const tally = redactionTally();
+      const out = redactBlobValue(redactor, make(), tally);
+      assert.equal(reads, 1, label);
+      assert.equal(out, want.text, label);
+      assert.equal(JSON.stringify(tally), want.tally, label);
+      assert.ok(!out.includes(SECRET), label);
     }
   });
 });

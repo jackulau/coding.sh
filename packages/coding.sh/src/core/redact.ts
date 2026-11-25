@@ -2,6 +2,7 @@
 // tuned for precision: they key on vendor prefixes or on an explicit secret
 // name next to the value, so ordinary code, paths and sha hashes pass through.
 import { statSync } from "node:fs";
+import { types } from "node:util";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { weightsCheckpointOf } from "./weights.ts";
 
@@ -969,15 +970,33 @@ function defineOwn(o: Record<string, unknown>, k: string, value: unknown): void 
   Object.defineProperty(o, k, { value, writable: true, enumerable: true, configurable: true });
 }
 
+/** True when `o` has `k` as an own data property: not a getter, and not deleted or a hole. */
+function hasValue(o: object, k: string | number): boolean {
+  const d = Object.getOwnPropertyDescriptor(o, k);
+  return d !== undefined && "value" in d;
+}
+
+/** What mapStrings met in a value besides plain parsed JSON. */
+interface Met {
+  /** A Proxy, a getter, a hole, a value isJsonData rejects, or a subtree too deep to follow. */
+  other: boolean;
+}
+
 /**
  * `v` with `f` applied to every string in it (keys are kept). An object or array that comes out
- * the same is `v` itself when it is JSON data (isJsonData); anything else is a new value.
+ * the same is `v` itself when it is plain parsed JSON: JSON data (isJsonData), not a Proxy, and
+ * with no getter. Anything else within 64 levels is a new value, built from one read of each
+ * property. A subtree deeper than that is followed through its JSON text. Both set `met.other`.
  */
-function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
+function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met): unknown {
   if (typeof v === "string") return f(v);
-  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (v === null || typeof v !== "object") return v;
+  const same = !types.isProxy(v) && isJsonData(v);
+  if (!same && met) met.other = true;
+  if (v instanceof Uint8Array) return v;
   // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
   if (depth > 64) {
+    if (met) met.other = true;
     try {
       const text = JSON.stringify(v);
       if (text === undefined) return v;
@@ -987,18 +1006,26 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
       return v; // a cycle, or too deep for the stack: the redaction walk replaces it
     }
   }
-  const same = isJsonData(v);
   if (Array.isArray(v)) {
-    const out = v.map((x) => mapStrings(x, f, depth + 1));
-    return same && out.every((x, i) => x === v[i]) ? v : out;
+    const out = v.map((x) => mapStrings(x, f, depth + 1, met));
+    if (!same) return out;
+    // A getter read again can give another value: keep the copy of what it gave once.
+    for (let i = 0; i < v.length; i++) {
+      if (hasValue(v, i)) continue;
+      if (met) met.other = true;
+      return out;
+    }
+    return out.every((x, i) => x === v[i]) ? v : out;
   }
   const entries = Object.entries(v);
   let out: Record<string, unknown> | undefined = same ? undefined : {};
   for (let i = 0; i < entries.length; i++) {
     const [k, x] = entries[i]!;
-    const y = mapStrings(x, f, depth + 1);
+    const y = mapStrings(x, f, depth + 1, met);
+    const getter = same && !hasValue(v, k);
+    if (getter && met) met.other = true;
     if (!out) {
-      if (y === x) continue;
+      if (y === x && !getter) continue;
       out = {};
       for (let j = 0; j < i; j++) defineOwn(out, entries[j]![0], entries[j]![1]);
     }
@@ -1035,7 +1062,7 @@ export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, le
 }
 
 /** `v` with each string that holds a JSON document redacted as that document: redactForBlob's first step. */
-function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number): unknown {
+function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met): unknown {
   return mapStrings(v, (s) => {
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
@@ -1049,23 +1076,25 @@ function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level
     }
     for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     return clean;
-  });
+  }, 0, met);
 }
 
 /**
  * The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too.
- * `v` is JSON data (what JSON.parse returns). For an object, the rules are first limited to those
- * whose needles its JSON text holds (RuleFilter): each string's own check is then needed only for
- * those, and the text pass needs none while the walk changed nothing. The walks copy only what they
- * change, so a value with nothing to redact is serialized once. The output is the same.
+ * For an object or array that is plain parsed JSON (what JSON.parse returns), the rules are first
+ * limited to those whose needles its JSON text holds (RuleFilter): each string's own check is then
+ * needed only for those, and the text pass needs none while the walk changed nothing. The walks
+ * copy only what they change, so a value with nothing to redact is serialized once. A value that
+ * holds anything else (Met) takes every rule on the walk's copy, as redactForBlob does. The output
+ * is the same.
  */
 export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally): string {
   const p = passes.get(r);
-  if (!p || typeof v !== "object" || v === null) {
-    const clean = redactForBlob(r, v, tally);
-    return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
-  }
-  const docs = documentsRedacted(r, v, tally, 0);
+  if (!p || typeof v !== "object" || v === null) return blobText(r, redactForBlob(r, v, tally), tally);
+  const met: Met = { other: false };
+  const docs = documentsRedacted(r, v, tally, 0, met);
+  // A getter, a Proxy or toJSON could give the filter's text one value and the walk another.
+  if (met.other) return blobText(r, r.value(docs, tally), tally);
   let text: string | undefined;
   try {
     text = JSON.stringify(docs);
@@ -1078,6 +1107,11 @@ export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally):
   // A walk that changed nothing gives `docs` back: its text is the one the filter was taken on.
   const out = only && clean === docs ? only.text : (JSON.stringify(clean) ?? "");
   return only && out === only.text ? p.string(out, tally, only) : r.string(out, tally);
+}
+
+/** A redacted value's blob text: a string as it is; anything else serialized, with the string rules on that text. */
+function blobText(r: Redactor, clean: unknown, tally: RedactionTally): string {
+  return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
 }
 
 // Redaction hits found in blob content, by blob ref (the content hash): the event
