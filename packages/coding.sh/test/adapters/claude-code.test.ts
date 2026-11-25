@@ -945,6 +945,102 @@ describe("claude-code split responses and nested subagents (real capture)", () =
   });
 });
 
+// Real capture (scripts/e2e/claude-stop-capture.mjs, Claude Code 2.1.319): the person stops the model while it
+// writes its reply, then stops a Bash call while it runs, then sends a prompt the model answers.
+describe("claude-code stopped turns (real capture)", () => {
+  const CONFIG = join(FIXTURES, "claude-code", "stop", "config");
+  const STOPPED = "11ca04d8-6d0e-4f00-86fc-d2cead23134d";
+  const lines = readFileSync(join(CONFIG, "projects", "-work-demo", `${STOPPED}.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  const at = (e: Record<string, any>) => Date.parse(e.timestamp);
+  /** A user entry's text: a prompt's string, or a stop entry's text block. A tool result has none. */
+  const text = (e: Record<string, any>): string | undefined =>
+    typeof e.message?.content === "string" ? e.message.content : e.message?.content?.find?.((b: Record<string, unknown>) => b.type === "text")?.text;
+  const typed = lines.filter((e) => e.type === "user" && text(e) !== undefined);
+  const replies = lines.filter((e) => e.type === "assistant");
+  const STOPS = ["[Request interrupted by user]", "[Request interrupted by user for tool use]"];
+  let env: TmpEnv;
+  let events: AgentEvent[];
+  before(async () => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = CONFIG;
+    events = await collect(claudeCode.backfill!(testCtx().ctx));
+  });
+  after(() => env.restore());
+
+  it("imports to golden events with no duplicate ids", () => {
+    assertWellFormed(events);
+    assertGolden("claude-code/golden/stop.golden.json", summarize(events));
+  });
+
+  it("each stop is a prompt in the turn it stopped, and that turn ends at the stop, once", () => {
+    const said = events.filter((e) => e.kind === "user.message");
+    assert.deepEqual(said.map((e) => e.payload.text), ["Summarize notes.txt.", STOPS[0], "Run the slow check.", STOPS[1], "Say done."]);
+    assert.deepEqual(typed.map((e) => e.promptId), [typed[0]!.promptId, typed[0]!.promptId, typed[2]!.promptId, typed[2]!.promptId, typed[4]!.promptId], "the fixture's stop entries carry the promptId of the turn they stopped");
+    const ends = events.filter((e) => e.kind === "turn.end");
+    assert.deepEqual(ends.map((e) => e.ts), [said[1]!.ts, said[3]!.ts, at(replies.at(-1)!)]);
+    assert.deepEqual(said.map((e) => e.turnId), [0, 0, 1, 1, 2].map((i) => ends[i]!.turnId));
+    assert.equal(new Set(ends.map((e) => e.turnId)).size, 3);
+    assert.equal(buildSession(events).stats.turns, 3);
+  });
+
+  it("the reply cut off is a call with no stop reason, and the Bash call cut off is interrupted, not a tool error", () => {
+    assert.equal(replies[0]!.message.stop_reason, null, "the fixture's first reply was cut off");
+    const call = events.find((e) => e.kind === "llm.call" && e.payload.messageId === replies[0]!.message.id)!;
+    assert.deepEqual([call.usage?.outputTokens, call.payload.stopReason], [1, undefined]);
+    const { stats } = buildSession(events);
+    assert.deepEqual([stats.toolCalls, stats.interruptedToolCalls, stats.toolErrors], [1, 1, 0]);
+  });
+
+  it("stored with the hooks' lines, in either order: three turns on the model, two of them cancelled", async () => {
+    // As launched from a terminal: "cli" on every line. Each prompt's hook runs about 90 ms after its entry, and
+    // Claude Code fires a Stop for the last turn only.
+    const cli = lines.map((e) => ("entrypoint" in e ? { ...e, entrypoint: "cli" } : e));
+    const bashAt = replies.find((e) => e.message.content.some((b: Record<string, unknown>) => b.type === "tool_use"))!;
+    const bash = bashAt.message.content.find((b: Record<string, unknown>) => b.type === "tool_use");
+    const asked = typed.filter((e) => !STOPS.includes(text(e)!));
+    const done = at(replies.at(-1)!);
+    const stops = typed.filter((e) => STOPS.includes(text(e)!)).map(at);
+    const want = {
+      "hooks first": [stops[0]! - (at(asked[0]!) - 1), stops[1]! - (at(asked[1]!) - 1), done + 40 - (at(asked[2]!) - 1)],
+      "transcript first": [stops[0]! - at(asked[0]!), stops[1]! - at(asked[1]!), done - at(asked[2]!)],
+    };
+    for (const [order, durationsMs] of Object.entries(want)) {
+      const t = tmpEnv();
+      const config = join(t.home, ".claude");
+      const transcript = join(config, "projects", "-work-demo", `${STOPPED}.jsonl`);
+      writeFile(transcript, cli.map((e) => JSON.stringify(e)).join("\n") + "\n");
+      const line = (event: string, ts: number, raw: Record<string, unknown> = {}): SpoolLine =>
+        ({ v: 0, agent: "claude-code", event, ts, pid: 4100, cwd: "/work/demo", entrypoint: "cli", raw: { session_id: STOPPED, transcript_path: transcript, cwd: "/work/demo", hook_event_name: event, ...raw } }) as SpoolLine;
+      const hookLines = [
+        line("SessionStart", at(asked[0]!) - 300, { source: "startup" }),
+        ...asked.map((e) => line("UserPromptSubmit", at(e) + 90, { prompt: text(e) })),
+        line("PreToolUse", at(bashAt) + 5, { tool_name: "Bash", tool_input: bash.input, tool_use_id: bash.id }),
+        line("Stop", done + 40, { stop_hook_active: false, last_assistant_message: "Done." }),
+        line("SessionEnd", done + 1200, { reason: "other" }),
+      ];
+      writeFile(join(t.dataHome, "spool", "claude-code", "2026-11-25.jsonl"), hookLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      const env = { CODING_SH_HOME: t.dataHome, HOME: t.home, CLAUDE_CONFIG_DIR: config };
+      const index = await SqliteIndexStore.open(join(t.root, "index.db"));
+      const base = { config: defaultConfig(env), index, blobs: new MemoryBlobStore(), env };
+      try {
+        const hooks = () => ingest({ ...base, adapters: new Map([["claude-code", claudeCode]]) });
+        const file = () => backfill({ ...base, adapters: [claudeCode] });
+        if (order === "hooks first") await hooks().then(file);
+        else await file().then(hooks);
+        const stored = await index.listEvents(STOPPED);
+        assert.equal(new Set(stored.map((e) => e.id)).size, stored.length, order);
+        assert.deepEqual(stored.filter((e) => e.kind === "user.message").map((e) => e.payload.text), ["Summarize notes.txt.", STOPS[0], "Run the slow check.", STOPS[1], "Say done."], order);
+        const s = await index.getSession(STOPPED);
+        assert.equal(s?.stats.launch, "interactive");
+        assert.deepEqual(s?.stats.turnsByModel, { "claude-sonnet-4-5": { turns: 3, replied: 2, cancelled: 2, durationsMs } }, order);
+      } finally {
+        await index.close();
+        t.restore();
+      }
+    }
+  });
+});
+
 // A call's speed is its output tokens over its duration, so the duration has to start when the request went out.
 // The real capture above, read the way a hook reads a large transcript (from the middle) and as an older
 // Claude Code wrote it (no api-request records); and synthetic lines written out of order.

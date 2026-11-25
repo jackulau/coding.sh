@@ -1,7 +1,7 @@
 // The person's turns by the model that ran them, and edit and shell calls with their real failures
 // (core/turn-stats.ts), folded into Session.stats.turnsByModel, edits and shells: synthetic sequences
-// for each rule, and recorded fixtures (the Codex rollout, the Claude Code capture made interactive).
-// No recorded capture has a cancelled turn, so the cancel rules are synthetic, in each agent's shape.
+// for each rule, and recorded fixtures (the Codex rollout, two Claude Code captures made interactive).
+// The Claude Code stop capture has two turns the person stopped; the other cancel rules are synthetic, in each agent's shape.
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -539,6 +539,34 @@ describe("the Claude Code capture", () => {
     assert.equal(cli.find((e) => e.kind === "turn.end")!.ts, second.ts);
     assert.deepEqual(buildSession(cli).stats.turnsByModel, {
       "claude-sonnet-4-5": { turns: 2, replied: 1, durationsMs: [said[0]!.ts - first.ts, said[1]!.ts - second.ts] },
+    });
+  });
+});
+
+describe("the Claude Code stop capture", () => {
+  let env: TmpEnv;
+  let events: AgentEvent[];
+  before(async () => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "stop", "config");
+    events = transcript(await collect(claudeCode.backfill!(testCtx().ctx)));
+  });
+  after(() => env.restore());
+
+  test("run through the Agent SDK it is headless: no turns, its stopped shell call still counts", () => {
+    const { stats } = buildSession(events);
+    assert.equal(stats.launch, "headless");
+    assert.equal("turnsByModel" in stats, false);
+    assert.deepEqual(stats.shells, { calls: 1 });
+  });
+
+  test("launched from the terminal: the turn stopped while the model wrote and the one stopped during its shell call are cancelled", () => {
+    const cli = events.map((e) => (e.kind === "session.start" ? { ...e, payload: { ...e.payload, entrypoint: "cli" } } : e));
+    const said = cli.filter((e) => e.kind === "user.message");
+    assert.deepEqual(said.map((e) => e.payload.text), ["Summarize notes.txt.", "[Request interrupted by user]", "Run the slow check.", "[Request interrupted by user for tool use]", "Say done."]);
+    const last = cli.findLast((e) => e.kind === "assistant.message")!;
+    assert.deepEqual(buildSession(cli).stats.turnsByModel, {
+      "claude-sonnet-4-5": { turns: 3, replied: 2, cancelled: 2, durationsMs: [said[1]!.ts - said[0]!.ts, said[3]!.ts - said[2]!.ts, last.ts - said[4]!.ts] },
     });
   });
 });
