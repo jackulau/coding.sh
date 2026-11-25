@@ -5,7 +5,7 @@
 // HTTP, so they never wait on a remote and never block a response.
 //
 // Ingest is idempotent and clients retry, so the mirror is handed only the
-// events a commit newly stored (InsertedEvents in otel/receiver.ts): a request
+// events a commit newly stored (InsertedEvents in otel/ingest-shared.ts): a request
 // that is posted again reaches a sink once.
 //
 // Per sink: a bounded buffer (oldest dropped past maxEvents), flushed every

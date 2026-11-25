@@ -33,7 +33,7 @@ export function parseTraceparent(v: unknown): TraceParent | undefined {
 /**
  * Remembers which session a trace belongs to, from hook events that carry a
  * traceId (the agent's traceparent), in the index kv the OTLP receiver reads
- * (`kvKey`: otel/map.ts traceKvKey, otel-trace:<traceId>). Spans of that trace that name no conversation then
+ * (`kvKey`: otel/ingest-shared.ts traceKvKey, otel-trace:<traceId>). Spans of that trace that name no conversation then
  * join the hook session. A trace already mapped keeps its session; OTel events
  * themselves are skipped (the receiver maps those).
  */
