@@ -41,7 +41,13 @@ bounds, and prints a shortest trace to a broken invariant. Both run the same cas
 failing property prints the command that replays it (`CODING_SH_PROP_SEED=<seed>`, with the run's
 `CODING_SH_PROP_RUNS` when that raised the case count).
 `CODING_SH_PROP_SEED=random` tries new cases, `CODING_SH_PROP_RUNS=1000` runs more of them, and
-`CODING_SH_MODEL_BOUND=1` raises each model's bounds by one.
+`CODING_SH_MODEL_BOUND=1` raises each model's bounds by one. To see which small bugs in one file
+the tests miss, run
+`node --no-warnings scripts/mutate.ts --file src/core/redact.ts --test test/verify/redact-prop.test.ts`
+from `packages/coding.sh`: it runs the test files against up to 80 mutants of the file, each a
+small change in a temp copy of the package, and lists the mutants no test fails on.
+`--json <path>` saves the run, `--survivors <path>` runs only the mutants a saved run lists as
+survived, and the header of `scripts/mutate.ts` lists every option; CI does not run it.
 
 `npm run verify:deep` in `packages/coding.sh` runs the files in `test/verify` one at a time, with
 the knobs in the `NIGHTLY` table of `scripts/verify-deep.ts`: each model at a raised bound and each

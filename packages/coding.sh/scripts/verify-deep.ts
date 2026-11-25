@@ -33,7 +33,7 @@ export interface Knobs {
 /**
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
- * are rough. A property file without a time takes under half a minute. Every file together: about 9
+ * are rough. A property file without a time takes under half a minute. Every file together: about 10
  * minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
@@ -44,17 +44,27 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // at bounds 3 and 6. About 20 seconds.
   "capture-model": { bound: 2 },
   "cost-prop": { runs: 10000 },
+  // About 35 seconds.
   "fold-prop": { runs: 5000 },
   "hook-imports": {},
+  "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
+  "metadata-prop": { runs: 10000 },
   model: {},
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
   "pushback-prop": { runs: 10000 },
+  "redact-counted-prop": { runs: 10000 },
+  "redact-deep-prop": { runs: 10000 },
+  "redact-env-prop": { runs: 10000 },
+  "redact-pii-prop": { runs: 10000 },
   "redact-prop": { runs: 10000 },
+  "redact-prose-prop": { runs: 10000 },
+  "redact-tally-prop": { runs: 10000 },
   // About 3 minutes and 6.5 GB of heap. At bound 3 the first run alone has 3,443,232 states and needs 8 GB.
   "refold-model": { bound: 2 },
+  // About 1 minute.
   "short-id-prop": { runs: 10000 },
   // About 1.5 minutes and 2 GB of heap.
   "work-model": { bound: 1 },
