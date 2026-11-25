@@ -31,6 +31,11 @@
 //   an older ingest stamped (spool/spawned.ts); with none, a subagent's id names it
 //   (`<parent>:sub:<agentId>`, neither part empty); else the first call the proxy saw that names
 //   another session.
+// - A session reports what its own events say: its last test run's counts (a count that is no finite
+//   number reads 0; none without a test run), how the agent was launched (a host's launch wins over
+//   the first session.start that says), and a fork's inherited tokens (the first count a fork notice
+//   gives that is above 0: one of 0, below 0 or not finite is skipped). A gateway's copy of an event
+//   reports nothing.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -38,6 +43,7 @@ import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { deserialize, serialize } from "node:v8";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
@@ -457,6 +463,148 @@ test("a session's parent is the one its session.start names, else its id's, else
       assert.deepEqual(buildSession(events).parent, want, why);
     },
     { runs: 1000, label: "parent" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** What a row reports of its last test run, its launch and a fork's inherited context. */
+type Reports = Pick<Session["stats"], "testsPassed" | "testsFailed" | "launch" | "inheritedTokens">;
+
+/** session.start payloads, and how each says the agent was launched (the doc of launchOf). */
+const STARTS: readonly (readonly [Record<string, string>, Reports["launch"]])[] = [
+  [{}, undefined],
+  [{ entrypoint: "cli" }, "interactive"],
+  [{ entrypoint: "sdk-ts" }, "headless"],
+  [{ entrypoint: "remote" }, undefined],
+  [{ launch: "exec" }, "headless"],
+  [{ originator: "codex_vscode" }, "interactive"],
+];
+
+/** A generated event that reports something: a test run, a session.start or a notification. */
+interface ReportEvent {
+  kind: "test.result" | "session.start" | "notification";
+  /** Seconds after T0. */
+  at: number;
+  /** A gateway's copy of the event (source "gateway", enrichment), not one of the session's own. */
+  copy: boolean;
+  /** A test run's payload.passed and payload.failed: counts, or values that are no count. */
+  passed: unknown;
+  failed: unknown;
+  /** A session.start's payload, and the launch it says. */
+  start: readonly [Record<string, string>, Reports["launch"]];
+  /** A notification: a fork's notice, a host's link or another host notice. */
+  note: "fork" | "host-link" | "usage-summary";
+  /** A fork notice's payload.inheritedTokens, and a host notice's payload.launch. */
+  inherited: unknown;
+  launch: unknown;
+}
+
+const reportEventGen: Gen<ReportEvent> = gen.record<ReportEvent>({
+  kind: gen.pick(["test.result", "test.result", "session.start", "notification", "notification"] as const),
+  at: gen.int(0, 4),
+  copy: gen.weighted(1 / 6),
+  passed: gen.pick<unknown>([undefined, 0, 3, 12, "4", NaN, Infinity, null]),
+  failed: gen.pick<unknown>([undefined, 0, 1, 5, "2", NaN]),
+  start: gen.pick(STARTS),
+  note: gen.pick(["fork", "fork", "host-link", "host-link", "usage-summary"] as const),
+  // A count the session keeps (above 0), one it skips (0, below 0 or not finite), or none that is a number.
+  inherited: gen.frequency<unknown>([3, gen.pick<unknown>([1200, 54000])], [3, gen.pick<unknown>([0, -300, NaN, Infinity])], [2, gen.pick<unknown>([undefined, "800"])]),
+  launch: gen.pick<unknown>([undefined, "interactive", "headless", "batch"]),
+});
+
+function reportEvents(rs: ReportEvent[]): AgentEvent[] {
+  return rs.map((r, i): AgentEvent => {
+    const payload: Record<string, unknown> = {};
+    const put = (k: string, v: unknown) => {
+      if (v !== undefined) payload[k] = v;
+    };
+    if (r.kind === "test.result") {
+      put("passed", r.passed);
+      put("failed", r.failed);
+    } else if (r.kind === "session.start") Object.assign(payload, r.start[0]);
+    else if (r.note === "fork") {
+      payload.kind = "fork";
+      put("inheritedTokens", r.inherited);
+    } else {
+      payload.type = r.note;
+      put("launch", r.launch);
+    }
+    const e: AgentEvent = { id: `report-${i}`, v: 0, sessionId: "report-session", ts: T0 + r.at * 1000, agent: "claude-code", kind: r.kind, payload };
+    if (r.copy) e.source = "gateway";
+    return e;
+  });
+}
+
+const isCount = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+/** A host-link's launch, which wins over a session.start's. */
+const hostLaunchOf = (r: ReportEvent) => (r.kind === "notification" && r.note === "host-link" && (r.launch === "interactive" || r.launch === "headless") ? r.launch : undefined);
+/** A fork notice's tokens, when it gives a number. */
+const forkTokensOf = (r: ReportEvent) => (r.kind === "notification" && r.note === "fork" && typeof r.inherited === "number" ? r.inherited : undefined);
+/** A fork notice's count that the session keeps: a finite number above 0. */
+const isKeptCount = (n: number | undefined) => n !== undefined && Number.isFinite(n) && n > 0;
+
+/**
+ * What a session's events report, in time order, from the docs of Session.stats and the test.result
+ * payload: the last test run's counts (one that is no finite number reads 0), how the agent was
+ * launched (a host-link's launch wins over the first session.start that says), and the first count a
+ * fork notice gives that is above 0 (one of 0, below 0 or not finite is skipped).
+ */
+function reportsOf(rs: ReportEvent[]): Reports {
+  const run = rs.findLast((r) => r.kind === "test.result");
+  const host = rs.map(hostLaunchOf).find((l) => l !== undefined);
+  const start = rs.find((r) => r.kind === "session.start" && r.start[1] !== undefined)?.start[1];
+  return {
+    testsPassed: run && (isCount(run.passed) ? (run.passed as number) : 0),
+    testsFailed: run && (isCount(run.failed) ? (run.failed as number) : 0),
+    launch: host ?? start,
+    inheritedTokens: rs.map(forkTokensOf).find(isKeptCount),
+  };
+}
+
+test("a session reports its last test run, its launch and a fork's inherited tokens as its own events give them", async (t) => {
+  const seen: Record<string, number> = {
+    "a test run": 0,
+    "a passed count that is no number": 0,
+    "a failed count that is no number": 0,
+    "a host's launch over a start's other one": 0,
+    "a start's launch": 0,
+    "a start that says none before one that says": 0,
+    "a fork's tokens": 0,
+    "a fork's count that is skipped, and none kept": 0,
+    "a skipped count before a kept one": 0,
+    "a kept count before another": 0,
+    "a gateway's copy that would change it": 0,
+  };
+  await forAll(
+    gen.array(reportEventGen, { minLength: 1, maxLength: 6 }),
+    (rs) => {
+      // The fold reads events in time order, keeping the order of events at the same time.
+      const all = [...rs].sort((a, b) => a.at - b.at);
+      // Enrichment never decides a session's shape: a gateway's copy reports nothing.
+      const own = all.filter((r) => !r.copy);
+      const want = reportsOf(own);
+      const run = own.findLast((r) => r.kind === "test.result");
+      if (run) seen["a test run"]!++;
+      if (run && !isCount(run.passed)) seen["a passed count that is no number"]!++;
+      if (run && !isCount(run.failed)) seen["a failed count that is no number"]!++;
+      const starts = own.filter((r) => r.kind === "session.start");
+      const start = starts.find((r) => r.start[1] !== undefined);
+      const host = own.map(hostLaunchOf).find((l) => l !== undefined);
+      if (host && start && host !== start.start[1]) seen["a host's launch over a start's other one"]!++;
+      if (!host && start) seen["a start's launch"]!++;
+      if (start && starts[0] !== start) seen["a start that says none before one that says"]!++;
+      const counts = own.map(forkTokensOf).filter((n) => n !== undefined);
+      const kept = counts.findIndex(isKeptCount);
+      if (kept >= 0) seen["a fork's tokens"]!++;
+      if (counts.length > 0 && kept < 0) seen["a fork's count that is skipped, and none kept"]!++;
+      if (kept > 0) seen["a skipped count before a kept one"]!++;
+      if (kept >= 0 && counts.slice(kept + 1).some(isKeptCount)) seen["a kept count before another"]!++;
+      if (!isDeepStrictEqual(reportsOf(all), want)) seen["a gateway's copy that would change it"]!++;
+      const { stats } = buildSession(reportEvents(rs));
+      assert.deepEqual({ testsPassed: stats.testsPassed, testsFailed: stats.testsFailed, launch: stats.launch, inheritedTokens: stats.inheritedTokens }, want);
+    },
+    { runs: 1000, label: "reports" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
