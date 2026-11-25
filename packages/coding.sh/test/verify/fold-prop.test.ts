@@ -31,7 +31,7 @@ import { forAll, gen, type Gen } from "../_prop.ts";
 
 /** Transcript fixtures and the variable that points each adapter's backfill at them. */
 const BACKFILLS: { agent: string; env: string; dirs: string[] }[] = [
-  { agent: "claude-code", env: "CLAUDE_CONFIG_DIR", dirs: ["config", "edge/config", "fallback/config", "fork/config", "hooks-real/config", "real/config", "subagents/config", "unapproved/config"] },
+  { agent: "claude-code", env: "CLAUDE_CONFIG_DIR", dirs: ["config", "edge/config", "fallback/config", "fork/config", "hooks-real/config", "real/config", "stop/config", "subagents/config", "unapproved/config"] },
   { agent: "codex", env: "CODEX_HOME", dirs: ["home", "cut", "skill"] },
 ];
 

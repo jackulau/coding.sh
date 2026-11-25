@@ -570,7 +570,7 @@ export async function run(c: CommandContext): Promise<number> {
       const listed = phased ? [] : ((all ? full : events) ?? []);
       const subagents = pageTree(tree, 0, SUBAGENT_JSON_LIMIT);
       const doc: Record<string, unknown> = {
-        session: sessionJson(s, { derailEvents: true }),
+        session: sessionJson(s, { derailEvents: true, turnDurations: true }),
         snapshot: changes ?? null,
         eventCount: s.stats.events,
         events: (await withWholePayloads(listed, ctx.blobs)).map((e) => eventJson(e, s)),

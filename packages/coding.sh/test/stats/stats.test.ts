@@ -21,6 +21,8 @@ import {
   roganGladen,
   stddev,
   summarize,
+  intervalDiff,
+  medianInterval,
   newcombeDiff,
   wilson,
 } from "../../src/stats/index.ts";
@@ -39,6 +41,51 @@ describe("newcombeDiff", () => {
     const s = newcombeDiff(0, 10, 10, 10);
     assert.ok(s.lo > 0 && s.hi <= 1);
     assert.deepEqual([newcombeDiff(0, 0, 1, 2).lo, newcombeDiff(0, 0, 1, 2).hi], [-1, 1]);
+  });
+});
+
+describe("medianInterval", () => {
+  const ranks = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+  // The order statistics x(l) and x(n + 1 − l) of the exact Bin(n, 1/2) table.
+  const table: [number, number, number][] = [
+    [6, 1, 6],
+    [10, 2, 9],
+    [20, 6, 15],
+    [100, 40, 61],
+    [2000, 956, 1045],
+  ];
+  for (const [n, l, u] of table) {
+    it(`n = ${n} → ranks ${l} and ${u}`, () => {
+      const r = medianInterval(ranks(n));
+      assert.deepEqual([r.lo, r.hi], [l, u]);
+      close(r.p, (n + 1) / 2, 1e-12);
+    });
+  }
+  it("below 6 values there is no 95% interval; an empty sample has no median", () => {
+    const r = medianInterval([1, 2, 3, 4, 5]);
+    assert.deepEqual([r.p, r.lo, r.hi], [3, -Infinity, Infinity]);
+    assert.ok(Number.isNaN(medianInterval([]).p));
+  });
+  it("reads the values at those ranks, not the ranks", () => {
+    const r = medianInterval([10, 20, 30, 40, 50, 60, 70, 80, 90, 1000]);
+    assert.deepEqual([r.p, r.lo, r.hi], [55, 20, 90]);
+  });
+});
+
+describe("intervalDiff", () => {
+  it("on two Wilson intervals it is newcombeDiff", () => {
+    const d = intervalDiff(wilson(1, 10), wilson(7, 10));
+    const n = newcombeDiff(1, 10, 7, 10);
+    close(d.p, n.p, 1e-12);
+    close(d.lo, n.lo, 1e-12);
+    close(d.hi, n.hi, 1e-12);
+  });
+  it("b − a, with each side's own width, and no bound when either side has none", () => {
+    // Down: b's lower side (3) and a's upper side (4); up: b's upper side (6) and a's lower side (8).
+    const d = intervalDiff({ p: 10, lo: 2, hi: 14 }, { p: 20, lo: 17, hi: 26 });
+    assert.deepEqual([d.p, d.lo, d.hi], [10, 5, 20]);
+    const open = intervalDiff({ p: 1, lo: -Infinity, hi: Infinity }, { p: 2, lo: 1, hi: 3 });
+    assert.deepEqual([open.p, open.lo, open.hi], [1, -Infinity, Infinity]);
   });
 });
 

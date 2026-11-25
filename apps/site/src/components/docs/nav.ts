@@ -128,6 +128,13 @@ export const DOC_GROUPS: DocGroup[] = [
         summary: "Tokens and cost per session, agent, model, repo and day, your most expensive sessions, and where each number comes from.",
       },
       {
+        path: "/docs/how-to/compare-models",
+        label: "Compare models",
+        title: "Compare models on your own sessions",
+        summary: "Put the models you used side by side: pushback, stopped turns, turn time, failed edits and shell commands, each with its counts and a 95% interval.",
+        searchTerms: ["scorecard", "personal eval"],
+      },
+      {
         path: "/docs/how-to/alerts",
         label: "Alerts",
         title: "Get an alert when failures or spend cross a threshold",

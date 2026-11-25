@@ -1,0 +1,299 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573344263,
+    "payload": {
+      "source": "transcript",
+      "gitBranch": "HEAD",
+      "entrypoint": "sdk-cli"
+    },
+    "id": "02ca5fb22b43c7c50481c2f04ab1eb1d0f453e352c1f8782efe2915fadc4d56a",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573344263,
+    "payload": {
+      "text": "Summarize notes.txt."
+    },
+    "id": "f66904e997aa479f326dc4fe9c30a5917d3e4a95aca48b945cdc47323718f854",
+    "turnId": "9730c9c42c6548f7c2a4241a9fdaa77803166f96ec27497ffcac2d7fe410095d",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573344368,
+    "payload": {
+      "text": "Let me read notes.txt first.",
+      "messageId": "msg_mwvi0bjd0"
+    },
+    "id": "db339043abb4384d28ba0532cf4a099bd8da3f1ed1e469faa22919ee15fe9c43",
+    "turnId": "9730c9c42c6548f7c2a4241a9fdaa77803166f96ec27497ffcac2d7fe410095d",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573344263,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "ttftMs": 105,
+      "tokensPerSec": 9.5,
+      "ok": true,
+      "messageId": "msg_mwvi0bjd0"
+    },
+    "id": "b8cf589a8765a72c53217663a16c67ee331d1b8b201bcbce0a813afb478faccc",
+    "turnId": "9730c9c42c6548f7c2a4241a9fdaa77803166f96ec27497ffcac2d7fe410095d",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 105,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 1
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573345905,
+    "payload": {
+      "durationMs": 1642,
+      "synthesized": true
+    },
+    "id": "91d2dd15247ea4cf4dca03c237edebc82e0b3ba705e6ab8f3980ac5dc52a27b6",
+    "turnId": "9730c9c42c6548f7c2a4241a9fdaa77803166f96ec27497ffcac2d7fe410095d",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 1642,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573345905,
+    "payload": {
+      "text": "[Request interrupted by user]"
+    },
+    "id": "6425d6e80777a98cbf4f75ff2321de9d9fe49a648683d51fdfb93526afe4f664",
+    "turnId": "9730c9c42c6548f7c2a4241a9fdaa77803166f96ec27497ffcac2d7fe410095d",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573347035,
+    "payload": {
+      "text": "Run the slow check."
+    },
+    "id": "2bb6d144749ef5400bf8bb7b6bffef12d9d187cf983756e6c53931a1ff1a22b3",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573347062,
+    "payload": {
+      "text": "Running the slow check.",
+      "messageId": "msg_mwvi0dmb2"
+    },
+    "id": "ec760179f21f329ca44f62dcb2c10be38ec2940882c45f462b765d465c004239",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573347065,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_mwvi0dmb3",
+      "input": {
+        "command": "sleep 20",
+        "description": "Slow check"
+      }
+    },
+    "id": "2e241dfa6cab24bba10235503bb65ddcf2109703492cc112afeb1446a90ffb27",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573350152,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_mwvi0dmb3",
+      "ok": false,
+      "durationMs": 3087,
+      "output": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed. Correction to the text above: this call was stopped while running, not refused before it ran. It may have run in part or in full, and its changes may have been written. No permission prompt was involved. Work it started elsewhere (a remote command, a background process) may still be running, so check before starting the same work again. The instruction to stop and wait still stands."
+    },
+    "id": "5a52bf80c7b7d0f797f832b391a678f5b2e3be632b176889a79214fa6ffc513b",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 3087,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573347035,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "ttftMs": 27,
+      "stopReason": "tool_use",
+      "tokensPerSec": 1000,
+      "ok": true,
+      "messageId": "msg_mwvi0dmb2"
+    },
+    "id": "400f56ebbe705ad110b396e392507d1bab32adb49d3dd7712e8d38a9bea1b40f",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 30,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 30,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573350155,
+    "payload": {
+      "durationMs": 3120,
+      "synthesized": true
+    },
+    "id": "f5a31a8ff8ff2aeb541bfc904280e98a0b22e186db2ea3648d2a811e1e33b349",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 3120,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573350155,
+    "payload": {
+      "text": "[Request interrupted by user for tool use]"
+    },
+    "id": "70c6f4bc17b6538530fc4d9d6fb7b9c4ebabbd405b1bb6da855afb30736b94da",
+    "turnId": "4bced4c4e4b3e13170edc2bb770fab2b6e4b6426c3799b4bb6ad328a1b1c5a1c",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573351265,
+    "payload": {
+      "text": "Say done."
+    },
+    "id": "053935c38a919c76fbb25bbbbd0d18e80fc631f503e46d45bcaca24b3cf00ff0",
+    "turnId": "254981faacc0829ce0df1a2f3635e23aad4f959e709e01f046ebe4e26e638f5e",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573351289,
+    "payload": {
+      "text": "Done.",
+      "messageId": "msg_mwvi0gvq4"
+    },
+    "id": "e5675c4c6eda89e4729b437e9e63bcdbac1e1b927bff7157df106719f9a94747",
+    "turnId": "254981faacc0829ce0df1a2f3635e23aad4f959e709e01f046ebe4e26e638f5e",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573351265,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "ttftMs": 24,
+      "stopReason": "end_turn",
+      "tokensPerSec": 1250,
+      "ok": true,
+      "messageId": "msg_mwvi0gvq4"
+    },
+    "id": "feeff1077e56671bdcc0fdef0f24ab4708a159a1a3ddf8ad296269675721769f",
+    "turnId": "254981faacc0829ce0df1a2f3635e23aad4f959e709e01f046ebe4e26e638f5e",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 24,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 30,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573351289,
+    "payload": {
+      "durationMs": 24,
+      "synthesized": true
+    },
+    "id": "5fe120557f24d2f14ecccbc0d7f1d5005b48df091f5be4b1507b2bdbde5b39a9",
+    "turnId": "254981faacc0829ce0df1a2f3635e23aad4f959e709e01f046ebe4e26e638f5e",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 24,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "11ca04d8-6d0e-4f00-86fc-d2cead23134d",
+    "ts": 1795573351289,
+    "payload": {
+      "reason": "idle",
+      "reportedUsage": {
+        "costUsd": 0.00162,
+        "apiDurationMs": 77,
+        "costUsdByModel": {
+          "claude-sonnet-4-5": 0.00162
+        }
+      }
+    },
+    "id": "5cd1e4aec1b4727ce4335a344cd1d66da05f12e32d189b9990b4c107da421314",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  }
+]

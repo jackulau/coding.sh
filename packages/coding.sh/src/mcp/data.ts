@@ -9,6 +9,7 @@ import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { apportion, splitOf, TOKEN_TYPES } from "../core/pricing.ts";
+import { isPushback } from "../core/pushback.ts";
 import { failureFlags, isBackfillEvent } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
@@ -512,17 +513,6 @@ export function turnIndex(turns: AgentEvent[][], startedAt: number): TurnInfo[] 
       durationMs: Math.max(0, last.ts + (last.durationMs ?? 0) - first.ts),
     };
   });
-}
-
-// ------------------------------------------------------------ pushback
-
-const PUSHBACK_START = /^(?:no\b|nope\b|stop\b|wait\b|don'?t\b|do not\b|undo\b|revert\b|wrong\b|why did you\b|that'?s (?:not|wrong)\b|this is (?:not|wrong)\b|not what\b|you (?:broke|didn'?t|forgot|missed)\b|still (?:fail|broken|not)\w*\b|it (?:still )?(?:doesn'?t|didn'?t) work\b|actually\b)/i;
-const PUSHBACK_ANY = /\b(?:that'?s wrong|you broke|not what i (?:asked|wanted)|didn'?t work|still (?:failing|fails|broken)|try again|please revert|undo (?:that|this|it)|that is wrong)\b/i;
-
-/** True when a follow-up prompt reads as the user correcting the agent. */
-export function isPushback(text: string): boolean {
-  const t = text.trim().slice(0, 400);
-  return PUSHBACK_START.test(t) || PUSHBACK_ANY.test(t);
 }
 
 // ------------------------------------------------------------ aggregates

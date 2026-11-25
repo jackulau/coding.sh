@@ -40,9 +40,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { isPlumbing, shellParts } from "../core/failing-command.ts";
+import { isPushback } from "../core/pushback.ts";
 import { failureFlags, FLAGS } from "../core/sessions.ts";
 import type { AgentEvent, Session, SessionFilter } from "../core/types.ts";
-import { isPushback } from "../mcp/data.ts";
 import { isTestPath } from "./impossible.ts";
 import { extractTestCommand, guessVerifierFromEvents, instructionFromArgs, shellCommandOf } from "./task.ts";
 

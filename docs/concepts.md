@@ -26,6 +26,8 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - `stats.prs` lists the PRs it opened, merged, closed or linked.
 - [`stats.retrieval`](https://coding.sh/docs/api/read#get-apisessionsid) counts reads and searches.
 - [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
+- [`stats.turnsByModel`](reference/api.md#get-apisessionsid) counts turns by model, and `stats.edits`
+  and `stats.shells` count edits and shell commands.
 - `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
@@ -50,6 +52,7 @@ One prompt and everything the agent does until it hands control back to you.
 - The viewer formats markdown in prompts and replies, such as headings, lists and code. A link
   shows its text and address, HTML shows as written, and Copy text copies the original.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
+- `coding.sh stats --scorecard` compares models turn by turn ([compare models](how-to/compare-models.md)).
 
 ### Event
 
@@ -102,8 +105,7 @@ session that recorded one has the `weights:edited` tag and counts its edits in `
 - In the CLI: `coding.sh sessions --flag weights:edited` lists the sessions, and
   `coding.sh show <id>` prints one line per edit.
 - Recorded by the Python SDK's `coding_sh.weights_edit()`, the TypeScript SDK's `weightsEdit()`,
-  or any OpenTelemetry SDK as a span named `weights.edit`. The fields are in the
-  [API reference](https://coding.sh/docs/api).
+  or any OpenTelemetry SDK as a span named [`weights.edit`](https://coding.sh/docs/api).
 
 ### Weights checkpoint
 
@@ -118,8 +120,7 @@ whole-file hash that `coding.sh exp run --weights` records. A session that recor
   that saved a file, and `coding.sh show <id>` prints `checkpoint 58899f90572c ← 0496e5111097`
   and the experiments that ran that file.
 - In evals: `coding.sh exp show` and `exp compare` name the session under the experiment's
-  `weights` line, with its edits. See
-  [Compare an edited model with its base](https://coding.sh/docs/experiments#weights).
+  [`weights` line](https://coding.sh/docs/experiments#weights), with its edits.
 - Recorded by the Python SDK's `coding_sh.weights_checkpoint()`, the TypeScript SDK's
   `weightsCheckpoint()`, or any OpenTelemetry SDK as a span named `weights.checkpoint`. You compute
   the hash.
@@ -131,14 +132,14 @@ estimate.
 
 - In the viewer: each session's cost in the list, and cost per day on Explore
   (`g x`).
-- In the CLI: `coding.sh usage` shows tokens and cost by agent, model, day, MCP server, skill or
-  subagent. See [Track cost](https://coding.sh/docs/cost).
+- In the CLI: [`coding.sh usage`](https://coding.sh/docs/cost) shows tokens and cost by agent, model,
+  day, MCP server, skill or subagent.
 - In the API: [`stats.compactionRefetches`](https://coding.sh/docs/api) counts reads that fetched
   again what a compaction dropped.
-- Budgets: `coding.sh budget set` sets a spend limit per day, week or month. See
-  [Track cost](https://coding.sh/docs/cost#set-a-budget).
-- Plan usage: `coding.sh quota` shows the use of a plan's 5-hour and weekly windows. See
-  the [CLI reference](https://coding.sh/docs/cli/quota).
+- Budgets: [`coding.sh budget set`](https://coding.sh/docs/cost#set-a-budget) sets a spend limit per
+  day, week or month.
+- Plan usage: [`coding.sh quota`](https://coding.sh/docs/cli/quota) shows the use of a plan's 5-hour
+  and weekly windows.
 
 ### Alert
 
@@ -170,8 +171,8 @@ case: better, worse or inconclusive.
 
 - In the viewer: Experiments (`g e`). `x` selects two, and `c`
   compares them.
-- In the CLI: `coding.sh exp run` makes one, and `coding.sh exp compare` compares two. See
-  [Experiments](https://coding.sh/docs/experiments).
+- In the CLI: [`coding.sh exp run`](https://coding.sh/docs/experiments) makes one, and
+  `coding.sh exp compare` compares two.
 
 ### Grader
 
@@ -187,8 +188,8 @@ A grader that asks a model. Trust it only after you check it against your own pa
 
 - In the viewer: mark a session Pass (`p`) or Fail (`f`) on its page. It is a human score; press
   again to clear it.
-- In the CLI: `coding.sh judge calibrate` measures how often the judge agrees with human labels. See
-  [Judges](https://coding.sh/docs/judges).
+- In the CLI: [`coding.sh judge calibrate`](https://coding.sh/docs/judges) measures how often the
+  judge agrees with human labels.
 
 ### Monitor
 

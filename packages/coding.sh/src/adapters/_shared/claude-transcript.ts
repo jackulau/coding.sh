@@ -159,6 +159,25 @@ export function promptText(e: Record<string, unknown>): string | undefined {
   return t !== undefined && syntheticUserKind(t) === undefined ? t : undefined;
 }
 
+/**
+ * The prompt Claude Code writes when the person stops a turn (Esc): "[Request interrupted by user]",
+ * or "[Request interrupted by user for tool use]" during a tool call. core/wait-stats.ts reads it the
+ * same way (INTERRUPTED).
+ */
+export const INTERRUPT_PROMPT = /^\s*\[Request interrupted by user/;
+
+/** What the person typed, from a user entry: a prompt's text, or a slash command's name and arguments ("/review src"). */
+export function typedText(e: Record<string, unknown>): string | undefined {
+  const t = userText(e);
+  if (t === undefined) return undefined;
+  const kind = syntheticUserKind(t);
+  if (kind === undefined) return t;
+  const name = kind === "command" ? tag(t, "command-name") : undefined;
+  if (!name) return undefined;
+  const args = tag(t, "command-args");
+  return args ? `${name} ${args}` : name;
+}
+
 /** The user entry where a fork's own transcript starts: it holds the tool_result for the parent's Agent call `toolUseId`. */
 function isForkStart(e: Record<string, unknown>, toolUseId: string): boolean {
   return e.type === "user" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_result" && b.tool_use_id === toolUseId);
@@ -421,10 +440,18 @@ export class ClaudeTranscriptConverter {
       await this.localCommand();
       // A request recorded before this prompt got no response: the prompt's own request comes after it.
       this.request = undefined;
-      await this.openTurn(str(e.promptId) ?? uuid, ts, lineNo, async (em) => {
-        const t = await clipText(this.ctx, text);
-        em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: [uuid], blobs: blobList(t.blob) });
-      });
+      // No hook reports the person stopping a turn: a live window records that prompt too, with the backfill's id.
+      const always = INTERRUPT_PROMPT.test(text);
+      await this.openTurn(
+        str(e.promptId) ?? uuid,
+        ts,
+        lineNo,
+        async (em) => {
+          const t = await clipText(this.ctx, text);
+          em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: [uuid], blobs: blobList(t.blob) });
+        },
+        always,
+      );
       return;
     }
     // Hooks never see what the harness loaded, so live windows record it too.
@@ -452,14 +479,21 @@ export class ClaudeTranscriptConverter {
     this.push(em);
   }
 
-  /** Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, or `prompts`). */
-  private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>): Promise<void> {
+  /**
+   * Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, `prompts`, or `always`).
+   * An entry keyed like the turn that just ended starts none: the stop prompt carries the promptId of the turn the
+   * person stopped, and ending that turn again would give a second turn.end its id.
+   */
+  private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>, always = false): Promise<void> {
     await this.endTurn(ts, lineNo);
-    this.turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
-    this.turnStartTs = ts;
-    this.turnEnded = false;
+    const turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
+    if (turnId !== this.turnId) {
+      this.turnId = turnId;
+      this.turnStartTs = ts;
+      this.turnEnded = false;
+    }
     this.boundary = true;
-    if (this.opts.mode !== "full" && !this.opts.prompts) return;
+    if (this.opts.mode !== "full" && !this.opts.prompts && !always) return;
     const em = this.em(ts, lineNo);
     await emit(em);
     this.push(em);
