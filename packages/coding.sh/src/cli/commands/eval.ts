@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { materialize, shadowRepoPath, snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
@@ -189,10 +190,12 @@ export async function run(c: CommandContext): Promise<number> {
             ...(list(c.flags.tag).length ? { tags: list(c.flags.tag) } : {}),
           });
         } catch (e) {
+          // Named by a reference that opens the session when pasted back: a full id can need quoting, or be `latest`.
+          const ref = await shortener(ctx.index).then((short) => short(s.id), () => s.id);
           if (e instanceof StatementError) {
-            throw new CliError(`Couldn't write a requirement ledger for ${s.id}: ${e.message}`, { reason: "draft_failed", next: ["Retry, use another model, or take one obligation per user turn:", `coding.sh eval new ${s.id} --statement ledger`] });
+            throw new CliError(`Couldn't write a requirement ledger for ${ref}: ${e.message}`, { reason: "draft_failed", next: ["Retry, use another model, or take one obligation per user turn:", `coding.sh eval new ${ref} --statement ledger`] });
           }
-          throw new CliError(`Couldn't draft a task from ${s.id}: ${commandsForShell(e instanceof Error ? e.message : String(e), c.env)}`, { reason: "draft_failed" });
+          throw new CliError(`Couldn't draft a task from ${ref}: ${commandsForShell(e instanceof Error ? e.message : String(e), c.env)}`, { reason: "draft_failed" });
         }
         await ctx.index.putTask(task);
         const notes = task.meta.notes.map((n) => commandsForShell(n, c.env));

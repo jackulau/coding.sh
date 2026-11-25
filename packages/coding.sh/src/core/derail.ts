@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import type { AgentEvent } from "../schema/index.ts";
 import { failureState, foldFailure, type FailureState, type ToolFailure } from "./failures.ts";
+import { billableUsage, promptTokens, tokenCount } from "./pricing.ts";
 import { commandField } from "./shell-tools.ts";
 
 export const DERAIL_FLAGS = {
@@ -157,6 +158,8 @@ interface Ev {
   passed?: number;
   manual?: boolean;
   ctx?: number;
+  /** A prompt token count of the call was skipped, so ctx can be too low. */
+  partial?: boolean;
 }
 
 interface RawDelta {
@@ -338,12 +341,18 @@ function patchDeltas(patch: string): RawDelta[] {
 
 const shortPath = (p: string): string => p.split(/[\\/]/).slice(-2).join("/");
 
-/** Tokens the model saw on one call: fresh input plus cache reads and writes. */
-const contextOf = (e: AgentEvent): number | undefined => {
+const PROMPT_COUNTS = ["inputTokens", "cacheReadTokens", "cacheWriteTokens"] as const;
+
+/**
+ * Tokens the model saw on one call: fresh input plus cache reads and writes. A count below 0 or not a
+ * finite number (null once stored) adds nothing, and makes the size partial: it can be too low.
+ */
+const contextOf = (e: AgentEvent): { tokens?: number; partial: boolean } => {
   const u = e.usage;
-  if (!u) return undefined;
-  const n = (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
-  return n > 0 ? n : undefined;
+  if (!u) return { partial: false };
+  const n = promptTokens(billableUsage(u));
+  const partial = PROMPT_COUNTS.some((k) => u[k] !== undefined && tokenCount(u[k]) === undefined);
+  return n > 0 ? { tokens: n, partial } : { partial };
 };
 
 const compact = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
@@ -532,8 +541,11 @@ function npEvent(e: AgentEvent): Ev | undefined {
     case "context.compact":
       return { ev: "compact", manual: e.payload.trigger === "manual" };
     case "llm.call": {
-      const ctx = contextOf(e);
-      return ctx === undefined ? { ev: "llm" } : { ev: "llm", ctx };
+      const { tokens, partial } = contextOf(e);
+      const x: Ev = { ev: "llm" };
+      if (tokens !== undefined) x.ctx = tokens;
+      if (partial) x.partial = true;
+      return x;
     }
   }
   return undefined;
@@ -692,8 +704,10 @@ function npStep(p: NoProgress, x: Ev | undefined, c: Call | undefined, t: Derail
         return;
       case "llm":
         if (x.ctx !== undefined && p.len) {
-          p.firstCtx ??= x.ctx;
-          p.lastCtx = x.ctx;
+          // A partial size can be too low: as the start it would make growth that is not there, and as
+          // the latest it would hide growth that is.
+          if (!x.partial) p.firstCtx ??= x.ctx;
+          p.lastCtx = x.partial ? Math.max(p.lastCtx ?? 0, x.ctx) : x.ctx;
         }
         return;
     }

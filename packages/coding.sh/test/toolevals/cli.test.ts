@@ -13,6 +13,7 @@ import { posixShell } from "../../src/core/spawn.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { FAKE_CLI } from "./helpers.ts";
 import { assertStartupBudget } from "../helpers-timing.ts";
+import { NO_USER_SHELL, runEnvLines } from "../cli/_env-lines.ts";
 
 // Task commands run in sh; on Windows that is Git's bash, which a node-only PATH would hide.
 const SHELL_DIR = process.platform === "win32" ? dirname(posixShell() ?? "") : undefined;
@@ -74,6 +75,24 @@ function one(stdout: string, label: string): Record<string, unknown> {
 }
 
 const q = (s: string) => JSON.stringify(s);
+
+/** The error document a --json run prints on stderr when it fails. */
+function errorDoc(r: SpawnSyncReturns<string>): { status: string; reason: string; message: string; next: string[] } {
+  assert.equal(r.status, 1, r.stderr);
+  const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
+  assert.ok(line, r.stderr);
+  return JSON.parse(line) as { status: string; reason: string; message: string; next: string[] };
+}
+
+/**
+ * A missing key named as the user's shell reads it: `$NAME` in sh and Git Bash, `$env:NAME` in
+ * PowerShell and cmd. The next step is the line that sets it there; the other way, apiKeyEnv in
+ * the driver's table, follows as a shell comment, so the line runs as printed in either shell.
+ */
+function assertKeyError(doc: ReturnType<typeof errorDoc>, says: string, name: string, table: string, powershell: boolean): void {
+  const set = powershell ? `$env:${name} = '...'` : `export ${name}=...`;
+  assert.deepEqual(doc, { status: "error", reason: "missing_api_key", message: `${says} ${powershell ? "$env:" : "$"}${name}`, next: ["Next:", `${set}   # or set apiKeyEnv under ${table}`] });
+}
 
 function writeRepo(h: Home, opts: { confirmAboveUsd?: number; providerUrl?: string; status?: string } = {}): void {
   const lines = ["[toolevals]", `confirmAboveUsd = ${opts.confirmAboveUsd ?? 5}`, "trialUsdEstimate = 0.1", "", "[toolevals.targets.fake]", 'kind = "cli"', 'bin = "fake-cli"', `command = [${q(process.execPath)}, ${q(FAKE_CLI)}]`, ""];
@@ -263,12 +282,42 @@ describe("toolevals CLI", () => {
     assert.ok(!existsSync(join(h.data, "toolevals")) || readdirSync(join(h.data, "toolevals")).length === 0, "nothing ran");
   });
 
-  it("needs the model driver's API key", () => {
+  it("needs the model driver's API key, named as the user's shell sets it", () => {
     const h = tmpHome();
     writeRepo(h);
     const r = cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake", "--json"]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /FAKE_KEY/);
+    const table = '[toolevals.drivers."model:anthropic/fake"]';
+    assertKeyError(errorDoc(cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake", "--json"], { SHELL: "/bin/bash" })), "Driver model:anthropic/fake needs", "FAKE_KEY", table, false);
+    assertKeyError(errorDoc(cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake", "--json"], { MSYSTEM: "MINGW64" })), "Driver model:anthropic/fake needs", "FAKE_KEY", table, false);
+    // h.env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows.
+    const plain = errorDoc(r);
+    assertKeyError(plain, "Driver model:anthropic/fake needs", "FAKE_KEY", table, process.platform === "win32");
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain.next[1]!], ["FAKE_KEY"]), { FAKE_KEY: "..." });
+  });
+
+  it("needs the shell model's API key, named as the user's shell sets it", () => {
+    const h = tmpHome();
+    writeRepo(h);
+    const run = (extra: Record<string, string>) => cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake", "--shell-model", "anthropic/sim", "--json"], { FAKE_KEY: "k", ...extra });
+    const table = '[toolevals.drivers."model:anthropic/sim"]';
+    assertKeyError(errorDoc(run({ SHELL: "/bin/bash" })), "Shell model anthropic/sim needs", "ANTHROPIC_API_KEY", table, false);
+    assertKeyError(errorDoc(run({ MSYSTEM: "MINGW64" })), "Shell model anthropic/sim needs", "ANTHROPIC_API_KEY", table, false);
+    assertKeyError(errorDoc(run({})), "Shell model anthropic/sim needs", "ANTHROPIC_API_KEY", table, process.platform === "win32");
+  });
+
+  it("compress needs the rewriter's API key, named as the user's shell sets it", () => {
+    const h = tmpHome();
+    writeFileSync(join(h.repo, "coding.sh.toml"), ["[toolevals]", 'rewriter = "model:anthropic/rw"', "", "[toolevals.targets.tools]", 'kind = "mcp"', 'command = ["x"]', "", '[toolevals.drivers."model:anthropic/fake"]', 'apiKeyEnv = "FAKE_KEY"', ""].join("\n"));
+    const tasks = join(h.repo, "evals", "toolevals", "tools", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    writeFileSync(join(tasks, "one.toml"), 'id = "one"\ninstruction = "Use a tool."\n');
+    const run = (extra: Record<string, string>) => cli(h, ["toolevals", "compress", "tools", "--driver", "model:anthropic/fake", "--yes", "--json"], { FAKE_KEY: "k", ...extra });
+    const table = '[toolevals.drivers."model:anthropic/rw"]';
+    assertKeyError(errorDoc(run({ SHELL: "/bin/bash" })), "Rewriter model:anthropic/rw needs", "ANTHROPIC_API_KEY", table, false);
+    assertKeyError(errorDoc(run({ MSYSTEM: "MINGW64" })), "Rewriter model:anthropic/rw needs", "ANTHROPIC_API_KEY", table, false);
+    assertKeyError(errorDoc(run({})), "Rewriter model:anthropic/rw needs", "ANTHROPIC_API_KEY", table, process.platform === "win32");
   });
 
   it("checks --samples and --stop-on-regression before anything runs", () => {

@@ -20,7 +20,7 @@ if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on C
 // index.html): codingsh on Windows, coding.sh elsewhere.
 const CLI = process.platform === "win32" ? "codingsh" : "coding\\.sh";
 const T0 = 1_762_400_000_000;
-// Real-looking ids: long enough that the eval command overflows a phone screen.
+// Real-looking ids. A command with the full id (what coding.sh serve copies) overflows a phone screen.
 const PARENT = "4b9889a2-c0d2-4046-9d28-6b07d00c01a8";
 const CHILD = `${PARENT}:sub:af5b468e7213397e9`;
 const BIG = "d6639e3e-6257-4741-aae9-e9979064bf0b";
@@ -265,13 +265,16 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     }
   });
 
-  test("at 390px the session page does not scroll sideways; the command scrolls in its box", async () => {
+  test("at 390px the session page does not scroll sideways; a long command scrolls in its box", async () => {
     await open(sessionHash(PARENT), true);
     try {
       const m = await page.eval(`(() => {
         // The eval command sits behind More details on a phone.
         document.querySelector('.facts-more').click();
         const code = document.querySelector('.make-eval .cmd code');
+        // This viewer names the session by its short reference, which fits. coding.sh serve names it by
+        // its full id, which does not: the command must scroll in its box, not widen the page.
+        code.textContent = ${JSON.stringify(`coding.sh eval new ${PARENT}`)};
         return { scrollWidth: document.documentElement.scrollWidth, vw: window.innerWidth,
           head: document.querySelector('.detail-head').getBoundingClientRect().right,
           codeScrolls: code.scrollWidth > code.clientWidth };
@@ -1491,4 +1494,36 @@ describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chro
       await fv.close();
     }
   });
+
+  for (const [keyEnv, model, names] of [
+    ["ANTHROPIC_API_KEY", "claude-sonnet-4-5", "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"],
+    ["OPENAI_API_KEY", "gpt-4o", "OPENAI_API_KEY"],
+  ] as const) {
+    test(`Fork from here with no ${keyEnv}: Run fork is off, and the hint names the variables with no shell's $ in front`, async () => {
+      const fv = await startViewer({
+        index,
+        blobs: new FakeBlobs(),
+        port: 0,
+        updateStatus: async () => ({ disabled: "test" }) as any,
+        fork: {
+          preview: async () => ({ step: { n: 4 }, call: { id: "0123456789abcdef", model, by: "tool-use" }, files: [{ path: "CLAUDE.md", text: "Run the tests with npm test." }], recorded: { label: "Bash: npm test" }, canCall: false, keyEnv }),
+          run: async () => ({ differ: 0, edits: [], trials: [] }),
+        },
+      });
+      page = await browser.newPage();
+      try {
+        await page.viewport(1280, 900);
+        await page.goto(fv.url + "#/s/" + RP + "?step=4");
+        await page.waitFor(`/Step 4 of 5/.test(${paneText})`, "step 4", 10_000);
+        await tab("Fork from here");
+        await page.waitFor("document.querySelector('.rp-fork-go .tone-fail')", "the hint for the missing key");
+        const hint: string = await page.eval("document.querySelector('.rp-fork-go .tone-fail').textContent");
+        assert.match(hint, new RegExp(`^Set ${names} and restart ${CLI} ui\\.$`), hint);
+        assert.equal(await page.eval("[...document.querySelectorAll('.rp-fork-go button')].find((b) => b.textContent === 'Run fork').disabled"), true);
+      } finally {
+        await page.close();
+        await fv.close();
+      }
+    });
+  }
 });

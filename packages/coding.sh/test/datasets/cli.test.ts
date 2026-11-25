@@ -111,6 +111,32 @@ describe("dataset add/import assign splits", () => {
   });
 });
 
+describe("dataset files Windows PowerShell wrote", () => {
+  // `>` and Out-File write UTF-16LE with a byte order mark; Out-File -Encoding utf8 writes UTF-8 with one.
+  const utf16 = (s: string): Buffer => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(s, "utf16le")]);
+  const utf8Bom = (s: string): Buffer => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(s, "utf8")]);
+
+  it("import reads a JSONL file in UTF-16 or in UTF-8 with a byte order mark", async () => {
+    const wide = join(root, "ps16.jsonl");
+    writeFileSync(wide, utf16('{"id":"p","input":"café"}\r\n{"id":"q","input":"q"}\r\n'));
+    cli(["dataset", "import", wide]);
+    assert.deepEqual((await cases("ps16")).map((c) => [c.id, c.input]).sort(), [["p", "café"], ["q", "q"]]);
+    const marked = join(root, "ps8.jsonl");
+    writeFileSync(marked, utf8Bom('{"id":"r","input":"r"}\r\n'));
+    cli(["dataset", "import", marked]);
+    assert.deepEqual((await cases("ps8")).map((c) => c.id), ["r"]);
+  });
+
+  it("--case reads a JSON file in either encoding", async () => {
+    const wide = join(root, "case16.json");
+    writeFileSync(wide, utf16('{"input":"from utf-16"}\r\n'));
+    const marked = join(root, "case8.json");
+    writeFileSync(marked, utf8Bom('{"input":"from utf-8"}\r\n'));
+    cli(["dataset", "add", "pscase", "--case", wide, "--case", marked]);
+    assert.deepEqual((await cases("pscase")).map((c) => c.input).sort(), ["from utf-16", "from utf-8"]);
+  });
+});
+
 describe("dataset add --case <JSON|FILE>", () => {
   it("reads a case from a JSON file as well as inline JSON, and help says so", async () => {
     writeFileSync(join(root, "case.json"), '{"input":"2+2","expected":"4"}\n');
