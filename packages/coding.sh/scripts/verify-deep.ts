@@ -33,10 +33,14 @@ export interface Knobs {
 /**
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
- * are rough. A property file without a time takes under half a minute. Every file together: about 14
- * minutes.
+ * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
+ * 15 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
+  // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
+  // deleted: 81,348 cuts, 48,002 closed cuts and 80,999 deletions. Then 200 seeded cases per fixture file.
+  // About 30 seconds.
+  "adapter-spool": { bound: 2, runs: 200 },
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
   // about 9.
   "capture-code": { runs: 200 },
@@ -44,6 +48,8 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // at bounds 3 and 6. About 20 seconds.
   "capture-model": { bound: 2 },
   "cost-prop": { runs: 10000 },
+  // Every prefix of 10,000 seeded JSON values.
+  cut: { runs: 10000 },
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
   "hook-imports": {},
