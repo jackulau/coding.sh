@@ -148,6 +148,9 @@ describe("an argument in a printed command", () => {
     for (const [env, platform] of [[{}, "linux"], [{}, "darwin"], [{ MSYSTEM: "MINGW64" }, "win32"], [{ SHELL: "/usr/bin/bash" }, "win32"]] as const) {
       assert.equal(quoteArg("C:\\my store", env, platform), "'C:\\my store'");
       assert.equal(quoteArg("it's", env, platform), "'it'\\''s'");
+      // zsh reads a word that starts with = as a command's path.
+      assert.equal(quoteArg("=x", env, platform), "'=x'");
+      assert.equal(quoteArg("a=b", env, platform), "a=b");
       assert.equal(runCommand(env, "<cmd>", platform), "coding.sh run -- <cmd>");
     }
   });
