@@ -984,6 +984,25 @@ describe("session usage rollup", () => {
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 });
     assert.deepEqual(rollupUsage([llm("x", "y", { inputTokens: 5 }), llm("y", "x", { inputTokens: 5 })]), { usage: { inputTokens: 5 }, duplicate: { calls: 1, tokens: 5 } });
   });
+
+  // The walks up and down the nested calls stopped after 64 levels.
+  it("model calls nested more than 64 levels deep count once, in a loop, a chain or under plain spans", () => {
+    const n = 100;
+    // Each call nested in the next, the last in the first: the first is the outer one.
+    const loop = Array.from({ length: n }, (_, i) => llm(`l${i}`, `l${(i + 1) % n}`, { inputTokens: 10 }));
+    assert.deepEqual(rollupUsage(loop), { usage: { inputTokens: 10 }, duplicate: { calls: n - 1, tokens: (n - 1) * 10 } });
+    // Billed calls with no usage, each nested in the one before, over one step: every bill counts, and the step's tokens.
+    const wrappers = Array.from({ length: n }, (_, i) => llm(`w${i}`, i ? `w${i - 1}` : undefined, undefined));
+    const chain = [...wrappers, llm("step", `w${n - 1}`, { inputTokens: 10 }), ...wrappers.map((w) => bill(w, 0.5))];
+    assert.deepEqual(rollupUsage(chain).usage, { inputTokens: 10, costUsd: n / 2 });
+    // Plain spans between a call and the call it is nested in.
+    const spans = Array.from({ length: n }, (_, i) => span(`s${i}`, i ? `s${i - 1}` : "top"));
+    const under = [llm("top", undefined, { inputTokens: 10 }), ...spans, llm("leaf", `s${n - 1}`, { inputTokens: 10 })];
+    assert.deepEqual(rollupUsage(under), { usage: { inputTokens: 10 }, duplicate: { calls: 1, tokens: 10 } });
+    // Deep enough that a walk by recursion would run out of stack.
+    const deep = Array.from({ length: 20_000 }, (_, i) => llm(`d${i}`, i ? `d${i - 1}` : undefined, { inputTokens: 10 }));
+    assert.deepEqual(rollupUsage(deep).usage, { inputTokens: 10 });
+  });
 });
 
 describe("the estimate by token type (stats.usage.estimatedCostByTokenType)", () => {
