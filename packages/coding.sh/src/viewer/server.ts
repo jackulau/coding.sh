@@ -96,6 +96,12 @@ export interface ViewerOptions {
   playground?: PlaygroundSource;
   /** Draw the first sessions page on the server and embed the first responses. Default: true. */
   serverRender?: boolean;
+  /**
+   * Give each session record a `shortId` (ViewerHandlerOptions.shortIds). Default: true, for a viewer of
+   * the CLI's own store. `coding.sh ui --store` turns it off: its copied commands name a session by the
+   * whole id, and it does not read every id of a team store.
+   */
+  shortIds?: boolean;
 }
 
 /** Forks behind /api/sessions/<id>/fork: what a fork at step N starts from, and the fork itself. */
@@ -441,8 +447,8 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     ...(opts.fork ? { fork: opts.fork } : {}),
     ...(opts.playground ? { playground: opts.playground } : {}),
     ...(opts.serverRender !== undefined ? { serverRender: opts.serverRender } : {}),
-    // This viewer reads the CLI's own store, so the shortest reference that opens a session here opens it from the CLI.
-    shortIds: true,
+    // By default this viewer reads the CLI's own store, so the shortest reference that opens a session here opens it from the CLI.
+    shortIds: opts.shortIds ?? true,
   });
 
   const server = createServer((req, res) => {

@@ -18,6 +18,7 @@ import * as replay from "../../src/cli/commands/replay.ts";
 import * as review from "../../src/cli/commands/review.ts";
 import * as show from "../../src/cli/commands/show.ts";
 import * as tree from "../../src/cli/commands/tree.ts";
+import * as ui from "../../src/cli/commands/ui.ts";
 import { wholeRef } from "../../src/core/session-ref.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
@@ -29,7 +30,7 @@ import { createViewerHandler, startViewer, type Viewer } from "../../src/viewer/
 import { nodeBin, pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
 import { improveWorld } from "../helpers-improve.ts";
-import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
+import { mkSession, runCmd, sandbox, type Ran, type Sandbox } from "./_cmd.ts";
 
 /** The id of the session `ref` opens with `coding.sh show`, or the error it gets. */
 async function opens(sb: Sandbox, ref: string): Promise<string> {
@@ -598,6 +599,22 @@ function getJson(port: number, path: string, token?: string): Promise<any> {
   });
 }
 
+/** The record a running `coding.sh ui` in `sb` sends for session `id`, read from the URL it prints when piped. */
+async function uiRecord(sb: Sandbox, id: string): Promise<any> {
+  const ac = new AbortController();
+  let live: Ran | undefined;
+  const done = runCmd(ui, sb, { flags: { port: "0", open: false }, signal: ac.signal, live: (r) => (live = r) });
+  try {
+    for (let i = 0; i < 200 && !live?.stderr.includes("Ctrl-C"); i++) await new Promise((r) => setTimeout(r, 25));
+    const url = new URL(live?.stdout.trim() ?? "");
+    return await getJson(Number(url.port), recordPath(id), url.searchParams.get("t") ?? undefined);
+  } finally {
+    ac.abort();
+    const ran = await done;
+    assert.equal(ran.code, 130, `${ran.stderr}${ran.error ?? ""}`);
+  }
+}
+
 describe("the viewer's copied commands name the session by a reference that opens it", () => {
   // The newest session is the one `latest` opens.
   const ids = [SPACED, "latest", A, B, "f00dcafe-cccc-4000-8000-000000000003"];
@@ -631,6 +648,18 @@ describe("the viewer's copied commands name the session by a reference that open
     } finally {
       await new Promise((r) => server.close(r));
     }
+  });
+
+  test("coding.sh ui sends a short reference for its own store, and none for a --store", async () => {
+    const own = await uiRecord(sb, A);
+    assert.equal(own.id, A);
+    assert.ok(own.shortId.length < A.length, own.shortId);
+    assert.equal(await opens(sb, own.shortId), A);
+    // A --store can be a team store, where the shortest reference takes reading every stored id; the copied
+    // commands use the whole id.
+    const other = await uiRecord({ ...sb, env: { ...sb.env, CODING_SH_STORE_URL: `sqlite://${join(sb.env.CODING_SH_HOME!, "index.db")}` } }, A);
+    assert.equal(other.id, A);
+    assert.equal("shortId" in other, false);
   });
 
   test("each command the page copies for a session opens that session when pasted", async () => {

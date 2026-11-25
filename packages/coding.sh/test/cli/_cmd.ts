@@ -61,7 +61,7 @@ export interface Ran {
   error?: any;
 }
 
-export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: string; flags?: Record<string, FlagValue>; positionals?: string[]; rest?: string[]; json?: boolean; cwd?: string; argv?: string[]; /** Ctrl-C: the signal main() aborts on the first SIGINT. */ signal?: AbortSignal; /** The platform printed commands are named for (Output platform). */ platform?: NodeJS.Platform } = {}): Promise<Ran> {
+export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: string; flags?: Record<string, FlagValue>; positionals?: string[]; rest?: string[]; json?: boolean; cwd?: string; argv?: string[]; /** Ctrl-C: the signal main() aborts on the first SIGINT. */ signal?: AbortSignal; /** The platform printed commands are named for (Output platform). */ platform?: NodeJS.Platform; /** Gets the output as the command starts; its stdout and stderr grow as it runs (a command that runs until signal aborts it). */ live?: (ran: Ran) => void } = {}): Promise<Ran> {
   const res: Ran = { code: undefined, stdout: "", stderr: "" };
   const outOpts: ConstructorParameters<typeof Output>[0] = {
     json: opts.json === true,
@@ -81,6 +81,7 @@ export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: s
     if (sb.env[k] === undefined) delete process.env[k];
     else process.env[k] = sb.env[k];
   }
+  opts.live?.(res);
   try {
     res.code = await mod.run(c);
   } catch (e) {
