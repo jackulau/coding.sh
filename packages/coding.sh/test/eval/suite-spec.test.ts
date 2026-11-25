@@ -61,4 +61,21 @@ describe("resolveSuites", () => {
     await writeFile(join(d, "suite.json"), JSON.stringify({ tasks: "tasks" }));
     assert.deepEqual(taskDirs(await loadSuite(d)).map((x) => x.slice(d.length + 1)), [join("tasks", "t1"), join("tasks", "t2")]);
   });
+  it("loads a suite.json that Windows PowerShell wrote", async () => {
+    const root = await tempDir();
+    dirs.push(root);
+    // `>` and Out-File write UTF-16LE with a byte order mark, Out-File -Encoding utf8 UTF-8 with one.
+    const text = `${JSON.stringify({ tasks: "tasks" })}\r\n`;
+    const bodies: [string, Buffer][] = [
+      ["utf16", Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")])],
+      ["utf8-bom", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")])],
+    ];
+    for (const [name, bytes] of bodies) {
+      const d = join(root, name);
+      await mkdir(join(d, "tasks", "t1"), { recursive: true });
+      await writeFile(join(d, "tasks", "t1", "task.json"), "{}");
+      await writeFile(join(d, "suite.json"), bytes);
+      assert.deepEqual(taskDirs(await loadSuite(d)).map((x) => x.slice(d.length + 1)), [join("tasks", "t1")], name);
+    }
+  });
 });

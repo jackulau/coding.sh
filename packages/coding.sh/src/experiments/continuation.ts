@@ -14,7 +14,7 @@
 // count. A control arm (EM-19) runs the recorded config from the same prefix:
 // how often it diverges from what the agent actually did is the replay noise
 // floor (replayNoise below), reported beside every delta.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { harnessItem, itemExposure, parseFrontmatter, type ExposureEvent, type ExposureState } from "../core/exposure.ts";
@@ -23,6 +23,7 @@ import { sha256Hex } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import { costFrom, lookupPrice, pricesFor, type Prices } from "../core/pricing.ts";
 import { commandOf } from "../core/sessions.ts";
+import { readTextFileSync } from "../core/text-file.ts";
 import { canonicalJson } from "../datasets/hash.ts";
 import { writeFileAtomic } from "../datasets/store.ts";
 import type { Case, CaseRun, ExperimentResult, TraceEvent } from "../datasets/types.ts";
@@ -283,7 +284,7 @@ export function loadContextFiles(files: readonly (string | ContextFile)[], cwd: 
     }
     const abs = resolve(cwd, f);
     if (!existsSync(abs)) throw new TaskError(`continuation task: context file ${JSON.stringify(f)} not found`);
-    return { path: f, text: readFileSync(abs, "utf8") };
+    return { path: f, text: readTextFileSync(abs) };
   });
 }
 
@@ -612,7 +613,7 @@ function prepare(spec: ContinuationTask): Prepared {
   if (spec.systemFile) {
     const f = resolve(cwd, spec.systemFile);
     if (!existsSync(f)) throw new TaskError(`continuation task: systemFile ${JSON.stringify(spec.systemFile)} not found`);
-    system = readFileSync(f, "utf8");
+    system = readTextFileSync(f);
   }
   const files = loadContextFiles(spec.context?.files ?? [], cwd);
   const placement = spec.context?.placement ?? "first-user";

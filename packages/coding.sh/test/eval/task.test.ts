@@ -376,6 +376,18 @@ describe("instruction for sessions without a user prompt (coding.sh run)", () =>
     await assert.rejects(readInstructionArg("@empty.md", dir), /empty/);
     await assert.rejects(readInstructionArg("   ", dir), /empty/);
   });
+  it("readInstructionArg reads an @FILE that Windows PowerShell wrote", async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    // `>` and Out-File write UTF-16LE with a byte order mark, Out-File -Encoding utf8 UTF-8 with one.
+    const text = "Fix add().\r\n\r\nKeep the API. Café ✓\r\n";
+    await writeFile(join(dir, "utf16.md"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]));
+    await writeFile(join(dir, "utf8-bom.md"), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]));
+    await writeFile(join(dir, "blank16.md"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("  \r\n", "utf16le")]));
+    assert.equal(await readInstructionArg("@utf16.md", dir), "Fix add().\r\n\r\nKeep the API. Café ✓");
+    assert.equal(await readInstructionArg("@utf8-bom.md", dir), "Fix add().\r\n\r\nKeep the API. Café ✓");
+    await assert.rejects(readInstructionArg("@blank16.md", dir), /empty/);
+  });
 });
 
 describe("task dir import/export", () => {

@@ -2,8 +2,8 @@
 // A dataset value is immutable by convention: every operation returns a new
 // Dataset with a recomputed version, so a version id always names exactly one
 // set of cases.
-import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { readTextFile } from "../core/text-file.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { parseCsvObjects, stringifyCsv } from "./csv.ts";
 import { canonicalJson, contentHash, hashUnit, shortHash } from "./hash.ts";
@@ -363,7 +363,7 @@ export async function loadDatasetFile(
   opts: { name?: string; format?: DatasetFormat; csv?: CsvCaseOpts; dedupe?: boolean } = {},
 ): Promise<Dataset & { duplicates: DedupeReport["duplicates"] }> {
   const format = opts.format ?? formatFromPath(path);
-  const text = await readFile(path, "utf8");
+  const text = await readTextFile(path);
   const name = opts.name ?? basename(path, extname(path));
   return createDataset({ name, cases: parseCases(text, format, opts.csv), ...(opts.dedupe === false ? { dedupe: false } : {}) });
 }
