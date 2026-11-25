@@ -178,17 +178,21 @@ describe("SqliteIndexStore", () => {
     await s.close();
   });
 
-  it("metricRows reads a stats number past 2^53 as listSessions does", async () => {
+  it("metricRows reads each stats number, also one past 2^53, as listSessions does", async () => {
     // SQLite gives node an integer past 2^53 only as a BigInt. A session with a token count of 1e17 reads
-    // back as a number in metricRows, as it does in listSessions, so stats and alerts can read it.
+    // back as a number in metricRows, as it does in listSessions, so stats and alerts can read it. Every
+    // number metricRows reads is set here, small integers too: each comes from SQLite as a BigInt.
     const s = tracked(await SqliteIndexStore.open(join(root, "big-stats.db")));
     const big = 1e17;
-    const usage = { inputTokens: big, outputTokens: 2 ** 53 + 2, costUsd: big };
+    const usage = { inputTokens: big, outputTokens: 2 ** 53 + 2, cacheReadTokens: big, cacheWriteTokens: 5, costUsd: big, estimatedCostUsd: 0.25 };
     const latency = { llmCalls: 1, llmP95Ms: big, ttftP50Ms: big };
-    await s.upsertSession({ id: "big", agent: "claude-code", startedAt: 1_700_000_000_000, stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage, latency }, flags: [] });
-    const rows = await s.metricRows({});
-    assert.deepEqual(rows.map((r) => [r.startedAt, r.inputTokens, r.outputTokens, r.costUsd, r.llmCalls, r.llmP95Ms, r.ttftP50Ms]), [[1_700_000_000_000, big, 2 ** 53 + 2, big, 1, big, big]]);
-    assert.deepEqual((await s.listSessions({}))[0]?.stats.usage, usage);
+    const waits = { count: 2, ms: big, medianMs: big, byKind: { permission: { count: 2, ms: big, medianMs: big } } };
+    const stats = { events: 1, turns: 1, toolCalls: big, toolErrors: 3, filesChanged: 0, usage, latency, llmErrors: { count: big, statusCode: 529 }, waits };
+    await s.upsertSession({ id: "big", agent: "claude-code", startedAt: 1_700_000_000_000, stats, flags: [] });
+    assert.deepEqual(await s.metricRows({}), [
+      { id: "big", startedAt: 1_700_000_000_000, agent: "claude-code", flags: [], ...usage, toolCalls: big, toolErrors: 3, ...latency, llmErrors: big, waits },
+    ]);
+    assert.deepEqual((await s.listSessions({}))[0]?.stats, stats);
     await s.close();
   });
 
