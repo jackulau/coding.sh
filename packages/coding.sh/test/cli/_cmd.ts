@@ -53,6 +53,18 @@ export function sandbox(extra: NodeJS.ProcessEnv = {}): Sandbox {
 /** The variables agents and the store resolve their homes from (the list tmpEnv() in test/adapters/_helpers.ts clears). */
 const AGENT_HOME_KEYS = ["HOME", "USERPROFILE", "CODING_SH_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CURSOR_CONFIG_DIR", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "CODING_SH_NO_AUTO_INGEST"];
 
+/** The runCmd calls running now, the agent homes they point process.env at, and the values it had before. */
+let running = 0;
+let runningHomes: Record<string, string | undefined> = {};
+let savedHomes: Record<string, string | undefined> = {};
+
+function setHomes(values: Record<string, string | undefined>): void {
+  for (const k of AGENT_HOME_KEYS) {
+    if (values[k] === undefined) delete process.env[k];
+    else process.env[k] = values[k];
+  }
+}
+
 export interface Ran {
   code: number | void;
   stdout: string;
@@ -75,11 +87,14 @@ export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: s
   const c: CommandContext = { action: opts.action, flags: opts.flags ?? {}, positionals: opts.positionals ?? [], rest: opts.rest ?? [], out, env: sb.env, cwd: opts.cwd ?? sb.env.HOME!, debug: false, signal: opts.signal ?? new AbortController().signal, argv: opts.argv };
   // Some paths (the inline transcript ingest a read runs, os.homedir()) resolve agent homes from
   // process.env, not c.env. Point those at the sandbox while the command runs, or a read would
-  // ingest the real ~/.claude and ~/.codex into the sandbox store.
-  const saved = Object.fromEntries(AGENT_HOME_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of AGENT_HOME_KEYS) {
-    if (sb.env[k] === undefined) delete process.env[k];
-    else process.env[k] = sb.env[k];
+  // ingest the real ~/.claude and ~/.codex into the sandbox store. Commands that overlap
+  // (Promise.all) share one sandbox: the first to start sets process.env, the last to end puts it back.
+  const homes = Object.fromEntries(AGENT_HOME_KEYS.map((k) => [k, sb.env[k]]));
+  if (running && AGENT_HOME_KEYS.some((k) => homes[k] !== runningHomes[k])) throw new Error("runCmd: commands that overlap must run in one sandbox");
+  if (!running++) {
+    runningHomes = homes;
+    savedHomes = Object.fromEntries(AGENT_HOME_KEYS.map((k) => [k, process.env[k]]));
+    setHomes(homes);
   }
   opts.live?.(res);
   try {
@@ -87,10 +102,7 @@ export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: s
   } catch (e) {
     res.error = e;
   } finally {
-    for (const k of AGENT_HOME_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
+    if (!--running) setHomes(savedHomes);
   }
   if (opts.json && res.stdout.trim()) {
     try {
