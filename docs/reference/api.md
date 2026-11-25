@@ -1086,6 +1086,10 @@ When the index can read an event by id, payload strings over 240 characters are 
 Prompts, replies, errors, subagent briefs, a changed file's path and the tool input a step is
 named by stay whole.
 
+A missing session is a 404; with `?missing=null` it is a 200 with the body `null`, as on
+[`/api/sessions/{id}`](#get-apisessionsid). The viewer asks for a linked session's first events
+this way, before it knows the id is there.
+
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1/events?kinds=tool.start,tool.end" -H "Authorization: Bearer $READ_KEY"
 ```

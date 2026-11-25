@@ -536,3 +536,27 @@ of the same build.
 
 In Chrome, with all 30,155 steps loaded, the timeline scrolls with a p95 of 11 ms per jump and
 9 ms per wheel step. No task during the background load ran longer than 0.1 s.
+
+## Session links
+
+A link straight to a session (`#/s/<id>`) opened it once the whole page script had run: the page
+asked for the session's record, waited for it, then asked for the first page of events. The first
+lines of the script now send both requests at once, and the labels and sub-sessions follow once the
+record says the session is there. A session whose first reads the server embeds in the page (the
+list's first row) sends neither. `test/viewer/viewer-fixes-browser.test.ts` checks which reads a
+link sends, and that each is sent once.
+
+Desk, Windows 11, Node 24.20, Nov 25, 2026, the built `cli.mjs`. A paired script opened a link to
+the oldest of five sessions of 2,000 events in headless Chrome with the cache off, 120 times per
+build in ABBA order, each build on its own throwaway store. Times are medians from the start of
+navigation. In brackets is the paired median difference with its 95% bootstrap interval.
+
+| Step | Before | After |
+| --- | --- | --- |
+| Events request sent | 148 ms | 93 ms (-56 [-72, -41]) |
+| Events loaded | 219 ms | 166 ms (-53 [-74, -29]) |
+| First timeline rows | 337 ms | 292 ms (-45 [-82, -12]) |
+| `DOMContentLoaded` | 143 ms | 153 ms (+9 [-9, 23]) |
+
+The rows came sooner in 79% of the pairs. Drawing them once the events arrive takes the same time in
+both builds, about 125 ms, so the gain is the time the events request no longer waits.
