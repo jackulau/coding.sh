@@ -901,6 +901,33 @@ describe("session usage rollup", () => {
     assert.deepEqual(buildSession(evs).stats.usage, r.usage);
   });
 
+  // Calls that arrive before the call they are nested in wait for it. Two such copies of one response tie, so the first to
+  // arrive counts, a level down as well.
+  it("calls that wait for the billed call they are nested in are checked in time order, at any depth", () => {
+    for (const first of ["a", "b"]) {
+      const label = `${first} first`;
+      const at = (id: string) => ({ ts: id === first ? 10 : 20 });
+      const w = llm("w", undefined, undefined, {}, { ts: 40 });
+      const a = llm("a", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_1" }, at("a"));
+      const b = llm("b", "w", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "resp_1" }, at("b"));
+      const want = first === "a" ? 10 : 20;
+      const sorted = (evs: AgentEvent[]) => [...evs].sort((x, y) => x.ts - y.ts);
+      const evs = sorted([a, b, w, bill(w, 1)]);
+      const r = rollupUsage(evs);
+      assert.deepEqual(r.usage, { inputTokens: want, costUsd: 1 }, label);
+      assert.deepEqual(r.duplicate, { calls: 2, tokens: 30 - want, costUsd: 0.75 }, label);
+      assert.deepEqual(buildSession(evs).stats.usage, r.usage, label);
+      // Both nested in m, which waits for w.
+      const m = llm("m", "w", undefined, {}, { ts: 30 });
+      const deep = sorted([{ ...a, parentSpanId: "m" }, { ...b, parentSpanId: "m" }, m, w, bill(w, 1), bill(m, 0.5)]);
+      const d = rollupUsage(deep);
+      assert.deepEqual(d.usage, { inputTokens: want, costUsd: 1.5 }, label);
+      // m counts as left out too, as each nested call does, and its bill counts in w's fold.
+      assert.deepEqual(d.duplicate, { calls: 3, tokens: 30 - want, costUsd: 0.75 }, label);
+      assert.deepEqual(buildSession(deep).stats.usage, d.usage, label);
+    }
+  });
+
   // A call was checked only against the first call to record its response id. With the wrapper first, two of its steps
   // that carry its id were each nested in it, so neither was a repeat, and both counted.
   it("calls nested in one billed wrapper that share its response id count once, with the wrapper first or last", () => {
