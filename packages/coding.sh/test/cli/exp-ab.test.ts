@@ -18,6 +18,7 @@ import type { Case } from "../../src/datasets/types.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
 import { CLI } from "../_cli.ts";
+import { NO_USER_SHELL, runEnvLines } from "./_env-lines.ts";
 
 const MARKER = "ALWAYS-RUN-NPM-TEST";
 
@@ -287,7 +288,7 @@ describe("cli exp ab", () => {
     assert.equal(hits.length, before);
   });
 
-  it("stops before any trial when the model API key is missing, and points at improve check", async () => {
+  it("stops before any trial when the model API key is missing, prints the line that sets it, and points at improve check", async () => {
     const e = await setup("nokey");
     const { ANTHROPIC_API_KEY: _k, ANTHROPIC_BASE_URL: _b, ...env } = e.env;
     writeFileSync(join(e.repo, "CLAUDE.md"), `${MARKER}\n`);
@@ -297,7 +298,16 @@ describe("cli exp ab", () => {
     assert.equal(err.reason, "missing_key");
     assert.match(err.message, /set ANTHROPIC_API_KEY \(6 of 6 model calls are not cached\)/);
     assert.match(err.message, /or log in to Claude Code \(.*\) or Codex \(run `codex login`\) and exp ab replays them on that subscription$/);
-    assert.ok(err.next.some((n: string) => /^(?:coding\.sh|codingsh) improve check$/.test(n)), err.next.join("\n"));
+    // The line that sets the key in the user's shell, the way that needs no key as its comment, then
+    // that command. An env with no SHELL or MSYSTEM is PowerShell's on Windows.
+    const later = "   # or commit the edit and compare the sessions before and after it:";
+    const set = process.platform === "win32" ? "$env:ANTHROPIC_API_KEY = '...'" : "export ANTHROPIC_API_KEY=...";
+    assert.deepEqual(err.next, [`${set}${later}`, `${nextStepBin(env)} improve check`]);
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([err.next[0]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    for (const sh of [{ SHELL: "/bin/bash" }, { MSYSTEM: "MINGW64" }]) {
+      const s = await cli({ ...e, env: { ...env, ...sh } }, ["exp", "ab", "--json"]);
+      assert.deepEqual((JSON.parse(s.stderr) as { next: string[] }).next, [`export ANTHROPIC_API_KEY=...${later}`, "coding.sh improve check"], JSON.stringify(sh));
+    }
     const runs = await cli({ ...e, env }, ["exp", "list", "--json"]);
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
   });
