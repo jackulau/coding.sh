@@ -177,9 +177,8 @@ function isInterrupt(e: unknown): boolean {
  */
 const PROMPT_ENTRY_BEFORE_MS = 2_000;
 const PROMPT_ENTRY_AFTER_MS = 10_000;
-/** A transcript line that can hold a prompt: a user entry that is not a tool result. Checked before parsing. */
+/** A transcript line that can hold a prompt: a user entry. Checked before parsing; typedText leaves out tool results. */
 const USER_LINE = /"type"\s*:\s*"user"/;
-const TOOL_RESULT_LINE = /"type"\s*:\s*"tool_result"/;
 const foldSpace = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /** The prompt entries in the last TRANSCRIPT_TAIL_BYTES of a transcript, read at one size and mtime. */
@@ -232,7 +231,7 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
   const times = new Map<string, number[]>();
   let first = Infinity;
   for (const l of text.split("\n")) {
-    const user = USER_LINE.test(l) && !TOOL_RESULT_LINE.test(l);
+    const user = USER_LINE.test(l);
     if (!user && first !== Infinity) continue;
     let e: unknown;
     try {

@@ -243,6 +243,17 @@ describe("claude-code hook capture: the time on a prompt's transcript entry", ()
     rmSync(transcript);
   });
 
+  it("a prompt entry with a tool_result object in a field its text does not come from still gives its time", async () => {
+    resetPromptIndexes();
+    writeFile(transcript, `${JSON.stringify({ ...prompt("u1", 0, "Add a test"), origin: { type: "tool_result", tool_use_id: "toolu_x" } })}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [], ts: [-1] });
+    // A tool result with the same text is not a prompt.
+    resetPromptIndexes();
+    writeFile(transcript, `${JSON.stringify(result("toolu_x", 0, "p-u1", "Add a test"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [], ts: [150] });
+    rmSync(transcript);
+  });
+
   it("says when the transcript is gone, or has grown past the prompt, so a reparse keeps the stored rows", async () => {
     const gone = join(t.home, "runs", "run_1", "home", ".claude", "projects", "-work-demo", `${SID}.jsonl`);
     assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" }, gone)), { said: [[gone, SID]], ts: [150] });
