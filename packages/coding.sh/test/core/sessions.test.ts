@@ -910,6 +910,39 @@ describe("session usage rollup", () => {
     }
   });
 
+  // A nested call that came before its wrapper recorded its response id, and then the wrapper turned out to be a repeat.
+  // A later call with that id was taken for a repeat of a call that did not count, and its tokens went missing.
+  it("a call nested in a repeated wrapper leaves its response id to a later call, in any order", () => {
+    const x = llm("x", undefined, { inputTokens: 5 }, { responseId: "gen_a" }, { traceId: "t0", ts: 10 });
+    const k = llm("k", "w", { inputTokens: 10 }, { responseId: "resp_1" }, { ts: 20 });
+    const w = llm("w", undefined, undefined, { responseId: "gen_a" }, { ts: 30 });
+    const z = llm("z", undefined, { inputTokens: 10 }, { responseId: "resp_1" }, { traceId: "t2", ts: 40 });
+    const evs = [x, k, w, z, bill(w, 1, "gen_a")];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { inputTokens: 15 });
+    assert.deepEqual(r.duplicate, { calls: 2, tokens: 10, costUsd: 1 });
+    const s = buildSession(evs);
+    assert.deepEqual(s.stats.usage, r.usage);
+    assert.deepEqual(s.stats.duplicateUsage, r.duplicate);
+    // One run recorded on two paths: as two calls with no trace, and as a billed wrapper over two steps, whose response id
+    // is the last step's. The wrapper comes last and repeats the second call, so its steps go with it, in any order.
+    const orders = (xs: string[]): string[][] => (xs.length ? xs.flatMap((a, i) => orders(xs.filter((_, j) => j !== i)).map((o) => [a, ...o])) : [[]]);
+    for (const order of orders(["a1", "a2", "k1", "k2"])) {
+      const at = (name: string) => ({ ts: 10 * (order.indexOf(name) + 1) });
+      const a1 = ev("llm.call", { costEstimated: true, responseId: "resp_1" }, { usage: { inputTokens: 10, costUsd: 0.25 }, ...at("a1") });
+      const a2 = ev("llm.call", { costEstimated: true, responseId: "gen_2" }, { usage: { inputTokens: 20, costUsd: 0.5 }, ...at("a2") });
+      const w2 = llm("w2", undefined, undefined, { responseId: "gen_2" }, { ts: 100 });
+      const k1 = llm("k1", "w2", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_1" }, at("k1"));
+      const k2 = llm("k2", "w2", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "gen_2" }, at("k2"));
+      const run = [a1, a2, w2, k1, k2, bill(a2, 2, "gen_2"), bill(w2, 2, "gen_2"), bill(k2, 2, "gen_2")].sort((p, q) => p.ts - q.ts);
+      const label = order.join(" ");
+      const got = rollupUsage(run);
+      assert.deepEqual(got.usage, { inputTokens: 30, costUsd: 2.25, estimatedCostUsd: 0.25 }, label);
+      assert.deepEqual(got.duplicate, { calls: 3, tokens: 30, costUsd: 4.25 }, label);
+      assert.deepEqual(buildSession(run).stats.usage, got.usage, label);
+    }
+  });
+
   it("a billed wrapper that carries usage adds the bills of its steps for other generations", () => {
     const w = llm("w", undefined, { inputTokens: 30, costUsd: 0.75 }, { costEstimated: true });
     const k1 = llm("k1", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true });
