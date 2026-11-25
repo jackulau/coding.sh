@@ -1,7 +1,7 @@
 // Workflow import stores agent transcripts in the index and blob store, so it
 // must redact them first, like spool ingest and backfill ("redact before
 // writing"). A secret in an agent's prompt, reply and a large tool output (big
-// enough to go to a blob) must not reach either store.
+// enough to go to a blob), or in the run's script, must not reach either store.
 //
 // The fixture is synthetic (paths /work/demo, a fake token), never read from a
 // real ~/.claude.
@@ -13,7 +13,9 @@ import { after, before, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import { profileCache } from "../../src/core/ingest.ts";
 import { importClaudeWorkflows } from "../../src/workflows/import.ts";
+import { replayWorkflow } from "../../src/workflows/replay.ts";
 import { WorkflowStore } from "../../src/workflows/store.ts";
+import type { WorkflowDriver } from "../../src/workflows/types.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 
 const T0 = Date.UTC(2026, 10, 8, 9, 0, 0);
@@ -21,11 +23,16 @@ const SID = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
 const RUN = "wf_redact01";
 const TOKEN = ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join("");
 const iso = (ms: number) => new Date(ms).toISOString();
+// The run's script, which names the token too.
+const SCRIPT = `export const meta = { name: "clone" };\nphase("Work");\nconst r = await agent({ label: "clone", prompt: "Use token ${TOKEN} to clone" });\n`;
 
 function writeRun(projects: string): void {
   const sessionDir = join(projects, "-work-demo", SID);
   const runDir = join(sessionDir, "subagents", "workflows", RUN);
   mkdirSync(runDir, { recursive: true });
+  // The copy of the script Claude Code keeps in the session dir.
+  mkdirSync(join(sessionDir, "workflows", "scripts"), { recursive: true });
+  writeFileSync(join(sessionDir, "workflows", "scripts", `clone-${RUN}.js`), SCRIPT);
   const base = { sessionId: SID, cwd: "/work/demo", version: "2.1.319", gitBranch: "main", userType: "external", entrypoint: "cli", isSidechain: true, agentId: "a0" };
   const big = `config dump\nGITHUB_TOKEN=${TOKEN}\n` + "x".repeat(8000);
   const lines = [
@@ -70,13 +77,17 @@ describe("importClaudeWorkflows redaction", () => {
     assert.ok(node?.output, "the agent's return value is stored");
     assert.deepEqual(await store.getValue(node.output), { ok: true, note: "cloned with [redacted:github-token]" });
     for await (const ref of store.blobs.list()) assert.ok(!(await store.blobs.getText(ref))?.includes(TOKEN), "no raw token in a workflow blob");
+    // So does the run's script, kept for `workflows replay`.
+    const script = (await store.getRun(RUN))?.run.script;
+    assert.ok(script, "the run's script is stored");
+    assert.equal(await store.getText(script), SCRIPT.split(TOKEN).join("[redacted:github-token]"));
 
     // Redaction keeps cost estimation: the profile also prices the calls.
     const child = [...index.sessions.values()].find((s) => s.parent?.sessionId === SID);
     assert.ok(child?.stats.usage?.costUsd !== undefined && child.stats.usage.costUsd > 0);
   });
 
-  it("keeps no agent return values in metadata mode: an imported run is passive capture, like a session", async () => {
+  it("keeps no agent return values and no script in metadata mode: an imported run is passive capture, like a session", async () => {
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "csh-meta") };
     const config = defaultConfig(env);
     const profile = profileCache({ ...config, capture: { ...config.capture, mode: "metadata" } }, env, () => {})(undefined);
@@ -87,5 +98,27 @@ describe("importClaudeWorkflows redaction", () => {
     assert.ok(got && got.nodes.length > 0);
     assert.deepEqual(got.nodes.filter((n) => n.output).map((n) => n.id), []);
     assert.equal(got.run.output, undefined);
+    assert.equal(got.run.script, undefined);
+  });
+
+  it("predicts replay cache hits from the redacted script as if it were the script on disk", async () => {
+    const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "csh-replay") };
+    const profile = profileCache(defaultConfig(env), env, () => {})(undefined);
+    const store = new WorkflowStore(join(root, "store-replay"));
+    await importClaudeWorkflows({ root: join(root, "projects"), store, index: new MemIndex(), blobs: new MemBlobs(), profile, concurrencyCap: 2 });
+    const base = (await store.getRun(RUN))!;
+    const baseScript = (await store.getText(base.run.script!))!;
+    const driver: WorkflowDriver = {
+      id: "none",
+      run: async () => {
+        throw new Error("a dry run starts no run");
+      },
+    };
+    const replay = (editedScript: string) => replayWorkflow({ base, baseScript, script: "/work/demo/clone.js", editedScript, redactor: profile.redactor, driver, store, dryRun: true });
+    const same = (await replay(SCRIPT)).prediction;
+    assert.equal(same.total, 1);
+    assert.equal(same.hits, 1, same.reason);
+    const edited = (await replay(SCRIPT.split("to clone").join("to fetch"))).prediction;
+    assert.equal(edited.hits, 0, edited.reason);
   });
 });
