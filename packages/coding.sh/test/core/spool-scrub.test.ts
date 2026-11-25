@@ -144,4 +144,13 @@ describe("a past day's spool file after ingest", () => {
     assert.equal(opens, 1);
     assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET));
   });
+
+  it("is scrubbed when it ends in a blank line", async () => {
+    const t = setup();
+    writeFileSync(t.spool, line(t, 1, `AWS_SECRET_ACCESS_KEY=${SECRET}`) + "\n");
+    const index = new MemoryIndexStore();
+    await ingest({ config: defaultConfig(t.env), index, blobs: new MemoryBlobStore(), adapters: new Map([[claudeCode.id, claudeCode]]), env: t.env, lock: false });
+    assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET));
+    assert.equal(await index.getCursor(spoolScrubKey("claude-code/2026-11-06.1.jsonl")), statSync(t.spool).size);
+  });
 });

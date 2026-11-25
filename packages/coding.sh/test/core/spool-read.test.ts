@@ -96,6 +96,20 @@ describe("spool-read", () => {
     assert.ok(errs.every((e) => e.nextOffset > e.offset));
   });
 
+  it("reports the offset past each blank line it skips, at every chunk size", async () => {
+    const dir = spool();
+    const file = join(dir, "codex", "a.jsonl");
+    const n = Buffer.byteLength(line());
+    writeFileSync(file, `\n${line()}\r\n \n`);
+    for (const chunkSize of [undefined, 1, 3]) {
+      const blanks: number[] = [];
+      const ends: number[] = [];
+      for await (const r of readSpoolFile(dir, file, 0, { chunkSize, onBlank: (next) => blanks.push(next) })) ends.push(r.nextOffset);
+      assert.deepEqual(ends, [1 + n]);
+      assert.deepEqual(blanks, [1, 1 + n + 2, 1 + n + 4]);
+    }
+  });
+
   it("resolves rawFile side files and refuses paths outside the spool", async () => {
     const dir = spool();
     const file = join(dir, "codex", "a.jsonl");

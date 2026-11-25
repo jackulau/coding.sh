@@ -44,6 +44,8 @@ export const TORN_TAIL_MS = 60 * 60_000;
 export interface ReadSpoolOptions {
   /** Called for lines that are skipped (bad JSON/shape) or degraded (missing rawFile). */
   onError?: (err: SpoolReadError) => void;
+  /** Called with the offset just past each blank line skipped, so a cursor can move past blank lines that end the file. */
+  onBlank?: (nextOffset: number) => void;
   /** Read buffer size; small values are useful in tests. */
   chunkSize?: number;
   /** Load rawFile side files into line.raw (default true). */
@@ -148,7 +150,8 @@ function gluedLine(text: string): { line: unknown; at: number } | undefined {
 
 /**
  * Yields complete lines of one spool file starting at byte `from`. Blank lines
- * are skipped silently; malformed lines are reported via onError and skipped.
+ * are skipped and reported via onBlank; malformed lines are reported via
+ * onError and skipped.
  */
 export async function* readSpoolFile(spoolDir: string, file: string, from = 0, opts: ReadSpoolOptions = {}): AsyncGenerator<SpoolRecord> {
   const source = toSource(spoolDir, file);
@@ -181,7 +184,10 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
       const text = buf.toString("utf8", 0, nl > 0 && buf[nl - 1] === 0x0d ? nl - 1 : nl);
       buf = buf.subarray(nl + 1);
       pos = nextOffset;
-      if (!text.trim()) continue;
+      if (!text.trim()) {
+        opts.onBlank?.(nextOffset);
+        continue;
+      }
       let parsed: unknown;
       let lineOffset = offset;
       try {

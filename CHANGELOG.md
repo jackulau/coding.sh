@@ -518,6 +518,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** A printed sh command single-quotes a word that starts with `=`, which zsh reads as the path of a command, so the command failed in zsh. An `=` later in a word stays bare. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md))
 - **Capture.** On Windows, `coding.sh init` no longer writes a hook command that cmd.exe or PowerShell would read differently: for a hook path with `%`, `$`, a backtick or a curly double quote, it says to set `CODING_SH_HOME` to a folder without them. Claude Code, Amp, OpenCode and Pi keep their hooks, and Copilot CLI's PowerShell command single-quotes the path. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#hook-command))
 - **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
+- **Capture.** A spool file that ends in a blank line is now read to its end, so `coding.sh gc` can delete it and ingest stops opening it again on every run. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 
 ## [0.1.7] - 2026-11-16
 
