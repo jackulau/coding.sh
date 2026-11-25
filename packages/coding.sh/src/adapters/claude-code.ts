@@ -177,37 +177,55 @@ const USER_LINE = /"type"\s*:\s*"user"/;
 const TOOL_RESULT_LINE = /"type"\s*:\s*"tool_result"/;
 const foldSpace = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-/**
- * When the transcript recorded the prompt a UserPromptSubmit line carries: the
- * entry with the same typed text, the latest at or before the line, else the
- * first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code writes the entry
- * before the hook runs. Undefined when no entry matches. `ctx.missing` hears of
- * a transcript that is gone, or that has grown past the line.
- */
-async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
-  if (!path) return undefined;
+/** The prompt entries in the last TRANSCRIPT_TAIL_BYTES of a transcript, read at one size and mtime. */
+interface PromptIndex {
+  size: number;
+  mtimeMs: number;
+  /** Each entry's time, by its whitespace-folded typed text. */
+  times: Map<string, number[]>;
+  /** The oldest time on a user line read (0 for a line with none), Infinity for none. */
+  oldest: number;
+  /** The tail read is the whole file. */
+  whole: boolean;
+}
+
+/** Indexes by transcript path, the one used last at the end: the prompt lines of one ingest read each transcript once. */
+const promptIndexes = new Map<string, PromptIndex>();
+const PROMPT_INDEXES_KEPT = 16;
+
+/** For tests: forget the transcripts read. */
+export function resetPromptIndexes(): void {
+  promptIndexes.clear();
+}
+
+async function promptIndex(path: string): Promise<PromptIndex> {
+  const st = await stat(path);
+  let index = promptIndexes.get(path);
+  if (index?.size !== st.size || index.mtimeMs !== st.mtimeMs) index = await readPromptIndex(path);
+  promptIndexes.delete(path);
+  promptIndexes.set(path, index);
+  if (promptIndexes.size > PROMPT_INDEXES_KEPT) promptIndexes.delete(promptIndexes.keys().next().value!);
+  return index;
+}
+
+async function readPromptIndex(path: string): Promise<PromptIndex> {
+  const fh = await open(path, "r");
   let text: string;
-  let reached: boolean;
+  let st: { size: number; mtimeMs: number };
+  let whole: boolean;
   try {
-    const fh = await open(path, "r");
-    try {
-      const size = (await fh.stat()).size;
-      const from = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
-      const buf = Buffer.alloc(size - from);
-      const { bytesRead } = await fh.read(buf, 0, buf.length, from);
-      text = buf.subarray(0, bytesRead).toString("utf8");
-      if (from > 0) text = text.slice(text.indexOf("\n") + 1); // the first line is partial
-      reached = from === 0;
-    } finally {
-      await fh.close();
-    }
-  } catch {
-    ctx.missing?.(path, sessionId);
-    return undefined;
+    st = await fh.stat();
+    const from = Math.max(0, st.size - TRANSCRIPT_TAIL_BYTES);
+    const buf = Buffer.alloc(st.size - from);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    text = buf.subarray(0, bytesRead).toString("utf8");
+    if (from > 0) text = text.slice(text.indexOf("\n") + 1); // the first line is partial
+    whole = from === 0;
+  } finally {
+    await fh.close();
   }
-  const want = foldSpace(prompt);
-  let before: number | undefined;
-  let after: number | undefined;
+  const times = new Map<string, number[]>();
+  let oldest = Infinity;
   for (const l of text.split("\n")) {
     if (!USER_LINE.test(l) || TOOL_RESULT_LINE.test(l)) continue;
     let e: unknown;
@@ -218,16 +236,43 @@ async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, se
     }
     if (!isObj(e)) continue;
     const ts = toMs(e.timestamp, 0);
-    if (ts <= at - PROMPT_ENTRY_SLACK_MS) {
-      reached = true; // the tail reaches back past the window
-      continue;
-    }
-    if (ts > at + PROMPT_ENTRY_SLACK_MS || e.isSidechain === true) continue;
+    oldest = Math.min(oldest, ts);
+    if (e.isSidechain === true) continue;
     const typed = typedText(e);
-    if (typed === undefined || foldSpace(typed) !== want) continue;
+    if (typed === undefined) continue;
+    const key = foldSpace(typed);
+    const list = times.get(key);
+    if (list) list.push(ts);
+    else times.set(key, [ts]);
+  }
+  return { size: st.size, mtimeMs: st.mtimeMs, times, oldest, whole };
+}
+
+/**
+ * When the transcript recorded the prompt a UserPromptSubmit line carries: the
+ * entry with the same typed text, the latest at or before the line, else the
+ * first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code writes the entry
+ * before the hook runs. Undefined when no entry matches. `ctx.missing` hears of
+ * a transcript that is gone, or that has grown past the line.
+ */
+async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
+  if (!path) return undefined;
+  let index: PromptIndex;
+  try {
+    index = await promptIndex(path);
+  } catch {
+    ctx.missing?.(path, sessionId);
+    return undefined;
+  }
+  let before: number | undefined;
+  let after: number | undefined;
+  for (const ts of index.times.get(foldSpace(prompt)) ?? []) {
+    if (ts <= at - PROMPT_ENTRY_SLACK_MS || ts > at + PROMPT_ENTRY_SLACK_MS) continue;
     if (ts <= at) before = Math.max(before ?? ts, ts);
     else after = Math.min(after ?? ts, ts);
   }
+  // No entry, and the tail read does not reach back past the window: the entry may be in the part not read.
+  const reached = index.whole || index.oldest <= at - PROMPT_ENTRY_SLACK_MS;
   if (before === undefined && after === undefined && !reached) ctx.missing?.(path, sessionId);
   return before ?? after;
 }

@@ -3,10 +3,10 @@
 // events that name none, then buildSession. The transcript entries are synthetic, shaped like the hooks-real
 // fixture's (Claude Code 2.1.319, no api-request records: a call starts at the entry before it).
 import assert from "node:assert/strict";
-import { appendFileSync, rmSync } from "node:fs";
+import { appendFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { claudeCode, resetPromptIndexes } from "../../src/adapters/claude-code.ts";
 import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
@@ -234,6 +234,70 @@ describe("claude-code hook capture: when a prompt was written", () => {
     const big = JSON.stringify(result("toolu_pad", 3_600_000, "p-u9", "x".repeat(1024 * 1024)));
     appendFileSync(transcript, `${Array.from({ length: 9 }, () => big).join("\n")}\n`);
     assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [[transcript, SID]], ts: [150] });
+    rmSync(transcript);
+  });
+
+  it("reads the transcript once for each size and mtime it has, and finds what a fresh read finds as it grows", async () => {
+    // Two "yes" prompts two minutes apart, one entry stamped after its hook ran, and a prompt the transcript never holds.
+    const entries = [
+      prompt("u1", 0, "yes"),
+      reply("m1", 2000, { type: "text", text: "Done." }),
+      prompt("u2", 60_000, "Add  a\ntest"),
+      reply("m2", 62_000, { type: "text", text: "Added." }),
+      prompt("u3", 120_000, "yes"),
+    ];
+    const lines = [
+      line("UserPromptSubmit", 90, { prompt: "yes" }),
+      line("UserPromptSubmit", 60_090, { prompt: "Add a test" }),
+      line("UserPromptSubmit", 119_950, { prompt: "yes" }),
+      line("UserPromptSubmit", 125_000, { prompt: "never written" }),
+    ];
+    resetPromptIndexes();
+    writeFile(transcript, "");
+    const cached: unknown[] = [];
+    const fresh: unknown[] = [];
+    for (const e of entries) {
+      appendFileSync(transcript, `${JSON.stringify(e)}\n`);
+      for (const l of lines) cached.push(await missing(l));
+      for (const l of lines) {
+        resetPromptIndexes();
+        fresh.push(await missing(l));
+      }
+    }
+    assert.deepEqual(cached, fresh);
+    assert.deepEqual(cached.slice(-4), [
+      { said: [], ts: [-1] },
+      { said: [], ts: [59_999] },
+      { said: [], ts: [119_999] },
+      { said: [], ts: [125_000] },
+    ]);
+  });
+
+  it("keeps the last 16 transcripts read: a rewrite that keeps the size and mtime is not read again", async () => {
+    const at = (path: string) => line("UserPromptSubmit", 150, { prompt: "Add a test" }, path);
+    const stamp = 1_800_000_000; // whole seconds, which utimes sets exactly
+    const rewrite = (path: string, ms: number) => {
+      writeFile(path, `${JSON.stringify(prompt("u1", ms, "Add a test"))}\n`);
+      utimesSync(path, stamp, stamp);
+    };
+    resetPromptIndexes();
+    rewrite(transcript, 0);
+    const { size } = statSync(transcript);
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] });
+    rewrite(transcript, 50);
+    assert.deepEqual([statSync(transcript).size, statSync(transcript).mtimeMs], [size, stamp * 1000]);
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] }, "answered from the index");
+    for (let i = 0; i < 15; i++) {
+      rewrite(join(t.home, "other", `a${i}.jsonl`), 0);
+      await missing(at(join(t.home, "other", `a${i}.jsonl`)));
+    }
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] }, "15 others read since: still kept");
+    for (let i = 0; i < 16; i++) {
+      rewrite(join(t.home, "other", `b${i}.jsonl`), 0);
+      await missing(at(join(t.home, "other", `b${i}.jsonl`)));
+    }
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [49] }, "16 others read since: read again");
+    resetPromptIndexes();
     rmSync(transcript);
   });
 });
