@@ -36,6 +36,8 @@
 //   the first session.start that says), and a fork's inherited tokens (the first count a fork notice
 //   gives that is above 0: one of 0, below 0 or not finite is skipped). A gateway's copy of an event
 //   reports nothing.
+// - A row's trace ids are those of its own events, first seen first, after the stored row's when a fold
+//   resumes one, and at most 256 (Session.traceIds). A gateway's copy adds none.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -605,6 +607,82 @@ test("a session reports its last test run, its launch and a fork's inherited tok
       assert.deepEqual({ testsPassed: stats.testsPassed, testsFailed: stats.testsFailed, launch: stats.launch, inheritedTokens: stats.inheritedTokens }, want);
     },
     { runs: 1000, label: "reports" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** Session.traceIds holds at most this many. */
+const TRACE_CAP = 256;
+/** Trace ids t-0, t-1, …: the first n. */
+const traceIdsOf = (n: number) => Array.from({ length: n }, (_, i) => `t-${i}`);
+/** How many trace ids the stored row a fold resumes saw: no stored row, some, the cap, or more. */
+const STORED_TRACES = [0, 120, 253, TRACE_CAP, 300] as const;
+const storedRows = new Map<number, Session>();
+
+/** The stored row of a session whose earlier events carried n trace ids, one each, in order. */
+function storedRow(n: number): Session | undefined {
+  if (n === 0) return undefined;
+  let row = storedRows.get(n);
+  if (!row) {
+    const events = traceIdsOf(n).map((traceId, i): AgentEvent => ({ id: `stored-${i}`, v: 0, sessionId: "trace-session", ts: T0 - n + i, agent: "claude-code", kind: "notification", payload: {}, traceId }));
+    storedRows.set(n, (row = buildSession(events)));
+  }
+  return row;
+}
+
+/** A new event: its trace id (none, one the stored row saw, or a new one), or a gateway's copy. */
+interface TraceEvent {
+  /** Seconds after T0. */
+  at: number;
+  trace: string | undefined;
+  copy: boolean;
+}
+
+const traceEventGen: Gen<TraceEvent> = gen.record<TraceEvent>({
+  at: gen.int(0, 4),
+  trace: gen.frequency<string | undefined>(
+    [1, gen.constant(undefined)],
+    [1, gen.map(gen.int(0, 9), (i) => `t-${i}`)],
+    [4, gen.map(gen.int(0, 11), (i) => `new-${i}`)],
+  ),
+  copy: gen.weighted(1 / 6),
+});
+
+test("a row keeps its events' trace ids first seen first, after the stored row's, and at most 256", async (t) => {
+  // Folded from scratch, a session keeps the first ones.
+  for (const n of STORED_TRACES) assert.deepEqual(storedRow(n)?.traceIds, n ? traceIdsOf(Math.min(n, TRACE_CAP)) : undefined, `${n} trace ids`);
+  const seen: Record<string, number> = {
+    "no stored row": 0,
+    "a stored row with room": 0,
+    "a new id past the cap": 0,
+    "a full row and a new id": 0,
+    "a stored id again": 0,
+    "a gateway's copy with a new id": 0,
+  };
+  await forAll(
+    gen.tuple(gen.pick(STORED_TRACES), gen.array(traceEventGen, { minLength: 1, maxLength: 14 })),
+    ([n, rs]) => {
+      const events = rs.map((r, i): AgentEvent => {
+        const e: AgentEvent = { id: `trace-${i}`, v: 0, sessionId: "trace-session", ts: T0 + r.at * 1000, agent: "claude-code", kind: "notification", payload: {} };
+        if (r.trace !== undefined) e.traceId = r.trace;
+        if (r.copy) e.source = "gateway";
+        return e;
+      });
+      const stored = traceIdsOf(Math.min(n, TRACE_CAP));
+      // In time order, keeping the order of events at the same time; a gateway's copy adds none.
+      const own = [...rs].sort((a, b) => a.at - b.at).flatMap((r) => (r.copy || r.trace === undefined ? [] : [r.trace]));
+      const ids = [...new Set([...stored, ...own])];
+      if (n === 0) seen["no stored row"]!++;
+      else if (ids.length > stored.length && ids.length <= TRACE_CAP) seen["a stored row with room"]!++;
+      if (ids.length > TRACE_CAP && stored.length < TRACE_CAP) seen["a new id past the cap"]!++;
+      if (ids.length > TRACE_CAP && stored.length === TRACE_CAP) seen["a full row and a new id"]!++;
+      if (own.some((id) => stored.includes(id))) seen["a stored id again"]!++;
+      if (rs.some((r) => r.copy && r.trace !== undefined && !ids.includes(r.trace))) seen["a gateway's copy with a new id"]!++;
+      const want = ids.slice(0, TRACE_CAP);
+      assert.deepEqual(buildSession(events, storedRow(n)).traceIds, want.length ? want : undefined);
+    },
+    { runs: 1000, label: "traces" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
