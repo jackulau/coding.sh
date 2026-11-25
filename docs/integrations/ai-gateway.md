@@ -264,7 +264,9 @@ The command links each llm call to a gateway generation in one of three ways:
 
 For each linked call, coding.sh reads the generation record. It tries the index cache first, then drained traces, then `GET /v1/generation?id=…` ([REST API](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api)). The cache keeps only cost, provider, model, latency and token counts.
 
-Each linked call gets a companion `vercel.ai_gateway.generation` span. The span stores the cost difference against what the call already reported. Session totals then equal what the gateway billed: the gateway debit, plus the provider's charge for BYOK, unless a call the gateway did not bill reported a cost of its own (below). A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, is billed once. Re-runs are no-ops.
+Each linked call gets a companion `vercel.ai_gateway.generation` span. The span stores the cost difference against what the call already reported. Session totals then equal what the gateway billed for the calls it linked: the gateway debit, plus the provider's charge for BYOK, unless a call the gateway did not bill reported a cost of its own (below). Re-runs are no-ops.
+
+A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, is billed once. When only the later copy is linked, the earlier one counts and the linked one does not, so the session shows the earlier copy's cost in place of the bill.
 
 Nested model calls, such as a framework's span around the provider's call, count once. A billed call counts at its bill, plus the bills of the calls nested in it, unless one is for the same generation. When it has no usage of its own, it counts their tokens.
 
