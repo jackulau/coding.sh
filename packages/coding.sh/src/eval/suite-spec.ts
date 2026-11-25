@@ -10,8 +10,8 @@
 // trials, split), so `coding.sh exp run evals/<name>/suite.json` reads it too
 // once the dataset is imported. Paths are relative to the suite dir.
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { readTextFile } from "../core/text-file.ts";
 import { SUITE_PURPOSES, type SuitePurpose } from "./report.ts";
 
 export const SUITE_FILE = "suite.json";
@@ -96,7 +96,7 @@ export function parseSuite(text: string, file: string): SuiteSpec {
 
 export async function loadSuite(dirOrFile: string): Promise<LoadedSuite> {
   const file = dirOrFile.endsWith(".json") ? dirOrFile : join(dirOrFile, SUITE_FILE);
-  const text = await readFile(file, "utf8").catch(() => {
+  const text = await readTextFile(file).catch(() => {
     throw new SuiteError(`No ${SUITE_FILE} in ${dirname(file)}`);
   });
   const spec = parseSuite(text, file);
