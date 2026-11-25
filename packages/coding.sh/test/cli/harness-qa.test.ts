@@ -79,6 +79,7 @@ describe("harness snapshot --agent claude-code", () => {
 
   it("finds imports only outside code, without trailing punctuation", () => {
     assert.deepEqual(importPaths("@AGENTS.md\nsee @a/b.md, then `@c.md`\n```\n@d.md\n```\nuser@example.test @~/z.md."), ["AGENTS.md", "a/b.md", "~/z.md"]);
+    assert.deepEqual(importPaths("read @docs/guide.md... and @a.b.c..\n@... @./x.md."), ["docs/guide.md", "a.b.c", "./x.md"]);
   });
 });
 

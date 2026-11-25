@@ -31,6 +31,7 @@ import {
   stripAnsi,
   stripNestedHooks,
   upsertTomlBlock,
+  upsertTomlTable,
   walkFiles,
   windowsHookPathProblem,
 } from "../../src/adapters/_shared/index.ts";
@@ -275,6 +276,15 @@ describe("toml edits", () => {
     assert.deepEqual(parseToml(withBlock).notify, ["node", "x"]);
     assert.equal(upsertTomlBlock(withBlock, "notify", 'notify = ["node", "x"]'), withBlock);
     assert.equal(removeTomlBlock(withBlock, "notify"), src);
+  });
+
+  it("a body's trailing whitespace is dropped, so a block or table reads the same either way", () => {
+    const table = '[mcp_servers.coding-sh]\ncommand = "x"';
+    for (const tail of ["\n", "\n\n \t\r\n", "\t "]) {
+      assert.equal(upsertTomlBlock(src, "notify", `notify = ["node", "x"]${tail}`), upsertTomlBlock(src, "notify", 'notify = ["node", "x"]'), JSON.stringify(tail));
+      assert.equal(upsertTomlTable(src, "mcp_servers.coding-sh", table + tail, "mcp-server"), upsertTomlTable(src, "mcp_servers.coding-sh", table, "mcp-server"), JSON.stringify(tail));
+    }
+    assert.equal(upsertTomlBlock(src, "notify", " \n\t\n"), upsertTomlBlock(src, "notify", ""), "a body of only whitespace");
   });
 
   it("a marked block whose END moved below a foreign table is not removed (INS-3)", () => {
