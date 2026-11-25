@@ -42,9 +42,10 @@
 // Ctrl-C skips `finally`) are removed by an exit handler.
 //
 // Hot path: the hook imports this file (spool/kick.ts) for isLocked(); keep it
-// to node:fs and node:os.
-import { closeSync, linkSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeSync } from "node:fs";
-import { hostname } from "node:os";
+// to node:fs and node:os, from process.getBuiltinModule as spool/hook.ts says.
+const fs = process.getBuiltinModule("node:fs");
+/** node:os, loaded only when a lock's holder is checked or written. */
+const hostname = () => process.getBuiltinModule("node:os").hostname();
 
 export interface LockOptions {
   /** Give up after this long while a live holder keeps the lock (default 30 s; 0 = try once). */
@@ -104,7 +105,7 @@ function parseHolder(text: string): LockInfo | undefined {
 
 function readText(path: string): string | undefined {
   try {
-    return readFileSync(path, "utf8");
+    return fs.readFileSync(path, "utf8");
   } catch {
     return undefined;
   }
@@ -135,7 +136,7 @@ interface Seen {
 function inspect(path: string, staleMs: number, now: number): Seen {
   let ino: number, mtimeMs: number;
   try {
-    ({ ino, mtimeMs } = statSync(path));
+    ({ ino, mtimeMs } = fs.statSync(path));
   } catch {
     return { state: "free" };
   }
@@ -167,26 +168,26 @@ const BREAK_STALE_MS = 10_000;
 function removeIfSame(path: string, seen: Seen): void {
   const moved = `${path}.stale.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
   try {
-    renameSync(path, moved);
+    fs.renameSync(path, moved);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
     throw e;
   }
   let same = false;
   try {
-    const s = statSync(moved);
+    const s = fs.statSync(moved);
     same = s.ino === seen.ino && s.mtimeMs === seen.mtimeMs && readText(moved) === seen.text;
   } catch {
     // vanished: nothing to restore
   }
   if (!same) {
     try {
-      linkSync(moved, path);
+      fs.linkSync(moved, path);
     } catch {
       // EEXIST, or no hard links on this filesystem
     }
   }
-  rmSync(moved, { force: true });
+  fs.rmSync(moved, { force: true });
 }
 
 /**
@@ -215,7 +216,7 @@ function breakStale(path: string, staleMs: number, nonce: string): boolean {
     if (now.state === "stale") removeIfSame(path, now);
   } finally {
     // A read, then a remove, like release: a stall between them removes a guard a second breaker took.
-    if (readHolder(guard)?.nonce === nonce) rmSync(guard, { force: true });
+    if (readHolder(guard)?.nonce === nonce) fs.rmSync(guard, { force: true });
   }
   return true;
 }
@@ -223,7 +224,7 @@ function breakStale(path: string, staleMs: number, nonce: string): boolean {
 /** True unless `path` is definitely absent (a file Windows is still deleting fails stat with EPERM). */
 function present(path: string): boolean {
   try {
-    statSync(path);
+    fs.statSync(path);
     return true;
   } catch (e) {
     return (e as NodeJS.ErrnoException).code !== "ENOENT";
@@ -233,7 +234,7 @@ function present(path: string): boolean {
 function tryCreate(path: string, info: LockInfo, retry = true): boolean {
   let fd: number;
   try {
-    fd = openSync(path, "wx", 0o600);
+    fd = fs.openSync(path, "wx", 0o600);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") return false;
@@ -247,9 +248,9 @@ function tryCreate(path: string, info: LockInfo, retry = true): boolean {
     throw e;
   }
   try {
-    writeSync(fd, JSON.stringify(info));
+    fs.writeSync(fd, JSON.stringify(info));
   } finally {
-    closeSync(fd);
+    fs.closeSync(fd);
   }
   return true;
 }
@@ -261,7 +262,7 @@ function releaseAllOnExit(): void {
   for (const [path, nonce] of held) {
     try {
       // The same read, then remove, as release.
-      if (readHolder(path)?.nonce === nonce) rmSync(path, { force: true });
+      if (readHolder(path)?.nonce === nonce) fs.rmSync(path, { force: true });
     } catch {
       // exiting anyway
     }
@@ -301,7 +302,7 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
     }
     try {
       const now = new Date();
-      utimesSync(path, now, now);
+      fs.utimesSync(path, now, now);
     } catch {
       lost = true;
     }
@@ -321,7 +322,7 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
       if (held.get(path) === nonce) held.delete(path);
       // Remove the file only if it is still ours: a read, then a remove. A stall past staleMs between
       // the two removes the lock a peer took meanwhile (see the header).
-      if (ours()) rmSync(path, { force: true });
+      if (ours()) fs.rmSync(path, { force: true });
     },
   };
 }

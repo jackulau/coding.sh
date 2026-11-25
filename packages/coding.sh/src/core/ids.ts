@@ -1,10 +1,15 @@
 // Id helpers. Event ids are content-derived so re-ingesting the same spool
 // line is a no-op; run/task ids are time-sortable so lists order naturally.
-import { createHash, randomBytes } from "node:crypto";
+
+// The hook's redaction rules bundle this file (through core/weights.ts) and call none of the
+// functions that use node:crypto, so it is loaded on first use, from process.getBuiltinModule as
+// spool/hook.ts says.
+let cryptoModule: typeof import("node:crypto") | undefined;
+const nodeCrypto = () => (cryptoModule ??= process.getBuiltinModule("node:crypto"));
 
 /** sha256 hex of a string (utf8) or bytes. */
 export function sha256Hex(data: string | Uint8Array): string {
-  return createHash("sha256").update(data).digest("hex");
+  return nodeCrypto().createHash("sha256").update(data).digest("hex");
 }
 
 /**
@@ -69,7 +74,7 @@ function incrementRandom(bytes: Uint8Array): Uint8Array {
     if (v <= 0xff) return next;
   }
   // 80-bit overflow within one millisecond is practically impossible; reseed.
-  return new Uint8Array(randomBytes(10));
+  return new Uint8Array(nodeCrypto().randomBytes(10));
 }
 
 /**
@@ -83,7 +88,7 @@ export function sortableId(prefix = "", now: number = Date.now()): string {
     now = lastTime;
   } else {
     lastTime = now;
-    lastRandom = new Uint8Array(randomBytes(10));
+    lastRandom = new Uint8Array(nodeCrypto().randomBytes(10));
   }
   return prefix + encodeTime(now) + encodeRandom(lastRandom);
 }

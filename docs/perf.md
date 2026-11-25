@@ -345,6 +345,27 @@ Long sessions are not faster. Every write rebuilds each session it touched from 
 so a request costs more as its session grows, and peak RSS in that mode reached about 250 MB in
 both builds.
 
+## Read commands
+
+Before it reads, a command such as `sessions` or `usage` ingests what hooks left in the spool and
+checks whether stored sessions need a re-parse after an upgrade. Both load the spool ingest,
+`core/ingest.ts`. It imported two names from the OTLP receiver, so every read also loaded the
+receiver, its protobuf decoder and its span mapping (233 KB of source a read never runs) and
+`node:http`, whose ESM import makes Node load its bundled HTTP client. The two names now live in
+`src/otel/ingest-shared.ts`. `test/core/ingest-imports.test.ts` fails if the ingest or the
+re-parse check loads the receiver or `node:http` again.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026, the built `cli.mjs` on an empty store. Each cell is
+the command over `node -e ""`, the median of 120 interleaved calls (80 for `--help`, which loads
+neither and is the control). In brackets is the paired median difference from the commit before
+this change, with its 95% bootstrap interval.
+
+| Command | Before | After |
+| --- | --- | --- |
+| `sessions` | +169.9 ms | +136.7 ms (-33.2 [-42.8, -26.0]) |
+| `usage` | +169.0 ms | +138.5 ms (-30.4 [-35.4, -26.4]) |
+| `--help` | +54.2 ms | +54.4 ms (+0.2 [-24.3, 21.6]) |
+
 ## Hook
 
 Agents run the hook on every tool call, so its cost adds to every step. Outside Windows the hook
@@ -409,6 +430,38 @@ added about 1.2 ms to every call, and a CommonJS bundle and node's compile cache
 The check finds a possible secret in 28% of this repo's source files, 67% of its docs pages, 12% of
 its site files and 17% of its adapter fixtures. A session that reads many files pays the slower
 cost often.
+
+### Built-in modules in the node hook
+
+The first ESM import of a built-in module makes Node build an ES module for it, which reads each
+of its exports. For `node:fs` that loaded `stream`, `stream/promises`, `string_decoder` and the
+internal modules behind them on every hook call. The modules `hook.mjs` loads now take `node:fs`
+and `node:path` from `process.getBuiltinModule`, which returns the module Node has already loaded.
+They load `node:os` only when `HOME` and `USERPROFILE` are both unset or a lock's holder is
+checked, and `node:crypto` on first use. `test/capture/hook.test.ts` checks that the bundled hook
+loads no built-in module that a bare node start does not.
+
+Agents run `hook.mjs` with the first node on their PATH. A node older than 22.3 (20.16 on the 20
+line) has no `process.getBuiltinModule`, so the first line of `hook.mjs` sets it to a `require`
+there, and the hook still records the call.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026. Each cell is `hook.mjs` over `node -e ""`, the median
+of interleaved calls (200 at 0.6 KB and 2 KB, 120 with a secret, 40 at 1 MB). In brackets is the
+paired median difference from origin/main, with its 95% bootstrap interval.
+
+| Payload | origin/main | Built-ins from `getBuiltinModule` |
+| --- | --- | --- |
+| 0.6 KB, no secret | +11.7 ms | +7.6 ms (-4.1 [-12.6, -0.9]) |
+| 2 KB, no secret | +9.2 ms | +5.8 ms (-3.4 [-5.9, -2.2]) |
+| 2 KB, one secret | +17.7 ms | +14.7 ms (-3.0 [-4.3, -1.8]) |
+| 1 MB, no secret | +14.6 ms | +11.0 ms (-3.7 [-4.8, -2.3]) |
+
+The machine was busier during the 0.6 KB row: `node -e ""` took 65 ms there and 46 to 52 ms in the
+others, which widens that interval.
+
+`bench.mjs hook --baseline` on the same machine, 50 calls each, puts `perf.hookStart` 3.3 ms
+[2.0, 4.9] under origin/main. It puts `perf.hook` 3.0 ms under, but at 50 calls that interval,
+[-1.0, 7.3], still includes no change.
 
 ## Long sessions
 
