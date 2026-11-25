@@ -338,8 +338,8 @@ export function rehomeTarget(tree: SpanTree, e: AgentEvent, r: Rehome): { sessio
   return at;
 }
 
-/** Index kv key of a persisted trace → conversation entry. */
-export const traceKvKey = (traceId: string) => `otel-trace:${traceId}`;
+/** Index kv key of a persisted trace → conversation entry (defined apart, for the spool ingest). */
+export { traceKvKey } from "./ingest-shared.ts";
 
 // ---------------------------------------------------------------- attribute helpers
 

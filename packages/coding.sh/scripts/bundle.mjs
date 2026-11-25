@@ -9,6 +9,12 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+// Agents run hook.mjs with the first node on their PATH, which can be older than the package
+// needs. The hook's modules take built-in modules from process.getBuiltinModule, added in Node
+// 22.3 and 20.16; on an older node this line sets it to a require first, so the hook still
+// records the call and exits 0. A node that has it skips the line and loads nothing more.
+export const HOOK_BANNER = `#!/usr/bin/env node\nif (typeof process.getBuiltinModule !== "function") process.getBuiltinModule = (await import("node:module")).createRequire(import.meta.url);`;
+
 /** @param {string} outdir absolute or package-relative output directory */
 export async function bundle(outdir = "dist") {
   const out = resolve(root, outdir);
@@ -44,7 +50,7 @@ export async function bundle(outdir = "dist") {
       // .md: the skills the MCP server serves (src/mcp/skills.ts).
       loader: { ".html": "text", ".css": "text", ".md": "text" },
     }),
-    build({ ...common, entryPoints: { hook: "src/spool/hook.ts" }, metafile: true, banner: { js: "#!/usr/bin/env node" }, minify: true }),
+    build({ ...common, entryPoints: { hook: "src/spool/hook.ts" }, metafile: true, banner: { js: HOOK_BANNER }, minify: true }),
     // The redaction rules hook.mjs imports only for a payload that may hold a secret (src/spool/gate.ts).
     build({ ...common, entryPoints: { "hook-redact": "src/spool/redact.ts" }, minify: true }),
     build({ ...common, entryPoints: { schema: "src/schema/index.ts" } }),
