@@ -87,6 +87,8 @@ missing token, still name `coding.sh`.
   `$`, a backtick, `!`, `%`, `& | < > ^`, a control character, or a trailing or doubled backslash.
 - The viewer's empty Experiments page gives `exp run --task` a JSON file, since PowerShell and cmd
   change JSON typed into an argument.
+- A file you pass to coding.sh can be UTF-8, or UTF-16 or UTF-8 with a byte order mark, as Windows
+  PowerShell writes it with `>` and `Out-File`.
 
 CI runs the test suite and this installer on Windows. It also installs the current releases of
 OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider, runs one session of each against

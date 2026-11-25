@@ -144,35 +144,51 @@ describe("CLI: exp replay", () => {
     assert.match(r.stdout, /^1 call × 2 arms × 3: 6 model calls, ~[\d.]+k? input tokens, ~\$[\d.]+ /m);
     assert.match(r.stdout, /^A model=claude-sonnet-4-5$/m);
     assert.match(r.stdout, /^B model=claude-haiku-4-5$/m);
-    assert.match(r.stdout, /needs \$ANTHROPIC_API_KEY to run/);
+    // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows, which read the variable as $env:NAME.
+    assert.match(r.stdout, process.platform === "win32" ? /needs \$env:ANTHROPIC_API_KEY to run/ : /needs \$ANTHROPIC_API_KEY to run/);
+    const sh = await cli([`${SESSION}#1`, "--vary", "model=claude-haiku-4-5", "--dry-run"], { SHELL: "/bin/bash" });
+    assert.equal(sh.status, 0, sh.stderr);
+    assert.match(sh.stdout, /needs \$ANTHROPIC_API_KEY to run/);
     assert.equal(replays.length, 0);
   });
 
   it("refuses to run without the user's own API key", async () => {
     const r = await cli([`${SESSION}#1`, "--vary", "model=claude-haiku-4-5"]);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
+    assert.match(r.stderr, process.platform === "win32" ? /\$env:ANTHROPIC_API_KEY is not set/ : /\$ANTHROPIC_API_KEY is not set/);
     assert.equal(replays.length, 0);
   });
 
   it("names the key as the user's shell sets it, in a line that runs as printed, and the same replay with --dry-run", async () => {
     const before = replays.length;
-    const next = async (extra: NodeJS.ProcessEnv) => {
+    const err = async (extra: NodeJS.ProcessEnv) => {
       const r = await cli([`${SESSION}#1`, "--vary", "model=claude-haiku-4-5", "--json"], extra);
       assert.equal(r.status, 1, r.stderr);
       const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
       assert.ok(line, r.stderr);
-      return (JSON.parse(line) as { next: string[] }).next;
+      return JSON.parse(line) as { message: string; next: string[] };
     };
-    // The note after the line is a comment in sh and in PowerShell, so the whole line runs.
-    const why = "   # the agent's own login is never stored, so it can't be reused; a subscription token in $CLAUDE_CODE_OAUTH_TOKEN works too";
-    const sh = [`export ANTHROPIC_API_KEY=...${why}`, `See the cost first: coding.sh exp replay '${SESSION}#1' --vary model=claude-haiku-4-5 --json --dry-run`];
-    assert.deepEqual(await next({ SHELL: "/bin/bash" }), sh);
+    // sh, and Git Bash on Windows (MSYSTEM), read $NAME. The note after the line is a comment in sh
+    // and in PowerShell, so the whole line runs.
+    const why = (token: string) => `   # the agent's own login is never stored, so it can't be reused; a subscription token in ${token} works too`;
+    const sh = {
+      status: "error",
+      reason: "missing_api_key",
+      message: "exp replay calls the Anthropic API with your own key, and $ANTHROPIC_API_KEY is not set",
+      next: [`export ANTHROPIC_API_KEY=...${why("$CLAUDE_CODE_OAUTH_TOKEN")}`, `See the cost first: coding.sh exp replay '${SESSION}#1' --vary model=claude-haiku-4-5 --json --dry-run`],
+    };
+    assert.deepEqual(await err({ SHELL: "/bin/bash" }), sh);
+    assert.deepEqual(await err({ MSYSTEM: "MINGW64" }), sh);
     // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows.
-    const plain = await next({});
-    const ps = [`$env:ANTHROPIC_API_KEY = '...'${why}`, `See the cost first: codingsh exp replay "${SESSION}#1" --vary model=claude-haiku-4-5 --json --dry-run`];
+    const plain = await err({});
+    const ps = {
+      status: "error",
+      reason: "missing_api_key",
+      message: "exp replay calls the Anthropic API with your own key, and $env:ANTHROPIC_API_KEY is not set",
+      next: [`$env:ANTHROPIC_API_KEY = '...'${why("$env:CLAUDE_CODE_OAUTH_TOKEN")}`, `See the cost first: codingsh exp replay "${SESSION}#1" --vary model=claude-haiku-4-5 --json --dry-run`],
+    };
     assert.deepEqual(plain, process.platform === "win32" ? ps : sh);
-    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain[0]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain.next[0]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
     assert.equal(replays.length, before);
   });
 

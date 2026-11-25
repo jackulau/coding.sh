@@ -8,8 +8,7 @@
 // `--margin D` adds paired non-inferiority and exits 1 unless B is within D of A.
 // `exp plateau` runs the restart e-detector over a loop's experiments (src/experiments/plateau.ts).
 // `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datasets/types.ts";
@@ -41,6 +40,7 @@ import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration
 import { renderCalibration } from "../../judge/render.ts";
 import { parseCaseLabels, type VerifierAudit } from "../../judge/verifier.ts";
 import { sortableId } from "../../core/ids.ts";
+import { readTextFile, readTextFileSync } from "../../core/text-file.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -79,7 +79,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
 /** Whether a spec file defines a matrix or variants. Unreadable files are left for loadSpec to report. */
 async function isMatrixFile(file: string): Promise<boolean> {
   try {
-    const v = JSON.parse(await readFile(file, "utf8")) as unknown;
+    const v = JSON.parse(await readTextFile(file)) as unknown;
     return isObj(v) && (v.matrix !== undefined || v.variants !== undefined);
   } catch {
     return false;
@@ -646,7 +646,7 @@ async function judgeLabelFlags(c: CommandContext, store: FileEvalStore, a: Exper
   const read = async (file: string, flag: string) => {
     let text: string;
     try {
-      text = await readFile(resolve(c.cwd, file), "utf8");
+      text = await readTextFile(resolve(c.cwd, file));
     } catch {
       throw new UsageError(`can't read ${flag} ${JSON.stringify(file)}`, { reason: "invalid_argument" });
     }
@@ -671,7 +671,7 @@ async function judgeLabelFlags(c: CommandContext, store: FileEvalStore, a: Exper
 async function readPairLabels(file: string) {
   let text: string;
   try {
-    text = await readFile(file, "utf8");
+    text = await readTextFile(file);
   } catch {
     throw new UsageError(`can't read --labels ${JSON.stringify(file)}`, { reason: "invalid_argument" });
   }
@@ -820,7 +820,7 @@ function parseMetricArm(v: string, cwd: string, timeoutMs: number): MetricArm {
   } else if (/\.json$/i.test(body)) {
     if (!existsSync(file)) throw new UsageError(`--arm ${name}: can't read ${JSON.stringify(body)}`, { reason: "invalid_argument" });
     try {
-      spec = JSON.parse(readFileSync(file, "utf8"));
+      spec = JSON.parse(readTextFileSync(file));
     } catch (e) {
       throw new UsageError(`--arm ${name}: ${body} is not valid JSON: ${(e as Error).message}`, { reason: "invalid_argument" });
     }

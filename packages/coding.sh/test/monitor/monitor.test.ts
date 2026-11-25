@@ -184,6 +184,10 @@ describe("monitor --run", () => {
     await bad({ run: "x", sample: 2 }, /--sample/);
     await bad({ run: "x", where: "((" }, /--where/);
     await bad({ judge: join(sb.root, "missing.md") }, /no rubric file/);
+    // Blank lines in UTF-16, what `>` writes in Windows PowerShell 5.1, are an empty rubric too.
+    const blank16 = join(sb.root, "blank16.md");
+    writeFileSync(blank16, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("  \r\n\r\n", "utf16le")]));
+    await bad({ judge: blank16 }, /is empty/);
     await bad({ run: "x" }, /monitor name/, "bad name!");
     await add(sb, "m", { run: "x" });
     const dup = await runCmd(monitorCmd, sb, { action: "add", positionals: ["m"], flags: { run: "y" } });
@@ -216,6 +220,19 @@ describe("monitor --judge", () => {
     assert.equal(r.json.monitors[0].scored, 0);
     assert.equal(r.json.monitors[0].skipped, 1, "already scored");
     assert.equal((await monitorScores(sb)).length, 1);
+  });
+
+  it("reads a rubric that Windows PowerShell wrote in UTF-16 as the same text", async () => {
+    const sb = box();
+    const text = "Did the agent finish the task the user asked for?\r\n";
+    const rubric = join(sb.root, "rubric16.md");
+    writeFileSync(rubric, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]));
+    await add(sb, "helpful16", { judge: rubric, provider: "mock" });
+    capture(sb, "mon-judge-16");
+    await ingest(sb);
+    const rows = await monitorScores(sb);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.judgeVersion, monitorVersion(text));
   });
 
   it("with no provider it records 'no judge provider' and scores nothing", async () => {
