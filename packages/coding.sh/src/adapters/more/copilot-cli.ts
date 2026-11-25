@@ -31,6 +31,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, RepoState, Usage } from "../../schema/index.ts";
+import { powerShellHookCommand } from "../_shared/hooks.ts";
 import { forgetInstall, ownsInstall, recordInstall } from "../_shared/installs.ts";
 import { parseTraceparent } from "../_shared/traceparent.ts";
 import {
@@ -88,7 +89,7 @@ export function copilotHookFile(hookCommand: string): Json {
   const hooks: Json = {};
   for (const ev of COPILOT_HOOK_EVENTS) {
     // bash runs outside Windows (the sh fast path), powershell on Windows (node).
-    hooks[ev] = [{ type: "command", bash: hookCmd(hookCommand, ID, ev, "", "linux"), powershell: `& ${hookCmd(hookCommand, ID, ev, "", "win32")}`, timeoutSec: 10 }];
+    hooks[ev] = [{ type: "command", bash: hookCmd(hookCommand, ID, ev, "linux"), powershell: powerShellHookCommand(hookCommand, ID, ev), timeoutSec: 10 }];
   }
   return { version: 1, hooks };
 }

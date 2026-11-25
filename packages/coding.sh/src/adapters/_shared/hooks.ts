@@ -35,17 +35,54 @@ export function hookShFor(hookPath: string): string {
   return hookPath.replace(/hook\.mjs$/, "hook.sh");
 }
 
+/** What cmd.exe or PowerShell read inside double quotes: cmd expands `%NAME%`, PowerShell reads `$` and the backtick and takes U+201C to U+201E for a double quote. */
+const WINDOWS_QUOTED: ReadonlyArray<readonly [RegExp, string]> = [
+  [/%/, "a %"],
+  [/\$/, "a $"],
+  [/`/, "a backtick"],
+  [/[\u201C-\u201E]/, "a curly double quote"],
+];
+
+/**
+ * Why `agent`'s hook command on Windows can't name `hookPath`, or undefined when it can. Claude Code
+ * runs hooks with Git Bash there, which reads the sh escapes the command uses. Other agents run them
+ * under cmd.exe or PowerShell, and no one quoted form keeps a path with `%`, `$`, a backtick or a
+ * curly double quote in sh, cmd and PowerShell alike.
+ */
+export function windowsHookPathProblem(hookPath: string, agent: string): string | undefined {
+  if (agent === "claude-code") return undefined;
+  const found = WINDOWS_QUOTED.filter(([re]) => re.test(hookPath)).map(([, name]) => name);
+  if (!found.length) return undefined;
+  const has = found.length === 1 ? found[0] : `${found.slice(0, -1).join(", ")} and ${found[found.length - 1]}`;
+  return `the hook path ${hookPath} has ${has}, which cmd.exe or PowerShell would read differently; set CODING_SH_HOME for your user account to a folder without %, $, backticks or curly double quotes (setx CODING_SH_HOME C:\\coding.sh), then run init again in a new terminal and restart the agent`;
+}
+
 /**
  * `/bin/sh "<dir>/hook.sh" <agent> <event> [--echo-continue]` for a `…/hook.mjs`
  * outside Windows, else `node "<hook>" <agent> <event> [extra…]`. The path is
- * always quoted.
+ * always quoted. On Windows it throws windowsHookPathProblem's reason for a
+ * path the agent's shell would read differently.
  */
 export function buildHookCommand(hookPath: string, agent: string, event: string, extra: string[] = [], platform: NodeJS.Platform = process.platform): string {
   const quote = (p: string) => `"${hookPathForCommand(p).replace(/(["\\$`])/g, "\\$1")}"`;
   if (platform !== "win32" && /(^|[\\/])hook\.mjs$/.test(hookPath) && extra.every((a) => a === "--echo-continue")) {
     return ["/bin/sh", quote(hookShFor(hookPath)), agent, event, ...extra].join(" ");
   }
+  const problem = platform === "win32" ? windowsHookPathProblem(hookPath, agent) : undefined;
+  if (problem) throw new Error(problem);
   return ["node", quote(hookPath), agent, event, ...extra.map(quoteArg)].join(" ");
+}
+
+/**
+ * Copilot's `powershell` hook command: `& node "<hook.mjs>" <agent> <event>`. PowerShell reads `$`,
+ * the backtick and a curly double quote inside double quotes, so a path with one goes in single
+ * quotes instead, where PowerShell reads each character as written but a single quote (' and U+2018
+ * to U+201B), which is doubled.
+ */
+export function powerShellHookCommand(hookPath: string, agent: string, event: string): string {
+  const p = hookPathForCommand(hookPath);
+  if (/[$`\u201C-\u201E]/.test(p)) return `& node '${p.replace(/['\u2018-\u201B]/g, "$&$&")}' ${agent} ${event}`;
+  return `& node "${p.replace(/(["\\$`])/g, "\\$1")}" ${agent} ${event}`;
 }
 
 /** Argv form of the same command, for formats that take an array (e.g. OpenCode plugins). */
