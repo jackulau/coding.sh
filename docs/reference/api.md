@@ -649,14 +649,18 @@ calls nested in it, also when a billed call is above it.
 A call that carries the response id of a call counted before it is a copy, and is left out with the
 calls nested in it. When one of the two is nested in the other, at any depth, they are one response
 seen at two levels, as when a gateway's generation id is on a wrapper and on its last step, and
-neither counts as a copy. Two calls with one id where neither is nested in the other are copies,
-also when both are nested in a call with that id. A nested call is checked after the call it is
-nested in, whatever their times, so one left out with a copy makes no later call a copy.
+neither counts as a copy.
+
+Two calls with one id where neither is nested in the other are copies, also when both are nested in
+a call with that id. A nested call is checked after the call it is nested in, whatever their times,
+so one left out with a copy makes no later call a copy.
 
 A call nested in a call that carries usage of its own, with no billed call between them, is not
 checked for copies. It counts within the outer call as above, or is left out with it, and its
-response id makes no later call a copy. Nor is a billed call with no usage and no calls nested in
-it checked. It has no tokens, and a gateway bill counts once per generation, as below.
+response id makes no later call a copy.
+
+A billed call with no usage and no calls nested in it is not checked for copies either. It has no
+tokens, and a gateway bill counts once per generation, as below.
 
 A gateway bill linked to two copies of one call, such as the proxy's copy and the agent's own
 record, counts once.
