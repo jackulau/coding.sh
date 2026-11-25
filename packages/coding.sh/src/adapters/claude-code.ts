@@ -249,11 +249,12 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
 }
 
 /**
- * When the transcript recorded the prompt a UserPromptSubmit line carries: the
- * entry with the same typed text, the latest at or before the line, else the
- * first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code writes the entry
- * before the hook runs. Undefined when no entry matches. `ctx.missing` hears of
- * a transcript that is gone, or that has grown past the line.
+ * The time on the transcript entry of the prompt a UserPromptSubmit line
+ * carries: the entry with the same typed text, the latest at or before the
+ * line, else the first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code
+ * stamps the entry before the hook runs, but may write it after. Undefined when
+ * no entry matches. `ctx.missing` hears of a transcript that is gone, or that
+ * has grown past the line.
  */
 async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
   if (!path) return undefined;
@@ -397,7 +398,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
     case "UserPromptSubmit": {
       const prompt = str(raw.prompt) ?? "";
       const t = await clipText(ctx, prompt);
-      // The turn's first model call starts when the transcript recorded the prompt, before this hook ran:
+      // The turn's first model call starts at the time on the prompt's transcript entry, before this hook ran:
       // the prompt takes that time, less 1 ms so it sorts before the call.
       const entry = inChild ? undefined : await promptEntryTs(ctx, str(raw.transcript_path), sessionId, prompt, line.ts);
       const said = em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
@@ -892,7 +893,7 @@ export const claudeCode: Adapter = {
   //    2 s old (the same permission prompt for two tool calls in a row).
   // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
   // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
-  // 21 (0.1.8): a hook prompt takes the time its transcript entry was written, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]").
+  // 21 (0.1.8): a hook prompt takes the time on its transcript entry, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]").
   parseVersion: 21,
 
   detect() {

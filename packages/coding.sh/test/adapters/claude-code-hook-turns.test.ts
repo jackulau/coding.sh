@@ -168,7 +168,7 @@ describe("claude-code hook capture: the person's turns", () => {
       prompt("u2", 123_000, "Now update the docs"),
       reply("m2", 126_000, { type: "text", text: "Updated." }),
     ];
-    // Each UserPromptSubmit hook runs 150 ms after Claude Code wrote the prompt.
+    // Each UserPromptSubmit hook runs 150 ms after the time Claude Code stamped on the prompt.
     const lines = [
       line("SessionStart", -1000, { source: "startup" }),
       line("UserPromptSubmit", 150, { prompt: "Add a test for the parser" }),
@@ -210,7 +210,7 @@ describe("claude-code hook capture: the person's turns", () => {
   });
 });
 
-describe("claude-code hook capture: when a prompt was written", () => {
+describe("claude-code hook capture: the time on a prompt's transcript entry", () => {
   const missing = async (l: SpoolLine): Promise<{ said: string[][]; ts: number[] }> => {
     const said: string[][] = [];
     const events = await claudeCode.normalize(l, { ...testCtx().ctx, missing: (path, session) => void said.push([path, session]) });
