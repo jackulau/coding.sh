@@ -223,12 +223,13 @@ export async function nextItem(index: IndexStore, name: string, o: NextOptions =
 
 /**
  * The item `id` of the queue: a number, or the item's session, by its id or by a reference that opens
- * it (findSessionRef, so the one review next prints). A ReviewError when there is none.
+ * it (findSessionRef, so the one review next prints). A number no item has is read as a session
+ * reference, since a printed one can be all digits. A ReviewError when there is none.
  */
 export async function getItem(index: IndexStore, q: ReviewQueue, id: string | number): Promise<ReviewItem> {
   const items = await reviewStore(index).listReviewItems(q.name);
   const raw = String(id);
-  const it = /^\d+$/.test(raw) ? items.find((x) => x.id === Number(raw)) : (items.find((x) => x.targetId === raw) ?? (await itemOfSession(index, items, raw)));
+  const it = (/^\d+$/.test(raw) ? items.find((x) => x.id === Number(raw)) : undefined) ?? items.find((x) => x.targetId === raw) ?? (await itemOfSession(index, items, raw));
   if (!it) throw new ReviewError("unknown_item", `Review queue ${q.name} has no item ${raw}: its items are 1 to ${items.length}`);
   return it;
 }

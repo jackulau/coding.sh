@@ -391,17 +391,19 @@ describe("eval run names each failed trial's session, and each captured failure'
 
 describe("review and score add name the session by a reference that opens it", () => {
   // `latest` as typed opens the newest session, and a full id with a space reaches show as three words.
+  // The shortest reference to DIGITS is all digits, like an item number.
+  const DIGITS = "20251124-aaaa-4000-8000-000000000001";
   let sb: Sandbox;
   before(async () => {
     sb = sandbox();
     const now = Date.now();
-    await sb.seed([mkSession(A, now - 3000), mkSession("latest", now - 2000), mkSession(SPACED, now - 1000)]);
+    await sb.seed([mkSession(DIGITS, now - 4000), mkSession(A, now - 3000), mkSession("latest", now - 2000), mkSession(SPACED, now - 1000)]);
     const r = await runCmd(score, sb, { action: "config", positionals: ["ok"], flags: { type: "boolean" } });
     assert.equal(r.error, undefined, String(r.error?.message));
   });
   after(() => sb.cleanup());
 
-  for (const [queue, id] of [["named", "latest"], ["spaced", SPACED]] as const) {
+  for (const [queue, id] of [["named", "latest"], ["spaced", SPACED], ["digits", DIGITS]] as const) {
     test(`review next and review done name session ${JSON.stringify(id)} by a reference that opens it`, async () => {
       const made = await runCmd(review, sb, { action: "create", positionals: [queue], flags: { where: `id:${JSON.stringify(id)}`, config: "ok" } });
       assert.equal(made.error, undefined, String(made.error?.message));
