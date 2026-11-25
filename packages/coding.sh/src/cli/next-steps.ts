@@ -43,14 +43,14 @@ export function codeSpansForShell(text: string, env: NodeJS.ProcessEnv, platform
  * when both pass it on as is, else in double quotes, which both strip and cmd
  * needs (it keeps single quotes). `--` is quoted: PowerShell drops the first
  * bare one given to a script, and npm's codingsh.ps1 is one. So are `--%`,
- * PowerShell's stop-parsing token, and `-x:y`, `a,b` and `@x`, which
+ * PowerShell's stop-parsing token, and `-x:y`, `-x.y`, `a,b` and `@x`, which
  * PowerShell splits or splats. An argument with `$`, a
  * backtick or a double quote has no form both shells keep: PowerShell expands
  * or splits it inside double quotes, so it gets PowerShell's single quotes.
  */
 export function quoteArg(s: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   if (!windowsShell(env, platform)) return shellQuote(s);
-  if (/^[\w%+=:./\\-][\w%+=:./\\@-]*$/.test(s) && s !== "--" && s !== "--%" && !(/^-[^-]/.test(s) && s.includes(":"))) return s;
+  if (/^[\w%+=:./\\-][\w%+=:./\\@-]*$/.test(s) && s !== "--" && s !== "--%" && !(/^-[^-]/.test(s) && /[:.]/.test(s))) return s;
   // Node reads `\"` as a quote, so backslashes before the closing quote are doubled.
   if (!/["$`\u201C\u201D\u201E]/.test(s)) return `"${s.replace(/\\+$/, "$&$&")}"`;
   return `'${s.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
