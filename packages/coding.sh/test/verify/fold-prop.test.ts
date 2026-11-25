@@ -38,6 +38,10 @@
 //   reports nothing.
 // - A row's trace ids are those of its own events, first seen first, after the stored row's when a fold
 //   resumes one, and at most 256 (Session.traceIds). A gateway's copy adds none.
+// - A session ends at its last session.end, unless activity stamped more than 5 s after it reopened
+//   it. With none, or once reopened, a session whose own events all came live (OTel, an SDK or the
+//   proxy) under an id that is none of their trace ids, or all from recorded history, ends at the end
+//   of its last event (stats.endInferred); any other has no end. A gateway's copy changes none of it.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -683,6 +687,121 @@ test("a row keeps its events' trace ids first seen first, after the stored row's
       assert.deepEqual(buildSession(events, storedRow(n)).traceIds, want.length ? want : undefined);
     },
     { runs: 1000, label: "traces" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** Activity over this long after a session.end reopens the session (outline.ts REOPEN_SLACK_MS). */
+const REOPEN_SLACK = 5000;
+
+/** Event sources by how a session was captured: live, from recorded history, by a hook, or a mix. */
+const END_SOURCES = {
+  live: ["otel-span", "otel-log", "sdk", "proxy"],
+  history: ["transcript", "backfill", "store"],
+  hook: [undefined],
+  mixed: [undefined, "otel-span", "sdk", "proxy", "transcript"],
+} as const;
+
+/** A generated event: what the fold reads to find where a session ended. */
+interface EndEvent {
+  kind: "session.end" | "user.message" | "llm.call" | "turn.end" | "notification";
+  /** Milliseconds after T0: two events are often 5 s or 5.001 s apart. */
+  at: number;
+  /** How long the event took, for one stamped at its start. */
+  durationMs: number | undefined;
+  source: string | undefined;
+  /** The event's trace id: none, another trace, or the session's id (a trace-keyed OTel session). */
+  trace: "none" | "other" | "own";
+  /** A gateway's copy of the event. */
+  copy: boolean;
+}
+
+const endEventGen = (sources: readonly (string | undefined)[]): Gen<EndEvent> =>
+  gen.record<EndEvent>({
+    kind: gen.pick(["session.end", "session.end", "user.message", "llm.call", "turn.end", "notification"] as const),
+    at: gen.pick([0, 1000, 5000, 6000, 6001, 12000]),
+    durationMs: gen.pick([undefined, undefined, 0, 2500, 8000]),
+    source: gen.pick(sources),
+    trace: gen.pick(["none", "none", "other", "own"] as const),
+    copy: gen.weighted(1 / 6),
+  });
+
+const endSessionGen: Gen<EndEvent[]> = gen.chain(gen.pick(["live", "live", "history", "hook", "mixed"] as const), (how) =>
+  gen.array(endEventGen(END_SOURCES[how]), { minLength: 1, maxLength: 5 }),
+);
+
+function endEvents(rs: EndEvent[]): AgentEvent[] {
+  return rs.map((r, i): AgentEvent => {
+    const e: AgentEvent = { id: `end-${i}`, v: 0, sessionId: "end-session", ts: T0 + r.at, agent: "claude-code", kind: r.kind, payload: {} };
+    if (r.durationMs !== undefined) e.durationMs = r.durationMs;
+    if (r.trace !== "none") e.traceId = r.trace === "own" ? "end-session" : "trace-1";
+    const source = r.copy ? "gateway" : r.source;
+    if (source !== undefined) e.source = source;
+    return e;
+  });
+}
+
+const isLive = (r: EndEvent) => r.source?.startsWith("otel") === true || r.source === "sdk" || r.source === "proxy";
+const activityOf = (own: EndEvent[]) => own.filter((r) => r.kind !== "session.end");
+
+/**
+ * Where a session ended, from the docs of Session.endedAt, stats.endInferred and the reopen slack,
+ * given its own events in time order (no tool calls): at its last session.end, unless activity
+ * stamped more than 5 s after it reopened it. With no session.end, or once reopened, a session whose
+ * events all came live under an id that is none of their trace ids, or all from recorded history,
+ * ends at the end of its last event; any other has no end.
+ */
+function endOf(own: EndEvent[]): { endedAt: number | undefined; endInferred: true | undefined; why: string } {
+  const end = own.findLast((r) => r.kind === "session.end");
+  // Activity counts from when it was stamped: a span that began before the end is no resume.
+  const reopened = end !== undefined && activityOf(own).some((r) => r.at > end.at + REOPEN_SLACK);
+  if (end && !reopened) return { endedAt: T0 + end.at, endInferred: undefined, why: "a session.end" };
+  const live = own.length > 0 && own.every(isLive) && !own.some((r) => r.trace === "own");
+  const history = own.length > 0 && own.every((r) => r.source === "transcript" || r.source === "backfill" || r.source === "store");
+  if (!live && !history) return { endedAt: undefined, endInferred: undefined, why: reopened ? "reopened" : "no end" };
+  // The end of the last event: ts for a *.end event, ts + durationMs for one stamped at its start.
+  const last = Math.max(...own.map((r) => r.at + (r.kind.endsWith(".end") ? 0 : (r.durationMs ?? 0))));
+  return { endedAt: T0 + last, endInferred: true, why: reopened ? "reopened, then its last activity" : "its last activity" };
+}
+
+test("a session ends at its last session.end unless activity over 5 s later reopened it, else, if it came live or from history, at its last event", async (t) => {
+  const seen: Record<string, number> = {
+    "a session.end": 0,
+    "its last activity": 0,
+    "reopened, then its last activity": 0,
+    reopened: 0,
+    "no end": 0,
+    "activity 5 s after the end": 0,
+    "activity 5.001 s after the end": 0,
+    "a span stamped before the end that closed after the slack": 0,
+    "a live session of one event": 0,
+    "a trace-keyed live session with no end": 0,
+    "a gateway's copy that would change it": 0,
+  };
+  await forAll(
+    endSessionGen,
+    (rs) => {
+      // The fold reads events in time order, keeping the order of events at the same time.
+      const all = [...rs].sort((a, b) => a.at - b.at);
+      // Enrichment never decides a session's shape.
+      const own = all.filter((r) => !r.copy);
+      const { why, ...want } = endOf(own);
+      seen[why]!++;
+      const end = own.findLast((r) => r.kind === "session.end");
+      const activity = activityOf(own);
+      const last = Math.max(...activity.map((r) => r.at));
+      if (end && last === end.at + REOPEN_SLACK) seen["activity 5 s after the end"]!++;
+      if (end && last === end.at + REOPEN_SLACK + 1) seen["activity 5.001 s after the end"]!++;
+      if (end && why === "a session.end" && activity.some((r) => r.at < end.at && !r.kind.endsWith(".end") && r.at + (r.durationMs ?? 0) > end.at + REOPEN_SLACK)) seen["a span stamped before the end that closed after the slack"]!++;
+      if (own.length === 1 && why === "its last activity" && isLive(own[0]!)) seen["a live session of one event"]!++;
+      if (own.length > 0 && own.every(isLive) && own.some((r) => r.trace === "own") && (why === "no end" || why === "reopened")) seen["a trace-keyed live session with no end"]!++;
+      const ifOwn = endOf(all.map((r) => (r.copy ? { ...r, source: "gateway" } : r)));
+      if (ifOwn.endedAt !== want.endedAt || ifOwn.endInferred !== want.endInferred) seen["a gateway's copy that would change it"]!++;
+      const row = buildSession(endEvents(rs));
+      assert.deepEqual({ endedAt: row.endedAt, endInferred: row.stats.endInferred }, want, why);
+    },
+    { runs: 1000, label: "end" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
