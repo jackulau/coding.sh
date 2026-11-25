@@ -516,6 +516,7 @@ grouped by area, with links to the docs for the details.
 - **Bench.** `bench schedule` writes a crontab line that keeps a `%` in a path. cron reads a bare `%` as the end of the command, so a working directory, CLI path, report folder or log path with one ran a cut-off command. A path with a line break is now an invalid argument. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/benchmarks.md#budget-schedule-and-report))
 - **CLI.** In PowerShell, a printed command puts an argument like `-x.y` in double quotes, as it does `-x:y`. PowerShell read the bare form as the parameter `-x` followed by `.y`, so the command got two arguments. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows))
 - **CLI.** A printed sh command single-quotes a word that starts with `=`, which zsh reads as the path of a command, so the command failed in zsh. An `=` later in a word stays bare. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md))
+- **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 
 ## [0.1.7] - 2026-11-16
 
