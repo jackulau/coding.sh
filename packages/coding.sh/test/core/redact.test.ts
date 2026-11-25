@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
-import { createRedactor, isSecretAttrKey, redactArgv, redactionTally, SECRET_NEEDLES, secretRules, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
+import { createRedactor, isSecretAttrKey, redactArgv, redactBlobValue, redactionTally, SECRET_NEEDLES, secretRules, sessionToMetadata, toMetadata, type RedactRule } from "../../src/core/redact.ts";
 import { originalSecretRedact } from "../fixtures/redact/original-secret-rules.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -593,5 +593,65 @@ describe("redact: same output as the original secret rules", () => {
       }
       assert.ok(matches > 0, `${rule.kind} matched none of the inputs`);
     }
+  });
+
+  it("finds each needle by the two ASCII characters it starts with", () => {
+    // One pass over a text looks needles up by their first two characters; a rule with a needle
+    // that does not start with two ASCII characters would run on every text.
+    for (const [kind, need] of Object.entries(SECRET_NEEDLES)) {
+      for (const n of need.any) assert.match(n, /^[\x00-\x7f]{2}/, `${kind}: ${JSON.stringify(n)}`);
+    }
+  });
+
+  it("keeps each rule's needles when a redactor's rules change", () => {
+    const gh = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+    const aws = ["AK", "IA", "Q3EGRIX7ZLBM2NWD"].join("");
+    const red = createRedactor();
+    const rules = red.rules as RedactRule[];
+    // The rules after the one taken out move up a place.
+    rules.splice(rules.findIndex((x) => x.kind === "github-token"), 1);
+    assert.equal(red.string(`${gh} ${aws}`), `${gh} [redacted:aws-access-key]`);
+    assert.equal(redactBlobValue(red, { a: [aws] }, redactionTally()), '{"a":["[redacted:aws-access-key]"]}');
+    rules.push({ kind: "pattern", pattern: /zzz+/g });
+    assert.equal(red.string(`${aws} zzzz`), "[redacted:aws-access-key] [redacted:pattern]");
+  });
+
+  it("checks a text's needles again after a rule's callback redacts another text", () => {
+    const gh = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+    const red = createRedactor();
+    const rules = red.rules as RedactRule[];
+    // The first rule has needles: the text is checked for them before the rule below runs.
+    assert.ok(SECRET_NEEDLES[rules[0]!.kind]);
+    // No needles, so it runs on every text. Its callback redacts another text with the same token.
+    rules.splice(1, 0, {
+      kind: "probe",
+      pattern: /PROBE/g,
+      replace: (m) => {
+        red.string(`other ${gh}`);
+        return m;
+      },
+    });
+    red.string("warm up"); // takes in the changed rules
+    assert.equal(red.string(`PROBE ${gh}`), "PROBE [redacted:github-token]");
+  });
+
+  it("checks the text a rule wrote for the needles of the rules after it", () => {
+    const gh = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+    const red = createRedactor();
+    const rules = red.rules as RedactRule[];
+    assert.ok(SECRET_NEEDLES[rules[0]!.kind]);
+    rules.splice(1, 0, { kind: "expand", pattern: /EXPANDME/g, replace: () => gh });
+    red.string("warm up"); // takes in the changed rules
+    assert.equal(red.string("EXPANDME"), "[redacted:github-token]");
+  });
+
+  it("runs every rule after one that changed a string, whatever the payload's text held", () => {
+    const secret = ["wJalrXUtnFEMI", "/K7MDENG/bPxRfiCYEXAMPLEKEY"].join("");
+    const red = createRedactor();
+    const rules = red.rules as RedactRule[];
+    // The rule that finds this value has a needle in the string, and none in the payload's text.
+    rules.unshift({ kind: "expand", pattern: /EXPANDME/g, replace: () => `api_token\t=\t${secret}` });
+    const out = redactBlobValue(red, { a: "EXPANDME" }, redactionTally());
+    assert.equal(out, JSON.stringify({ a: "api_token\t=\t[redacted:secret-value]" }));
   });
 });

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import type { BuildOptions } from "esbuild";
 
 export const PKG_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 
@@ -119,10 +120,14 @@ export function tsNodeArgs(): string[] {
   return f ? ["--no-warnings"] : ["--no-warnings", "--experimental-strip-types"];
 }
 
-/** hook.mjs and the hook-redact.mjs it imports, bundled into `dir` as dist/ holds them. Returns hook.mjs. */
+/** hook.mjs, with its banner, and the hook-redact.mjs it imports, bundled into `dir` as dist/ holds them. Returns hook.mjs. */
 export async function bundleHook(dir: string): Promise<string> {
   const { build } = await import("esbuild");
-  const entryPoints = { hook: join(PKG_ROOT, "src", "spool", "hook.ts"), "hook-redact": join(PKG_ROOT, "src", "spool", "redact.ts") };
-  await build({ entryPoints, bundle: true, platform: "node", format: "esm", target: "node22", minify: true, outdir: dir, outExtension: { ".js": ".mjs" }, logLevel: "silent" });
+  const { HOOK_BANNER } = await import("../../scripts/bundle.mjs");
+  const common: BuildOptions = { bundle: true, platform: "node", format: "esm", target: "node22", minify: true, outdir: dir, outExtension: { ".js": ".mjs" }, logLevel: "silent" };
+  await Promise.all([
+    build({ ...common, entryPoints: { hook: join(PKG_ROOT, "src", "spool", "hook.ts") }, banner: { js: HOOK_BANNER } }),
+    build({ ...common, entryPoints: { "hook-redact": join(PKG_ROOT, "src", "spool", "redact.ts") } }),
+  ]);
   return join(dir, "hook.mjs");
 }

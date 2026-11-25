@@ -17,7 +17,7 @@
 // A first call that failed never seeds; a repeat whose output differs is not one.
 // foldWaste is the same rules as a fold live ingest keeps; a call whose end comes
 // after 64 more calls in its scope (or 1,024 in all) can count as unfinished.
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import type { AgentEvent, CompactionRefetchStats, WasteStats } from "../schema/index.ts";
 import { isShellCall } from "../adapters/_shared/tools.ts";
 import { commandOf, FLAGS } from "./sessions.ts";
@@ -391,7 +391,7 @@ export function foldWaste(s: WasteState, e: AgentEvent): void {
     if (reads) {
       const text = typeof e.payload.output === "string" ? e.payload.output : canonical(e.payload.output);
       // outputOf, hashed: equal outputs give equal hashes. A later end of the same call replaces an earlier one.
-      const end = { ok: e.payload.ok !== false, out: createHash("sha1").update(`${text}\u0000${(e.blobs ?? []).join(",")}`).digest("base64"), chars: text.length };
+      const end = { ok: e.payload.ok !== false, out: hash("sha1", `${text}\u0000${(e.blobs ?? []).join(",")}`, "base64"), chars: text.length };
       for (const r of reads) r.end = end;
     }
   } else if (e.kind === "tool.start" && e.payload.wrapper !== true) {
