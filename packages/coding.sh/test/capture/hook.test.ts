@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -12,7 +13,7 @@ import { buildHookCommand } from "../../src/adapters/_shared/hooks.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { spoolLineRedactor } from "../../src/spool/redact.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
-import { CALLER_ENV, PKG_ROOT, bundleHook, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { CALLER_ENV, PKG_ROOT, bundleHook, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs, withoutCallerEnv } from "./_helpers.ts";
 import { median, pairedRatio, timeMs } from "../helpers-timing.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
@@ -953,6 +954,89 @@ describe("hook performance", () => {
     console.log(`# hook (${bundled ? "bundled" : "ts source"}) against a bare node start over ${PAIRS} pairs: ${m.text}${m === first ? "" : ` (first try: ${first.text})`}`);
     assert.ok(m.ratio < limit, `hook against a bare node start over ${PAIRS} pairs: ${m.text}; limit ${limit}x on either`);
     assert.equal(readLines(h, "claude-code").length, 1 + (m === first ? 1 : 2) * PAIRS);
+  });
+
+  test("bundled hook loads no built-in module that a bare node start does not, whatever the payload", async () => {
+    // Which modules a call loads, not how long it takes, so it holds on a loaded machine. An
+    // import of node:fs loaded Node's stream modules (stream, stream/promises, string_decoder) on
+    // every call, and an import of node:os came with ../core/paths.ts (src/spool/hook.ts says why).
+    const script = await bundleHook(tmp("csh-bundle-"));
+    const dir = tmp("csh-loaded-");
+    // Preloaded into each run: at exit, the modules Node loaded, on stderr.
+    const reporter = join(dir, "loaded.cjs");
+    writeFileSync(reporter, `process.on("exit", () => require("node:fs").writeSync(2, "\\nloaded:" + JSON.stringify(process.moduleLoadList) + "\\n"));\n`);
+    const bare = join(dir, "bare.mjs");
+    writeFileSync(bare, "");
+    const h = freshHome();
+    /** The public built-in modules (fs, stream, os, ...) a run loaded. */
+    const loaded = (args: string[], input?: string, extra: Record<string, string> = {}): string[] => {
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: dir, CODING_SH_HOME: h, ...extra };
+      // A session end looks at the ingest lock and for cli-path, a session start for proxy-installs.json.
+      delete env.CODING_SH_NO_AUTO_INGEST;
+      delete env.CODING_SH_NO_PROXY_AUTOSTART;
+      delete env.NODE_OPTIONS;
+      const r = spawnSync(process.execPath, ["-r", reporter, ...args], { input, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"], env, encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+      const m = /\nloaded:(\[.*\])\n/.exec(r.stderr);
+      assert.ok(m, `no module list reported: ${r.stderr}`);
+      const names = (JSON.parse(m[1]!) as string[]).flatMap((e) => (e.startsWith("NativeModule ") ? [e.slice("NativeModule ".length)] : []));
+      return names.filter((n) => builtinModules.includes(n));
+    };
+    const base = loaded([bare]);
+    assert.ok(base.includes("fs"), base.join(", "));
+    const project = tmp("csh-devinproj-");
+    mkdirSync(join(project, ".devin"));
+    writeFileSync(join(project, ".devin", "config.json"), '{"hooks":{}}');
+    const cases: [event: string, payload: object, extra?: Record<string, string>][] = [
+      ["PostToolUse", { session_id: "s", cwd: "/w", tool_name: "Read" }],
+      ["PostToolUse", { session_id: "s", cwd: "/w", tool_response: "z".repeat(10_000) }], // a side file
+      ["PostToolUse", { session_id: "s", cwd: "/w", tool_input: { command: `curl -H 'x-api-key: ${["sk", "ant", "api03", "Q7x".repeat(30)].join("-")}' https://example.invalid` } }], // the redaction rules
+      ["SessionStart", { session_id: "s", cwd: "/w", source: "startup" }],
+      ["Stop", { session_id: "s", cwd: "/w" }],
+      ["PostToolUse", { session_id: "s", hook_event_name: "PostToolUse", cwd: project }, { DEVIN_PROJECT_DIR: project, DEVIN_CONFIG_HOME: join(dir, "devin") }],
+    ];
+    for (const [event, payload, extra] of cases) {
+      const more = loaded([script, "claude-code", event], JSON.stringify(payload), extra).filter((n) => !base.includes(n));
+      assert.deepEqual(more, [], `${event} ${JSON.stringify(payload).slice(0, 80)}`);
+    }
+    // Each case took its path: a side file, the redaction rules, the ingest lock, Devin's hook files.
+    const lines = [...readLines(h, "claude-code"), ...readLines(h, "devin")];
+    assert.deepEqual(lines.map((l) => l.agent), [...Array(cases.length - 1).fill("claude-code"), "devin"]);
+    assert.ok(lines.some((l) => l.rawFile), "a payload went to a side file");
+    assert.ok(lines.some((l) => JSON.stringify(l).includes("[redacted:")), "the redaction rules ran");
+    assert.ok(existsSync(join(h, "spool", ".ingest.pending")), "the session end touched the ingest marker");
+  });
+});
+
+describe("hook on a node older than the package needs", () => {
+  // Agents run hook.mjs with the first node on their PATH. A node before 22.3 (or 20.16) has no
+  // process.getBuiltinModule, which the hook's modules call as they load; the preload takes it
+  // away to stand in for one, and hook.mjs's banner (scripts/bundle.mjs) puts a require there.
+  test("bundled hook still records each call, prints nothing and exits 0", async () => {
+    const script = await bundleHook(tmp("csh-bundle-"));
+    const preload = join(tmp("csh-oldnode-"), "no-getbuiltin.cjs");
+    writeFileSync(preload, "delete process.getBuiltinModule;\n");
+    const gone = spawnSync(process.execPath, ["-r", preload, "-p", "typeof process.getBuiltinModule"], { encoding: "utf8" });
+    assert.equal(gone.stdout.trim(), "undefined", "the preload removes process.getBuiltinModule");
+    const h = freshHome();
+    const key = ["sk", "ant", "api03", "Q7x".repeat(30)].join("-");
+    const payloads = [
+      { session_id: "s", cwd: "/w", tool_name: "Read" },
+      { session_id: "s", cwd: "/w", tool_response: "z".repeat(10_000) }, // a side file
+      { session_id: "s", cwd: "/w", tool_input: { command: `curl -H 'x-api-key: ${key}' https://example.invalid` } }, // hook-redact.mjs
+    ];
+    for (const payload of payloads) {
+      const r = spawnSync(process.execPath, ["-r", preload, script, "claude-code", "PostToolUse"], { input: JSON.stringify(payload), env: { ...withoutCallerEnv(process.env), CODING_SH_HOME: h }, encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, "");
+      assert.equal(r.stderr, "");
+    }
+    const lines = readLines(h, "claude-code");
+    assert.equal(lines.length, payloads.length);
+    assert.ok(lines.some((l) => l.rawFile), "a payload went to a side file");
+    assert.ok(lines.some((l) => JSON.stringify(l).includes("[redacted:")), "the redaction rules ran");
+    assert.ok(!JSON.stringify(lines).includes(key), "the key is not in the spool");
+    assert.equal(existsSync(join(h, "spool", "errors.log")), false, "nothing went to errors.log");
   });
 });
 

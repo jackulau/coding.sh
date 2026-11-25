@@ -24,7 +24,7 @@ export const BENCH_COMMAND: CommandSpec = {
         { name: "sitemap", type: "list", value: "<URL>", desc: "urls source: sitemap URL (repeatable)" },
         { name: "dataset", type: "string", value: "<NAME>", desc: "dataset source: dataset to sample from" },
         { name: "contender", short: "c", type: "list", value: "<NAME=CMD|URL|agent:ID[:MODEL]>", desc: "A contender (repeatable, at least two)" },
-        { name: "grader", short: "g", type: "list", value: "<JSON>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
+        { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
         { name: "cases", short: "n", type: "number", value: "<N>", desc: "Cases per run", default: "50" },
         { name: "global", type: "boolean", desc: "Write to ~/.coding.sh/benchmarks instead of ./bench" },
         { name: "force", type: "boolean", desc: "Overwrite an existing definition" },

@@ -114,8 +114,8 @@ export const KEY_SQL: Record<string, string[]> = {
   // payload.error of a failed call, or the message of an error event.
   error: [jstr("payload", "error"), `if(kind = 'error', ${jstr("payload", "message")}, NULL)`],
   "event.duration": ["duration_ms"],
-  // Read from the session's start event.
-  user: [`if(kind = 'session.start', ${jstr("payload", "user")}, NULL)`],
+  // Read from the session's start event; the SDKs' trace() records its user as userId.
+  user: ["user", "userId"].map((f) => `if(kind = 'session.start', ${jstr("payload", f)}, NULL)`),
   env: [`if(kind = 'session.start', ${jstr("payload", "environment")}, NULL)`],
   release: [`if(kind = 'session.start', ${jstr("payload", "release")}, NULL)`],
 };

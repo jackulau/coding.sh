@@ -388,6 +388,38 @@ The check finds a possible secret in 28% of this repo's source files, 67% of its
 its site files and 17% of its adapter fixtures. A session that reads many files pays the slower
 cost often.
 
+### Built-in modules in the node hook
+
+The first ESM import of a built-in module makes Node build an ES module for it, which reads each
+of its exports. For `node:fs` that loaded `stream`, `stream/promises`, `string_decoder` and the
+internal modules behind them on every hook call. The modules `hook.mjs` loads now take `node:fs`
+and `node:path` from `process.getBuiltinModule`, which returns the module Node has already loaded.
+They load `node:os` only when `HOME` and `USERPROFILE` are both unset or a lock's holder is
+checked, and `node:crypto` on first use. `test/capture/hook.test.ts` checks that the bundled hook
+loads no built-in module that a bare node start does not.
+
+Agents run `hook.mjs` with the first node on their PATH. A node older than 22.3 (20.16 on the 20
+line) has no `process.getBuiltinModule`, so the first line of `hook.mjs` sets it to a `require`
+there, and the hook still records the call.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026. Each cell is `hook.mjs` over `node -e ""`, the median
+of interleaved calls (200 at 0.6 KB and 2 KB, 120 with a secret, 40 at 1 MB). In brackets is the
+paired median difference from origin/main, with its 95% bootstrap interval.
+
+| Payload | origin/main | Built-ins from `getBuiltinModule` |
+| --- | --- | --- |
+| 0.6 KB, no secret | +11.7 ms | +7.6 ms (-4.1 [-12.6, -0.9]) |
+| 2 KB, no secret | +9.2 ms | +5.8 ms (-3.4 [-5.9, -2.2]) |
+| 2 KB, one secret | +17.7 ms | +14.7 ms (-3.0 [-4.3, -1.8]) |
+| 1 MB, no secret | +14.6 ms | +11.0 ms (-3.7 [-4.8, -2.3]) |
+
+The machine was busier during the 0.6 KB row: `node -e ""` took 65 ms there and 46 to 52 ms in the
+others, which widens that interval.
+
+`bench.mjs hook --baseline` on the same machine, 50 calls each, puts `perf.hookStart` 3.3 ms
+[2.0, 4.9] under origin/main. It puts `perf.hook` 3.0 ms under, but at 50 calls that interval,
+[-1.0, 7.3], still includes no change.
+
 ## Long sessions
 
 [scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code

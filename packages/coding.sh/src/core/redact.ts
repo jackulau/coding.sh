@@ -1,8 +1,9 @@
 // Redaction runs before anything is written (index, blobs, sinks). Rules are
 // tuned for precision: they key on vendor prefixes or on an explicit secret
 // name next to the value, so ordinary code, paths and sha hashes pass through.
-import { statSync } from "node:fs";
-import { types } from "node:util";
+//
+// The hook's redaction rules (spool/redact.ts, bundled to hook-redact.mjs) include this file,
+// so it loads node:fs and node:util from process.getBuiltinModule, as spool/hook.ts says.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { weightsCheckpointOf } from "./weights.ts";
 
@@ -694,7 +695,7 @@ const ENV_PLACE_NAME = /^(?:OLD)?PWD$|^SESSION_MANAGER$|_(?:PATH|DIR|FILE|SOCK)$
 function isExistingPath(value: string): boolean {
   if (!/^(?:\/|[A-Za-z]:[\\/])/.test(value) || value.includes("\n")) return false;
   try {
-    return statSync(value, { throwIfNoEntry: false }) !== undefined;
+    return process.getBuiltinModule("node:fs").statSync(value, { throwIfNoEntry: false }) !== undefined;
   } catch {
     return false;
   }
@@ -976,6 +977,10 @@ function hasValue(o: object, k: string | number): boolean {
   return d !== undefined && "value" in d;
 }
 
+let utilTypes: typeof import("node:util").types | undefined;
+/** True for a Proxy. node:util is loaded on first use (see the top of this file). */
+const isProxy = (v: object) => (utilTypes ??= process.getBuiltinModule("node:util").types).isProxy(v);
+
 /** What mapStrings met in a value besides plain parsed JSON. */
 interface Met {
   /** A Proxy, a getter, a hole, a value isJsonData rejects, or a subtree too deep to follow. */
@@ -991,7 +996,7 @@ interface Met {
 function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met): unknown {
   if (typeof v === "string") return f(v);
   if (v === null || typeof v !== "object") return v;
-  const same = !types.isProxy(v) && isJsonData(v);
+  const same = !isProxy(v) && isJsonData(v);
   if (!same && met) met.other = true;
   if (v instanceof Uint8Array) return v;
   // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.

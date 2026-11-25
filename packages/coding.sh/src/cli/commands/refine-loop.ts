@@ -56,7 +56,7 @@ import { sh } from "../../runner/exec.ts";
 import { gateFlags, list, num, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import { infraStopNote } from "../jobs.ts";
-import { cliCommand } from "../next-steps.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import { protectOptions, protectOverrides } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
 import { targetPath as targetPathOf } from "../../refine/target.ts";
@@ -568,7 +568,7 @@ export async function proposerReply(e: Env, spend: Spend, req: { system: string;
     // The provider's message says "to call the judge"; here it is the proposer.
     const key = /set (\w+) to call the judge/.exec(err instanceof Error ? err.message : "")?.[1];
     if (!key) throw err;
-    throw new CliError(`refine asks a model to write the edit: set ${key}`, { reason: "missing_key", next: ["Without an API key, list what to fix and the line that fixes it:", "coding.sh improve"] });
+    throw new CliError(`refine asks a model to write the edit: set ${key}`, { reason: "missing_key", next: [`${envLine(e.c.env, key, "...")}   # or, without an API key, list what to fix and the line that fixes it:`, "coding.sh improve"] });
   });
   return res.text;
 }

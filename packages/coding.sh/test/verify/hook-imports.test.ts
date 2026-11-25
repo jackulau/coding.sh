@@ -7,6 +7,9 @@
 //   node:child_process, node:worker_threads or node:cluster (a connection or another process), or
 //   node:inspector, node:module or node:vm (a port, or code this walk cannot follow), other than the
 //   one load ALLOWED names, in the one way it names, with its reason;
+// - loads any other built-in module other than through process.getBuiltinModule: the first import
+//   of a built-in makes Node build an ES module for it, which reads each of its exports, and for
+//   node:fs that loads Node's stream modules too (src/spool/hook.ts says more);
 // - uses fetch, WebSocket, EventSource or XMLHttpRequest, or calls eval or Function;
 // - names one of those modules in a string no load takes (a computed load would hide it);
 // - loads a package (coding.sh has no runtime dependencies) or a file that is not there;
@@ -431,7 +434,14 @@ function walk(entry: string, read: (file: string) => string | undefined, bundled
       const builtin = `node:${name}`;
       builtins.push({ module: from, builtin, via: l.via, line: l.line });
       const base = name.split("/")[0] ?? name;
-      if (!BANNED.has(base)) continue;
+      if (!BANNED.has(base)) {
+        if (l.via !== "process.getBuiltinModule")
+          problems.push(
+            `${from}:${l.line} loads ${builtin} (${l.via}); a module the hook loads takes built-in modules from process.getBuiltinModule: ` +
+              "an import makes Node build an ES module of the built-in, and for node:fs that loads Node's stream modules too",
+          );
+        continue;
+      }
       const allow = allowed.find((a) => a.file === from && a.builtin === builtin);
       if (allow && allow.via === l.via) used.add(allow);
       else if (allow) problems.push(`${from}:${l.line} loads ${builtin} (${l.via}); ALLOWED lets it load ${builtin} only through ${allow.via}: ${allow.why}`);
@@ -479,6 +489,8 @@ test("no module the hook can load opens a connection, starts a process or runs c
   for (const m of ["src/spool/write.ts", "src/spool/kick.ts", "src/core/lock.ts", "src/spool/redact.ts", "src/core/redact.ts", "src/core/toml.ts"])
     assert.ok(w.modules.includes(m), `${m} is not in the walk: ${w.modules.join(", ")}`);
   assert.ok(w.builtins.some((b) => b.module === "src/spool/kick.ts" && b.builtin === "node:child_process" && b.via === "process.getBuiltinModule"));
+  // And it saw the hook take node:fs, which the rule above keeps out of an import.
+  assert.ok(w.builtins.some((b) => b.module === "src/spool/write.ts" && b.builtin === "node:fs"));
 
   // The tokenizer finds every import a line-by-line search of the same files finds.
   for (const m of w.modules) {
@@ -622,6 +634,21 @@ test("each check fails on a module that breaks it, whichever kind of load reache
   for (const [text, expected] of cases) fails(add(leaf, text), expected);
   // A type is erased before the code runs, so naming a module in one loads nothing.
   assert.deepEqual(problems(add(leaf, `export type Engine = typeof import("node:https");\nimport type { Agent } from "node:http";`)), []);
+
+  // Any other built-in module, through anything but process.getBuiltinModule.
+  const viaImport = /a module the hook loads takes built-in modules from process\.getBuiltinModule/;
+  const builtinCases: [string, RegExp][] = [
+    [`import { readFileSync } from "node:fs";`, /loads node:fs \(import\)/],
+    [`import "fs";`, /loads node:fs \(import\)/],
+    [`export { join } from "node:path";`, /loads node:path \(export from\)/],
+    [`export const f = () => import("node:fs");`, /loads node:fs \(import\(\)\)/],
+    [`export const os = require("node:os");`, /loads node:os \(require\(\)\)/],
+  ];
+  for (const [text, expected] of builtinCases) {
+    fails(add(leaf, text), expected);
+    fails(add(leaf, text), viaImport);
+  }
+  assert.deepEqual(problems(add(leaf, `export const home = () => process.getBuiltinModule("node:os").homedir();`)), []);
 
   // The allowance: only kick.ts, only node:child_process, only through getBuiltinModule, and only while it does.
   fails(add("src/spool/static.ts", `export const s = process.getBuiltinModule("node:child_process");`), /^src\/spool\/static\.ts:\d+ loads node:child_process/);

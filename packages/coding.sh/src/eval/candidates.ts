@@ -62,15 +62,18 @@ const REJECT_COUNTED: Record<CandidateReject, readonly [string, string]> = {
   "external-deliverable": ["that mostly publishes or deploys", "that mostly publish or deploy"],
 };
 
-/** Why a session can't become a task, in words, and what would change that where something can. */
-export function rejectReason(c: Pick<Candidate, "reject" | "gone" | "wrapped">): string {
+/**
+ * Why a session can't become a task, in words, and what would change that where something can. `ref`
+ * names the session a wrapper recorded: the whole id unless given one (core/session-ref.ts shortener).
+ */
+export function rejectReason(c: Pick<Candidate, "reject" | "gone" | "wrapped">, ref: (id: string) => string = (id) => id): string {
   switch (c.reject) {
     case "subagent":
       return "a subagent's session: the session that started it is the one to use";
     case "run":
       return "it ran with a run id (CODING_SH_RUN_ID), as eval, compare, exp and bench trials do, and trials are left out";
     case "wrapped":
-      return `it wrapped session ${(c.wrapped ?? "").slice(0, 8)}, which recorded the same work: that session is the one to use`;
+      return `it wrapped session ${ref(c.wrapped ?? "")}, which recorded the same work: that session is the one to use`;
     case "no-git-start":
       return `no git commit was recorded at its start (read from a transcript, or not in a git repository), so its start can't be rebuilt${c.gone ? `, and its folder ${c.gone} is not on this machine` : ""}`;
     case "repo-gone":
@@ -318,15 +321,18 @@ export function rejectSummary(cands: readonly Candidate[]): string {
     .join(", ");
 }
 
-/** A plain-text table: rank, score, session, why. */
-export function formatCandidates(cands: readonly Candidate[]): string {
+/**
+ * A plain-text table: rank, score, session, why. `name` names a row's session and `ref` the session a
+ * wrapper recorded (rejectReason): each by its id unless given a function (core/session-ref.ts printedRefs).
+ */
+export function formatCandidates(cands: readonly Candidate[], ref?: (id: string) => string, name: (id: string) => string = (id) => id): string {
   if (!cands.length) return "No candidate sessions";
   const lines: string[] = [];
   for (const [i, c] of cands.entries()) {
     const title = (c.title ?? "").replace(/\s+/g, " ").trim();
-    const head = c.eligible ? `${String(i + 1).padStart(2)}. ${String(c.score).padStart(3)}  ${c.sessionId}` : `    rej  ${c.sessionId}`;
+    const head = c.eligible ? `${String(i + 1).padStart(2)}. ${String(c.score).padStart(3)}  ${name(c.sessionId)}` : `    rej  ${name(c.sessionId)}`;
     lines.push(`${head}  ${title.length > 60 ? `${title.slice(0, 59)}…` : title}`);
-    lines.push(`         ${c.eligible ? c.reasons.join(", ") || "no signals" : `rejected: ${rejectReason(c)}`}${c.verifierGuess ? `  · verifier: ${c.verifierGuess}` : ""}`);
+    lines.push(`         ${c.eligible ? c.reasons.join(", ") || "no signals" : `rejected: ${rejectReason(c, ref)}`}${c.verifierGuess ? `  · verifier: ${c.verifierGuess}` : ""}`);
   }
   return lines.join("\n");
 }

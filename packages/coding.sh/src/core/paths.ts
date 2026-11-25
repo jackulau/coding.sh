@@ -1,7 +1,10 @@
 // Every on-disk location coding.sh uses. CODING_SH_HOME overrides the root so
 // tests, CI and eval runs never touch a user's real data.
-import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+//
+// The hook imports this file, so it takes built-in modules from process.getBuiltinModule,
+// as ../spool/hook.ts says. node:os is taken where it is used, only when HOME and
+// USERPROFILE are both unset.
+const { join, resolve, sep } = process.getBuiltinModule("node:path");
 
 export function dataHome(env: NodeJS.ProcessEnv = process.env): string {
   const h = env.CODING_SH_HOME;
@@ -9,7 +12,7 @@ export function dataHome(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export function userHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.HOME || env.USERPROFILE || homedir();
+  return env.HOME || env.USERPROFILE || process.getBuiltinModule("node:os").homedir();
 }
 
 export function expandHome(p: string, env: NodeJS.ProcessEnv = process.env): string {

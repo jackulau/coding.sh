@@ -215,13 +215,14 @@ export function createHeliconeClient(o: LookupOpts & { baseUrl: string; apiKey: 
 
 /**
  * The lookup client for a configured gateway, or why there is none:
- * "key" (no key), "config" (Cloudflare account / gateway id, or a
- * self-hosted URL, missing) or "none" (the gateway has no lookup API).
+ * "key" (c.apiKeyEnv is not set; no detail, as the caller names the variable
+ * in the form its user's shell reads), "config" (Cloudflare account / gateway
+ * id, or a self-hosted URL, missing) or "none" (the gateway has no lookup API).
  */
-export function lookupClient(c: GatewayConfig, o: LookupOpts = {}): { client: GatewayClient } | { missing: "key" | "config" | "none"; detail: string } {
+export function lookupClient(c: GatewayConfig, o: LookupOpts = {}): { client: GatewayClient } | { missing: "key" } | { missing: "config" | "none"; detail: string } {
   const def = GATEWAYS[c.id];
   if (!def.lookup) return { missing: "none", detail: `${def.name} has no per-request lookup API` };
-  if (!c.apiKey) return { missing: "key", detail: `export ${c.apiKeyEnv}=…` };
+  if (!c.apiKey) return { missing: "key" };
   if (!c.baseUrl) return { missing: "config", detail: `set [gateway.${c.id}] baseUrl or ${def.urlEnv[0] ?? "its URL"}` };
   const base = { baseUrl: c.baseUrl, apiKey: c.apiKey, ...o };
   switch (c.id) {

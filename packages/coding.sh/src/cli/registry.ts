@@ -1142,7 +1142,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Add cases to a dataset (creates it when missing)",
         args: [{ name: "name", desc: "Dataset name", required: true }],
         flags: [
-          { name: "case", type: "list", value: "<JSON>", desc: 'Case as JSON: {"input":…,"expected":…} (repeatable)' },
+          { name: "case", type: "list", value: "<JSON|FILE>", desc: 'Case as JSON or a JSON file: {"input":…,"expected":…} (repeatable)' },
           { name: "session", type: "list", commas: true, value: "<ID>", desc: "Case from a captured session (repeatable)" },
           { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split for the added cases (default: stable hash of the case id, 60/20/20)" },
           { name: "kind", type: "string", value: "<KIND>", choices: ["bad", "guard", "control"], desc: "Kind for the added cases: bad fails before the fix, guard and control pass before and after" },
@@ -1547,7 +1547,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Score an item with the queue's config and mark it done (doing it again replaces the score)",
         args: [
           { name: "queue", desc: "The queue's name", required: true },
-          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+          { name: "item", desc: "The item's number (review next), or its session: its id or the reference review next prints", required: true },
           { name: "value", desc: "The score: true or false, a number or a category, as the config allows", required: true },
         ],
         flags: [{ name: "comment", type: "string", value: "<TEXT>", desc: "Why this score" }],
@@ -1558,7 +1558,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Skip an item; it is counted as skipped and never comes up again",
         args: [
           { name: "queue", desc: "The queue's name", required: true },
-          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+          { name: "item", desc: "The item's number (review next), or its session: its id or the reference review next prints", required: true },
         ],
         examples: ["coding.sh review skip codex-flagged 2"],
       },

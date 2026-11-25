@@ -8,6 +8,7 @@ import { stringifyToml } from "../../core/toml.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { list, num, str, withContext } from "../common.ts";
+import { envLine, envRef } from "../next-steps.ts";
 import { ASK_USER, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { infraStopNote, retryFlag } from "../jobs.ts";
@@ -89,7 +90,8 @@ function parseDrivers(c: CommandContext, cfg: ToolEvalsConfig, values: string[])
     }
   }
   for (const d of drivers) {
-    if (d.kind === "model" && !c.env[d.apiKeyEnv]) throw new CliError(`Driver model:${d.provider}/${d.model} needs $${d.apiKeyEnv}`, { reason: "missing_api_key", next: [`Export ${d.apiKeyEnv}, or set apiKeyEnv under [toolevals.drivers."model:${d.provider}/${d.model}"]`] });
+    // The next step's other way goes in a shell comment, so the line runs as printed in sh and PowerShell.
+    if (d.kind === "model" && !c.env[d.apiKeyEnv]) throw new CliError(`Driver model:${d.provider}/${d.model} needs ${envRef(c.env, d.apiKeyEnv)}`, { reason: "missing_api_key", next: [`${envLine(c.env, d.apiKeyEnv, "...")}   # or set apiKeyEnv under [toolevals.drivers."model:${d.provider}/${d.model}"]`] });
   }
   return drivers;
 }
@@ -464,7 +466,7 @@ async function runAction(c: CommandContext): Promise<number> {
     if (agent) throw new UsageError(`--shell-model works with model drivers only; drop --driver agent:${agent.kind === "agent" ? agent.agent : ""}`, { reason: "invalid_driver" });
     drivers = drivers.map((d) => withShellModel(d, shellModel, cfg.drivers));
     const sim = drivers[0]?.kind === "model" ? drivers[0].shell : undefined;
-    if (sim && !c.env[sim.apiKeyEnv]) throw new CliError(`Shell model ${shellModel} needs $${sim.apiKeyEnv}`, { reason: "missing_api_key", next: [`Export ${sim.apiKeyEnv}, or set apiKeyEnv under [toolevals.drivers."model:${shellModel}"]`] });
+    if (sim && !c.env[sim.apiKeyEnv]) throw new CliError(`Shell model ${shellModel} needs ${envRef(c.env, sim.apiKeyEnv)}`, { reason: "missing_api_key", next: [`${envLine(c.env, sim.apiKeyEnv, "...")}   # or set apiKeyEnv under [toolevals.drivers."model:${shellModel}"]`] });
   }
   const variantNames = list(c.flags.variant);
   const variants = (variantNames.length ? variantNames : ["base"]).map((v) => pickVariant(cfg, target.name, v));
@@ -652,7 +654,7 @@ async function compress(c: CommandContext): Promise<number> {
     const rd = parseDriver(cfg.rewriter, cfg.drivers);
     if (rd.kind !== "model") throw new CliError(`[toolevals] rewriter must be a model driver, got ${cfg.rewriter}`, { reason: "invalid_config" });
     const key = c.env[rd.apiKeyEnv];
-    if (!key) throw new CliError(`Rewriter ${cfg.rewriter} needs $${rd.apiKeyEnv}`, { reason: "missing_api_key" });
+    if (!key) throw new CliError(`Rewriter ${cfg.rewriter} needs ${envRef(c.env, rd.apiKeyEnv)}`, { reason: "missing_api_key", next: [`${envLine(c.env, rd.apiKeyEnv, "...")}   # or set apiKeyEnv under [toolevals.drivers."${cfg.rewriter}"]`] });
     rewrite = modelRewriter(rd, key);
   } else out.warn("No [toolevals] rewriter configured; using rule-based candidates only");
   const base = cfg.variants.get(target.name)?.get("base") ?? { name: "base" };

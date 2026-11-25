@@ -12,5 +12,7 @@ export interface BundleResult {
   schema: string;
   store: string;
 }
+/** The first lines of hook.mjs: the shebang, and process.getBuiltinModule for a node without it. */
+export const HOOK_BANNER: string;
 /** Bundle cli, hook and schema into `outdir` (absolute or package-relative). */
 export function bundle(outdir?: string): Promise<BundleResult>;

@@ -24,7 +24,7 @@ Every command accepts these.
 - stdout carries the answer only. Progress, warnings and errors go to stderr.
 - With `--json`, a command prints one JSON document on stdout. An error is one JSON line on stderr:
   `{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}`.
-  `next` holds up to two lines: the step, then the command to run. The reasons are listed in [Troubleshooting](../troubleshooting.md).
+  `next` holds up to two lines: usually the step, then the command to run. An error for a missing key starts with the line that sets it. The reasons are listed in [Troubleshooting](../troubleshooting.md).
   When that step deletes or overwrites data, cannot be undone, or spends money, the error also has `askUser: true`
   and the text says the user must approve it first, unless a person runs the command at a terminal ([Troubleshooting](../troubleshooting.md#errors-by-reason)).
   An agent that reads such an error asks the user instead of running the step.
@@ -1809,7 +1809,7 @@ coding.sh dataset add <NAME> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--case <JSON>` |  | Case as JSON: {"input":…,"expected":…} (repeatable) |
+| `--case <JSON|FILE>` |  | Case as JSON or a JSON file: {"input":…,"expected":…} (repeatable) |
 | `--session <ID>` |  | Case from a captured session (repeatable) Takes a comma list too (a,b). |
 | `--split <SPLIT>` |  | Split for the added cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
 | `--kind <KIND>` |  | Kind for the added cases: bad fails before the fix, guard and control pass before and after. One of: `bad`, `guard`, `control`. |
@@ -2509,7 +2509,7 @@ coding.sh review done <QUEUE> <ITEM> <VALUE> [options]
 | Argument | Required | Description |
 |---|---|---|
 | `queue` | yes | The queue's name. |
-| `item` | yes | The item's number (review next), or its session id. |
+| `item` | yes | The item's number (review next), or its session: its id or the reference review next prints. |
 | `value` | yes | The score: true or false, a number or a category, as the config allows. |
 
 | Option | Default | Description |
@@ -2531,7 +2531,7 @@ coding.sh review skip <QUEUE> <ITEM>
 | Argument | Required | Description |
 |---|---|---|
 | `queue` | yes | The queue's name. |
-| `item` | yes | The item's number (review next), or its session id. |
+| `item` | yes | The item's number (review next), or its session: its id or the reference review next prints. |
 
 ```sh
 coding.sh review skip codex-flagged 2
@@ -3209,7 +3209,7 @@ coding.sh bench new <NAME> [options]
 | `--sitemap <URL>` |  | urls source: sitemap URL (repeatable) |
 | `--dataset <NAME>` |  | dataset source: dataset to sample from. |
 | `-c, --contender <NAME=CMD|URL|agent:ID[:MODEL]>` |  | A contender (repeatable, at least two) |
-| `-g, --grader <JSON>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
 | `-n, --cases <N>` | `50` | Cases per run. |
 | `--global` |  | Write to ~/.coding.sh/benchmarks instead of ./bench. |
 | `--force` |  | Overwrite an existing definition. |
