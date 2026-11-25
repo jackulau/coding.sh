@@ -11,8 +11,12 @@
 //   the user runs there. The readers are cmd.exe running node and npm's codingsh.cmd; Windows
 //   PowerShell 5.1 and PowerShell 7 running node and npm's codingsh.ps1; and 5.1 running
 //   codingsh.cmd. cmd runs with every variable set, so any %NAME% would expand.
-// - adapters/_shared/hooks.ts buildHookCommand and quoteArg: the hook command an agent's config
-//   holds, as sh reads it: /bin/sh outside Windows, and Git Bash, which runs it for Claude Code on
+// - adapters/_shared/hooks.ts buildHookCommand, powerShellHookCommand and quoteArg: the hook
+//   command an agent's config holds, as the shell that runs it reads it. /bin/sh runs it outside
+//   Windows. On Windows Git Bash runs it for Claude Code and PowerShell runs Copilot's `powershell`
+//   command. For the other agents cmd or PowerShell may run it, so their command has to come back
+//   the same in cmd, PowerShell 5.1 and PowerShell 7, or buildHookCommand has to refuse the path,
+//   as it does for a %, $, backtick or curly double quote, which cmd or PowerShell read in quotes on
 //   Windows. The path is under /home, or under C:\Users with a name Windows allows. The agent ids
 //   and the words adapters add after the path (cursor's --echo-continue, antigravity's --reply={})
 //   are checked at their source: the ids and --echo-continue are words sh, PowerShell and cmd read
@@ -32,12 +36,12 @@ import { isDeepStrictEqual } from "node:util";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import type { Json } from "../../src/adapters/more/_util.ts";
 import { agyHookDef } from "../../src/adapters/more/antigravity.ts";
-import { buildHookCommand, hookPathForCommand, hookShFor, quoteArg as hookQuote } from "../../src/adapters/_shared/hooks.ts";
+import { buildHookCommand, hookPathForCommand, hookShFor, powerShellHookCommand, quoteArg as hookQuote } from "../../src/adapters/_shared/hooks.ts";
 import { benchHome, NAME_RE } from "../../src/bench/define.ts";
 import { cronLine, shq } from "../../src/bench/schedule.ts";
 import { shellQuote } from "../../src/cli/args.ts";
 import { quoteArg } from "../../src/cli/next-steps.ts";
-import { cmdRun, cmdToNode, cmdToShim, cronCommand, crtArgv, everyEnv, HOSTILE, psToCmdShim, psToNode, psToShim, shTokens, shWords, type PsVersion, type ShToken } from "./_shells.ts";
+import { cmdRun, cmdToNode, cmdToShim, cronCommand, crtArgv, everyEnv, HOSTILE, psCommand, psNative, psToCmdShim, psToNode, psToShim, shTokens, shWords, type PsVersion, type ShToken } from "./_shells.ts";
 
 function boundFrom(env: NodeJS.ProcessEnv): number {
   const raw = env.CODING_SH_MODEL_BOUND ?? "0";
@@ -123,14 +127,43 @@ test("quoteArg in PowerShell and cmd: each reader gets each string back, or the 
   for (const [label, back, limits] of readers) prove(t, label, ALPHABET, back, (s) => [s], limits);
 });
 
-test("the hook command: sh and Git Bash get the hook's path back", (t) => {
-  // Characters a Windows file name can hold.
-  const windowsName = ALPHABET.filter((c) => !'"<>|?*:\t\n'.includes(c));
+test("the hook command: each shell that runs it gets the hook's path back, or buildHookCommand refuses the path", (t) => {
+  // The characters a Windows path can hold (a backslash starts a folder below), and a curly double
+  // and single quote, which PowerShell reads as quotes.
+  const windowsName = [...ALPHABET.filter((c) => !'"<>|?*:\t\n'.includes(c)), "\u201C", "\u2019"];
   const words = (line: string) => shWords(line);
+  const win = (s: string) => `C:\\Users\\${s}\\.coding.sh\\hook.mjs`;
+  // The program and the arguments node gets when cmd or PowerShell runs a command line.
+  const cmd = (line: string) => {
+    const r = cmdRun(line, everyEnv);
+    return r === undefined ? undefined : crtArgv(r);
+  };
+  const ps = (v: PsVersion) => (line: string) => {
+    const c = psCommand(line);
+    return c ? [c.name, ...crtArgv(`node ${psNative(c.args.map((a) => a.value), v)}`).slice(1)] : undefined;
+  };
+  const readers: [string, (line: string) => string[] | undefined][] = [["cmd", cmd], ["PowerShell 5.1", ps("5.1")], ["PowerShell 7", ps("7")]];
   for (const extra of [[], ["--echo-continue"]]) {
-    prove(t, `sh, ${extra.length ? "with --echo-continue" : "no extra"}`, ALPHABET, (s) => words(buildHookCommand(`/home/${s}/.coding.sh/hook.mjs`, "cursor", "beforeSubmitPrompt", extra, "linux")), (s) => ["/bin/sh", hookShFor(`/home/${s}/.coding.sh/hook.mjs`), "cursor", "beforeSubmitPrompt", ...extra]);
-    const win = (s: string) => `C:\\Users\\${s}\\.coding.sh\\hook.mjs`;
-    prove(t, `Git Bash, ${extra.length ? "with --echo-continue" : "no extra"}`, windowsName, (s) => words(buildHookCommand(win(s), "claude-code", "PreToolUse", extra, "win32")), (s) => ["node", hookPathForCommand(win(s)), "claude-code", "PreToolUse", ...extra]);
+    const how = extra.length ? "with --echo-continue" : "no extra";
+    prove(t, `sh, ${how}`, ALPHABET, (s) => words(buildHookCommand(`/home/${s}/.coding.sh/hook.mjs`, "cursor", "beforeSubmitPrompt", extra, "linux")), (s) => ["/bin/sh", hookShFor(`/home/${s}/.coding.sh/hook.mjs`), "cursor", "beforeSubmitPrompt", ...extra]);
+    prove(t, `Git Bash, ${how}`, windowsName, (s) => words(buildHookCommand(win(s), "claude-code", "PreToolUse", extra, "win32")), (s) => ["node", hookPathForCommand(win(s)), "claude-code", "PreToolUse", ...extra]);
+    // Another agent's command: each of cmd and PowerShell reads it back, or buildHookCommand refuses
+    // the path, and it refuses just the paths with a %, $, backtick or curly double quote.
+    const want = (s: string) => (/[%$`\u201C-\u201E]/.test(s) ? "refused" : ["node", hookPathForCommand(win(s)), "cursor", "beforeSubmitPrompt", ...extra]);
+    for (const [shell, read] of readers) {
+      prove(t, `${shell}, ${how}`, windowsName, (s) => {
+        let line: string;
+        try {
+          line = buildHookCommand(win(s), "cursor", "beforeSubmitPrompt", extra, "win32");
+        } catch {
+          return "refused";
+        }
+        return read(line);
+      }, want);
+    }
+  }
+  for (const v of ["5.1", "7"] as PsVersion[]) {
+    prove(t, `Copilot's powershell command, PowerShell ${v}`, windowsName, (s) => ps(v)(powerShellHookCommand(win(s), "copilot-cli", "preToolUse")), (s) => ["node", hookPathForCommand(win(s)), "copilot-cli", "preToolUse"]);
   }
   prove(t, "quoteArg under sh", ALPHABET, (s) => after("x")(words(`x ${hookQuote(s)}`)), (s) => [s]);
 });
