@@ -76,10 +76,10 @@ nothing to count for that row.
 | Failed file edits | File edit calls that failed, out of all of them. |
 | Failed shell commands | Shell commands that failed, out of all of them. |
 
-A prompt takes the first kind it matches, so the four kinds add up to Pushback (4 kinds). The row
-counts only these kinds. Other corrections, such as "no, use the other helper" or "you forgot the
-docs", do not count. "No problem", "wait for the build" and "actually, also add a test" are not
-pushback.
+A prompt takes the first of these kinds, in this order, that it matches in its first 400 characters,
+so the four kinds add up to Pushback (4 kinds). The row counts only these kinds. Other corrections,
+such as "no, use the other helper" or "you forgot the docs", do not count. "No problem", "wait for
+the build" and "actually, also add a test" are not pushback.
 
 ## 2. Read the result
 

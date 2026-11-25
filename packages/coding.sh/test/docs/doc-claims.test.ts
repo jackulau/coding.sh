@@ -1,6 +1,7 @@
 // Doc lines that state what the code does: the MCP status tool's work-item count in the
-// changelog, the parts of the status line in its how-to, file modes in the CLI reference, and the
-// scorecard's scope note and intervals in its how-to, its help and the changelog.
+// changelog, the parts of the status line in its how-to, file modes in the CLI reference, the
+// scorecard's scope note and intervals in its how-to, its help and the changelog, and which
+// pushback kind a prompt takes in the scorecard's how-to and the API reference.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -8,6 +9,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { scopeNote } from "../../src/cli/commands/stats-scorecard.ts";
 import { statuslineLine } from "../../src/cli/statusline.ts";
+import { PUSHBACK_KINDS, pushbackKind } from "../../src/core/pushback.ts";
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const repo = join(pkg, "..", "..");
@@ -56,5 +58,22 @@ describe("doc claims", () => {
   it("the scorecard's how-to, help and changelog line give the Turns row no interval", () => {
     assert.doesNotMatch(read("docs", "how-to", "compare-models.md"), /Every row shows its/);
     for (const doc of ["CHANGELOG.md", "docs/reference/cli.md"]) assert.doesNotMatch(read(doc), /--scorecard[^\n]*turns, [^\n]*each with its counts and a 95% interval/, doc);
+  });
+
+  it("the scorecard's how-to and the API reference say the order of the pushback kinds, not of the prompt, picks a prompt's kind", () => {
+    // "try again" comes first in the prompt, but undo comes before redo in the order.
+    assert.equal(pushbackKind("try again, and undo that"), "undo");
+    assert.equal(pushbackKind(`${"x".repeat(390)} undo that`), "undo");
+    assert.equal(pushbackKind(`${"x".repeat(391)} undo that`), undefined, "reads the first 400 characters");
+    const claim = "A prompt takes the first of these kinds, in this order, that it matches in its first 400 characters";
+    const row = read("docs", "reference", "api.md").split("\n").find((l) => l.startsWith("| `stats.turnsByModel.<model>.pushback` |"));
+    assert.ok(row, "found the API reference row");
+    const howTo = read("docs", "how-to", "compare-models.md").replace(/\s+/g, " ");
+    for (const [doc, text, name] of [["docs/reference/api.md", row, (k: string) => `\`${k}\``], ["docs/how-to/compare-models.md", howTo, (k: string) => `| Pushback: ${k} |`]] as const) {
+      assert.ok(text.includes(claim), `${doc} says: ${claim}`);
+      const at = PUSHBACK_KINDS.map((k) => text.indexOf(name(k)));
+      assert.ok(at.every((i) => i >= 0), `${doc} names every kind`);
+      assert.deepEqual(at, [...at].sort((a, b) => a - b), `${doc} lists the kinds in the order the code tries them`);
+    }
   });
 });
