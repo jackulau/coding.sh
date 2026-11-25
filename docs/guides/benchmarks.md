@@ -57,9 +57,9 @@ coding.sh bench new sums --cases 30 --command 'node gen.mjs' \
 /home/user/sums/bench/sums.toml
 ```
 
-`bench/sums.toml` holds the definition: sampling, limits, contenders and graders. Without
-`--cases`, a run takes 50 cases. `coding.sh bench run sums --dry-run` prints today's sample without
-calling anyone.
+`bench/sums.toml` holds the definition: sampling, limits, contenders and graders. `-g` takes a
+grader as JSON or as a path to a JSON file. Without `--cases`, a run takes 50 cases.
+`coding.sh bench run sums --dry-run` prints today's sample without calling anyone.
 
 ```sh
 coding.sh bench run sums

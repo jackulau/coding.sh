@@ -137,6 +137,16 @@ describe("dataset files Windows PowerShell wrote", () => {
   });
 });
 
+describe("dataset add --case <JSON|FILE>", () => {
+  it("reads a case from a JSON file as well as inline JSON, and help says so", async () => {
+    writeFileSync(join(root, "case.json"), '{"input":"2+2","expected":"4"}\n');
+    cli(["dataset", "add", "fromfile", "--case", "case.json", "--case", '{"input":"3+3","expected":"6"}']);
+    assert.deepEqual((await cases("fromfile")).map((c) => [c.input, c.expected]).sort(), [["2+2", "4"], ["3+3", "6"]]);
+    const help = spawnSync(process.execPath, ["--no-warnings", MAIN, "dataset", "add", "--help"], { env, cwd: root, encoding: "utf8", timeout: 30_000 });
+    assert.match(help.stdout, /--case <JSON\|FILE> +Case as JSON or a JSON file/);
+  });
+});
+
 describe("dataset add/import with case kinds (TB-12)", () => {
   it("--kind marks the added cases; a kind in the case JSON wins; the summary counts kinds", async () => {
     const out = cli(["dataset", "add", "fix", "--kind", "control", "--session", SESSIONS[1]!, "--case", '{"input":"a"}', "--case", '{"input":"b","kind":"bad"}']) as unknown as { dataset: { kinds?: Record<string, number> } };

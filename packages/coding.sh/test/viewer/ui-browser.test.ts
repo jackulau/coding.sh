@@ -1491,4 +1491,36 @@ describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chro
       await fv.close();
     }
   });
+
+  for (const [keyEnv, model, names] of [
+    ["ANTHROPIC_API_KEY", "claude-sonnet-4-5", "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"],
+    ["OPENAI_API_KEY", "gpt-4o", "OPENAI_API_KEY"],
+  ] as const) {
+    test(`Fork from here with no ${keyEnv}: Run fork is off, and the hint names the variables with no shell's $ in front`, async () => {
+      const fv = await startViewer({
+        index,
+        blobs: new FakeBlobs(),
+        port: 0,
+        updateStatus: async () => ({ disabled: "test" }) as any,
+        fork: {
+          preview: async () => ({ step: { n: 4 }, call: { id: "0123456789abcdef", model, by: "tool-use" }, files: [{ path: "CLAUDE.md", text: "Run the tests with npm test." }], recorded: { label: "Bash: npm test" }, canCall: false, keyEnv }),
+          run: async () => ({ differ: 0, edits: [], trials: [] }),
+        },
+      });
+      page = await browser.newPage();
+      try {
+        await page.viewport(1280, 900);
+        await page.goto(fv.url + "#/s/" + RP + "?step=4");
+        await page.waitFor(`/Step 4 of 5/.test(${paneText})`, "step 4", 10_000);
+        await tab("Fork from here");
+        await page.waitFor("document.querySelector('.rp-fork-go .tone-fail')", "the hint for the missing key");
+        const hint: string = await page.eval("document.querySelector('.rp-fork-go .tone-fail').textContent");
+        assert.match(hint, new RegExp(`^Set ${names} and restart ${CLI} ui\\.$`), hint);
+        assert.equal(await page.eval("[...document.querySelectorAll('.rp-fork-go button')].find((b) => b.textContent === 'Run fork').disabled"), true);
+      } finally {
+        await page.close();
+        await fv.close();
+      }
+    });
+  }
 });

@@ -80,7 +80,7 @@ export async function run(c: CommandContext): Promise<number> {
           const harvested = caseFromSession(s, await ctx.index.listEvents(s.id), split ? { split } : {});
           raw.push(kind ? { ...harvested, kind } : harvested);
         }
-        if (!raw.length) throw new UsageError("Nothing to add. Pass --case <JSON> or --session <ID>", { reason: "missing_argument" });
+        if (!raw.length) throw new UsageError("Nothing to add. Pass --case <JSON|FILE> or --session <ID>", { reason: "missing_argument" });
         return save(slugify(name), (existing) => {
           try {
             return existing ? addCases(existing, raw) : createDataset({ name, cases: raw });

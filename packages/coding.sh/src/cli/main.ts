@@ -16,7 +16,7 @@ import { paths } from "../core/paths.ts";
 import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
-import { cliCommand, nextStepBin, windowsShell } from "./next-steps.ts";
+import { cliCommand, nextStepBin, quoteArg, windowsShell } from "./next-steps.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
 
 export const BIN = "coding.sh";
@@ -73,23 +73,79 @@ function section(title: string, body: string[], s: HelpStyle): string[] {
   return body.length ? ["", s.heading(title), ...body] : [];
 }
 
-export function rootHelp(s: HelpStyle): string {
-  const out = [`${s.bold(BIN)} <command> [options]`, "", `  ${s.faint(SUMMARY)}`];
+/** The CLI as help names it: nextStepBin in PowerShell or cmd (windowsShell), else BIN. */
+function helpBin(env: NodeJS.ProcessEnv | undefined, platform: NodeJS.Platform): string {
+  return env && windowsShell(env, platform) ? nextStepBin(env, platform) : BIN;
+}
+
+/** A line's sh words, each marked when any part of it was quoted; undefined when the quotes do not pair up. */
+function shWords(line: string): { text: string; quoted: boolean }[] | undefined {
+  const word = /(?:'[^']*'|"[^"]*"|[^\s'"])+/g;
+  if (line.replace(word, "").trim()) return undefined;
+  return [...line.matchAll(word)].map(([w]) => ({ text: w.replace(/'([^']*)'|"([^"]*)"/g, "$1$2"), quoted: /['"]/.test(w) }));
+}
+
+/**
+ * An example, written for sh, as help prints it. In PowerShell or cmd (windowsShell), the line
+ * as that shell runs it: `coding.sh` names nextStepBin and each argument gets quoteArg, since
+ * cmd keeps single quotes. A JSON value for a <JSON|FILE> flag becomes <flag>.json, with its
+ * JSON on a line below: no quoting passes JSON to a native program the same way in PowerShell
+ * 5.1, PowerShell 7 and cmd. `eval "$(coding.sh …)"` becomes `… | Invoke-Expression`, which
+ * runs the $env: lines such a command prints there. A line with other sh syntax ($, a backtick
+ * or a backslash) only names the bin. Without env, or in sh, the line as written.
+ */
+function exampleLines(line: string, flags: readonly FlagSpec[], env: NodeJS.ProcessEnv | undefined, platform: NodeJS.Platform): string[] {
+  if (!env || !windowsShell(env, platform)) return [`    ${line}`];
+  const bin = nextStepBin(env, platform);
+  const ev = /^eval "\$\((coding\.sh [^$`\\)]*)\)"$/.exec(line);
+  if (ev) {
+    const [first, ...notes] = exampleLines(ev[1]!, flags, env, platform);
+    return [`${first} | Invoke-Expression`, ...notes];
+  }
+  const words = /[$`\\]/.test(line) ? undefined : shWords(line);
+  if (!words) return [`    ${line.replace(/(?<=^|\s)coding\.sh(?=\s|$)/g, bin)}`];
+  const notes: string[] = [];
+  const out = words.map(({ text, quoted }, i) => {
+    if (!quoted && text === "coding.sh") return bin;
+    // A pipe, a redirect and a placeholder (<ID>, an id that ends in …) read the same in both shells.
+    if (!quoted && /^(?:\|\|?|&&|>>?|<|<[^<>]+>|.*…)$/.test(text)) return text;
+    const prev = words[i - 1];
+    const flag = prev && !prev.quoted ? flags.find((f) => prev.text === `--${f.name}` || (f.short !== undefined && prev.text === `-${f.short}`)) : undefined;
+    if (flag?.value === "<JSON|FILE>" && /^\s*[{[]/.test(text)) {
+      let file = `${flag.name}.json`;
+      for (let n = 2; notes.some((l) => l.startsWith(`      ${file}: `)); n++) file = `${flag.name}-${n}.json`;
+      notes.push(`      ${file}: ${text}`);
+      return file;
+    }
+    return quoteArg(text, env, platform);
+  });
+  return [`    ${out.join(" ")}`, ...notes];
+}
+
+/**
+ * Help for the whole CLI. With env, the CLI and the examples are named as that shell runs them
+ * (nextStepBin in PowerShell or cmd, exampleLines); without, the sh form docs/reference/cli.md
+ * shows on every machine.
+ */
+export function rootHelp(s: HelpStyle, env?: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  const bin = helpBin(env, platform);
+  const out = [`${s.bold(bin)} <command> [options]`, "", `  ${s.faint(SUMMARY)}`];
   for (const g of GROUPS) {
     const cmds = COMMANDS.filter((c) => c.group === g);
     out.push(...section(g, rows(cmds.map((c) => [c.name, c.summary])), s));
   }
   out.push(...section("Global Options", rows(GLOBAL_FLAGS.map((f): [string, string] => [flagSyntax(f), flagDesc(f)]).concat([["-v, --version", "Print the version"]])), s));
-  out.push(...section("Examples", ["    coding.sh init", "    coding.sh sessions --since 7d", "    coding.sh show latest"], s));
-  out.push(...section("Learn More", [`  Run ${s.bold(`${BIN} <command> --help`)} for a command's options.`], s));
+  out.push(...section("Examples", ["coding.sh init", "coding.sh sessions --since 7d", "coding.sh show latest"].flatMap((e) => exampleLines(e, [], env, platform)), s));
+  out.push(...section("Learn More", [`  Run ${s.bold(`${bin} <command> --help`)} for a command's options.`], s));
   return out.join("\n") + "\n";
 }
 
-export function commandHelp(cmd: CommandSpec, action: ActionSpec | undefined, s: HelpStyle): string {
+/** Help for one command or action, named for env's shell as rootHelp is. */
+export function commandHelp(cmd: CommandSpec, action: ActionSpec | undefined, s: HelpStyle, env?: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   const name = action ? `${cmd.name} ${action.name}` : cmd.name;
   const args = action ? action.args : cmd.args;
   const flags = visibleFlags(action ? action.flags : cmd.flags);
-  const usage = [BIN, name];
+  const usage = [helpBin(env, platform), name];
   if (!action && cmd.actions) usage.push(cmd.actionOptional ? "[action]" : "<action>");
   const argText = argSyntax(args);
   if (cmd.passthrough) usage.push("[options] --", argText);
@@ -103,7 +159,7 @@ export function commandHelp(cmd: CommandSpec, action: ActionSpec | undefined, s:
   if (flags.length) out.push(...section("Options", rows(flags.map((f) => [flagSyntax(f), flagDesc(f)])), s));
   out.push(...section("Global Options", rows(GLOBAL_FLAGS.map((f) => [flagSyntax(f), flagDesc(f)])), s));
   const examples = (action ? action.examples : cmd.examples) ?? [];
-  out.push(...section("Examples", examples.slice(0, 3).map((e) => `    ${e}`), s));
+  out.push(...section("Examples", examples.slice(0, 3).flatMap((e) => exampleLines(e, flags, env, platform)), s));
   if (!action && cmd.notes?.length) out.push(...section("Notes", cmd.notes.map((n) => `  ${n}`), s));
   if (cmd.aliases?.length && !action) out.push(...section("Aliases", [`  ${cmd.aliases.join(", ")}`], s));
   return out.join("\n") + "\n";
@@ -253,7 +309,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
         throw new UsageError(`Unknown option ${name}`, { suggestion: hint, reason: "unknown_option" });
       }
       if (out.json) out.data(helpMetadata());
-      else process.stdout.write(rootHelp(helpStyle(out)));
+      else process.stdout.write(rootHelp(helpStyle(out), env));
       return 0;
     }
     const cmd = findCommand(name);
@@ -270,7 +326,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
       if (a === undefined || a.startsWith("-")) {
         if (globals.help) {
           if (out.json) out.data(helpMetadata(cmd));
-          else process.stdout.write(commandHelp(cmd, undefined, helpStyle(out)));
+          else process.stdout.write(commandHelp(cmd, undefined, helpStyle(out), env));
           return 0;
         }
         throw new UsageError(`Missing command for ${BIN} ${cmd.name}. Choose one of: ${cmd.actions.map((x) => x.name).join(", ")}`, { reason: "missing_command" });
@@ -285,7 +341,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
 
     if (globals.help) {
       if (out.json) out.data(helpMetadata(cmd, action));
-      else process.stdout.write(commandHelp(cmd, action, helpStyle(out)));
+      else process.stdout.write(commandHelp(cmd, action, helpStyle(out), env));
       return 0;
     }
 
