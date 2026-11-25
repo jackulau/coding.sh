@@ -642,6 +642,11 @@ calls nested in it.
 A call the gateway did not bill keeps a cost it reported, and that cost covers the bills of the
 calls nested in it, also when a billed call is above it.
 
+A call that carries the response id of a call counted before it is a copy, and is left out with the
+calls nested in it. When one of the two is nested in the other, at any depth, they are one response
+seen at two levels, as when a gateway's generation id is on a wrapper and on its last step, and
+neither counts as a copy.
+
 A gateway bill linked to two copies of one call, such as the proxy's copy and the agent's own
 record, counts once.
 
