@@ -27,6 +27,10 @@
 //   started none (a host-link with no provider thread) or names none it knows ("unknown"). Session.host
 //   is the host then, and provider the agent; otherwise the session is the host's, with no host. A
 //   session no host drove is the agent of its first event that is no durable engine's span.
+// - A session's parent is the one its first session.start names, unless that start is a spawn marker
+//   an older ingest stamped (spool/spawned.ts); with none, a subagent's id names it
+//   (`<parent>:sub:<agentId>`, neither part empty); else the first call the proxy saw that names
+//   another session.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -344,6 +348,115 @@ test("a session a host app drove is the agent it ran, with the host as its host"
       assert.deepEqual({ agent: row.agent, host: row.host, provider: row.provider }, want, why);
     },
     { runs: 1000, label: "host" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+type Parent = NonNullable<Session["parent"]>;
+
+/** Session ids, and the parent each names as `<parent>:sub:<agentId>`, neither part empty. */
+const SUB_IDS: readonly (readonly [string, Parent | undefined])[] = [
+  ["s-1", undefined],
+  ["p-1:sub:a-1", { sessionId: "p-1", subagentId: "a-1", type: "subagent" }],
+  ["p-1:sub:a-1:sub:a-2", { sessionId: "p-1:sub:a-1", subagentId: "a-2", type: "subagent" }],
+  [":sub:a-1", undefined],
+  ["p-1:sub:", undefined],
+];
+
+/** A generated event: what the fold reads to find a session's parent. */
+interface ParentEvent {
+  kind: "session.start" | "llm.call" | "user.message";
+  /** Seconds after T0. */
+  at: number;
+  /** payload.parentSessionId: another session, this one ("self"), or no id. */
+  parent: unknown;
+  /** A model call's source: "proxy" for a call the proxy saw. */
+  source: string | undefined;
+  /** A session.start's payload.subagentType, and whether it names the agent that spawned it. */
+  subagentType: string | undefined;
+  parentAgent: boolean;
+  /** The subagent the event belongs to, and a model call's payload.agentId and agentType. */
+  subagentId: string | undefined;
+  agentId: unknown;
+  agentType: unknown;
+}
+
+const parentEventGen: Gen<ParentEvent> = gen.record<ParentEvent>({
+  kind: gen.pick(["session.start", "session.start", "llm.call", "llm.call", "user.message"] as const),
+  at: gen.int(0, 3),
+  parent: gen.pick<unknown>([undefined, "parent-1", "parent-2", "self", 7]),
+  source: gen.pick([undefined, "proxy", "proxy", "hook"]),
+  subagentType: gen.pick([undefined, "Explore", "harness", "harness"]),
+  parentAgent: gen.weighted(0.5),
+  subagentId: gen.pick([undefined, "sa-1"]),
+  agentId: gen.pick<unknown>([undefined, "agent-1", 3]),
+  agentType: gen.pick<unknown>([undefined, "general-purpose", false]),
+});
+
+function parentEvents(id: string, idParent: Parent | undefined, ps: ParentEvent[]): AgentEvent[] {
+  return ps.map((p, i): AgentEvent => {
+    // When a subagent's id names its parent, its model calls name no other: which of the two came first
+    // would win, an order no doc gives.
+    const other = typeof p.parent === "string" && p.parent !== "self";
+    const parent = p.parent === "self" ? id : idParent && p.kind === "llm.call" && other ? undefined : p.parent;
+    const payload: Record<string, unknown> = {};
+    if (parent !== undefined) payload.parentSessionId = parent;
+    if (p.kind === "session.start" && p.subagentType !== undefined) payload.subagentType = p.subagentType;
+    if (p.kind === "session.start" && p.parentAgent) payload.parentAgent = "claude-code";
+    if (p.kind === "llm.call" && p.agentId !== undefined) payload.agentId = p.agentId;
+    if (p.kind === "llm.call" && p.agentType !== undefined) payload.agentType = p.agentType;
+    const e: AgentEvent = { id: `parent-${i}`, v: 0, sessionId: id, ts: T0 + p.at * 1000, agent: "claude-code", kind: p.kind, payload };
+    if (p.kind === "llm.call" && p.source !== undefined) e.source = p.source;
+    if (p.subagentId !== undefined) e.subagentId = p.subagentId;
+    return e;
+  });
+}
+
+/** A spawn marker an older ingest stamped (spool/spawned.ts): the session it names is not the parent. */
+const isMarker = (e: AgentEvent) => e.kind === "session.start" && e.payload.subagentType === "harness" && typeof e.payload.parentAgent === "string";
+/** A call the proxy saw that names a session other than its own. */
+const namesOther = (e: AgentEvent) => e.kind === "llm.call" && e.source === "proxy" && typeof e.payload.parentSessionId === "string" && e.payload.parentSessionId !== e.sessionId;
+
+/**
+ * The parent a session's row names, from the docs of parentOf and the fold: the first session.start
+ * that names one and is no spawn marker; with none, a subagent's id; else the first call the proxy saw
+ * that names another session.
+ */
+function parentWant(idParent: Parent | undefined, sorted: AgentEvent[]): { want: Parent | undefined; why: string } {
+  const start = sorted.find((e) => e.kind === "session.start" && typeof e.payload.parentSessionId === "string" && !isMarker(e));
+  if (start) {
+    const want: Parent = { sessionId: start.payload.parentSessionId as string };
+    if (start.subagentId) want.subagentId = start.subagentId;
+    if (typeof start.payload.subagentType === "string") want.type = start.payload.subagentType;
+    return { want, why: "session.start" };
+  }
+  if (idParent) return { want: idParent, why: "id" };
+  const call = sorted.find(namesOther);
+  if (!call) return { want: undefined, why: "none" };
+  const want: Parent = { sessionId: call.payload.parentSessionId as string };
+  const sub = call.subagentId ?? (typeof call.payload.agentId === "string" ? call.payload.agentId : undefined);
+  if (sub) want.subagentId = sub;
+  if (typeof call.payload.agentType === "string") want.type = call.payload.agentType;
+  return { want, why: "proxy" };
+}
+
+test("a session's parent is the one its session.start names, else its id's, else the proxy's", async (t) => {
+  const seen: Record<string, number> = { "session.start": 0, id: 0, proxy: 0, none: 0, "a spawn marker": 0, "a proxy call after a session.start": 0, "a proxy call naming its own session": 0, "an id that names none": 0 };
+  await forAll(
+    gen.tuple(gen.pick(SUB_IDS), gen.array(parentEventGen, { minLength: 1, maxLength: 5 })),
+    ([[id, idParent], ps]) => {
+      const events = parentEvents(id, idParent, ps);
+      const sorted = byTime(events);
+      const { want, why } = parentWant(idParent, sorted);
+      seen[why]!++;
+      if (why !== "session.start" && sorted.some((e) => isMarker(e) && e.payload.parentSessionId !== undefined)) seen["a spawn marker"]!++;
+      if (why === "session.start" && sorted.some(namesOther)) seen["a proxy call after a session.start"]!++;
+      if (sorted.some((e) => e.kind === "llm.call" && e.source === "proxy" && e.payload.parentSessionId === id)) seen["a proxy call naming its own session"]!++;
+      if (why !== "session.start" && (id === ":sub:a-1" || id === "p-1:sub:")) seen["an id that names none"]!++;
+      assert.deepEqual(buildSession(events).parent, want, why);
+    },
+    { runs: 1000, label: "parent" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
