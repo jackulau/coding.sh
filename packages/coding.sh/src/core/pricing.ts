@@ -60,6 +60,9 @@ export type Prices = Record<string, Price>;
 /** A token count as an estimate bills it: a finite number above 0, else 0. */
 const billable = (v: number | undefined): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 
+/** A token count as session stats take it: a finite number not below 0, else undefined, so it is skipped (an estimate bills it as 0). */
+export const tokenCount = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+
 /** A usage record's four token counts as an estimate bills them (each billable); its cost is left out. */
 export const billableUsage = (u: Usage | undefined): Usage => ({
   inputTokens: billable(u?.inputTokens),
