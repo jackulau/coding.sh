@@ -352,6 +352,19 @@ describe("claude-code hook capture: the time on a prompt's transcript entry", ()
 });
 
 describe("claude-code hook capture, then a transcript import", () => {
+  const writeLines = (path: string, rows: unknown[]) => writeFile(path, rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  /** A store, with the two ways events reach it, and the stop prompts and turns it then holds. */
+  function store() {
+    const index = new MemoryIndexStore();
+    const opts = { config: defaultConfig(process.env), index, blobs: new MemoryBlobStore(), env: process.env };
+    return {
+      ingestHook: () => ingestSpool({ ...opts, adapters: new Map([[claudeCode.id, claudeCode]]) }),
+      importTranscript: () => importTranscripts({ ...opts, adapters: [claudeCode] }),
+      stops: async () => (await index.listEvents(SID, { kinds: ["user.message"] })).filter((e) => String(e.payload.text).startsWith("[Request interrupted")).map((e) => [e.ts - T, e.source]),
+      turns: async () => (await index.getSession(SID))?.stats.turnsByModel,
+    };
+  }
+
   it("a second stop that only the import reads counts as cancelled, not as a copy of the first stop's prompt", async () => {
     const entries = [
       prompt("u1", 0, "Explain the cache"),
@@ -372,17 +385,81 @@ describe("claude-code hook capture, then a transcript import", () => {
       line("SessionEnd", 70_000, { reason: "prompt_input_exit" }),
     ];
     resetPromptIndexes();
-    writeFile(transcript, entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
-    writeFile(spoolFile("claude-code", T), lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
-    const index = new MemoryIndexStore();
-    const opts = { config: defaultConfig(process.env), index, blobs: new MemoryBlobStore(), env: process.env };
-    const stops = async () => (await index.listEvents(SID, { kinds: ["user.message"] })).filter((e) => String(e.payload.text).startsWith("[Request interrupted")).map((e) => [e.ts - T, e.source]);
-    await ingestSpool({ ...opts, adapters: new Map([[claudeCode.id, claudeCode]]) });
-    assert.deepEqual(await stops(), [[1500, "hook"]]);
-    assert.deepEqual((await index.getSession(SID))?.stats.turnsByModel, { [MODEL]: { turns: 3, replied: 2, cancelled: 1, cancelNotRecorded: 1, durationsMs: [1501, 2101] } });
-    await importTranscripts({ ...opts, adapters: [claudeCode] });
-    assert.deepEqual(await stops(), [[1500, "hook"], [61_000, "transcript"]]);
-    assert.deepEqual((await index.getSession(SID))?.stats.turnsByModel, { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 2101, 1001] } });
+    writeLines(transcript, entries);
+    writeLines(spoolFile("claude-code", T), lines);
+    const s = store();
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "hook"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 1, cancelNotRecorded: 1, durationsMs: [1501, 2101] } });
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "hook"], [61_000, "transcript"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 2101, 1001] } });
+    rmSync(transcript);
+  });
+
+  it("a second stop seconds after the first counts as cancelled, not as a copy of the first stop's prompt", async () => {
+    // As above, with the second stop 4.8 s after the first: both write the same prompt.
+    const entries = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 2000, "Explain the cache in one line"),
+      reply("m1", 3000, { type: "text", text: "It keeps answers." }),
+      prompt("u4", 5800, "Now the eviction"),
+      stopPrompt("u5", 6300, "p-u4", "[Request interrupted by user]"),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 2010, { prompt: "Explain the cache in one line" }),
+      stop(3100, "It keeps answers."),
+      line("UserPromptSubmit", 5810, { prompt: "Now the eviction" }),
+      line("SessionEnd", 70_000, { reason: "prompt_input_exit" }),
+    ];
+    resetPromptIndexes();
+    writeLines(transcript, entries);
+    writeLines(spoolFile("claude-code", T), lines);
+    const s = store();
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "hook"]]);
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "hook"], [6300, "transcript"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 1101, 501] } });
+    rmSync(transcript);
+  });
+
+  it("a stop that a Stop reads after an import is kept when the import stored another stop seconds before it", async () => {
+    const first = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 2000, "Explain the cache in one line"),
+      reply("m1", 3000, { type: "text", text: "It keeps answers." }),
+    ];
+    const rest = [
+      prompt("u4", 4500, "Now the eviction"),
+      stopPrompt("u5", 5000, "p-u4", "[Request interrupted by user]"),
+      prompt("u6", 5500, "Just the eviction"),
+      reply("m2", 6500, { type: "text", text: "Oldest first." }),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 2010, { prompt: "Explain the cache in one line" }),
+      stop(3100, "It keeps answers."),
+      line("UserPromptSubmit", 4510, { prompt: "Now the eviction" }),
+      line("UserPromptSubmit", 5510, { prompt: "Just the eviction" }),
+      stop(6600, "Oldest first."),
+    ];
+    resetPromptIndexes();
+    writeLines(transcript, first);
+    const s = store();
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "transcript"]]);
+    // The session goes on; its hooks' spool is ingested next, with the second stop in the last Stop's window.
+    writeLines(transcript, [...first, ...rest]);
+    writeLines(spoolFile("claude-code", T), lines);
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "transcript"], [5000, "hook"]]);
+    assert.equal((await s.turns())?.[MODEL]?.cancelled, 2);
     rmSync(transcript);
   });
 });
