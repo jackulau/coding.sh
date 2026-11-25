@@ -129,17 +129,20 @@ function validate(v: unknown): string | undefined {
 }
 
 /** How every writer starts a spool line (hook.sh and JSON.stringify of a SpoolLine). */
-const LINE_START = '{"v":0,"agent":"';
+const LINE_START = Buffer.from('{"v":0,"agent":"');
 
 /**
  * A whole spool line glued onto a torn fragment: a write cut short (a full disk)
  * left a fragment with no "\n", and the next writer appended its line right
- * after it. Returns the first later line start that parses, with its index in `text`.
+ * after it. Returns the first later line start that parses, with its index in
+ * `bytes`. The search runs over the bytes, not the decoded text: a fragment cut
+ * inside a character decodes to U+FFFD, which need not be as long as the bytes
+ * it stands for.
  */
-function gluedLine(text: string): { line: unknown; at: number } | undefined {
-  for (let at = text.indexOf(LINE_START, 1); at > 0; at = text.indexOf(LINE_START, at + 1)) {
+function gluedLine(bytes: Buffer): { line: unknown; at: number } | undefined {
+  for (let at = bytes.indexOf(LINE_START, 1); at > 0; at = bytes.indexOf(LINE_START, at + 1)) {
     try {
-      const line: unknown = JSON.parse(text.slice(at));
+      const line: unknown = JSON.parse(bytes.toString("utf8", at));
       if (!validate(line)) return { line, at };
     } catch {
       // not this one: the fragment's payload may hold the same characters
@@ -181,7 +184,8 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
       const offset = pos;
       const nextOffset = pos + nl + 1;
       // A CRLF line ends without its "\r": the byte is dropped before decoding.
-      const text = buf.toString("utf8", 0, nl > 0 && buf[nl - 1] === 0x0d ? nl - 1 : nl);
+      const bytes = buf.subarray(0, nl > 0 && buf[nl - 1] === 0x0d ? nl - 1 : nl);
+      const text = bytes.toString("utf8");
       buf = buf.subarray(nl + 1);
       pos = nextOffset;
       if (!text.trim()) {
@@ -193,11 +197,11 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
       try {
         parsed = JSON.parse(text);
       } catch (err) {
-        const glued = gluedLine(text);
+        const glued = gluedLine(bytes);
         opts.onError?.({ source, offset, nextOffset, message: `invalid JSON: ${(err as Error).message}${glued ? "; the whole line after the torn fragment is kept" : ""}` });
         if (!glued) continue;
         parsed = glued.line;
-        lineOffset = offset + Buffer.byteLength(text.slice(0, glued.at));
+        lineOffset = offset + glued.at;
       }
       const problem = validate(parsed);
       if (problem) {

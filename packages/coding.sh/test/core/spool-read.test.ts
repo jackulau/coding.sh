@@ -179,6 +179,29 @@ describe("spool-read", () => {
     assert.equal(errs.length, 1);
     assert.match(errs[0]!.message, /invalid JSON.*the whole line after the torn fragment is kept/);
   });
+  it("keeps a glued line at the byte where it starts when the fragment ends inside a character", async () => {
+    // The cut character decodes to U+FFFD, three bytes in UTF-8, whatever number of bytes it held.
+    const dir = spool();
+    const file = join(dir, "codex", "2026-11-06.jsonl");
+    const first = Buffer.from(line({ event: "PreToolUse", raw: { n: 1 } }));
+    const after = Buffer.from(line({ event: "PostToolUse", raw: { n: 3 } }));
+    for (const ch of ["é", "€", "\u{1f600}"]) {
+      const whole = Buffer.from(line({ event: "PreToolUse", raw: { n: 2, text: `${ch} done` } }));
+      for (let cut = 1; cut < Buffer.byteLength(ch); cut++) {
+        const fragment = whole.subarray(0, whole.indexOf(ch) + cut);
+        writeFileSync(file, Buffer.concat([first, fragment, after]));
+        const start = first.length + fragment.length;
+        for (const chunkSize of [undefined, 1, 7]) {
+          for (const from of [0, first.length, start]) {
+            const { recs, errs } = await readAll(dir, file, from, chunkSize);
+            const what = `${ch} cut after ${cut} of its ${Buffer.byteLength(ch)} bytes, read from ${from} in chunks of ${chunkSize ?? "64 KiB"}`;
+            assert.deepEqual(recs.map((r) => [r.line.event, r.offset, r.nextOffset]).at(-1), ["PostToolUse", start, start + after.length], what);
+            assert.equal(errs.length, from === start ? 0 : 1, what);
+          }
+        }
+      }
+    }
+  });
 
   it("still skips a bad line with no whole line after it", async () => {
     const dir = spool();
