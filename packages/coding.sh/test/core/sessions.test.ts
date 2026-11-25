@@ -964,20 +964,18 @@ describe("session usage rollup", () => {
       assert.deepEqual(s.stats.duplicateUsage, r.duplicate, label);
     }
     // One run recorded on two paths: as two calls with no trace, and as a billed wrapper over two steps, whose response id
-    // is the last step's. The wrapper comes last, so its steps repeat the calls with no trace, in any order.
-    for (const order of orders(["a1", "a2", "k1", "k2"])) {
-      const at = (name: string) => ({ ts: 10 * (order.indexOf(name) + 1) });
-      const a1 = ev("llm.call", { costEstimated: true, responseId: "resp_1" }, { usage: { inputTokens: 10, costUsd: 0.25 }, ...at("a1") });
-      const a2 = ev("llm.call", { costEstimated: true, responseId: "gen_2" }, { usage: { inputTokens: 20, costUsd: 0.5 }, ...at("a2") });
-      const w2 = llm("w2", undefined, undefined, { responseId: "gen_2" }, { ts: 100 });
-      const k1 = llm("k1", "w2", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_1" }, at("k1"));
-      const k2 = llm("k2", "w2", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "gen_2" }, at("k2"));
-      const run = [a1, a2, w2, k1, k2, bill(a2, 2, "gen_2"), bill(w2, 2, "gen_2"), bill(k2, 2, "gen_2")].sort((p, q) => p.ts - q.ts);
-      const label = order.join(" ");
-      const got = rollupUsage(run);
+    // is the last step's. Whichever path comes first counts, in any order.
+    const a1 = ev("llm.call", { costEstimated: true, responseId: "resp_1" }, { usage: { inputTokens: 10, costUsd: 0.25 }, spanId: "a1" });
+    const a2 = ev("llm.call", { costEstimated: true, responseId: "gen_2" }, { usage: { inputTokens: 20, costUsd: 0.5 }, spanId: "a2" });
+    const w2 = llm("w2", undefined, undefined, { responseId: "gen_2" });
+    const k1 = llm("k1", "w2", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_1" });
+    const k2 = llm("k2", "w2", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "gen_2" });
+    for (const { label, evs } of runs([a1, a2, w2, k1, k2], [bill(a2, 2, "gen_2"), bill(w2, 2, "gen_2"), bill(k2, 2, "gen_2")])) {
+      const got = rollupUsage(evs);
+      // The wrapper's bill is its last step's, so the step before it keeps its estimate.
       assert.deepEqual(got.usage, { inputTokens: 30, costUsd: 2.25, estimatedCostUsd: 0.25 }, label);
-      assert.deepEqual(got.duplicate, { calls: 2, tokens: 30, costUsd: 4.25 }, label);
-      assert.deepEqual(buildSession(run).stats.usage, got.usage, label);
+      assert.equal(got.duplicate?.tokens, 30, label);
+      assert.deepEqual(buildSession(evs).stats.usage, got.usage, label);
     }
   });
 

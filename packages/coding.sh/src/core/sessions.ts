@@ -364,7 +364,9 @@ export interface UsageRollup {
  *   nested call or as the wrapper, and then has no token counts of its own, not even zeros. A billed
  *   call counts at its bill, $0 included, without its nested calls' cost, but adds the bills of the
  *   calls nested in it that are not its own generation, unless a call between them kept a cost it
- *   reported. This holds at any depth; calls nested in each other in a loop count under the first of them;
+ *   reported. When a call nested in it carries its generation id, as a response id or a bill's, the
+ *   bill is that call's: it covers that call and the calls nested in it, and the others keep their
+ *   costs. This holds at any depth; calls nested in each other in a loop count under the first of them;
  * - a gateway generation is billed once: when two companions carry one (`payload.gateway` and
  *   `payload.generationId`), as when the proxy's copy of a call and the agent's own record of it
  *   were both linked to it, the companion of a counted call holds the bill, else the first;
@@ -383,14 +385,16 @@ export interface UsageRollup {
  */
 export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   const billed = new Set<string>();
-  // The gateway generations each billed call was billed for.
+  // The gateway generations each billed call was billed for, and the calls billed with no generation id.
   const generations = new Map<string, Set<string>>();
+  const plain = new Set<string>();
   for (const e of sorted) {
     const call = billedCallOf(e);
     if (!call) continue;
     billed.add(call);
     const g = generationOf(e);
     if (g) generations.set(call, (generations.get(call) ?? new Set<string>()).add(g));
+    else plain.add(call);
   }
   const bySpan = new Map<string, AgentEvent>();
   for (const e of sorted) {
@@ -489,6 +493,77 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const j = at.get(e);
     return i !== undefined && j !== undefined && i < j && j < i + size.get(a)!;
   };
+  // The calls whose cost a bill above them covers, and the billed calls billed for a generation a call above them was.
+  // A billed call covers the calls nested in it, unless one of them carries its generation id, as its response id or a
+  // bill's: then the bill is that call's, and covers it and the calls nested in it, while the others keep their costs.
+  const covered = new Set<AgentEvent>();
+  const shared = new Set<AgentEvent>();
+  if (billed.size) {
+    const idOf = (g: string): string => g.slice(g.indexOf("\u0000") + 1);
+    // The generation ids a call carries: its response id, when it carries usage (a wrapper's can be its last step's), and
+    // those of its bills.
+    const carried = (c: AgentEvent): string[] => {
+      const ids = [...(generations.get(c.id) ?? [])].map(idOf);
+      const rid = c.payload?.responseId;
+      if (carriesUsage(c) && typeof rid === "string" && rid && !ids.includes(rid)) ids.push(rid);
+      return ids;
+    };
+    // The places in the walk of the calls that carry each id, in order.
+    const carriedAt = new Map<string, number[]>();
+    for (let i = 0; i < pre.length; i++) {
+      for (const id of carried(pre[i]!)) {
+        const places = carriedAt.get(id);
+        if (places) places.push(i);
+        else carriedAt.set(id, [i]);
+      }
+    }
+    // Whether a call nested in `c` carries `id`: the first place after c's is within its tree.
+    const carriedBelow = (c: AgentEvent, id: string): boolean => {
+      const places = carriedAt.get(id);
+      if (!places) return false;
+      const i = at.get(c)!;
+      let lo = 0;
+      let hi = places.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (places[mid]! <= i) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo < places.length && places[lo]! < i + size.get(c)!;
+    };
+    // Down each tree: how many calls above cover the ones below, and the generations of the billed calls above, as keys
+    // and as ids. A call that changes them is undone at the end of its tree.
+    const above: { end: number; covers: boolean; gens: string[] }[] = [];
+    let cover = 0;
+    const gensAbove = new Map<string, number>();
+    const idsAbove = new Map<string, number>();
+    const mark = (gens: string[], by: number): void => {
+      for (const g of gens) {
+        gensAbove.set(g, (gensAbove.get(g) ?? 0) + by);
+        idsAbove.set(idOf(g), (idsAbove.get(idOf(g)) ?? 0) + by);
+      }
+    };
+    for (let i = 0; i < pre.length; i++) {
+      while (above.length && above[above.length - 1]!.end <= i) {
+        const done = above.pop()!;
+        if (done.covers) cover--;
+        mark(done.gens, -1);
+      }
+      const c = pre[i]!;
+      const gens = [...(generations.get(c.id) ?? [])];
+      // It carries the generation of a billed call above it: that bill is its own.
+      const mine = carried(c).some((id) => (idsAbove.get(id) ?? 0) > 0);
+      if (cover > 0 || mine) covered.add(c);
+      if (gens.some((g) => (gensAbove.get(g) ?? 0) > 0)) shared.add(c);
+      const covers = mine || (billed.has(c.id) && (plain.has(c.id) || !gens.some((g) => carriedBelow(c, idOf(g)))));
+      const n = size.get(c)!;
+      if (n > 1 && (covers || gens.length)) {
+        above.push({ end: i + n, covers, gens });
+        if (covers) cover++;
+        mark(gens, 1);
+      }
+    }
+  }
   // Calls left out as repeats: one that repeats a counted call's response id or replays one, and the calls nested in it.
   const repeats = new Set<AgentEvent>();
   const estimatedOf = (e: AgentEvent): number => (e.payload?.costEstimated === true && !billed.has(e.id) ? (num(e.usage?.costUsd) ?? 0) : 0);
@@ -611,8 +686,8 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     else nested.set(c, { u, mode: "kids", reported: kidsReported, priced: kids.some((x) => x.priced) });
   }
   // The counted calls with nested calls, folded first, so a companion knows whether the call it billed is in a count. Down
-  // each tree, a call that keeps its own cost counts it unless a billed call is above it, and covers the calls nested in
-  // it. A billed call counts its bill unless a billed call above it has its generation; a nested call billed for another
+  // each tree, a call that keeps its own cost counts it unless a bill covers it, and covers the calls nested in it. A
+  // billed call counts its bill unless a billed call above it has its generation; a nested call billed for another
   // generation adds its bill: its own cost here, the rest in its companion.
   const folds = new Map<AgentEvent, Folded>();
   const costed = new Set<string>();
@@ -621,20 +696,11 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const top = nested.get(r)!;
     const f: Folded = { u: { ...top.u }, est: 0, tiers: {}, split: { parts: noParts(), unsplit: 0 } };
     let cost = 0;
-    let billedAbove = 0;
-    const gensAbove = new Map<string, number>();
-    // A call to fold in, or (true) a billed call whose nested calls are done.
-    const todo: [AgentEvent, boolean][] = [[r, false]];
+    const todo = [r];
     while (todo.length) {
-      const [c, done] = todo.pop()!;
-      const gens = generations.get(c.id);
-      if (done) {
-        billedAbove--;
-        if (gens) for (const g of gens) gensAbove.set(g, gensAbove.get(g)! - 1);
-        continue;
-      }
+      const c = todo.pop()!;
       const n = nested.get(c)!;
-      const counts = n.mode === "own" ? billedAbove === 0 : n.mode === "billed" && ![...(gens ?? [])].some((g) => (gensAbove.get(g) ?? 0) > 0);
+      const counts = n.mode === "own" ? !covered.has(c) : n.mode === "billed" && !shared.has(c);
       if (counts) {
         costed.add(c.id);
         cost += num(c.usage?.costUsd) ?? 0;
@@ -643,13 +709,8 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
         addSplit(f.split, splitOfEvent(c));
       }
       if (n.mode === "own") continue;
-      if (n.mode === "billed") {
-        billedAbove++;
-        if (gens) for (const g of gens) gensAbove.set(g, (gensAbove.get(g) ?? 0) + 1);
-        todo.push([c, true]);
-      }
       const kids = children.get(c) ?? [];
-      for (let i = kids.length - 1; i >= 0; i--) if (!repeats.has(kids[i]!)) todo.push([kids[i]!, false]);
+      for (let i = kids.length - 1; i >= 0; i--) if (!repeats.has(kids[i]!)) todo.push(kids[i]!);
     }
     if (top.priced) f.u.costUsd = cost;
     folds.set(r, f);
