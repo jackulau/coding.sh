@@ -2244,7 +2244,7 @@ delete); when any run dropped something, the report adds a note. A task can allo
 
 ### Efficiency, reliability and tasks needed
 
-Below the metrics, the report divides each arm's agent cost and tokens by the tasks it solved:
+Below the metrics, the report divides each arm's agent cost and tokens by its passing runs:
 
 ```
 cost / solved     $0.200                $0.240                +$0.040 (+20%)
