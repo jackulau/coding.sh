@@ -648,13 +648,18 @@ calls nested in it.
 
 When a call nested in a billed call carries its generation id, as the response id of a call with
 usage or as a bill's, the bill is that call's, as when a gateway's generation id is on a wrapper and
-on its last step. The bill covers that call and the calls nested in it, and replaces the cost of each
-call between the two, as a bill nested in them would. The other nested calls keep their costs.
+on its last step.
+
+Such a bill covers the call that carries its generation and the calls nested in it, and replaces
+the cost of each call between the two, as a bill nested in them would. The other nested calls keep
+their costs.
 
 Two calls that share a response id, directly or through other calls, are copies of one response: one
-counts, and the others are left out with the calls nested in them. A generation id a gateway billed a
-call for is one of its response ids, unless a billed call above it has that generation. So two calls
-billed for one generation are copies when no billed call above either of them has it.
+counts, and the others are left out with the calls nested in them.
+
+A generation id a gateway billed a call for is one of its response ids, unless a billed call above
+it has that generation. So two calls billed for one generation are copies when no billed call above
+either of them has it.
 
 When one of two calls with one id is nested in the other, at any depth, they are one response seen at
 two levels, as when a gateway's generation id is on a wrapper and on its last step, and neither is a
@@ -663,8 +668,10 @@ with that id.
 
 Of two copies, the one checked first counts, unless the other ranks higher: a billed call, or one
 with a billed call nested in it at any depth, ranks first, then a call a bill above it covers, or
-whose cost such a bill replaces, then any other. A copy checked later that is nested in neither
-level of a response seen at two levels is left out, whatever its rank.
+whose cost such a bill replaces, then any other.
+
+A copy checked later that is nested in neither level of a response seen at two levels is left out,
+whatever its rank.
 
 Calls are checked in time order, but a nested call is checked after the call it is nested in,
 whatever their times, so one left out with a copy makes no later call a copy. Calls that came before
