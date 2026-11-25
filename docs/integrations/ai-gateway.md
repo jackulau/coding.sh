@@ -270,7 +270,7 @@ A generation linked to two copies of one call, such as the proxy's copy and the 
 
 Nested model calls, such as a framework's span around the provider's call, count once. A billed call counts at its bill, plus the bills of the calls nested in it, unless one is for the same generation. When it has no usage of its own, it counts their tokens.
 
-A wrapper's bill can be for its last step's generation, when the gateway's id is on both. The bill then covers that step, and the other steps keep their own costs.
+A wrapper's bill can be for its last step's generation, when the gateway's id is on both. The bill then covers that step and replaces the cost of any call between the two, and the other steps keep their own costs.
 
 A billed call nested in a call that was not billed, at any depth, counts at its bill, in place of the outer call's cost, estimated or reported.
 

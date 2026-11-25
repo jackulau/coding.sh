@@ -646,9 +646,10 @@ the bills of the calls nested in it, except a bill for its own generation. When 
 of its own, it counts their tokens. A bill of $0 counts as $0 when the call has a cost of its own or
 calls nested in it.
 
-When a call nested in a billed call carries its generation id, as its response id or a bill's, the
-bill is that call's. It covers that call and the calls nested in it, and the other nested calls keep
-their costs, as when a gateway's generation id is on a wrapper and on its last step.
+When a call nested in a billed call carries its generation id, as the response id of a call with
+usage or as a bill's, the bill is that call's, as when a gateway's generation id is on a wrapper and
+on its last step. The bill covers that call and the calls nested in it, and replaces the cost of each
+call between the two, as a bill nested in them would. The other nested calls keep their costs.
 
 Two calls that share a response id, directly or through other calls, are copies of one response: one
 counts, and the others are left out with the calls nested in them. A generation id a gateway billed a

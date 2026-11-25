@@ -1221,6 +1221,41 @@ describe("session usage rollup", () => {
     assert.deepEqual(rollupUsage([both, k3, bill(both, 1, "gen_b"), bill(k3, 5, "gen_k")]).usage, { inputTokens: 10, costUsd: 6 });
   });
 
+  // A step that carries its billed wrapper's generation is the call that bill is for, but a call between them kept its own
+  // cost, which holds the step's, and added it to the bill.
+  it("a call between a billed call and the step that carries its generation counts at that bill, not its own cost", () => {
+    const w = llm("w", undefined, undefined);
+    const r = llm("r", "w", { inputTokens: 10, costUsd: 3 });
+    const k = llm("k", "r", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_w" });
+    for (const { label, evs } of runs([w, r, k], [bill(w, 2, "gen_w")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, label);
+      // The $3 between them and the step's estimate are left out.
+      assert.deepEqual(got.duplicate, { calls: 2, tokens: 10, costUsd: 3.25 }, label);
+      const s = buildSession(evs);
+      assert.deepEqual(s.stats.usage, got.usage, label);
+      assert.deepEqual(s.stats.duplicateUsage, got.duplicate, label);
+    }
+    const usageOf = (evs: AgentEvent[]) => rollupUsage(evs).usage;
+    // A step that reported its cost, and a call between them whose cost is an estimate, over a step that reported or not.
+    const reported = llm("k", "r", { inputTokens: 10, costUsd: 0.25 }, { responseId: "gen_w" });
+    assert.deepEqual(usageOf([w, r, reported, bill(w, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "a reported step");
+    const guess = llm("r", "w", { inputTokens: 10, costUsd: 0.5 }, { costEstimated: true });
+    assert.deepEqual(usageOf([w, guess, k, bill(w, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "an estimate over an estimate");
+    assert.deepEqual(usageOf([w, guess, reported, bill(w, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "an estimate over a reported step");
+    // Two calls between them, and a billed call that carries usage of its own: its companion holds the bill less its $1.
+    const q = llm("q", "w", { inputTokens: 10, costUsd: 4 });
+    const r2 = llm("r", "q", { inputTokens: 10, costUsd: 3 });
+    assert.deepEqual(usageOf([w, q, r2, k, bill(w, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "two calls between them");
+    const own = llm("w", undefined, { inputTokens: 10, costUsd: 1 });
+    const withUsage = rollupUsage([own, r, k, bill(own, 2, "gen_w")]);
+    assert.deepEqual(withUsage.usage, { inputTokens: 10, costUsd: 2 }, "a billed call with usage");
+    assert.deepEqual(withUsage.duplicate, { calls: 2, tokens: 20, costUsd: 3.25 }, "a billed call with usage");
+    // A call between them with no cost already took the step's, and a bill on the step itself already replaced the $3.
+    assert.deepEqual(usageOf([w, llm("r", "w", { inputTokens: 10 }), k, bill(w, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "no cost between");
+    assert.deepEqual(usageOf([r, k, bill(k, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "the bill on the step");
+  });
+
   it("model calls nested in each other in a loop count under the first of them", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);
