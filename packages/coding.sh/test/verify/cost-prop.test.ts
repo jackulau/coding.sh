@@ -26,18 +26,24 @@
 //   once, whatever order its calls arrive in. A path records some of the run, as top-level calls or
 //   as steps nested in a call a gateway billed that has no usage of its own. That wrapper may carry
 //   the run's last response id. A response may be recorded again on a path: beside the steps, under
-//   another billed call nested in the wrapper, or at the top level. Each call carries an estimate, and
-//   a gateway may bill it for its response's generation. The cost is each generation's bill once, each
-//   bill with no generation id, and the estimate of each response no bill covers. The tokens and cost
-//   not counted are left out, and the two costs add up to every cost the events carry.
+//   another billed call nested in the wrapper, or at the top level. Each of these calls carries an
+//   estimate, and a gateway may bill it for its response's generation. Or a path's wrapper carries the
+//   last response's tokens and id, with an estimate, a cost it reported or no cost, over one call of
+//   that response, and a gateway may bill the wrapper or a call nested in it. The cost is each
+//   generation's bill once, each bill with no generation id, and for each response no bill covers, the
+//   cost of the first of its records to arrive: its estimate, or the cost a wrapper reported. A bill
+//   below a wrapper replaces the wrapper's cost. The tokens and cost not counted are left out, and the
+//   two costs add up to every cost the events carry.
 //
 // Calls are drawn over every model in the built-in table, with provider prefixes, dated and variant
 // suffixes, family fallbacks and an unknown model; prompts near each long-context threshold; and the
 // service tiers, speeds and geographies adapters record. A session's calls are drawn over a
 // `[prices]` row of 0 too, so a wrapper's estimate can be $0. A session draws no gateway companions:
 // they carry what a gateway billed minus the call's own cost, which can be negative. A run draws bills
-// no lower than its estimates, so no companion carries a negative cost. Other shapes of billed calls
-// are covered in test/core/sessions.test.ts.
+// no lower than its estimates or the costs a wrapper reported, so no companion carries a negative
+// cost. A copy that does not count takes the calls nested in it with it, bills included, so a
+// wrapper with usage of its own, and the calls nested in it, are billed only for the last
+// response's generation. Other shapes of billed calls are covered in test/core/sessions.test.ts.
 //
 // The last test shows each check fails on a mutant of the table, the pricer, the estimate or the fold.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200 per call, 100 per session);
@@ -573,6 +579,16 @@ interface RunCopy extends RunRecord {
   middleLast: boolean;
 }
 
+/** A wrapper that carries usage of its own: the last response's tokens and response id. */
+interface RunOwn {
+  /** Its cost: the response's estimate, one the agent reported, or none. */
+  cost: "estimate" | "reported" | "none";
+  /** The cost it reported, in thousandths of a dollar, up to the response's bill. */
+  reported: number;
+  /** A gateway billed it for the last response's generation. */
+  billed: boolean;
+}
+
 /** How a path records the run. */
 interface RunPath {
   /** The responses it misses, as bits: it records the rest, or all of them when that leaves none. */
@@ -586,6 +602,12 @@ interface RunPath {
   /** The call of each response on the path. */
   steps: RunRecord[];
   copy?: RunCopy;
+  /**
+   * The wrapper carries usage of its own instead. The path then records the last response alone, as one call nested in
+   * the wrapper: its step, or for a copy "under", a copy under another call billed for its generation. A copy "top" is
+   * recorded too, and one "beside" is not.
+   */
+  own?: RunOwn;
 }
 
 interface RunCase {
@@ -613,6 +635,10 @@ const runGen: Gen<RunCase> = gen.record<RunCase>({
         [1, gen.constant<RunCopy | undefined>(undefined)],
         [3, gen.record<RunCopy>({ ...runRecord, of: gen.int(0, 3), at: gen.pick(["beside", "under", "top"] as const), middle: gen.int(1, 3000), middlePlain: gen.bool, middleLast: gen.bool })],
       ),
+      own: gen.frequency(
+        [3, gen.constant<RunOwn | undefined>(undefined)],
+        [2, gen.record<RunOwn>({ cost: gen.pick(["estimate", "reported", "none"] as const), reported: gen.int(0, 3000), billed: gen.weighted(0.3) })],
+      ),
     }),
     { minLength: 1, maxLength: 3 },
   ),
@@ -621,8 +647,10 @@ const runGen: Gen<RunCase> = gen.record<RunCase>({
 
 /** What a run's calls and bills count. */
 interface RunExpected {
-  /** How each response's calls rank: 2 billed, 1 covered by a bill above them, 0 neither. */
+  /** How each response's records rank: 2 billed or over a billed call, 1 covered by a bill above them, 0 none of these. */
   ranks: number[][];
+  /** Each response's records that rank 0, with the cost each counts when it is the first of them to arrive. */
+  unbilled: { call: string; cost: number; estimated: boolean }[][];
   /** Each generation's bill, by id. */
   gens: Map<string, number>;
   /** Each bill with no generation id. */
@@ -638,7 +666,7 @@ function runEvents(c: RunCase): RunExpected & { events: AgentEvent[] } {
   const usd = (thousandths: number): number => thousandths / 1000;
   const last = c.responses.length - 1;
   const billFor = (i: number): number => usd(c.responses[i]!.estimate + c.responses[i]!.over);
-  const x: RunExpected = { ranks: c.responses.map(() => []), gens: new Map(), plain: [] };
+  const x: RunExpected = { ranks: c.responses.map(() => []), unbilled: c.responses.map(() => []), gens: new Map(), plain: [] };
   // A gateway companion: what it billed a call, for a generation or with no generation id, less the call's own cost.
   const bill = (call: string, own: number, amount: number, generationId?: string): void => {
     const payload: Record<string, unknown> = { gateway: "vercel", billedCostUsd: amount };
@@ -651,14 +679,23 @@ function runEvents(c: RunCase): RunExpected & { events: AgentEvent[] } {
     if (delta) companion.usage = { costUsd: delta };
     event(`${call}-${generationId ?? "bill"}`, "span", companion);
   };
-  // A call of response i with its estimate, top-level or at a span: covered when a bill above it covers it.
-  const record = (id: string, i: number, r: RunRecord, covered: boolean, at: Partial<AgentEvent> = {}): void => {
+  // A call of response i with its estimate, top-level or at a span, and its bill.
+  const call = (id: string, i: number, r: RunRecord, at: Partial<AgentEvent> = {}): void => {
     const { input, output, estimate } = c.responses[i]!;
     const payload: Record<string, unknown> = { costEstimated: true };
     if (!r.billed || !r.bare || i === last) payload.responseId = `resp_${i}`;
     event(id, "llm.call", { usage: { inputTokens: input, outputTokens: output, costUsd: usd(estimate) }, payload, ...at });
     if (r.billed) bill(id, usd(estimate), billFor(i), `resp_${i}`);
-    x.ranks[i]!.push(r.billed ? 2 : covered ? 1 : 0);
+  };
+  // A record of response i, by the call that holds it, and the cost it counts when it ranks 0 and arrives first.
+  const note = (i: number, rank: number, id: string, cost: number, estimated: boolean): void => {
+    x.ranks[i]!.push(rank);
+    if (!rank) x.unbilled[i]!.push({ call: id, cost, estimated });
+  };
+  // A call of response i that records it once: covered when a bill above it covers it.
+  const record = (id: string, i: number, r: RunRecord, covered: boolean, at: Partial<AgentEvent> = {}): void => {
+    call(id, i, r, at);
+    note(i, r.billed ? 2 : covered ? 1 : 0, id, usd(c.responses[i]!.estimate), true);
   };
   for (const [p, path] of c.paths.entries()) {
     const kept = [...c.responses.keys()].filter((i) => !(path.missed & (1 << i)));
@@ -670,6 +707,30 @@ function runEvents(c: RunCase): RunExpected & { events: AgentEvent[] } {
     const traceId = `trace${p}`;
     const copy = path.copy;
     const of = copy ? copy.of % c.responses.length : 0;
+    if (path.own) {
+      // A wrapper over one call of the last response, with its tokens and response id: one record of it. The calls nested
+      // in it are not checked for copies. A bill on it or below it ranks it with a billed call and replaces its own cost,
+      // estimated or reported. With none, it counts the estimate, the cost it reported, or with no cost its step's estimate.
+      const { input, output, estimate, over } = c.responses[last]!;
+      const reported = usd(Math.min(path.own.reported, estimate + over));
+      const cost = path.own.cost === "estimate" ? usd(estimate) : path.own.cost === "reported" ? reported : undefined;
+      const payload: Record<string, unknown> = { responseId: `resp_${last}` };
+      if (path.own.cost === "estimate") payload.costEstimated = true;
+      event(`p${p}`, "llm.call", { traceId, spanId: "w", usage: cost === undefined ? { inputTokens: input, outputTokens: output } : { inputTokens: input, outputTokens: output, costUsd: cost }, payload });
+      if (path.own.billed) bill(`p${p}`, cost ?? 0, billFor(last), `resp_${last}`);
+      let below = true;
+      if (copy?.at === "under") {
+        event(`p${p}m`, "llm.call", { traceId, spanId: "m", parentSpanId: "w" });
+        bill(`p${p}m`, 0, billFor(last), `resp_${last}`);
+        call(`p${p}copy`, last, copy, { traceId, spanId: "copy", parentSpanId: "m" });
+      } else {
+        call(`p${p}s${last}`, last, path.steps[last]!, { traceId, spanId: `s${last}`, parentSpanId: "w" });
+        below = path.steps[last]!.billed;
+      }
+      note(last, path.own.billed || below ? 2 : 0, `p${p}`, path.own.cost === "reported" ? reported : usd(estimate), path.own.cost !== "reported");
+      if (copy?.at === "top") record(`p${p}copy`, of, copy, false);
+      continue;
+    }
     // The wrapper's bill covers the calls nested in it, unless one of them carries its generation: then it covers that
     // call, and the others keep their costs. A bill with no generation id covers them all.
     const carried = path.plain === undefined && (steps.includes(last) || (copy !== undefined && copy.at !== "top" && (of === last || (copy.at === "under" && copy.middleLast))));
@@ -695,25 +756,30 @@ function runEvents(c: RunCase): RunExpected & { events: AgentEvent[] } {
 }
 
 function checkRun(s: Subject, c: RunCase): void {
-  const { events, ranks, gens, plain } = runEvents(c);
+  const { events, ranks, unbilled, gens, plain } = runEvents(c);
   const stats = s.fold(events).stats;
   const u = stats.usage ?? {};
   const want: Record<(typeof TOKEN_KEYS)[number], number> = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  // Each response recorded once, each bill once, and the estimate of each response no bill covers: none of its calls was
-  // billed, and no bill above one of them covers it.
+  // Each response recorded once, each bill once, and for each response no bill covers, the cost of the first of its
+  // records to arrive: none of them was billed or is over a billed call, and no bill above one of them covers it.
+  const arrived = new Map(events.map((e, n) => [e.id, n]));
+  let own = 0;
   let estimated = 0;
   for (const [i, r] of c.responses.entries()) {
     const rank = Math.max(-1, ...ranks[i]!);
     if (rank < 0) continue;
     want.inputTokens += r.input;
     want.outputTokens += r.output;
-    if (rank === 0) estimated += r.estimate / 1000;
+    if (rank > 0) continue;
+    const first = unbilled[i]!.reduce((a, b) => (arrived.get(b.call)! < arrived.get(a.call)! ? b : a));
+    own += first.cost;
+    if (first.estimated) estimated += first.cost;
   }
-  const cost = [...gens.values(), ...plain].reduce((a, b) => a + b, estimated);
+  const cost = [...gens.values(), ...plain].reduce((a, b) => a + b, own);
   const near = (got: number, want: number): boolean => Math.abs(got - want) <= 1e-9 * Math.max(1, Math.abs(want));
   const arrival = events.map((e) => e.id).join(" ");
   for (const k of TOKEN_KEYS) assert.equal(u[k] ?? 0, want[k], `${k}: ${u[k] ?? 0}, the responses add up to ${want[k]} (in order: ${arrival})`);
-  assert.ok(near(u.costUsd ?? 0, cost), `the cost: ${u.costUsd ?? 0}, the bills and the estimates no bill covers add up to ${cost} (in order: ${arrival})`);
+  assert.ok(near(u.costUsd ?? 0, cost), `the cost: ${u.costUsd ?? 0}, the bills and the costs no bill covers add up to ${cost} (in order: ${arrival})`);
   assert.ok(near(u.estimatedCostUsd ?? 0, estimated), `the estimated cost: ${u.estimatedCostUsd ?? 0}, the estimates no bill covers add up to ${estimated} (in order: ${arrival})`);
   const all = events.reduce((a, e) => a + (e.kind === "llm.call" ? tokensOf(e) : 0), 0);
   assert.equal(stats.duplicateUsage?.tokens ?? 0, all - want.inputTokens - want.outputTokens, `the tokens left out (in order: ${arrival})`);
@@ -802,18 +868,23 @@ test("a session's tokens and cost are the sums over the calls it counts, and wha
 });
 
 test("a run of responses recorded on several paths counts each response's tokens once and each bill once, whatever order its calls arrive in", async (t) => {
-  const seen = { paths: 0, partial: 0, wrapped: 0, named: 0, plain: 0, beside: 0, under: 0, top: 0, calls: 0, billed: 0, covered: 0 };
+  const seen = { paths: 0, partial: 0, wrapped: 0, named: 0, plain: 0, own: 0, reported: 0, below: 0, beside: 0, under: 0, top: 0, calls: 0, billed: 0, covered: 0 };
   await forAll(
     runGen,
     (c) => {
       checkRun(REAL, c);
       const wrapped = c.paths.filter((p) => p.wrapped);
+      const own = wrapped.filter((p) => p.own);
+      const others = c.paths.filter((p) => !p.wrapped || !p.own);
       seen.paths += c.paths.length;
-      seen.partial += c.paths.filter((p) => [...c.responses.keys()].some((i) => p.missed & (1 << i)) && [...c.responses.keys()].some((i) => !(p.missed & (1 << i)))).length;
+      seen.partial += others.filter((p) => [...c.responses.keys()].some((i) => p.missed & (1 << i)) && [...c.responses.keys()].some((i) => !(p.missed & (1 << i)))).length;
       seen.wrapped += wrapped.length;
-      seen.named += wrapped.filter((p) => p.wrapperId).length;
-      seen.plain += wrapped.filter((p) => p.plain !== undefined).length;
-      for (const at of ["beside", "under", "top"] as const) seen[at] += wrapped.filter((p) => p.copy?.at === at).length;
+      seen.named += wrapped.filter((p) => !p.own && p.wrapperId).length;
+      seen.plain += wrapped.filter((p) => !p.own && p.plain !== undefined).length;
+      seen.own += own.length;
+      seen.reported += own.filter((p) => p.own!.cost === "reported").length;
+      seen.below += own.filter((p) => !p.own!.billed && (p.copy?.at === "under" || p.steps[c.responses.length - 1]!.billed)).length;
+      for (const at of ["beside", "under", "top"] as const) seen[at] += wrapped.filter((p) => p.copy?.at === at && !(at === "beside" && p.own)).length;
       const ranks = runEvents(c).ranks.flat();
       seen.calls += ranks.length;
       seen.billed += ranks.filter((r) => r === 2).length;
@@ -822,7 +893,7 @@ test("a run of responses recorded on several paths counts each response's tokens
     { runs: SESSION_RUNS, label: "runs" },
   );
   t.diagnostic(
-    `${seen.paths} paths, ${seen.partial} missing some responses: ${seen.wrapped} wrapped (${seen.named} with the last response id, ${seen.plain} billed with no generation id), with a response recorded again beside the steps ${seen.beside} times, under another billed call ${seen.under} and at the top level ${seen.top}; ${seen.calls} calls: ${seen.billed} billed, ${seen.covered} covered by a bill above them`,
+    `${seen.paths} paths, ${seen.partial} missing some responses: ${seen.wrapped} wrapped (${seen.named} with the last response id, ${seen.plain} billed with no generation id, ${seen.own} by a call with usage of its own: ${seen.reported} with a cost it reported, ${seen.below} with a bill below it and none on it), with a response recorded again beside the steps ${seen.beside} times, under another billed call ${seen.under} and at the top level ${seen.top}; ${seen.calls} records: ${seen.billed} billed or over a billed call, ${seen.covered} covered by a bill above them`,
   );
 });
 
