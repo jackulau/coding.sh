@@ -1,8 +1,9 @@
-// Folding a session (core/sessions.ts foldSession, sessionOf, buildSession), checked on real sessions:
-// every spool fixture under test/fixtures/adapters normalized by its adapter, and the Claude Code and
-// Codex transcript fixtures read by their backfill, stored as ingest stores them (source "transcript")
-// and priced as ingest prices them (core/pricing.ts applyPricing). Each case takes one session, drops
-// some of its events (a lost hook line), and splits the rest into batches. The properties:
+// Folding a session (core/sessions.ts foldSession, sessionOf, buildSession), checked on real sessions
+// and on generated ones. The real ones: every spool fixture under test/fixtures/adapters normalized by
+// its adapter, and the Claude Code and Codex transcript fixtures read by their backfill, stored as
+// ingest stores them (source "transcript") and priced as ingest prices them (core/pricing.ts
+// applyPricing). Each case takes one session, drops some of its events (a lost hook line), and splits
+// the rest into batches. The properties:
 //
 // - Two batches equal one. Ingest saves the fold of a session's events so far (core/ingest.ts
 //   foldStoredSession, serialized with node:v8, only for a `simple` fold) and folds the next batch into
@@ -20,7 +21,15 @@
 // - A stat stays absent when no event feeds it. Every optional stat a row has reports something: a
 //   number that is not 0, a list with an item, an object with a field that does.
 //
-// CODING_SH_PROP_RUNS=n runs n cases per test (default 30); CODING_SH_PROP_SEED=s replays one.
+// The generated sessions are small, and each is checked against what the docs say its row holds:
+// - A session a host app drove (payload.via: T3 Code) is the agent the host ran: the first event from
+//   another agent, else the agent the host's events name (payload.provider), unless the host thread
+//   started none (a host-link with no provider thread) or names none it knows ("unknown"). Session.host
+//   is the host then, and provider the agent; otherwise the session is the host's, with no host. A
+//   session no host drove is the agent of its first event that is no durable engine's span.
+//
+// CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
+// CODING_SH_PROP_SEED=s replays one.
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +39,7 @@ import { ADAPTERS } from "../../src/adapters/index.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { buildSession, byTime, foldSession, sessionOf, sessionState, type SessionState } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
+import type { EventKind } from "../../src/schema/index.ts";
 import { collect, FIXTURES, loadSpool, testCtx, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { forAll, gen, type Gen } from "../_prop.ts";
 
@@ -242,6 +252,101 @@ test("a stat a session has reports something", async () => {
     },
     { runs: 30, label: "absent when empty" },
   );
+});
+
+/** When the generated sessions start. */
+const T0 = Date.UTC(2026, 0, 5);
+
+/** A generated event: what the fold reads to name a session's agent, its host and what the host ran. */
+interface HostEvent {
+  agent: string;
+  kind: EventKind;
+  /** Seconds after T0: events often share a second. */
+  at: number;
+  /** payload.via, the host app that drove the agent ("" names none). */
+  via?: string;
+  /** A notification's payload.type and payload.t3ProviderThreadId (the agent run a host-link names). */
+  type?: string;
+  thread?: string;
+  /** payload.provider: the agent the host names, or something that names none. */
+  provider?: unknown;
+  /** A durable engine's tag (payload.durable), on an event with no span. */
+  durable: boolean;
+}
+
+const hostEventGen: Gen<HostEvent> = gen.record<HostEvent>({
+  agent: gen.frequency<string>([3, gen.constant("t3code")], [1, gen.constant("claude-code")], [1, gen.constant("codex")]),
+  kind: gen.pick<EventKind>(["notification", "notification", "session.start", "user.message", "llm.call", "turn.end"]),
+  at: gen.int(0, 4),
+  via: gen.pick([undefined, "t3code", "t3code", "", "codex"]),
+  type: gen.pick([undefined, "host-link", "host-link", "usage-summary"]),
+  thread: gen.pick([undefined, "pt-1"]),
+  provider: gen.pick<unknown>([undefined, undefined, "claude-code", "codex", "unknown", "t3code", "", 5]),
+  durable: gen.weighted(0.3),
+});
+
+/** A session's events: in 2 sessions in 5 no event names a host, in 1 the host's own events are all. */
+const hostSessionGen: Gen<HostEvent[]> = gen.map(
+  gen.tuple(gen.pick(["hostless", "hostless", "alone", "mixed", "mixed"] as const), gen.array(hostEventGen, { minLength: 1, maxLength: 6 })),
+  ([mode, hs]) => hs.map((h) => (mode === "hostless" ? { ...h, via: h.via && undefined } : mode === "alone" ? { ...h, agent: "t3code", via: h.via && "t3code" } : h)),
+);
+
+function hostEvents(hs: HostEvent[]): AgentEvent[] {
+  return hs.map((h, i): AgentEvent => {
+    const payload: Record<string, unknown> = {};
+    if (h.via !== undefined) payload.via = h.via;
+    if (h.kind === "notification" && h.type !== undefined) payload.type = h.type;
+    if (h.kind === "notification" && h.thread !== undefined) payload.t3ProviderThreadId = h.thread;
+    if (h.provider !== undefined) payload.provider = h.provider;
+    // With no span the session has no durable run (core/durable.ts reads spans), only a tagged event.
+    if (h.durable) payload.durable = { engine: "restate", run: "run-1", role: "other" };
+    return { id: `host-${i}`, v: 0, sessionId: "host-session", ts: T0 + h.at * 1000, agent: h.agent, kind: h.kind, payload };
+  });
+}
+
+interface HostRow {
+  agent: string;
+  host: string | undefined;
+  provider: string | undefined;
+}
+
+/**
+ * The agent, host and provider of a session's row, from the docs of Session.host and Session.provider
+ * and of the fold's hostedAgent, with how they were found.
+ */
+function hostOf(sorted: AgentEvent[]): { want: HostRow; why: string } {
+  const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  const via = sorted.map((e) => text(e.payload.via)).find((v) => v !== undefined);
+  if (via === undefined) {
+    const own = sorted.find((e) => e.payload.durable === undefined);
+    const first = must(sorted[0]);
+    return { want: { agent: (own ?? first).agent, host: undefined, provider: undefined }, why: own && own !== first && own.agent !== first.agent ? "durable first" : "no host" };
+  }
+  const named = sorted.map((e) => text(e.payload.provider)).find((p) => p !== undefined);
+  const other = sorted.find((e) => e.agent !== via)?.agent;
+  // A host-link the host's events carry with no provider thread: the thread started no agent.
+  const bare = sorted.some((e) => text(e.payload.via) !== undefined && e.payload.type === "host-link" && e.payload.t3ProviderThreadId === undefined);
+  const known = named !== undefined && named !== "unknown" && named !== via;
+  const ran = other ?? (!bare && known ? named : undefined);
+  const why = other ? "another agent" : ran ? "named" : bare && known ? "bare" : "names none";
+  return { want: ran === undefined ? { agent: via, host: undefined, provider: named } : { agent: ran, host: via, provider: ran }, why };
+}
+
+test("a session a host app drove is the agent it ran, with the host as its host", async (t) => {
+  const seen: Record<string, number> = { "no host": 0, "durable first": 0, "another agent": 0, named: 0, bare: 0, "names none": 0 };
+  await forAll(
+    hostSessionGen,
+    (hs) => {
+      const events = hostEvents(hs);
+      const { want, why } = hostOf(byTime(events));
+      seen[why]!++;
+      const row = buildSession(events);
+      assert.deepEqual({ agent: row.agent, host: row.host, provider: row.provider }, want, why);
+    },
+    { runs: 1000, label: "host" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
 });
 
 function must<T>(v: T | undefined): T {
