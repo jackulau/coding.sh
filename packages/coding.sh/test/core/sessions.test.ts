@@ -803,13 +803,14 @@ describe("session usage rollup", () => {
     assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 1 });
     assert.deepEqual(r.duplicate, { calls: 3, tokens: 10, costUsd: 1.25 });
     assert.deepEqual(buildSession(replayed).stats.usage, r.usage);
-    // A call nested in a billed wrapper with no usage repeats an earlier call's response id.
+    // A call nested in a billed wrapper with no usage repeats an earlier call's response id: the bill covers it, so the
+    // earlier call gives way.
     const first = llm("a", undefined, { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_2" });
     const wrapper = llm("w", undefined, undefined);
     const again = llm("b", "w", { inputTokens: 10 }, { responseId: "resp_2" });
     const repeated = rollupUsage([first, wrapper, again, bill(wrapper, 1)]);
-    assert.deepEqual(repeated.usage, { inputTokens: 10, costUsd: 1.25, estimatedCostUsd: 0.25 });
-    assert.deepEqual(repeated.duplicate, { calls: 1, tokens: 10 });
+    assert.deepEqual(repeated.usage, { inputTokens: 10, costUsd: 1 });
+    assert.deepEqual(repeated.duplicate, { calls: 2, tokens: 10, costUsd: 0.25 });
     // A billed copy with no usage and nothing nested in it has no tokens to check, so the copy after it that carries them counts.
     const bare = llm("x", undefined, undefined, { responseId: "resp_3" });
     const copy = llm("y", undefined, { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "resp_3" }, { traceId: "t2" });
@@ -945,6 +946,44 @@ describe("session usage rollup", () => {
     const w2 = llm("w2", undefined, undefined, { responseId: "gen_a" });
     const z = llm("z", undefined, { inputTokens: 10 }, { responseId: "resp_2" }, { traceId: "t2" });
     check([x, k, w2, z], [bill(w2, 1, "gen_a")], { inputTokens: 15, costUsd: 1 }, 10);
+  });
+
+  // Of two calls with one response id, the first counted: a copy with only an estimate beat a copy a gateway billed, or
+  // one a bill above it covers, and the total took the estimate on top of the bill, or in place of it.
+  it("of two calls with one response id, a billed call or one a bill covers counts, in any order", () => {
+    const check = (calls: AgentEvent[], bills: AgentEvent[], usage: AgentEvent["usage"], duplicate: { calls: number; tokens: number; costUsd?: number }) => {
+      for (const { label, evs } of runs(calls, bills)) {
+        const r = rollupUsage(evs);
+        assert.deepEqual(r.usage, usage, label);
+        assert.deepEqual(r.duplicate, duplicate, label);
+        const s = buildSession(evs);
+        assert.deepEqual(s.stats.usage, r.usage, label);
+        assert.deepEqual(s.stats.duplicateUsage, r.duplicate, label);
+      }
+    };
+    const est = (responseId: string) => ({ costEstimated: true, responseId });
+    // A copy beside a billed wrapper repeats the step nested in it, which the bill covers.
+    const x = llm("x", undefined, { inputTokens: 10, costUsd: 0.25 }, est("resp_1"));
+    const w = llm("w", undefined, undefined);
+    const k = llm("k", "w", { inputTokens: 10, costUsd: 0.25 }, est("resp_1"));
+    check([x, w, k], [bill(w, 1)], { inputTokens: 10, costUsd: 1 }, { calls: 2, tokens: 10, costUsd: 0.5 });
+    // Two copies nested in a billed wrapper, one billed for a generation of its own: its bill counts.
+    const w2 = llm("w2", undefined, undefined);
+    const a = llm("a", "w2", { inputTokens: 10, costUsd: 0.25 }, est("resp_2"));
+    const b = llm("b", "w2", { inputTokens: 10, costUsd: 0.25 }, est("resp_2"));
+    check([w2, a, b], [bill(w2, 2, "gen_w"), bill(b, 1, "gen_b")], { inputTokens: 10, costUsd: 3 }, { calls: 2, tokens: 10, costUsd: 0.25 });
+    // A copy beside a wrapper over two steps, whose response id and bill are its last step's.
+    const a2 = llm("a2", undefined, { inputTokens: 10, costUsd: 0.25 }, est("gen_2"));
+    const w3 = llm("w3", undefined, undefined, { responseId: "gen_2" });
+    const k1 = llm("k1", "w3", { inputTokens: 10, costUsd: 0.25 }, est("r1"));
+    const k2 = llm("k2", "w3", { inputTokens: 10, costUsd: 0.25 }, est("gen_2"));
+    check([a2, w3, k1, k2], [bill(w3, 2, "gen_2"), bill(k1, 1, "gen_1")], { inputTokens: 20, costUsd: 3 }, { calls: 3, tokens: 10, costUsd: 0.5 });
+    // A copy beside a call that a billed call covers, under a wrapper that carries usage.
+    const t = llm("t", undefined, { inputTokens: 10 });
+    const m = llm("m", "t", undefined);
+    const j = llm("j", "m", { inputTokens: 10 }, { responseId: "resp_3" });
+    const y = llm("y", undefined, { inputTokens: 10 }, { responseId: "resp_3" });
+    check([t, m, j, y], [bill(m, 1)], { inputTokens: 10, costUsd: 1 }, { calls: 3, tokens: 20 });
   });
 
   // A nested call that came before its wrapper recorded its response id, and then the wrapper turned out to be a repeat.

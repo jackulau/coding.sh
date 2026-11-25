@@ -375,7 +375,9 @@ export interface UsageRollup {
  *   is checked only for a replay, when calls are nested in it: its response id can be its last step's.
  *   The calls nested in it are checked, since it counts their tokens: a repeat is left out. A nested call
  *   is checked after the call it is nested in, whatever their times. Calls nested in each other share a
- *   response id without repeating it, but a call beside any of them repeats it;
+ *   response id without repeating it, but a call beside any of them repeats it. Of two calls beside each
+ *   other, a billed call counts over one with no bill, and a call a bill above it covers over one no bill
+ *   covers, else the first; a call with calls nested in it does not give way;
  * - `estimatedCostUsd` is the part of `costUsd` computed from the price table
  *   (`payload.costEstimated`), unless a gateway companion billed that call
  *   (its `payload.billedCostUsd`). `estimatedCostByTokenType` splits that same
@@ -581,7 +583,7 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   const byTier: Tiers = {};
   const split: Split = { parts: noParts(), unsplit: 0 };
   let snapshot: AgentEvent | undefined;
-  // The calls counted so far that carry each response id.
+  // The calls counted so far that carry each response id, each nested in the one before it.
   const responses = new Map<string, AgentEvent[]>();
   const dropped = new Set<string>();
   const usageCalls = new Set<string>();
@@ -591,6 +593,17 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   let countedCost = 0;
   let calls = 0;
   const tokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (count(u[k]) ?? 0), 0);
+  // Of two calls with one response, the one that ranks higher counts, else the first: 2 a billed call, whose bill goes
+  // with it; 1 a call a bill above it covers, which counts it at that bill; 0 any other.
+  const rank = (x: AgentEvent): number => (billed.has(x.id) ? 2 : covered.has(x) ? 1 : 0);
+  const repeat = (x: AgentEvent): void => {
+    repeats.add(x);
+    // A nested call was counted as left out when it came.
+    if (!parentOf.has(x)) {
+      calls++;
+      dropped.add(x.id);
+    }
+  };
   // Decides whether a call is a repeat, after the call it is nested in: a call nested in a repeat goes with it, and the
   // response id of a call that does not count must not make a later call a repeat.
   const decide = (e: AgentEvent): void => {
@@ -603,24 +616,36 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     if (p && carriesUsage(p)) return;
     // A billed call with neither usage nor nested calls has no tokens to check: a copy of its bill is found by its generation.
     if (!carriesUsage(e) && !children.has(e)) return;
+    // A durable engine replaying recorded history re-emits calls it already made.
+    if (e.payload?.replay === true) {
+      repeat(e);
+      return;
+    }
     // A billed call with no usage is checked by replay only. Its response id is often one of its nested calls' (a gateway's
     // generation id on a wrapper and on its last step), so a call beside it that repeats only that step would take all of
     // its tokens with it.
     const rid = carriesUsage(e) && typeof e.payload?.responseId === "string" && e.payload.responseId ? e.payload.responseId : undefined;
-    const others = rid ? responses.get(rid) : undefined;
-    // A call nested in a counted call with its response id is that response seen at two levels, as when a gateway's
-    // generation id is on a wrapper and on its last step: not a repeat. A call beside one repeats it, also when both are
-    // nested in one with the id. None is nested in this call, which is decided before the calls nested in it. A durable
-    // engine replaying recorded history re-emits calls it already made (payload.replay).
-    if (others?.some((r) => !isAbove(r, e)) || e.payload?.replay === true) {
-      repeats.add(e);
-      if (!p) {
-        calls++;
-        dropped.add(e.id);
-      }
+    if (!rid) return;
+    const chain = responses.get(rid);
+    if (!chain) {
+      responses.set(rid, [e]);
       return;
     }
-    if (rid) responses.set(rid, [...(others ?? []), e]);
+    // A call nested in a counted call with its response id is that response seen at two levels, as when a gateway's
+    // generation id is on a wrapper and on its last step: not a repeat. A call beside one repeats it, also when both are
+    // nested in one with the id. None is nested in this call, which is decided before the calls nested in it.
+    const last = chain[chain.length - 1]!;
+    if (!isAbove(last, e)) {
+      // The call beside it gives way when this one ranks higher, unless calls are nested in it or a second call with the
+      // id is beside this one too.
+      if (children.has(last) || (chain.length > 1 && !isAbove(chain[chain.length - 2]!, e)) || rank(e) <= rank(last)) {
+        repeat(e);
+        return;
+      }
+      chain.pop();
+      repeat(last);
+    }
+    chain.push(e);
   };
   // The calls decided so far, and the nested calls that came before the call they are nested in was decided.
   const decided = new Set<AgentEvent>();
