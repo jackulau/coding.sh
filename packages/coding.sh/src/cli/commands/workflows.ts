@@ -31,6 +31,7 @@ import { acquireLock } from "../../core/lock.ts";
 import { ingestCli } from "../../mcp/launch.ts";
 import { paths } from "../../core/paths.ts";
 import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX } from "../../core/session-ref.ts";
+import { readTextFile } from "../../core/text-file.ts";
 import { ago, clean, CliError, duration, LABEL_WIDTH, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -987,7 +988,7 @@ async function replay(c: CommandContext): Promise<number> {
   const script = resolve(c.cwd, scriptFlag);
   let editedScript: string;
   try {
-    editedScript = await readFile(script, "utf8");
+    editedScript = await readTextFile(script);
   } catch {
     throw new UsageError(`Can't read --script ${JSON.stringify(scriptFlag)}`, { reason: "invalid_value" });
   }

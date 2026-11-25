@@ -664,7 +664,10 @@ export async function requireConsent(c: CommandContext, question: string, rerun:
   if (!(await c.out.confirm(question, opts))) throw new CliError("Canceled. Nothing was changed", { reason: "canceled", exitCode: 130 });
 }
 
-/** Parses JSON from an inline string or a path to a .json file. */
+/**
+ * Parses JSON from an inline string or a path to a .json file. The file may be UTF-8, with or
+ * without a byte order mark, or UTF-16 with one, as Windows PowerShell writes it (readTextFile).
+ */
 export async function jsonArg(v: string, what: string): Promise<unknown> {
   const t = v.trim();
   if (t.startsWith("{") || t.startsWith("[")) {
@@ -674,10 +677,10 @@ export async function jsonArg(v: string, what: string): Promise<unknown> {
       throw new UsageError(`${what} is not valid JSON: ${(e as Error).message}`);
     }
   }
-  const { readFile } = await import("node:fs/promises");
+  const { readTextFile } = await import("../core/text-file.ts");
   let text: string;
   try {
-    text = await readFile(v, "utf8");
+    text = await readTextFile(v);
   } catch {
     throw new UsageError(`${what} must be JSON or a path to a JSON file; can't read ${JSON.stringify(v)}`);
   }

@@ -102,6 +102,25 @@ describe("coding.sh purge --literal", () => {
     assert.ok(holds(readFileSync(seeded.spoolFile), SECRET));
   });
 
+  test("--dry-run finds the same copies when Windows PowerShell wrote the file", () => {
+    // `>` and Out-File write UTF-16LE with a byte order mark, Out-File -Encoding utf8 writes UTF-8
+    // with one, and a pipe to a program can start with one too.
+    const text = `${SECRET}\r\n\r\n${QUOTED}\r\n`;
+    const bom = join(env.root, "leaked-utf8-bom.txt");
+    const utf16 = join(env.root, "leaked-utf16.txt");
+    writeFileSync(bom, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]));
+    writeFileSync(utf16, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]));
+    const plan = (source: string, input?: string): number[] => {
+      const j = JSON.parse(ok(["purge", "--literal", source, "--dry-run", "--json"], {}, input).stdout);
+      return [j.values, j.events, j.sessions, j.otherRows, j.blobs, j.files, j.foldsDropped];
+    };
+    const want = plan(secrets);
+    assert.deepEqual(want, [2, 3, 1, 2, 1, 1, 1]);
+    assert.deepEqual(plan(bom), want, "UTF-8 with a byte order mark");
+    assert.deepEqual(plan(utf16), want, "UTF-16LE with a byte order mark");
+    assert.deepEqual(plan("-", `﻿${text}`), want, "stdin that starts with a byte order mark");
+  });
+
   test("the purge leaves no copy in the index, its WAL, the blobs or the spool", async () => {
     const r = ok(["purge", "--literal", secrets]);
     assert.match(r.stderr, /Integrity\s+index and search ok/);

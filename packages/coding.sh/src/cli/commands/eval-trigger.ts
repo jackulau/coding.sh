@@ -8,6 +8,7 @@ import { ADAPTERS, getAdapter } from "../../adapters/index.ts";
 import { sortableId } from "../../core/ids.ts";
 import { paths } from "../../core/paths.ts";
 import { snapshotDir } from "../../core/snapshot.ts";
+import { readTextFile } from "../../core/text-file.ts";
 import type { AgentId, HarnessBundle } from "../../core/types.ts";
 import { readInstructionArg } from "../../eval/task.ts";
 import {
@@ -57,7 +58,7 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
   if (c.flags.draft !== undefined) return (await import("./eval-trigger-draft.ts")).evalTriggerDraft(c, current, target);
   const specFlag = str(c.flags.spec);
   const specPath = resolve(c.cwd, specFlag ?? join(current.dir, "triggers.toml"));
-  const specText = await readFile(specPath, "utf8").catch(() => undefined);
+  const specText = await readTextFile(specPath).catch(() => undefined);
   if (specText === undefined) {
     // The draft goes where this run looks: --spec when given.
     const draftArgs = ["eval", "trigger", target];

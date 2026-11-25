@@ -11,9 +11,10 @@
 // coding.sh judge sample <experiment> --budget N: a confidence-stratified random
 // label plan (src/judge/audit.ts); calibrate --plan turns its labelled picks
 // into a human-audited pass rate.
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { estimateCost, pricesFor } from "../../core/pricing.ts";
+import { decodeText, readTextFile } from "../../core/text-file.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Grader, GraderInfo, JudgeVersion, Split } from "../../datasets/types.ts";
 import { asText } from "../../graders/builtin.ts";
@@ -44,7 +45,7 @@ const isJudge = (g: GraderInfo) => g.kind === "llm" || (g.kind === CHECKLIST_KIN
 async function readCaseLabels(file: string): Promise<HumanLabel[]> {
   let text: string;
   try {
-    text = await readFile(file, "utf8");
+    text = await readTextFile(file);
   } catch {
     throw new UsageError(`can't read --labels ${JSON.stringify(file)}`, { reason: "invalid_argument" });
   }
@@ -61,7 +62,7 @@ async function readCaseLabels(file: string): Promise<HumanLabel[]> {
 async function readPlan(file: string): Promise<AuditPlan> {
   let text: string;
   try {
-    text = await readFile(file, "utf8");
+    text = await readTextFile(file);
   } catch {
     throw new UsageError(`can't read --plan ${JSON.stringify(file)}`, { reason: "invalid_argument" });
   }
@@ -191,7 +192,7 @@ function lookupModel(model: string): string | undefined {
 
 async function readText(path: string, what: string, cwd: string): Promise<string> {
   try {
-    return await readFile(resolve(cwd, path), "utf8");
+    return await readTextFile(resolve(cwd, path));
   } catch {
     throw new UsageError(`can't read ${what} ${JSON.stringify(path)}`, { reason: "invalid_argument" });
   }
@@ -200,7 +201,7 @@ async function readText(path: string, what: string, cwd: string): Promise<string
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
+  return decodeText(Buffer.concat(chunks));
 }
 
 export async function run(c: CommandContext): Promise<number> {
