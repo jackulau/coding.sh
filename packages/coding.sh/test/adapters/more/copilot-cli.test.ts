@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { COPILOT_HOOK_EVENTS, copilotCliAdapter } from "../../../src/adapters/more/copilot-cli.ts";
+import { COPILOT_HOOK_EVENTS, copilotCliAdapter, copilotHookFile } from "../../../src/adapters/more/copilot-cli.ts";
 import { installRecord, ownsInstall, sha256 } from "../../../src/adapters/_shared/installs.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertWellFormed, collect, FIXTURES, HOOK, moreEnv, normalizeFixture, summarize, testCtx, writeFile } from "./_helpers.ts";
@@ -79,6 +79,11 @@ describe("copilot-cli install", () => {
     assert.ok(!("preToolUse" in f.hooks), "preToolUse fails closed, never installed");
     assert.deepEqual(f.hooks.postToolUse[0], { type: "command", bash: `/bin/sh "${HOOK.replace(/hook\.mjs$/, "hook.sh")}" copilot-cli postToolUse`, powershell: `& node "${HOOK}" copilot-cli postToolUse`, timeoutSec: 10 });
     assert.equal(readFileSync(join(env.home, ".copilot", "hooks", "mine.json"), "utf8"), '{"version":1,"hooks":{}}\n');
+  });
+
+  it("puts a hook path with a $ in single quotes for PowerShell", () => {
+    const f = copilotHookFile("D:\\a$b\\.coding.sh\\bin\\hook.mjs") as { hooks: Record<string, unknown[]> };
+    assert.deepEqual(f.hooks.postToolUse![0], { type: "command", bash: '/bin/sh "D:/a\\$b/.coding.sh/bin/hook.sh" copilot-cli postToolUse', powershell: "& node 'D:/a$b/.coding.sh/bin/hook.mjs' copilot-cli postToolUse", timeoutSec: 10 });
   });
 
   it("honours COPILOT_HOME and refuses a foreign coding-sh.json", async () => {

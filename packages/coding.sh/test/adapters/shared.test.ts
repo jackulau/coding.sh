@@ -20,6 +20,7 @@ import {
   parseHookCommand,
   parsePatch,
   parseTestOutput,
+  powerShellHookCommand,
   isShellCall,
   isShellTool,
   PROBE_TIMEOUT_MS,
@@ -31,6 +32,7 @@ import {
   stripNestedHooks,
   upsertTomlBlock,
   walkFiles,
+  windowsHookPathProblem,
 } from "../../src/adapters/_shared/index.ts";
 
 describe("test-output heuristics", () => {
@@ -186,10 +188,11 @@ describe("usage mapping", () => {
 describe("hook command + merge", () => {
   const hook = "/home/u/.coding.sh/bin/hook.mjs";
   it("builds and recognizes our command", () => {
-    // Windows: node runs hook.mjs. Elsewhere: /bin/sh runs the fast path beside it, unless a flag only hook.mjs handles is passed.
-    const win = buildHookCommand("/p a/$x/hook.mjs", "codex", "Stop", ["--echo-continue"], "win32");
-    assert.equal(win, 'node "/p a/\\$x/hook.mjs" codex Stop --echo-continue');
-    assert.deepEqual(parseHookCommand(win), { hookPath: "/p a/$x/hook.mjs", agent: "codex" });
+    // Windows: node runs hook.mjs (Claude Code runs it under Git Bash, which reads the sh escapes). Elsewhere: /bin/sh runs the fast path beside it, unless a flag only hook.mjs handles is passed.
+    const win = buildHookCommand("/p a/$x/hook.mjs", "claude-code", "Stop", ["--echo-continue"], "win32");
+    assert.equal(win, 'node "/p a/\\$x/hook.mjs" claude-code Stop --echo-continue');
+    assert.deepEqual(parseHookCommand(win), { hookPath: "/p a/$x/hook.mjs", agent: "claude-code" });
+    assert.equal(buildHookCommand("D:\\O'Brien (x)\\.coding.sh\\bin\\hook.mjs", "codex", "Stop", [], "win32"), `node "D:/O'Brien (x)/.coding.sh/bin/hook.mjs" codex Stop`);
     const sh = buildHookCommand("/p a/$x/hook.mjs", "codex", "Stop", ["--echo-continue"], "linux");
     assert.equal(sh, '/bin/sh "/p a/\\$x/hook.sh" codex Stop --echo-continue');
     assert.deepEqual(parseHookCommand(sh), { hookPath: "/p a/$x/hook.mjs", agent: "codex" }, "names the hook.mjs beside it");
@@ -201,6 +204,36 @@ describe("hook command + merge", () => {
     assert.ok(isCodingShCommand(buildHookCommand(hook, "codex", "Stop"), "codex"));
     assert.ok(!isCodingShCommand(buildHookCommand(hook, "codex", "Stop"), "claude-code"), "agent-specific");
     assert.ok(!isCodingShCommand("node ./my-hook.mjs codex Stop", "codex"));
+  });
+
+  it("on Windows refuses a hook path cmd.exe or PowerShell would read differently, but for Claude Code", () => {
+    const named: [string, string][] = [["%", "a %"], ["$", "a $"], ["`", "a backtick"], ["\u201C", "a curly double quote"], ["\u201E", "a curly double quote"]];
+    for (const [ch, name] of named) {
+      const p = `D:\\a${ch}b\\.coding.sh\\bin\\hook.mjs`;
+      for (const agent of ["codex", "cursor", "antigravity", "devin", "droid", "gemini-cli", "goose"]) {
+        assert.throws(() => buildHookCommand(p, agent, "Stop", [], "win32"), (e: Error) => e.message.startsWith(`the hook path ${p} has ${name}, `) && e.message.includes("setx CODING_SH_HOME"), `${agent}: ${name}`);
+      }
+      // Claude Code runs hooks under Git Bash, which reads the sh escapes; sh reads them elsewhere.
+      assert.equal(parseHookCommand(buildHookCommand(p, "claude-code", "Stop", [], "win32"))?.hookPath, p.replace(/\\/g, "/"));
+      for (const platform of ["linux", "darwin"] as const) assert.match(buildHookCommand(p, "codex", "Stop", [], platform), /^\/bin\/sh "/, platform);
+    }
+    assert.equal(windowsHookPathProblem("D:\\u\\.coding.sh\\bin\\hook.mjs", "codex"), undefined);
+    assert.equal(windowsHookPathProblem("C:\\a$b\\hook.mjs", "claude-code"), undefined);
+    assert.match(windowsHookPathProblem("C:\\a%b$c\\hook.mjs", "codex") ?? "", / has a % and a \$, /);
+    assert.match(windowsHookPathProblem("C:\\a%b$c`d\\hook.mjs", "codex") ?? "", / has a %, a \$ and a backtick, /);
+  });
+
+  it("Copilot's PowerShell command single-quotes a path PowerShell would read differently in double quotes", () => {
+    const ps = (p: string) => powerShellHookCommand(p, "copilot-cli", "postToolUse");
+    // The same bytes as before for a plain path, so existing installs are left as they are.
+    assert.equal(ps("D:\\u\\.coding.sh\\bin\\hook.mjs"), '& node "D:/u/.coding.sh/bin/hook.mjs" copilot-cli postToolUse');
+    assert.equal(ps("D:\\O'Brien %x%\\.coding.sh\\bin\\hook.mjs"), `& node "D:/O'Brien %x%/.coding.sh/bin/hook.mjs" copilot-cli postToolUse`);
+    assert.equal(ps("D:\\a$b\\.coding.sh\\bin\\hook.mjs"), "& node 'D:/a$b/.coding.sh/bin/hook.mjs' copilot-cli postToolUse");
+    assert.equal(ps("D:\\a`b\\hook.mjs"), "& node 'D:/a`b/hook.mjs' copilot-cli postToolUse");
+    assert.equal(ps("D:\\a\u201Cb\\hook.mjs"), "& node 'D:/a\u201Cb/hook.mjs' copilot-cli postToolUse");
+    // In single quotes a single quote (' and U+2018 to U+201B) is written twice.
+    assert.equal(ps("D:\\O'Brien$\\hook.mjs"), "& node 'D:/O''Brien$/hook.mjs' copilot-cli postToolUse");
+    assert.equal(ps("D:\\a\u2019b$\\hook.mjs"), "& node 'D:/a\u2019\u2019b$/hook.mjs' copilot-cli postToolUse");
   });
 
   it("nested merge appends after user entries, is idempotent, and strips cleanly", () => {

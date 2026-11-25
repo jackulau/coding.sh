@@ -25,7 +25,7 @@ import { teeFile } from "../../core/tee.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
 import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, restoreForInstall } from "../_shared/installs.ts";
 import { resolveWriteTarget } from "../_shared/files.ts";
-import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
+import { buildHookCommand } from "../_shared/hooks.ts";
 import { skillFieldsOf } from "../_shared/tools.ts";
 import { parseTestOutput, runsTests, type TestSummary } from "../_shared/heuristics.ts";
 import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
@@ -95,11 +95,10 @@ export function xdg(kind: "config" | "data" | "state" | "cache", env: NodeJS.Pro
 
 /**
  * The one hook command every adapter installs: `/bin/sh "<hook.sh>" <agent> <Event>`
- * outside Windows (buildHookCommand), else and with `extra` flags `node "<hook.mjs>" <agent> <Event>`.
+ * outside Windows, else `node "<hook.mjs>" <agent> <Event>` (buildHookCommand).
  */
-export function hookCmd(hookCommand: string, agent: AgentId, event: string, extra = "", platform: NodeJS.Platform = process.platform): string {
-  if (!extra) return buildHookCommand(hookCommand, agent, event, [], platform);
-  return `node "${hookPathForCommand(hookCommand)}" ${agent} ${event} ${extra}`;
+export function hookCmd(hookCommand: string, agent: AgentId, event: string, platform: NodeJS.Platform = process.platform): string {
+  return buildHookCommand(hookCommand, agent, event, [], platform);
 }
 
 /** True when a command string is a coding.sh hook for `agent` (works without the marker). */

@@ -418,6 +418,17 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   in the current directory and at the root of its repository, and skips the user install unless
   `--force`.
 - The command path is quoted.
+- On Windows, cmd.exe and PowerShell read `%`, `$`, a backtick or a curly double quote (U+201C to
+  U+201E) in a quoted path differently. Codex, Cursor CLI, Antigravity CLI, Devin CLI, Factory
+  Droid, Gemini CLI and Goose run hook commands under one of them. When the path of `hook.mjs` has
+  one of these characters, `coding.sh init` says so and installs no hooks for these seven agents.
+- Claude Code, Copilot CLI, Amp, OpenCode and Pi keep their hooks. Claude Code runs hooks under Git
+  Bash, which reads the quoted path as sh does. Copilot CLI's `powershell` command puts the path in
+  single quotes. Amp, OpenCode and Pi start the hook with no shell.
+- To install hooks for the seven, set `CODING_SH_HOME` for your user account to a folder without
+  these characters (`setx CODING_SH_HOME C:\coding.sh`). Then run `coding.sh init` again in a new
+  terminal and restart the agent. The data folder moves too, so copy `~/.coding.sh` there first to
+  keep your sessions.
 - Each entry is tagged with a marker (`"_codingsh": true` where JSON allows, or a `# coding.sh` comment
   in TOML) so `uninstall` removes only our entries. Where the format has no room for a marker,
   Cursor entries are recognized by their command, and a Copilot hook file coding.sh created is
