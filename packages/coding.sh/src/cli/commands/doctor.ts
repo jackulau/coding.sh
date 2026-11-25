@@ -15,6 +15,7 @@ import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { spoolFile } from "../../spool/write.ts";
@@ -486,6 +487,8 @@ export async function run(c: CommandContext): Promise<number> {
   // so "routes claude-code via cliproxyapi" sits next to the sessions tagged gateway:cliproxyapi.
   const countedGateways = [...new Set<GatewayId>(["vercel", ...gatewaySetups.map((f) => f.gateway), ...gatewayConfigs.filter((g) => g.apiKey).map((g) => g.id)])];
   let gatewaySessions = 0;
+  // The session with the most of those calls, by a reference that opens it when pasted (core/session-ref.ts).
+  let worstRef: string | undefined;
   try {
     const ctx = await openContext({ env, cwd: c.cwd });
     try {
@@ -508,7 +511,10 @@ export async function run(c: CommandContext): Promise<number> {
       }
       store.foldErrors = (await ctx.index.listSessions({ flag: FLAGS.foldError })).length;
       const odd = await implausibleCalls(ctx.index);
-      if (odd) store.implausible = odd;
+      if (odd) {
+        store.implausible = odd;
+        worstRef = (await shortener(ctx.index))(odd.worst);
+      }
       store.ok = true;
     } finally {
       await ctx.close();
@@ -674,9 +680,10 @@ export async function run(c: CommandContext): Promise<number> {
   }
   if (store.implausible) {
     const { count, by, worst } = store.implausible;
+    const ref = worstRef ?? worst;
     const names: Record<string, string> = { speed: `over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s`, ttft: "first token outside the call", cost: "cost below 0 or over $" + PLAUSIBLE_LIMITS.maxCallCostUsd };
-    const message = `${plural(count, "model call")} past physical limits (${Object.entries(by).map(([k, v]) => `${names[k] ?? k} ${v}`).join(", ")}); most in ${worst}`;
-    warn("Stats", `${message}; see ${cliCommand(env, ["show", worst])}`, { check: "stats", message, next: cliCommand(env, ["show", worst]) });
+    const message = `${plural(count, "model call")} past physical limits (${Object.entries(by).map(([k, v]) => `${names[k] ?? k} ${v}`).join(", ")}); most in ${ref}`;
+    warn("Stats", `${message}; see ${cliCommand(env, ["show", ref])}`, { check: "stats", message, next: cliCommand(env, ["show", ref]) });
   }
   if (store.foldErrors) {
     const message = `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError})`;

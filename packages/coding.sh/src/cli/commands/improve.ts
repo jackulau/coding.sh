@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, headlessAfter, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, withHeadless, type ChangeOptions, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
@@ -113,10 +114,13 @@ export async function run(c: CommandContext): Promise<number> {
 /** A command as printed: `coding.sh` named for the user's shell (Output.command). */
 type Cmd = (line: string) => string;
 const asIs: Cmd = (line) => line;
+/** How a printed line names a session: a reference that opens it when pasted (core/session-ref.ts shortener). */
+type Ref = (id: string) => string;
+const idAsIs: Ref = (id) => id;
 
-function issueJson(i: Issue, n: number, provider: ModelProvider | undefined, cmd: Cmd) {
+function issueJson(i: Issue, n: number, provider: ModelProvider | undefined, cmd: Cmd, ref: Ref) {
   const { sessionIds: _ids, ...rest } = i;
-  return { rank: n, ...rest, next: stepsFor(i, n, { provider }).map((s) => ({ ...s, command: cmd(s.command) })) };
+  return { rank: n, ...rest, next: stepsFor(i, n, { provider, ref }).map((s) => ({ ...s, command: cmd(s.command) })) };
 }
 
 /** A group's counts, with every flagged session (id, ISO start, title, flags). */
@@ -167,12 +171,13 @@ const shownSubject = (out: Output, subject: string): string => JSON.stringify(on
 const FLAGGED_SHOWN = 5;
 
 /**
- * `flagged`: how many of the sessions still flagged after the change to list (0, the default: none).
+ * `flagged`: how many of the sessions still flagged after the change to list (0, the default: none), each
+ * named by `ref` (default the id).
  * `headlessInWindow`: headless sessions in the window were left out, though none counted after this change
  * (with --headless they may still be left out for another reason, such as no git HEAD). One that did
  * count after it is in the change's reason (withHeadless).
  */
-function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number; headlessInWindow?: boolean } = {}): void {
+function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number; headlessInWindow?: boolean; ref?: Ref } = {}): void {
   const { out } = c;
   const indent = o.indent ?? "  ";
   const ch = e.change;
@@ -192,7 +197,8 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
   const list = e.after.flaggedSessions;
   if (!o.flagged || !list.length) return;
   out.print(`${indent}  Still flagged after it, ${e.after.flagged} of ${plural(e.after.sessions, "session")} (${out.command("coding.sh show <id>")}):`);
-  for (const s of list.slice(0, o.flagged)) out.print(`${indent}    ${s.id}  ${localTime(s.startedAt)}  ${s.flags.join(", ")}${s.title ? `  ${JSON.stringify(oneLine(s.title, 50))}` : ""}`);
+  const ref = o.ref ?? idAsIs;
+  for (const s of list.slice(0, o.flagged)) out.print(`${indent}    ${ref(s.id)}  ${localTime(s.startedAt)}  ${s.flags.join(", ")}${s.title ? `  ${JSON.stringify(oneLine(s.title, 50))}` : ""}`);
   if (list.length > o.flagged) out.print(`${indent}    ${out.style(`… ${list.length - o.flagged} more (--sessions lists them all)`, "faint")}`);
 }
 
@@ -213,10 +219,12 @@ async function report(c: CommandContext): Promise<number> {
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     const cmd: Cmd = (line) => out.command(line);
+    // A command names a session by a reference that opens it when pasted: a full id can need quoting, or be `latest`.
+    const ref = top.length ? await shortener(ctx.index) : idAsIs;
     if (out.json) {
       out.data({
         scope: { repo: o.place?.repo ?? o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, subagents: children || undefined, notRead: notRead || undefined, headlessLeftOut: headlessLeftOut || undefined },
-        issues: top.map((i, k) => issueJson(i, k + 1, provider, cmd)),
+        issues: top.map((i, k) => issueJson(i, k + 1, provider, cmd, ref)),
         more: Math.max(0, issues.length - top.length),
         changes: changes.map((e) => changeJson(e, cmd)),
         ...pendingField(backlog),
@@ -250,7 +258,7 @@ async function report(c: CommandContext): Promise<number> {
         out.print("   Fix, costliest cause first:");
         for (const k of i.causes) out.print(`     ${k.cause} (${k.usd ? `$${k.usd.toFixed(2)}, ` : ""}${plural(k.breaks, "break")}): ${k.fix}`);
       } else if (!i.quietSince) out.print(`   Fix: ${i.fix}${i.rule ? ` Add: "${i.rule}"` : ""}`);
-      for (const s of stepsFor(i, n, { provider })) out.print(`   ${out.style("→", "faint")} ${s.label}: ${out.style(cmd(s.command), "cyan")}`);
+      for (const s of stepsFor(i, n, { provider, ref })) out.print(`   ${out.style("→", "faint")} ${s.label}: ${out.style(cmd(s.command), "cyan")}`);
       out.print("");
     });
     if (issues.length > top.length) out.print(`${plural(issues.length - top.length, "more issue")}: ${cmd(`coding.sh improve --limit ${issues.length}`)}\n`);
@@ -265,7 +273,7 @@ async function report(c: CommandContext): Promise<number> {
     }
     if (top[0]?.quietSince) out.next("Nothing new since your last change; see whether it helped", "coding.sh improve check");
     else if (top[0]?.rule) out.next("Start with the first one", `coding.sh improve fix 1`);
-    else if (top[0]?.examples[0]) out.next("Start with the first one", `coding.sh show ${top[0].examples[0].sessionId}`);
+    else if (top[0]?.examples[0]) out.next("Start with the first one", `coding.sh show ${ref(top[0].examples[0].sessionId)}`);
     if (top.length) out.note(`Turn these sessions into an eval you can rerun: ${cmd("coding.sh eval init --sessions")}`);
     return 0;
   });
@@ -290,9 +298,10 @@ async function fix(c: CommandContext): Promise<number> {
     const issue = n >= 1 ? issues[n - 1] : undefined;
     if (!issue) throw new CliError(`No issue ${JSON.stringify(ref)} in ${plural(issues.length, "issue")} since ${o.sinceText}`, { reason: "not_found", next: ["List them:", `coding.sh improve --since ${o.sinceText}`] });
     if (!issue.rule) {
+      const ex = issue.examples[0];
       throw new CliError(`Issue ${n} (${issue.title}) has no line that fixes it: ${issue.fix}`, {
         reason: "no_rule",
-        next: issue.examples[0] ? ["See it happen:", `coding.sh show ${issue.examples[0].sessionId}`] : [],
+        next: ex ? ["See it happen:", `coding.sh show ${(await shortener(ctx.index))(ex.sessionId)}`] : [],
       });
     }
     const agents = sessions.filter((s) => issue.examples.some((x) => x.sessionId === s.id)).map((s) => s.agent);
@@ -414,8 +423,10 @@ async function check(c: CommandContext): Promise<number> {
       if (!watch) return 0;
     }
     const shown = c.flags.sessions === true ? Number.POSITIVE_INFINITY : FLAGGED_SHOWN;
+    // The sessions listed and the next step are named by references that open them when pasted.
+    const ref = first.changes.some((e) => e.after.sessions) ? await shortener(ctx.index) : idAsIs;
     for (const e of first.changes) {
-      printChange(c, e, { indent: "", flagged: shown, headlessInWindow: windowLeftOut > 0 && !leftOut.has(e.change.commit) });
+      printChange(c, e, { indent: "", flagged: shown, headlessInWindow: windowLeftOut > 0 && !leftOut.has(e.change.commit), ref });
       out.print("");
     }
     // Where it counted: a folder and the folders under it, which is not what sessions --where repo:<name> counts (every checkout named so).
@@ -426,7 +437,8 @@ async function check(c: CommandContext): Promise<number> {
       // The command as given plus one flag, so --repo, --since and --agent still pick the same sessions.
       const given = c.argv ?? (o.repo ? ["improve", "check"] : ["improve", "check", "--repo", "all"]);
       const givenPlus = (flag: string) => ["coding.sh", ...[...given, flag].map((a) => quoteArg(a, c.env))].join(" ");
-      if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${after.flaggedSessions[0]?.id ?? after.examples[0] ?? "latest"}`);
+      const firstAfter = after?.flaggedSessions[0]?.id ?? after?.examples[0];
+      if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${firstAfter === undefined ? "latest" : ref(firstAfter)}`);
       else if (removal) out.next(removal.label, removal.command);
       else if (leftOut.size || windowLeftOut) out.next("Count the headless sessions too", givenPlus("--headless"));
       else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", givenPlus("--watch"));

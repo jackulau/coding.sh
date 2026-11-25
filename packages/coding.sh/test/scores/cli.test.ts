@@ -65,7 +65,8 @@ describe("coding.sh score", () => {
     const out = ok(["score", "add", "sess-aaaa", "helpfulness", "4", "--comment", "fixed it"]);
     const id = out.stdout.trim();
     assert.match(id, /^[0-9a-f]{64}$/);
-    assert.match(out.stderr, /Scored helpfulness = 4 \(numeric\) on session sess-aaaa1111/);
+    // The session by its shortest reference: the first 8 characters open it here.
+    assert.match(out.stderr, /Scored helpfulness = 4 \(numeric\) on session sess-aaa$/m);
     const again = json(["score", "add", "sess-aaaa1111", "helpfulness", "4", "--comment", "fixed it"]);
     assert.equal(again.created, false);
     assert.equal(again.changed, false);
@@ -105,7 +106,7 @@ describe("coding.sh score", () => {
   });
 
   test("add: a typo does not retype a stored score; --type does", () => {
-    assert.match(ok(["score", "add", "sess-bbbb2222", "n1", "-5"]).stderr, /Scored n1 = -5 \(numeric\) on session sess-bbbb2222/);
+    assert.match(ok(["score", "add", "sess-bbbb2222", "n1", "-5"]).stderr, /Scored n1 = -5 \(numeric\) on session sess-bbb$/m);
     const typo = cli(["score", "add", "sess-bbbb2222", "n1", "1,5"]);
     assert.equal(typo.status, 2);
     assert.match(typo.stderr, /n1 is a numeric score on session sess-bbbb2222, and "1,5" reads as categorical/);
@@ -141,8 +142,8 @@ describe("coding.sh score", () => {
     ok(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
     const moved = ok(["score", "add", "sess-bbbb2222", "tone", "neutral", "--id", "pick-1"]);
     assert.equal(moved.stdout, "pick-1\n");
-    assert.match(moved.stderr, /Scored tone = neutral \(categorical\) on session sess-bbbb2222/);
-    assert.match(moved.stderr, /--id pick-1 held helpfulness = 2 on session sess-aaaa1111; that score is replaced/);
+    assert.match(moved.stderr, /Scored tone = neutral \(categorical\) on session sess-bbb$/m);
+    assert.match(moved.stderr, /--id pick-1 held helpfulness = 2 on session sess-aaa; that score is replaced/);
     assert.deepEqual((json(["score", "list", "--name", "helpfulness"]).items as Score[]).map((s) => s.value), [4], "the score left its old target");
     const back = json(["score", "add", "sess-aaaa1111", "helpfulness", "2", "--id", "pick-1"]);
     assert.deepEqual([back.replaced?.name, back.replaced?.target, back.replaced?.targetId, back.replaced?.value], ["tone", "session", "sess-bbbb2222", "neutral"]);

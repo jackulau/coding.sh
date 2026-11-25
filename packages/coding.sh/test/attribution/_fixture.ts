@@ -107,7 +107,8 @@ const FEATURE = ['import { smoothstep } from "./math.ts";', "", "export function
 
 const text = (ls: string[]) => ls.join("\n") + "\n";
 
-export async function buildFixture(): Promise<Fixture> {
+/** The story above in a new repo. `ids.s1` names S1 (s1-claude by default). */
+export async function buildFixture(ids: { s1?: string } = {}): Promise<Fixture> {
   const root = tmp("csh-attr-");
   const env = process.env;
   gitc(root, "init", "-q", "-b", "main");
@@ -123,7 +124,7 @@ export async function buildFixture(): Promise<Fixture> {
   appendFileSync(join(root, "src/math.ts"), "\n" + text(CLAMP));
   appendFileSync(join(root, "README.md"), "\n" + text(README_S1));
   const s1End = (await snapshot(root, { env, ...ROOMY }))!;
-  const s1 = makeSession("s1-claude", "claude-code", "claude-sonnet-4-5", T0 + 1 * HOUR, s1Start, s1End.snapshot);
+  const s1 = makeSession(ids.s1 ?? "s1-claude", "claude-code", "claude-sonnet-4-5", T0 + 1 * HOUR, s1Start, s1End.snapshot);
   events.push(event(s1, "file.change", { path: join(root, "src/math.ts"), op: "modify" }), event(s1, "file.change", { path: "README.md", op: "modify" }));
   const c1 = commitAll(root, T0 + 2 * HOUR, "add clamp");
 

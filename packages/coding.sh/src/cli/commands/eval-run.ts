@@ -11,6 +11,7 @@ import { relative, resolve } from "node:path";
 import { ADAPTERS, getAdapter } from "../../adapters/index.ts";
 import { repoRoot } from "../../core/git.ts";
 import { sortableId } from "../../core/ids.ts";
+import { shortener, wholeRef } from "../../core/session-ref.ts";
 import type { EvalTask, HarnessBundle } from "../../core/types.ts";
 import type { Context } from "../../core/context.ts";
 import { assignSplits, loadDatasetFile, addCases } from "../../datasets/dataset.ts";
@@ -29,7 +30,7 @@ import { latestPerSlot } from "../../runner/iterate.ts";
 import { captureRedactor, failedRuns, renderFailedRuns, type FailedRun } from "../../runner/verifier-output.ts";
 import { paint } from "../../experiments/text.ts";
 import { renderSuiteReport, renderSuitesMarkdown, suiteReport, type SuiteReport, type TaskTrials } from "../../eval/report.ts";
-import { TODO } from "../../eval/init.ts";
+import { CAPTURED_FAILURE_TAG, TODO } from "../../eval/init.ts";
 import { capturedFailuresLine, trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
 import type { TriggerRunResult } from "./eval-trigger.ts";
 import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite } from "../../eval/suite-spec.ts";
@@ -59,6 +60,8 @@ interface SuiteOutcome {
   exitCode?: number;
   /** More lines under the report. */
   extra?: string[];
+  /** Repo-task suites with tasks from captured failures: the line on them, each source session named by `ref`. */
+  captured?: (ref: (id: string) => string) => string | undefined;
   /** Case suites: lines of the cases file left out for repeating an earlier line's input and expected answer. */
   duplicates?: { dropped: string; kept: string }[];
 }
@@ -67,7 +70,6 @@ export async function evalRun(c: CommandContext): Promise<number> {
   const { out } = c;
   // The commands under the report, named as the user's shell runs them.
   const bin = nextStepBin(c.env);
-  const transcript = (id: string) => `${bin} show ${id.slice(0, 12)}`;
   const trialsFlag = positiveInt(c.flags.trials, "trials");
   const root = (await repoRoot(c.cwd)) ?? c.cwd;
   let suites: LoadedSuite[];
@@ -95,9 +97,13 @@ export async function evalRun(c: CommandContext): Promise<number> {
   }
   const failed = outcomes.some((o) => (o.report ? !o.report.ok : (o.exitCode ?? 0) !== 0));
   const summary = str(c.flags.summary);
+  // Each session the text names, by the shortest reference that opens it. --json keeps whole ids.
+  const ref = summary || !out.json ? await sessionRefs(c, outcomes) : wholeRef;
+  const transcript = (id: string) => `${bin} show ${ref(id)}`;
+  const lines = (o: SuiteOutcome) => [...(o.extra ?? []), o.captured?.(ref), ...metaLine(o)].filter((l) => l !== undefined);
   if (summary) {
     const md = renderSuitesMarkdown(
-      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o, c.env), ...(o.extra ?? []), ...metaLine(o)] })),
+      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o, c.env), ...lines(o)] })),
       { transcript, bin },
     );
     try {
@@ -117,10 +123,20 @@ export async function evalRun(c: CommandContext): Promise<number> {
       for (const line of unverifiedLine(o, c.env)) out.print(line);
       const block = renderFailedRuns(o.failedRuns ?? [], { names: (id) => o.names?.get(id) ?? id, dim: (s) => paint(s, "dim", out.color) });
       if (block.length) out.print(["", ...block].join("\n"));
-      for (const line of [...(o.extra ?? []), ...metaLine(o)]) out.print(line);
+      for (const line of lines(o)) out.print(line);
     }
   }
   return failed ? 1 : 0;
+}
+
+/**
+ * The shortest reference that opens each session the reports name (core/session-ref.ts), read
+ * from the store once every suite ran, so a later suite's sessions can't make a prefix ambiguous.
+ * Each id whole (wholeRef) when the reports name none or the store can't be read.
+ */
+async function sessionRefs(c: CommandContext, outcomes: readonly SuiteOutcome[]): Promise<(id: string) => string> {
+  if (!outcomes.some((o) => o.captured || o.report?.rows.some((r) => r.failedSession))) return wholeRef;
+  return withContext(c, (ctx) => shortener(ctx.index)).catch(() => wholeRef);
 }
 
 // The text names coding.sh as the docs' sample does (the site's docs-samples test reads it here); commandsForShell names the user's.
@@ -209,8 +225,10 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   const report = suiteReport(s.spec.name, s.spec.purpose, trials);
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
   const failed = failedRuns(runs, redactor);
-  const captured = capturedFailuresLine(tasks, trials);
-  return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(captured ? { extra: [captured] } : {}), ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
+  const outcome: SuiteOutcome = { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
+  // Written under the report, once every suite ran and each source session has its reference.
+  if (tasks.some((t) => t.tags.includes(CAPTURED_FAILURE_TAG))) outcome.captured = (ref) => capturedFailuresLine(tasks, trials, { ref });
+  return outcome;
 }
 
 async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, trials: number, root: string): Promise<SuiteOutcome> {

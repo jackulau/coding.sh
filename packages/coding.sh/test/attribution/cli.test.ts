@@ -24,12 +24,11 @@ const json = (...args: string[]) => {
   return JSON.parse(r.stdout) as Record<string, unknown>;
 };
 
-before(async () => {
-  isolate();
-  fx = await buildFixture();
+/** The env that runs the CLI in a throwaway home whose store holds the fixture's sessions. */
+async function homeFor(f: Fixture): Promise<NodeJS.ProcessEnv> {
   const home = tmp("csh-attr-home-");
   mkdirSync(join(home, "codex"), { recursive: true });
-  env = {
+  const e = {
     ...process.env,
     ["HO" + "ME"]: home,
     USERPROFILE: home,
@@ -38,13 +37,20 @@ before(async () => {
     CODING_SH_NO_UPDATE_CHECK: "1",
     NO_COLOR: "1",
   };
-  const ctx = await openContext({ env, cwd: fx.root });
+  const ctx = await openContext({ env: e, cwd: f.root });
   try {
-    for (const s of Object.values(fx.sessions)) await ctx.index.upsertSession(s);
-    for (const s of Object.values(fx.sessions)) await ctx.index.putEvents(await fx.index.listEvents(s.id));
+    for (const s of Object.values(f.sessions)) await ctx.index.upsertSession(s);
+    for (const s of Object.values(f.sessions)) await ctx.index.putEvents(await f.index.listEvents(s.id));
   } finally {
     await ctx.close();
   }
+  return e;
+}
+
+before(async () => {
+  isolate();
+  fx = await buildFixture();
+  env = await homeFor(fx);
 });
 after(() => removeTmp());
 
@@ -128,6 +134,29 @@ describe("coding.sh attribution / blame", () => {
     const blame = cli(fx.root, "blame", "src/util.ts");
     assert.equal(blame.status, 0, blame.stderr);
     assert.ok(blame.stderr.includes(`${npx} show s2-codex`), blame.stderr);
+  });
+});
+
+// The same story with S1 named latest. `show latest` opens the newest session (S3), not S1.
+describe("blame, when the session that wrote the most is named latest", () => {
+  let fx2: Fixture;
+  let env2: NodeJS.ProcessEnv;
+  const cli = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: env2, encoding: "utf8", cwd: fx2.root });
+  before(async () => {
+    isolate();
+    fx2 = await buildFixture({ s1: "latest" });
+    env2 = await homeFor(fx2);
+  });
+
+  test("its next step names the session by a reference that opens it", () => {
+    const r = cli("blame", "README.md");
+    assert.equal(r.status, 0, r.stderr);
+    const show = `${nextStepBin(env2)} show `;
+    const ref = r.stderr.split("\n").map((l) => l.trim()).find((l) => l.startsWith(show))?.slice(show.length);
+    assert.ok(ref, r.stderr);
+    const shown = cli("show", ref, "--json", "--fields", "session.id");
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(JSON.parse(shown.stdout).session.id, "latest", `${show}${ref}`);
   });
 });
 

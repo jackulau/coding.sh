@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { cliCommand, envLine } from "../../src/cli/next-steps.ts";
 import { loadConfig } from "../../src/core/config.ts";
+import { wholeRef } from "../../src/core/session-ref.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { recorderFor } from "../../src/proxy/index.ts";
 import { startProxy } from "../../src/proxy/server.ts";
@@ -21,6 +22,9 @@ import { CLI } from "../_cli.ts";
 const SESSION = "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
 const PROXY_ONLY = "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a";
 const WRITER = "9e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b";
+const LATEST = "latest";
+/** The reference replay prints for SESSION, PROXY_ONLY and WRITER: 8 characters, which no other id here starts with. */
+const short = (id: string) => id.slice(0, 8);
 const USER_KEY = ["sk-ant-api03-", "NEXTSTEPNEXTSTEPNEXTSTEP", "-abcdefAA"].join("");
 const AGENT_KEY = ["sk-ant-api03-", "AGENTKEYAGENTKEYAGENTKEY", "-abcdefAA"].join("");
 
@@ -75,20 +79,28 @@ describe("replay and exp replay: what they print", () => {
       assert.equal(r.status, 200);
       await recorder.flush();
     };
-    try {
-      // Step 1: the prompt. Its call replies with Bash, step 2. Step 3: "thanks", replied to in text.
-      await stores.index.putEvents([hook("next-hook-0001", Date.now() - 60_000, "user.message", { text: "fix the failing test" })]);
-      await proxied([first]);
+    // Step 1: the prompt. Its call replies with Bash, step 2. Step 3: "thanks", replied to in text.
+    // Returns the time of step 2.
+    const record = async (session: string, ids: string, start: number) => {
+      const at = (n: number, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ ...hook(`${ids}${n}`, ts, kind, payload), sessionId: session });
+      await stores.index.putEvents([at(1, start, "user.message", { text: "fix the failing test" })]);
+      await proxied([first], session);
       await sleep(20);
       const t = Date.now();
       await stores.index.putEvents([
-        hook("next-hook-0002", t, "tool.start", { tool: "Bash", toolUseId: "toolu_1", input: { command: "npm test" } }),
-        hook("next-hook-0003", t + 1, "tool.end", { tool: "Bash", toolUseId: "toolu_1", ok: false, output: "npm ERR! Missing script: test" }),
-        hook("next-hook-0004", t + 2, "user.message", { text: "thanks" }),
+        at(2, t, "tool.start", { tool: "Bash", toolUseId: "toolu_1", input: { command: "npm test" } }),
+        at(3, t + 1, "tool.end", { tool: "Bash", toolUseId: "toolu_1", ok: false, output: "npm ERR! Missing script: test" }),
+        at(4, t + 2, "user.message", { text: "thanks" }),
       ]);
       await sleep(20);
-      await proxied([first, toolUse, { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "npm ERR! Missing script: test" }, { type: "text", text: "thanks" }] }]);
-      await stores.index.upsertSession(buildSession(await stores.index.listEvents(SESSION)));
+      await proxied([first, toolUse, { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "npm ERR! Missing script: test" }, { type: "text", text: "thanks" }] }], session);
+      await stores.index.upsertSession(buildSession(await stores.index.listEvents(session)));
+      return t;
+    };
+    try {
+      // A session named latest, older than the rest: typed as is, `latest` opens the newest session.
+      await record(LATEST, "next-hook-020", Date.now() - 120_000);
+      const t = await record(SESSION, "next-hook-000", Date.now() - 60_000);
       // A session the proxy logged alone (no hooks): model calls, but no prompts or tool calls of its own.
       await proxied([first], PROXY_ONLY);
       await stores.index.upsertSession(buildSession(await stores.index.listEvents(PROXY_ONLY)));
@@ -125,8 +137,8 @@ describe("replay and exp replay: what they print", () => {
       p.on("close", (status) => resolve({ status, stdout, stderr }));
     });
   const lines = (s: string) => s.split(/\r?\n/);
-  const steps = async () => {
-    const r = await cli(["replay", SESSION, "--json"]);
+  const steps = async (ref = SESSION) => {
+    const r = await cli(["replay", ref, "--json"]);
     assert.equal(r.status, 0, r.stderr);
     const all = (JSON.parse(r.stdout) as { steps: { n: number; kind: string; tool?: string }[] }).steps;
     const tool = all.find((x) => x.tool === "Bash")?.n;
@@ -161,7 +173,7 @@ describe("replay and exp replay: what they print", () => {
       assert.equal(s.key, USER_KEY);
       assert.ok(s.text.includes("node --test") && s.text.includes("You are a careful agent."), "the fork carried both changes");
     }
-    const keep = cliCommand(env, [...args, "--save-case", "forks"]);
+    const keep = cliCommand(env, ["replay", short(SESSION), ...args.slice(2), "--save-case", "forks"]);
     assert.ok(lines(r.stderr).includes(`    ${keep}`), `expected "${keep}" in:\n${r.stderr}`);
   });
 
@@ -172,7 +184,7 @@ describe("replay and exp replay: what they print", () => {
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.equal(sent.length - before, 1);
     assert.match(r.stderr, /recorded reply was text, and the fork gave no single tool call/);
-    const retry = cliCommand(env, ["replay", SESSION, "--step", String(thanks), "--fork", "--with", "CLAUDE.md=my fixed.md", "-k", "3", "--save-case", "forks"]);
+    const retry = cliCommand(env, ["replay", short(SESSION), "--step", String(thanks), "--fork", "--with", "CLAUDE.md=my fixed.md", "-k", "3", "--save-case", "forks"]);
     assert.ok(lines(r.stderr).includes(`    ${retry}`), `expected "${retry}" in:\n${r.stderr}`);
   });
 
@@ -205,7 +217,7 @@ describe("replay and exp replay: what they print", () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^0 steps, 0 files touched$/m);
     assert.match(r.stdout, /^This session has no steps to replay: it came from a source that records model calls only \(the proxy, or an SDK call outside trace\(\)\), and steps come from the agent's prompts and tool calls\.$/m, r.stdout);
-    const show = cliCommand(env, ["show", PROXY_ONLY]);
+    const show = cliCommand(env, ["show", short(PROXY_ONLY)]);
     assert.ok(lines(r.stderr).includes(`    ${show}`), `expected "${show}" in:\n${r.stderr}`);
     const before = up.seen.length;
     const f = await cli(["replay", PROXY_ONLY, "--step", "1", "--fork"], { ANTHROPIC_API_KEY: USER_KEY });
@@ -219,16 +231,40 @@ describe("replay and exp replay: what they print", () => {
     const r = await cli(["replay", WRITER, "--step", "2"]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^ {2}[AM] app\/\(auth\)\/login\/page\.tsx {2}← this step$/m, r.stdout);
-    const file = cliCommand(env, ["replay", WRITER, "--step", "2", "--file", path]);
+    const file = cliCommand(env, ["replay", short(WRITER), "--step", "2", "--file", path]);
     assert.notEqual(file.endsWith(` ${path}`), true, "the path is quoted");
     assert.ok(lines(r.stderr).includes(`    ${file}`), `expected "${file}" in:\n${r.stderr}`);
     const idx = await cli(["replay", WRITER]);
     assert.equal(idx.status, 0, idx.stderr);
-    const step = cliCommand(env, ["replay", WRITER, "--step", "2"]);
+    const step = cliCommand(env, ["replay", short(WRITER), "--step", "2"]);
     assert.ok(lines(idx.stderr).includes(`    ${step}`), `expected "${step}" in:\n${idx.stderr}`);
     const shown = await cli(["replay", WRITER, "--step", "2", "--file", path]);
     assert.equal(shown.status, 0, shown.stderr);
     assert.match(shown.stdout, /^export default function Page\(\) \{\}$/m);
+  });
+
+  it("a session named latest: the step list and the fork's commands name it by a reference that opens it", async () => {
+    // Typed as is, `latest` opens the newest session. The reference coding.sh sessions lists it by opens this one.
+    const ref = wholeRef(LATEST);
+    const opened = await cli(["show", ref, "--json", "--fields", "session.id"]);
+    assert.equal(opened.status, 0, opened.stderr);
+    assert.equal(JSON.parse(opened.stdout).session.id, LATEST);
+    const { tool, thanks } = await steps(ref);
+    const idx = await cli(["replay", ref]);
+    assert.equal(idx.status, 0, idx.stderr);
+    const step = cliCommand(env, ["replay", ref, "--step", "1"]);
+    assert.ok(lines(idx.stderr).includes(`    ${step}`), `expected "${step}" in:\n${idx.stderr}`);
+    const before = sent.length;
+    const change = ["--fork", "--with", "CLAUDE.md=my fixed.md"];
+    const r = await cli(["replay", ref, "--step", String(tool), ...change], { ANTHROPIC_API_KEY: USER_KEY });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const keep = cliCommand(env, ["replay", ref, "--step", String(tool), ...change, "--save-case", "forks"]);
+    assert.ok(lines(r.stderr).includes(`    ${keep}`), `expected "${keep}" in:\n${r.stderr}`);
+    const t = await cli(["replay", ref, "--step", String(thanks), ...change, "--save-case", "forks"], { ANTHROPIC_API_KEY: USER_KEY });
+    assert.equal(t.status, 1, t.stderr + t.stdout);
+    const retry = cliCommand(env, ["replay", ref, "--step", String(thanks), ...change, "-k", "3", "--save-case", "forks"]);
+    assert.ok(lines(t.stderr).includes(`    ${retry}`), `expected "${retry}" in:\n${t.stderr}`);
+    assert.equal(sent.length - before, 2, "one forked call each, both to the stub");
   });
 
   it("exp replay with no calls named: the example in the message runs in the user's shell", async () => {
