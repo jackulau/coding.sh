@@ -700,6 +700,28 @@ describe("OTLP receiver over HTTP", () => {
     assert.ok(res.body.length > 0, "protobuf partial_success is non-empty");
   });
 
+  it("stores a model call whose messages are wrapped thousands deep, and answers 200", async () => {
+    // Each LangChain {"kwargs":…} or OpenAI {"message":…} wrapper is one level, on a root span and on a
+    // child span. At one call frame a level, 50,000 levels would not fit on the stack.
+    const depth = 50_000;
+    const traceId = "0af7651916cd43dd8448eb211c80319c";
+    for (const wrapper of ["kwargs", "message"]) {
+      for (const parent of ["00f067aa0ba902b7", undefined]) {
+        await rx.close();
+        await start();
+        const before = errors.length;
+        const nested = `{"${wrapper}":`.repeat(depth) + "1" + "}".repeat(depth);
+        const chat = otlpSpan(traceId, "b7ad6b7169203331", parent, "chat m", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.output.messages", nested)], 1000, 2000);
+        const res = await send(rx.url, json("/v1/traces", otlpTraces("deep", [chat])));
+        const label = `${wrapper} ${parent ? "child" : "root"}`;
+        assert.equal(res.status, 200, label);
+        assert.deepEqual(JSON.parse(res.body.toString()), {}, label);
+        assert.equal(errors.length, before, label);
+        assert.equal(store.all().filter((e) => e.kind === "llm.call").length, 1, label);
+      }
+    }
+  });
+
   it("accepts metrics and drops them", async () => {
     let res = await send(rx.url, json("/v1/metrics", { resourceMetrics: [] }));
     assert.equal(res.status, 200);

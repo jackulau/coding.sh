@@ -994,27 +994,36 @@ interface Met {
  * the same is `v` itself when it is plain parsed JSON: JSON data (isJsonData), not a Proxy, and
  * with no getter. Anything else within 64 levels is a new value, built from one read of each
  * property. A subtree deeper than that is followed through its JSON text. Both set `met.other`.
+ * `copy` says `v` is part of such a copy, which holds no cycle.
  */
-function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met): unknown {
+function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met, copy = false): unknown {
   if (typeof v === "string") return f(v);
   if (v === null || typeof v !== "object") return v;
   const same = !isProxy(v) && isJsonData(v);
   if (!same && met) met.other = true;
   if (v instanceof Uint8Array) return v;
-  // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
   if (depth > 64) {
     if (met) met.other = true;
     try {
+      // Part of a copy: followed on from depth 0, not copied again, so a stack that runs out leaves
+      // only the levels below as they were.
+      if (copy) return mapStrings(v, f, 0, met, true);
+      // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
       const text = JSON.stringify(v);
       if (text === undefined) return v;
-      const out = mapStrings(JSON.parse(text), f, 0);
+      const out = mapStrings(JSON.parse(text), f, 0, undefined, true);
       return JSON.stringify(out) === text ? v : out;
     } catch {
-      return v; // a cycle, or too deep for the stack: the redaction walk replaces it
+      return v; // a cycle, or too deep for the stack: the walk that follows redacts it or replaces it
     }
   }
   if (Array.isArray(v)) {
-    const out = v.map((x) => mapStrings(x, f, depth + 1, met));
+    // A loop, not map: one stack frame a level, so an array is followed as deep as an object.
+    // Its length is read as map reads it (ToLength): an array Proxy's can be a fraction or below 0.
+    const len = Math.floor(v.length);
+    const n = len > 0 ? len : 0;
+    const out: unknown[] = new Array(n);
+    for (let i = 0; i < n; i++) if (i in v) out[i] = mapStrings(v[i], f, depth + 1, met, copy);
     if (!same) return out;
     // A getter read again can give another value: keep the copy of what it gave once.
     for (let i = 0; i < v.length; i++) {
@@ -1028,7 +1037,7 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met):
   let out: Record<string, unknown> | undefined = same ? undefined : {};
   for (let i = 0; i < entries.length; i++) {
     const [k, x] = entries[i]!;
-    const y = mapStrings(x, f, depth + 1, met);
+    const y = mapStrings(x, f, depth + 1, met, copy);
     const getter = same && !hasValue(v, k);
     if (getter && met) met.other = true;
     if (!out) {
@@ -1189,16 +1198,19 @@ export function redactArgv<T>(args: readonly T[]): T[] {
  * `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text.
  * `keep`: an object or array that comes out the same is returned as is when it is JSON data (isJsonData), for a caller
  * that only serializes the result. Without it every object and array is a new one.
+ * `copy`: `v` is part of a copy tooDeep made, which holds no cycle.
  */
-function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false): unknown {
+function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false, copy = false): unknown {
   if (typeof v === "string") return redact(v);
   if (v === null || typeof v !== "object") return v;
-  if (depth > 64) return tooDeep(v, full, tally);
+  if (depth > 64) return copy ? walkOn(v, full, tally) : tooDeep(v, full, tally);
   // Arrays may be argv (wrapper session.start args, tool command vectors).
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
     if (tally) for (let i = 0; i < argv.length; i++) if (argv[i] !== v[i] && typeof v[i] === "string") tallyChange(tally, v[i] as string, argv[i] as string);
-    const out = argv.map((x, i) => walk(x, x === v[i] ? redact : full, depth + 1, tally, full, keep));
+    // A loop, not map: one stack frame a level, so an array is followed as deep as an object.
+    const out: unknown[] = [];
+    for (let i = 0; i < argv.length; i++) out.push(walk(argv[i], argv[i] === v[i] ? redact : full, depth + 1, tally, full, keep, copy));
     return keep && isJsonData(v) && out.every((x, i) => x === v[i]) ? v : out;
   }
   if (v instanceof Uint8Array) return v;
@@ -1210,7 +1222,7 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")
-      : walk(x, redact, depth + 1, tally, full, keep);
+      : walk(x, redact, depth + 1, tally, full, keep, copy);
     if (!out) {
       if (val === x) continue;
       out = {};
@@ -1230,8 +1242,20 @@ function tooDeep(v: object, redact: (s: string) => string, tally?: RedactionTall
   try {
     const text = JSON.stringify(v);
     if (text === undefined) return v;
-    const out = walk(JSON.parse(text), redact, 0, tally);
+    const out = walk(JSON.parse(text), redact, 0, tally, redact, false, true);
     return JSON.stringify(out) === text ? v : out;
+  } catch {
+    return tooDeepMarker(tally);
+  }
+}
+
+/**
+ * Part of tooDeep's copy past depth 64, walked on from depth 0. The copy is not copied again. Too
+ * deep for the stack, it becomes a marker, and the levels above are kept.
+ */
+function walkOn(v: object, redact: (s: string) => string, tally?: RedactionTally): unknown {
+  try {
+    return walk(v, redact, 0, tally, redact, false, true);
   } catch {
     return tooDeepMarker(tally);
   }
