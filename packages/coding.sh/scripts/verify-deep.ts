@@ -34,13 +34,37 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 15 minutes.
+ * 17 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
   // deleted: 81,348 cuts, 48,002 closed cuts and 80,999 deletions. Then 200 seeded cases per fixture file.
   // About 30 seconds.
   "adapter-spool": { bound: 2, runs: 200 },
+  // At bound 2, every record of every transcript cut at k = 1, n/2 rounded down and up, and n-1, and closed
+  // at those cuts and at each top-level member's end, each distinct closed line once; then 40 seeded cases
+  // per transcript: 410 cuts, 1,708 closed cuts and 80 seeded cases over 118 records.
+  "adapter-transcript-1": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 320 cuts, 1,283 closed cuts and 200 seeded cases over 92
+  // records.
+  "adapter-transcript-2": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 409 cuts, 1,487 closed cuts and 160 seeded cases over 118
+  // records.
+  "adapter-transcript-3": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 418 cuts, 1,722 closed cuts and 200 seeded cases over 122
+  // records.
+  "adapter-transcript-4": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 467 cuts, 1,198 closed cuts and 240 seeded cases over 134
+  // records.
+  "adapter-transcript-5": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 729 cuts, 1,500 closed cuts and 680 seeded cases over 212
+  // records.
+  "adapter-transcript-6": { bound: 2 },
+  // At bound 1, every cut of every JSON file, and each distinct text those cuts close into: 1,674 cuts and
+  // 530 closed cuts over 7 files.
+  "adapter-transcript-json-1": { bound: 1 },
+  // As adapter-transcript-json-1, over its own homes: 3,075 cuts and 869 closed cuts over 11 files.
+  "adapter-transcript-json-2": { bound: 1 },
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
   // about 9.
   "capture-code": { runs: 200 },

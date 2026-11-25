@@ -28,13 +28,13 @@ import { sep } from "node:path";
 import { after, before, test } from "node:test";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import { isWrapperLine } from "../../src/adapters/more/wrapper.ts";
-import { validEvent } from "../../src/core/ingest.ts";
 import type { Adapter, SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { FIXTURES, loadSpool, testCtx, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { forAll, gen } from "../_prop.ts";
 import { modelBound, preview, stdinText } from "./_common.ts";
 import { closeJson, storedPayload } from "./_cut.ts";
+import { eventProblems, Problems } from "./_events.ts";
 
 const bound = modelBound(process.env.CODING_SH_MODEL_BOUND);
 
@@ -92,34 +92,6 @@ const fixtures: Fixture[] = readdirSync(FIXTURES, { recursive: true, encoding: "
 /** A cut at k ends inside the fixture root. */
 const insideRoot = (spans: [number, number][], k: number) => spans.some(([a, b]) => a < k && k < b);
 
-/** Problems by kind, each with the first input that showed it (the smallest cut of the first payload). */
-class Problems {
-  readonly seen = new Map<string, { count: number; first: string }>();
-  add(kind: string, where: string): void {
-    const p = this.seen.get(kind);
-    if (p) p.count++;
-    else this.seen.set(kind, { count: 1, first: where });
-  }
-  list(): string[] {
-    return [...this.seen].map(([kind, p]) => `${kind} (${p.count} inputs; first: ${p.first})`);
-  }
-}
-
-/** What is wrong with what normalize resolved to: events ingest would drop, ids that are not 64 hex digits or repeat. */
-function eventProblems(events: unknown): string[] {
-  if (!Array.isArray(events)) return ["normalize resolved to no array"];
-  const out: string[] = [];
-  const ids = new Set<string>();
-  for (const e of events as AgentEvent[]) {
-    const problem = validEvent(e);
-    if (problem) out.push(problem.replace(/\b[0-9a-f]{64}\b/g, "<id>"));
-    else if (!/^[0-9a-f]{64}$/.test(e.id)) out.push(`a ${e.kind} event's id ${JSON.stringify(e.id)} is not 64 hex digits`);
-    else if (ids.has(e.id)) out.push(`a ${e.kind} event has the id of an earlier event from the same line`);
-    if (typeof e?.id === "string") ids.add(e.id);
-  }
-  return out;
-}
-
 async function check(problems: Problems, line: SpoolLine, where: string): Promise<void> {
   const adapter = adapterOf(line);
   // No adapter reads it: ingest skips the line and reports it.
@@ -131,7 +103,7 @@ async function check(problems: Problems, line: SpoolLine, where: string): Promis
     problems.add(`${adapter.id}.normalize threw: ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`, where);
     return;
   }
-  for (const p of eventProblems(events)) problems.add(`${adapter.id}: ${p}`, where);
+  for (const p of eventProblems(events, "the same line")) problems.add(`${adapter.id}.normalize: ${p}`, where);
 }
 
 let env: TmpEnv;
