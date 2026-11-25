@@ -6,7 +6,8 @@
 // Prompts and replies: a hook prompt has no natural id (Claude's
 // UserPromptSubmit carries no entry uuid), so copies are matched by text:
 // - backfill: a transcript prompt/reply whose text a live copy of the same
-//   session already has is dropped (live wins);
+//   session already has is dropped (live wins); a stop prompt ("[Request
+//   interrupted by user") only when the live copy is of the same moment;
 // - spool ingest: a live prompt/reply that a backfill already stored for the
 //   same moment is dropped (the live path saw it first, but too late).
 // A transcript without timestamps (Cursor) marks its prompts and replies
@@ -34,6 +35,7 @@
 // latest unpaired live one up to COMPACT_SLACK_MS before it, and a live one of
 // the earliest unpaired transcript one up to COMPACT_SLACK_MS after it.
 import type { AgentEvent } from "../schema/index.ts";
+import { INTERRUPT_PROMPT } from "../adapters/_shared/claude-transcript.ts";
 import type { IndexStore } from "./types.ts";
 import { isBackfillEvent } from "./sessions.ts";
 
@@ -161,9 +163,11 @@ export function copyFilter(index: IndexStore): CopyFilter {
         }
       }
       const near = (o: Stored) => Math.abs(o.ts - e.ts) <= COPY_SLACK_MS;
-      // A transcript copy matches live text anywhere in the session (other live paths stamp their own times).
+      // A transcript copy matches live text anywhere in the session (other live paths stamp their own times),
+      // except a stop prompt: every stop writes the same text, and a live window stores it at its entry's time.
       // A live event is new: it is a copy only of the same moment's transcript entry. No text: time alone.
-      return (backfill ? c.live : c.backfill).some((o) => o.kind === e.kind && (key !== undefined && o.key !== undefined ? o.key === key && (backfill || near(o)) : near(o)));
+      const anywhere = backfill && !(e.kind === "user.message" && INTERRUPT_PROMPT.test(String(e.payload.text)));
+      return (backfill ? c.live : c.backfill).some((o) => o.kind === e.kind && (key !== undefined && o.key !== undefined ? o.key === key && (anywhere || near(o)) : near(o)));
     },
   };
 }

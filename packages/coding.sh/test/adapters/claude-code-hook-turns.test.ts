@@ -8,9 +8,13 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode, resetPromptIndexes } from "../../src/adapters/claude-code.ts";
 import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
+import { defaultConfig } from "../../src/core/config.ts";
+import { backfill as importTranscripts, ingest as ingestSpool } from "../../src/core/ingest.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { spoolFile } from "../../src/spool/write.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const SID = "6f1e2d3c-4b5a-4968-8778-a6b5c4d3e2f1";
@@ -298,6 +302,42 @@ describe("claude-code hook capture: the time on a prompt's transcript entry", ()
     }
     assert.deepEqual(await missing(at(transcript)), { said: [], ts: [49] }, "16 others read since: read again");
     resetPromptIndexes();
+    rmSync(transcript);
+  });
+});
+
+describe("claude-code hook capture, then a transcript import", () => {
+  it("a second stop that only the import reads counts as cancelled, not as a copy of the first stop's prompt", async () => {
+    const entries = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 5000, "Explain the cache in one line"),
+      reply("m1", 7000, { type: "text", text: "It keeps answers." }),
+      prompt("u4", 60_000, "Now the eviction"),
+      stopPrompt("u5", 61_000, "p-u4", "[Request interrupted by user]"),
+    ];
+    // The Stop reads the first stop prompt. The person stops the last turn while the model writes, then
+    // quits: SessionEnd reads no transcript, so only an import reads the second.
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 5010, { prompt: "Explain the cache in one line" }),
+      stop(7100, "It keeps answers."),
+      line("UserPromptSubmit", 60_010, { prompt: "Now the eviction" }),
+      line("SessionEnd", 70_000, { reason: "prompt_input_exit" }),
+    ];
+    resetPromptIndexes();
+    writeFile(transcript, entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+    writeFile(spoolFile("claude-code", T), lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
+    const index = new MemoryIndexStore();
+    const opts = { config: defaultConfig(process.env), index, blobs: new MemoryBlobStore(), env: process.env };
+    const stops = async () => (await index.listEvents(SID, { kinds: ["user.message"] })).filter((e) => String(e.payload.text).startsWith("[Request interrupted")).map((e) => [e.ts - T, e.source]);
+    await ingestSpool({ ...opts, adapters: new Map([[claudeCode.id, claudeCode]]) });
+    assert.deepEqual(await stops(), [[1500, "hook"]]);
+    assert.deepEqual((await index.getSession(SID))?.stats.turnsByModel, { [MODEL]: { turns: 3, replied: 2, cancelled: 1, cancelNotRecorded: 1, durationsMs: [1501, 2101] } });
+    await importTranscripts({ ...opts, adapters: [claudeCode] });
+    assert.deepEqual(await stops(), [[1500, "hook"], [61_000, "transcript"]]);
+    assert.deepEqual((await index.getSession(SID))?.stats.turnsByModel, { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 2101, 1001] } });
     rmSync(transcript);
   });
 });
