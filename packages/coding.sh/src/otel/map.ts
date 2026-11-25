@@ -1826,10 +1826,13 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
   };
 
   const suffix = name ? (AGENT_EVENT.exec(name)?.[2] ?? name) : undefined;
-  const durationMs = num(a, "duration_ms");
-  // The start is the log's time less its duration, unless that is a time no Date holds.
-  const back = durationMs !== undefined ? ts - Math.round(durationMs) : ts;
-  const startTs = Math.abs(back) <= MAX_DATE_MS ? back : ts;
+  // The start is the log's time less its duration. A duration that reaches past what a Date holds
+  // on either side of the log's time is dropped, and the start is then the log's time: a session
+  // ends at its last activity, and a compaction is placed at the log's time and ends a duration later.
+  const logged = num(a, "duration_ms");
+  const back = logged !== undefined ? ts - Math.round(logged) : ts;
+  const durationMs = logged !== undefined && Math.abs(back) <= MAX_DATE_MS && Math.abs(ts + logged) <= MAX_DATE_MS ? logged : undefined;
+  const startTs = durationMs !== undefined ? back : ts;
   const timing = durationMs !== undefined ? { durationMs } : {};
   const usage = usageOf(a);
   const model = str(a, "model", "gen_ai.response.model", "gen_ai.request.model");

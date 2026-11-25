@@ -103,12 +103,59 @@ describe("times past what a Date holds", () => {
         inRange(s.endedAt, `${s.id} endedAt`);
         for (const e of await store.listEvents(s.id)) {
           inRange(e.ts, `${e.kind} ts`);
-          if (e.kind !== "llm.call" || e.durationMs !== 1e300) continue;
+          if (e.kind !== "llm.call" || e.payload.event !== "api_request") continue;
           calls++;
           assert.equal(e.ts, 1767225603000, "a call whose duration reaches before the earliest Date starts at its log's time");
+          assert.equal(e.durationMs, undefined, "and has no duration");
         }
       }
       assert.equal(calls, 1);
+    } finally {
+      await rx.close();
+      await store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A Claude Code log with no trace belongs to the session its session.id names, and that session
+  // ends at its last activity: an event's time plus its duration. A duration_ms that would put that
+  // end past what a Date holds is dropped, so sessions --json and status --json list the whole store.
+  it("leave the end of a session keyed by its logs in range when a log's duration reaches past them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cs-rx-dur-"));
+    const store = await SqliteIndexStore.open(join(root, "index.db"));
+    const rx = await startReceiver({ port: 0, store, blobs: new MemBlobs() });
+    try {
+      const ts = 1767225603000;
+      const attr = (key: string, v: string | number) => ({ key, value: typeof v === "string" ? { stringValue: v } : { doubleValue: v } });
+      const usage = [attr("model", "claude-sonnet-4-5"), attr("input_tokens", "1"), attr("output_tokens", "1")];
+      const log = (session: string, name: string, duration: number, extra: object[] = []) => ({
+        timeUnixNano: `${ts}000000`,
+        attributes: [attr("session.id", session), attr("event.name", name), attr("duration_ms", duration), ...extra],
+      });
+      const records = [
+        log("cc-dur-far", "api_request", 1e300, usage),
+        log("cc-dur-back", "api_request", -1e300, usage),
+        // Its start is in range; its end, the log's time plus the duration, is not.
+        log("cc-dur-compact", "compaction", 8.639e15),
+        log("cc-dur-tool", "tool_result", 1e300, [attr("tool_name", "Bash")]),
+        log("cc-dur-kept", "api_request", 1500, usage),
+      ];
+      const body = { resourceLogs: [{ resource: { attributes: [attr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: records }] }] };
+      const res = await post(rx.url, JSON.stringify(body), "/v1/logs");
+      assert.equal(res.status, 200, res.body);
+      const sessions = await store.listSessions({ limit: 100 });
+      assert.deepEqual(sessions.map((s) => s.id).sort(), ["cc-dur-back", "cc-dur-compact", "cc-dur-far", "cc-dur-kept", "cc-dur-tool"]);
+      for (const s of sessions) {
+        const events = await store.listEvents(s.id);
+        assert.ok(events.length >= 1, s.id);
+        const kept = s.id === "cc-dur-kept";
+        assert.equal(s.startedAt, kept ? ts - 1500 : ts, `${s.id} startedAt`);
+        assert.equal(s.endedAt, ts, `${s.id} endedAt`);
+        for (const e of events) {
+          assert.equal(e.durationMs, kept ? 1500 : undefined, `${s.id} ${e.kind} durationMs`);
+          assert.equal(e.payload.durationMs, undefined, `${s.id} ${e.kind} payload durationMs`);
+        }
+      }
     } finally {
       await rx.close();
       await store.close();
