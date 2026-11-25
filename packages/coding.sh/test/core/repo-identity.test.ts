@@ -7,11 +7,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, posix, win32 } from "node:path";
 import { after, before, describe, it } from "node:test";
-import type { Adapter, IndexStore } from "../../src/core/types.ts";
+import type { Adapter, IndexStore, QueryOpts } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
 import { isBare, mainWorktree, repoPath, worktreeRoots } from "../../src/core/git.ts";
 import { checkoutRepo, currentByCwd, matchesPlace, parsePlace, pathKey, scanSessions, usage } from "../../src/mcp/data.ts";
+import { facetSource } from "../../src/query/compile.ts";
 import { parseWhere, repoGroup, windowsSpelling, worktreeRepo } from "../../src/query/where.ts";
 import { facetCounts, findSessions } from "../../src/query/run.ts";
 import type { EventKind, Session } from "../../src/schema/index.ts";
@@ -19,9 +20,9 @@ import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { DAY_MS, groupKeys, loadMetricRows } from "../../src/viewer/metrics.ts";
 import { CLI } from "../_cli.ts";
-import { T0 } from "../query/_seed.ts";
+import { session, T0 } from "../query/_seed.ts";
 import { RawClient } from "../mcp/helpers.ts";
-import { WORKTREE_FACET, WORKTREE_QUERIES, worktreeSessions } from "../query/_where-fixture.ts";
+import { repoNameSessions, WORKTREE_FACET, WORKTREE_QUERIES, worktreeSessions } from "../query/_where-fixture.ts";
 
 describe("worktreeRepo: the repo an agent's worktree belongs to, from its path", () => {
   for (const [os, home, join_] of [["posix", "/home/user", posix.join], ["windows", "C:\\Users\\me", win32.join]] as const) {
@@ -94,6 +95,45 @@ describe("the repo key groups worktrees under their repo, in SQLite and the scan
       await index.close?.();
     });
   }
+
+  it("the repo facet counts the same in both under the viewer's filters, a where clause, a typed prefix and a limit", async () => {
+    // SQLite counts the sessions per folder first and names each folder once (facet.group); the
+    // scan names each session. Subagents, another project and a session with no folder ride along.
+    // The where clause's repo:other is left out, as a facet leaves out its own key's clauses.
+    assert.ok(facetSource("repo").group, "SQLite counts the repo facet by folder");
+    const at = (k: number) => ({ startedAt: T0 - (k + 1) * 60_000, endedAt: T0 - k * 60_000 });
+    const sessions = [
+      ...worktreeSessions(),
+      ...repoNameSessions(),
+      session("wt-child", { parent: { sessionId: "wt-main" }, cwd: "/work/demo", ...at(7) }),
+      session("wt-win-child", { parent: { sessionId: "wt-win" }, cwd: "C:\\work\\demo\\.claude\\worktrees\\b", ...at(8) }),
+      session("other-p2", { project: "p2", repo: { root: "/work/other", head: "abc" }, cwd: "/work/other", ...at(9) }),
+      session("no-folder", at(10)),
+    ];
+    const sqlite = await SqliteIndexStore.open(":memory:");
+    const memory = new MemoryIndexStore();
+    for (const s of sessions) {
+      await sqlite.upsertSession(s);
+      await memory.upsertSession(s);
+    }
+    const repo = async (index: IndexStore, q: string, o: QueryOpts) => (await facetCounts(index, p(q), ["repo"], o)).repo!.map((f): [string, number] => [f.value, f.count]);
+    const cases: [string, QueryOpts, [string, number][]][] = [
+      ["", {}, [["demo", 8], ["tmp", 3], ["other", 2], ["T", 1], ["tmp.Ab12", 1]]],
+      ["", { filter: { parentSessionId: null } }, [["demo", 6], ["tmp", 3], ["other", 2], ["T", 1], ["tmp.Ab12", 1]]],
+      ["", { filter: { project: "p2" } }, [["other", 1]]],
+      ["", { filter: { since: T0 - 6 * 60_000, until: T0 - 2 * 60_000 } }, [["demo", 4], ["T", 1], ["tmp", 1], ["tmp.Ab12", 1]]],
+      ["-dir:/tmp repo:other", { filter: { parentSessionId: null } }, [["demo", 6], ["other", 2], ["tmp", 2], ["T", 1], ["tmp.Ab12", 1]]],
+      ["", { prefix: "DE" }, [["demo", 8]]],
+      ["", { prefix: "t", limit: 2 }, [["tmp", 3], ["T", 1]]],
+      ["", { limit: 1 }, [["demo", 8]]],
+    ];
+    for (const [q, o, want] of cases) {
+      const what = `${JSON.stringify(q)} ${JSON.stringify(o)}`;
+      assert.deepEqual(await repo(sqlite, q, o), want, `sqlite ${what}`);
+      assert.deepEqual(await repo(memory, q, o), want, `scan ${what}`);
+    }
+    await sqlite.close();
+  });
 });
 
 // ------------------------------------------------------------ real git worktrees

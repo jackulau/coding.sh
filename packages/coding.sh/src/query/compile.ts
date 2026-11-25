@@ -156,13 +156,14 @@ export function orderBy(sort: { key: string; desc: boolean } | undefined): strin
  * Facet value expression and FROM clause for a key (one row per value per session).
  * Event keys read session_facets, the distinct values each session's events
  * have, so a count never touches the events table; `facetKey` is then the
- * session_facets key to bind.
+ * session_facets key to bind. `group` (a session key's facet.group): the
+ * columns to count sessions by first, and the value over them.
  */
-export function facetSource(key: string): { value: string; from: string; prefix?: string; facetKey?: string } {
+export function facetSource(key: string): { value: string; from: string; prefix?: string; facetKey?: string; group?: { cols: string[]; sql: string } } {
   const def = KEYS.get(key)!;
   if (def.multi) return { value: def.multi.prefix ? `substr(j.value, ${def.multi.prefix.length + 1})` : "j.value", from: `sessions s, json_each(${def.multi.from}) j`, prefix: def.multi.prefix };
   if (def.level === "event") return { value: "f.value", from: "session_facets f JOIN sessions s ON s.id = f.session_id", facetKey: key };
-  return { value: def.facet?.sql ?? def.sql[0]!, from: "sessions s" };
+  return { value: def.facet?.sql ?? def.sql[0]!, from: "sessions s", group: def.facet?.group };
 }
 
 /** Event keys whose values session_facets keeps (one row per session and value). */
