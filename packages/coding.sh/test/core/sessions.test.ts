@@ -1316,13 +1316,37 @@ describe("session usage rollup", () => {
     }
   });
 
-  it("model calls nested in each other in a loop count under the first of them", () => {
+  it("model calls nested in each other in a loop count under the first billed one, else the first of them", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);
     const r = rollupUsage([a, b, bill(a, 1), bill(b, 2)]);
     assert.deepEqual(r.usage, { costUsd: 3 });
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 });
     assert.deepEqual(rollupUsage([llm("x", "y", { inputTokens: 5 }), llm("y", "x", { inputTokens: 5 })]), { usage: { inputTokens: 5 }, duplicate: { calls: 1, tokens: 5 } });
+    // A billed call in a loop is the outer one, whichever came first, so its bill is for the step nested in the call
+    // below it and replaces that call's cost, as with no loop: $2. The first to arrive was the outer one, so the total
+    // depended on the order.
+    const lw = llm("w", "r", undefined);
+    const lr = llm("r", "w", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    const lk = llm("k", "r", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_w" });
+    for (const { label, evs } of runs([lw, lr, lk], [bill(lw, 2, "gen_w")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, `an estimated step: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 2, tokens: 10, costUsd: 3.25 }, `an estimated step: ${label}`);
+    }
+    const reported = llm("k", "r", { inputTokens: 10, costUsd: 1.75 }, { responseId: "gen_w" });
+    for (const { label, evs } of runs([lw, lr, reported], [bill(lw, 2, "gen_w")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, `a reported step: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 2, tokens: 10, costUsd: 4.75 }, `a reported step: ${label}`);
+    }
+    // A copy of the call below it that no bill covers is left out.
+    const top = llm("x", undefined, { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" }, { traceId: "t2" });
+    for (const { label, evs } of runs([lw, lr, lk, top], [bill(lw, 2, "gen_w")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, `a copy at the top: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, `a copy at the top: ${label}`);
+    }
   });
 
   // The walks up and down the nested calls stopped after 64 levels.
