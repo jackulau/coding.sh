@@ -47,6 +47,12 @@ export function codeSpansForShell(text: string, env: NodeJS.ProcessEnv, platform
  * PowerShell splits or splats. An argument with `$`, a
  * backtick or a double quote has no form both shells keep: PowerShell expands
  * or splits it inside double quotes, so it gets PowerShell's single quotes.
+ * Some arguments no form passes on. cmd ends the command at a line break,
+ * expands %NAME% inside quotes too, and keeps single quotes. Windows
+ * PowerShell 5.1 drops an empty argument and passes a double quote on
+ * unescaped; when it runs a .cmd, cmd still reads a line break and %NAME%,
+ * and reads & | < > ( ) and ^ as well. In PowerShell, an argument in quotes
+ * that ends in a backslash arrives changed.
  */
 export function quoteArg(s: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
   if (!windowsShell(env, platform)) return shellQuote(s);

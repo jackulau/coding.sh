@@ -33,7 +33,7 @@ export interface Knobs {
 /**
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
- * are rough. A property file without a time takes under half a minute. Every file together: about 10
+ * are rough. A property file without a time takes under half a minute. Every file together: about 14
  * minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
@@ -55,6 +55,8 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
   "pushback-prop": { runs: 10000 },
+  // Bound 1: every string up to length 4, about 3 minutes.
+  "quoting-proof": { bound: 1 },
   "redact-counted-prop": { runs: 10000 },
   "redact-deep-prop": { runs: 10000 },
   "redact-env-prop": { runs: 10000 },
@@ -64,6 +66,8 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "redact-tally-prop": { runs: 10000 },
   // About 3 minutes and 6.5 GB of heap. At bound 3 the first run alone has 3,443,232 states and needs 8 GB.
   "refold-model": { bound: 2 },
+  // Runs each model next to the real shell: 20 to 40 seconds on Windows, under a second elsewhere.
+  "shell-models": {},
   // About 1 minute.
   "short-id-prop": { runs: 10000 },
   // About 1.5 minutes and 2 GB of heap.
