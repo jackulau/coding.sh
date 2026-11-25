@@ -24,6 +24,14 @@ describe("bench schedule", () => {
     assert.throws(() => parseAt("25:00"), /HH:MM/);
   });
 
+  test("cron line keeps a % in a path, which cron reads as the end of the command, and refuses a line break", () => {
+    const log = shq(join(benchHome(o.env), "daily", "cron.log"));
+    assert.equal(cronLine({ ...o, cwd: "/srv/100%/it's" }), `15 6 * * * cd '/srv/100'\\%'/it'\\''s' && coding.sh bench run daily >> ${log} 2>&1 # coding.sh bench daily`);
+    assert.equal(cronLine({ ...o, cli: ["/opt/50%"] }), `15 6 * * * cd /srv/proj && '/opt/50'\\%'' bench run daily >> ${log} 2>&1 # coding.sh bench daily`);
+    assert.throws(() => cronLine({ ...o, cwd: "/srv/a\nb" }), /line break/);
+    assert.throws(() => cronLine({ ...o, reportDir: "/r/a\rb" }), /line break/);
+  });
+
   test("workflow: pinned version, secrets from env refs, history as an artifact", () => {
     const def = parseDefinition(
       `name = "daily"\n[source]\nkind = "github"\nrepo = "a/b"\ntokenEnv = "BENCH_GH_TOKEN"\n[[contenders]]\nname = "x"\nurl = "https://x.test"\nheaderEnv = { authorization = "X_KEY" }\n[[contenders]]\nname = "y"\ncommand = "y"\n[[graders]]\nkind = "llm"\nrubric = "r"\napiKeyEnv = "JUDGE_KEY"\n`,

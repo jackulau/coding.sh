@@ -56,12 +56,21 @@ export function shq(s: string): string {
 
 export const cronMarker = (name: string) => `# coding.sh bench ${name}`;
 
+/**
+ * shq for a crontab line. cron ends the command at a % and turns \% into %, so a % goes outside
+ * the single quotes as \%. A line break would end the line, so it is refused.
+ */
+function cronq(s: string): string {
+  if (/[\r\n]/.test(s)) throw new Error(`cron can't run ${JSON.stringify(s)}: it has a line break`);
+  return /^[\w@+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`).replace(/%/g, `'\\%'`)}'`;
+}
+
 export function cronLine(o: ScheduleOpts): string {
   const { h, m } = parseAt(o.at);
-  const cli = o.cli.map(shq).join(" ");
+  const cli = o.cli.map(cronq).join(" ");
   const log = join(benchHome(o.env), o.name, "cron.log");
-  const report = o.reportDir ? ` && ${cli} bench report ${shq(o.name)} --out ${shq(o.reportDir)}` : "";
-  return `${m} ${h} * * * cd ${shq(o.cwd)} && ${cli} bench run ${shq(o.name)}${report} >> ${shq(log)} 2>&1 ${cronMarker(o.name)}`;
+  const report = o.reportDir ? ` && ${cli} bench report ${cronq(o.name)} --out ${cronq(o.reportDir)}` : "";
+  return `${m} ${h} * * * cd ${cronq(o.cwd)} && ${cli} bench run ${cronq(o.name)}${report} >> ${cronq(log)} 2>&1 ${cronMarker(o.name)}`;
 }
 
 export function workflowYaml(o: ScheduleOpts): string {
