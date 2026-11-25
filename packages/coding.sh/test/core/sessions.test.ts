@@ -1299,6 +1299,21 @@ describe("session usage rollup", () => {
       assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 7 }, `a copy in another billed call: ${label}`);
       assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, `a copy in another billed call: ${label}`);
     }
+    // The copy that bill covers counts over the call between, whose cost the other bill replaces, so the copy's own 12
+    // tokens count in any order. The two ranked alike, so the one checked first counted.
+    const inner12 = llm("x", "w2", { inputTokens: 12, costUsd: 3 }, { responseId: "gen_r" }, { traceId: "t2" });
+    for (const { label, evs } of runs([w, r, k, w2, inner12], [bill(w, 2, "gen_w"), bill(w2, 5, "gen_w2")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 12, costUsd: 7 }, `the covered copy's tokens: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, `the covered copy's tokens: ${label}`);
+    }
+    // So too when a call nested in the call between carries its response id.
+    const x1 = llm("x1", "r", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    for (const { label, evs } of runs([w, r, k, x1, w2, inner], [bill(w, 2, "gen_w"), bill(w2, 5, "gen_w2")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 7 }, `a level below the call between: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 4, tokens: 30, costUsd: 9.25 }, `a level below the call between: ${label}`);
+    }
   });
 
   it("model calls nested in each other in a loop count under the first of them", () => {
