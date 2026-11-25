@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { request as httpRequest, createServer } from "node:http";
+import { request as httpRequest, createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { runBench } from "../../src/bench/run.ts";
 import { runsDir } from "../../src/bench/store.ts";
-import { benchmarkDir, BLOB_CAP_BYTES, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { benchmarkDir, BLOB_CAP_BYTES, createViewerHandler, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
@@ -998,5 +998,67 @@ describe("viewer server: long ids and the outline", () => {
     } finally {
       await v.close();
     }
+  });
+});
+
+describe("viewer server: a linked session that may not be there (?missing=null)", () => {
+  // The page asks for a linked session's record and its first events before it knows the id is
+  // there (earlyReads in ui/index.html). With ?missing=null both routes answer a session that is not
+  // there, or not the caller's, with a 200 and null; without it both stay 404.
+  const index = new MemoryIndexStore();
+  let server: Server;
+  let port = 0;
+  /** A GET as an unscoped caller, or as one scoped to `project` like a project read key. */
+  const get = async (path: string, project?: string): Promise<{ status: number; body: any }> => {
+    const headers: Record<string, string> = { connection: "close" };
+    if (project) headers["x-project"] = project;
+    const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers });
+    const text = await r.text();
+    return { status: r.status, body: r.status === 200 ? JSON.parse(text) : text };
+  };
+  const withMissing = (path: string) => path + (path.includes("?") ? "&" : "?") + "missing=null";
+  /** The first page of a session's events, as the page asks for it. */
+  const firstEvents = (id: string) => `/api/sessions/${encodeURIComponent(id)}/events?limit=5000&rows=1`;
+
+  before(async () => {
+    await index.upsertSession(session("s1"));
+    await index.upsertSession(session("demo/s2", { project: "demo" }));
+    await index.putEvents([event("s1", 1), event("s1", 2), event("demo/s2", 1, { project: "demo" })]);
+    const handler = await createViewerHandler({
+      index,
+      blobs: new FakeBlobs(),
+      authorize: (req) => (req.headers["x-project"] ? { project: String(req.headers["x-project"]) } : {}),
+      checkHost: (h) => h === `127.0.0.1:${port}`,
+      updateStatus: async () => ({ current: "0.0.0" }) as never,
+    });
+    server = createServer((req, res) => void handler(req, res));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    port = (server.address() as AddressInfo).port;
+  });
+  after(() => new Promise<void>((r) => server.close(() => r())));
+
+  test("a session that is not there is null with ?missing=null and a 404 without, on its record and its events", async () => {
+    for (const path of ["/api/sessions/nope", firstEvents("nope")]) {
+      assert.deepEqual(await get(withMissing(path)), { status: 200, body: null }, path);
+      assert.equal((await get(path)).status, 404, path);
+    }
+  });
+
+  test("a session that is there reads the same with ?missing=null", async () => {
+    assert.deepEqual(await get(withMissing("/api/sessions/s1")), await get("/api/sessions/s1"));
+    const events = await get(withMissing(firstEvents("s1")));
+    assert.equal(events.status, 200);
+    assert.equal(events.body.items.length, 2);
+    assert.deepEqual(events, await get(firstEvents("s1")));
+  });
+
+  test("another project's session is null to a project-scoped caller with ?missing=null and a 404 without", async () => {
+    for (const path of ["/api/sessions/s1", firstEvents("s1")]) {
+      assert.deepEqual(await get(withMissing(path), "demo"), { status: 200, body: null }, path);
+      assert.equal((await get(path, "demo")).status, 404, path);
+    }
+    const own = await get(withMissing(firstEvents("demo/s2")), "demo");
+    assert.equal(own.status, 200);
+    assert.equal(own.body.items.length, 1);
   });
 });

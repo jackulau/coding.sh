@@ -635,6 +635,16 @@ async function visibleSession(ctx: ApiCtx, id: string): Promise<Session> {
   return session;
 }
 
+/**
+ * visibleSession, except that with ?missing=null a session that is not there (or not the caller's)
+ * is null, which the route answers as a 200 with null: the viewer can ask about an id it got from
+ * a link without the browser logging an error.
+ */
+function visibleUnlessMissing(ctx: ApiCtx, id: string, q: URLSearchParams): Promise<Session | null> {
+  if (q.get("missing") !== "null") return visibleSession(ctx, id);
+  return visibleSession(ctx, id).catch((e) => (e instanceof HttpError && e.status === 404 ? null : Promise.reject(e)));
+}
+
 /** Project filter for lists: a scoped caller's project, else `?project=`. */
 function projectParam(ctx: ApiCtx, q: URLSearchParams): string | undefined {
   if (ctx.project !== undefined) return ctx.project;
@@ -751,11 +761,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (id === undefined || (id === "" && sub === undefined)) return sendJsonCompressed(req, res, await listSessions(ctx.index, q, projectParam(ctx, q)));
       const sessionId = checkId(id, "session id");
       if (sub === undefined) {
-        // ?missing=null: a session that is not there (or not the caller's) is a 200 with null, not a 404,
-        // so the viewer can ask about an id it got from a link without the browser logging an error.
-        const s = q.get("missing") === "null"
-          ? await visibleSession(ctx, sessionId).catch((e) => (e instanceof HttpError && e.status === 404 ? null : Promise.reject(e)))
-          : await visibleSession(ctx, sessionId);
+        const s = await visibleUnlessMissing(ctx, sessionId, q);
         if (!s) return sendJson(res, 200, null);
         // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json`
         // has them. Eval assets belong to no project: a project-scoped key sees none.
@@ -769,7 +775,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         return sendJsonCompressed(req, res, body);
       }
       if (sub === "events") {
-        await visibleSession(ctx, sessionId);
+        // ?missing=null too: the page asks for a linked session's first events before it knows the id is there.
+        if (!(await visibleUnlessMissing(ctx, sessionId, q))) return sendJson(res, 200, null);
         const limit = intParam(q, "limit", 5000, 1, 20_000);
         const offset = intParam(q, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
         const kinds = q.get("kinds")?.split(",").filter(Boolean);
