@@ -139,8 +139,12 @@ export interface KeyDef {
   multi?: { from: string; prefix: string };
   /** The values the scan fallback compares (one per `sql` expression, or every list item for multi). */
   get(row: Session & AgentEvent): unknown[];
-  /** Counted by facets: which value expression (default sql[0]). */
-  facet?: { sql?: string; get?(row: Session & AgentEvent): unknown[] };
+  /**
+   * Counted by facets: which value expression (default sql[0]). `group`, for a costly `sql` that
+   * reads only a few columns: those columns, and the same value over them as g.c0, g.c1, … (SQLite
+   * counts the sessions per distinct set of columns first, then works the value out once per set).
+   */
+  facet?: { sql?: string; get?(row: Session & AgentEvent): unknown[]; group?: { cols: string[]; sql: string } };
   /**
    * An event key that says something about the whole session (user:, read from its session.start):
    * in a group with other event keys it matches its own event, not the same one (levelOf: "mixed").
@@ -294,7 +298,8 @@ const KEY_LIST: KeyDef[] = [
     spell: windowsSpelling,
     sql: ["s.repo_root", sqlGroupPath(SQL_DIR, SQL_MAIN), sqlRepoName(SQL_DIR), sqlGroupName(SQL_DIR, SQL_MAIN)],
     get: (s) => [s.repo?.root, groupPath(s), repoName(s.repo?.root ?? s.cwd), repoGroup(s).name],
-    facet: { sql: sqlGroupName(SQL_DIR, SQL_MAIN), get: (s) => [repoGroup(s).name] },
+    // Far fewer folders than sessions: the name is worked out once per folder.
+    facet: { sql: sqlGroupName(SQL_DIR, SQL_MAIN), group: { cols: [SQL_DIR, SQL_MAIN], sql: sqlGroupName("g.c0", "g.c1") }, get: (s) => [repoGroup(s).name] },
   },
   { name: "launch", level: "session", type: "text", doc: "How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive", example: "launch:headless", sql: [stat("launch")], get: (s) => [s.stats?.launch], facet: {} },
   { name: "branch", level: "session", type: "text", doc: "Git branch", example: "branch:main", sql: ["json_extract(s.repo, '$.branch')"], get: (s) => [s.repo?.branch], facet: {} },

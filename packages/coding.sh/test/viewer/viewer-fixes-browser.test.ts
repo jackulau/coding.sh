@@ -1,5 +1,7 @@
-// Viewer fixes seen in headless Chrome: a running session's header follows its tail, an unknown id is
-// one request and a 404 state, a query that cannot parse is not sent, the Explore range names its
+// Viewer fixes seen in headless Chrome: a running session's header follows its tail, a link to a
+// session asks for its first events with its record and for each first read once (none when the page
+// embeds them), an unknown id is
+// those two reads answered null and a not-found state, a query that cannot parse is not sent, the Explore range names its
 // year, the totals count subagents apart ("+ N subagents"), the repo column falls back to the working directory, and
 // the page's DOM helper never writes "null".
 import assert from "node:assert/strict";
@@ -87,11 +89,55 @@ describe("viewer fixes in a browser", { skip: chrome ? false : "no Chrome/Chromi
     assert.deepEqual(p.errors, []);
   });
 
-  test("an unknown session id is one request and a not-found state", async () => {
+  test("a link to a session asks for its first events with its record, and for each first read once", async () => {
+    const p = await open("#/s/m03");
+    await p.waitFor("document.querySelector('.detail-head [data-fact=tokens] dd')", "the session open");
+    await pause(300);
+    const calls = await apiCalls(p);
+    for (const path of ["/api/sessions/m03?missing=null", "/api/labels?sessionId=m03", "/api/sessions?parent=m03&limit=500"])
+      assert.equal(calls.filter((u) => u === path).length, 1, `${path} once in ${calls.join(", ")}`);
+    // The first page of events is read once, by the early read: a page of another size would be a second read.
+    assert.deepEqual(calls.filter((u) => u.startsWith("/api/sessions/m03/events")), ["/api/sessions/m03/events?limit=5000&rows=1&missing=null"]);
+    // The page used to ask for the events only once the record came back.
+    const t = await p.eval(`(() => {
+      const at = (path) => performance.getEntriesByType('resource').find((e) => e.name.endsWith(path));
+      return { events: at('/api/sessions/m03/events?limit=5000&rows=1&missing=null').startTime, record: at('/api/sessions/m03?missing=null').responseEnd };
+    })()`);
+    assert.ok(t.events < t.record, `the events asked for at ${t.events} ms, the record back at ${t.record} ms`);
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("a link to the session the page embeds (the first row) asks for none of its first reads", async () => {
+    // The server embeds the first row's first reads in the page (src/viewer/ssr.ts); asking for them
+    // early would read each twice. A store of its own leaves this file's list as it is.
+    const own = new MemoryIndexStore();
+    await own.upsertSession(session("first-row", { stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.1 } } }));
+    await own.putEvents([event("first-row", 1), event("first-row", 2)]);
+    const v2 = await startViewer({ index: own, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    try {
+      await page?.close();
+      const p = (page = await browser.newPage());
+      await p.viewport(1280, 900);
+      await p.goto(v2.url + "#/s/first-row");
+      await p.waitFor("document.querySelector('.detail-head [data-fact=tokens] dd')", "the session open");
+      await pause(300);
+      const first = ["/api/sessions/first-row?missing=null", "/api/sessions/first-row/events?limit=5000&rows=1", "/api/sessions/first-row/events?limit=5000&rows=1&missing=null", "/api/labels?sessionId=first-row", "/api/sessions?parent=first-row&limit=500"];
+      assert.deepEqual((await apiCalls(p)).filter((u) => first.includes(u)), []);
+      assert.deepEqual(p.errors, []);
+    } finally {
+      await page?.close();
+      page = undefined;
+      await v2.close();
+    }
+  });
+
+  test("an unknown session id is two reads answered null and a not-found state", async () => {
     const p = await open("#/s/no-such-session");
     await p.waitFor("document.querySelector('.panel.empty h2')?.textContent === 'Session not found'", "not found");
     await pause(300);
-    assert.deepEqual((await apiCalls(p)).filter((u) => u.includes("no-such-session")), ["/api/sessions/no-such-session?missing=null"]);
+    // The record and the first events, asked for together before the page knows the id is not there.
+    assert.deepEqual((await apiCalls(p)).filter((u) => u.includes("no-such-session")).sort(), ["/api/sessions/no-such-session/events?limit=5000&rows=1&missing=null", "/api/sessions/no-such-session?missing=null"]);
+    assert.deepEqual(await p.eval("performance.getEntriesByType('resource').filter((e) => e.responseStatus >= 400).map((e) => e.name)"), []);
     assert.deepEqual(p.errors, []);
   });
 

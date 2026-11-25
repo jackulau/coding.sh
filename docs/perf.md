@@ -308,6 +308,28 @@ The load makes these rates lower than the desk runs above, so only the paired di
 result. A second check ingested one 5,000-event corpus with each build into the same folder and
 compared every table of `index.db` and `blobs/pack.db`: only the write times differ.
 
+## Repo facet
+
+`sessions --facets` and the viewer's filter list count sessions per repo. A session's repo is a
+long SQL expression over its folder: the main checkout's name, the worktree layouts of Claude
+Code, T3 Code and Codex, and the macOS temp folder. SQLite worked it out about two and a half
+times per session. The SQLite store now counts the sessions per folder first, then names each
+folder once, and a store has far fewer folders than sessions. `test/core/repo-identity.test.ts`
+checks that SQLite and the in-memory scan give the same counts.
+
+Desk, Windows 11, Node 24.20, Nov 24, 2026.
+[scripts/dogfood/bench-where.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench-where.mjs)
+ran on a generated store of 3,600 sessions and 208,010 events in 40 folders. Each run gives every
+query's warm median of 9 calls, and 10 pairs of runs of the old and new code alternate. In
+brackets is the paired median difference with its 95% bootstrap interval.
+
+| Query | Before | After |
+| --- | --- | --- |
+| `facets agent,model,repo,flag` | 35.2 ms | 8.9 ms (-26.3 [-27.2, -25.3]) |
+
+The other 19 queries (sessions, events, search and the other facets) moved by at most 0.8 ms, each
+with an interval that includes no change, and every query returned the same number of rows.
+
 ## OTLP collector
 
 `coding.sh collector` stores concurrent OTLP requests together:
@@ -514,3 +536,27 @@ of the same build.
 
 In Chrome, with all 30,155 steps loaded, the timeline scrolls with a p95 of 11 ms per jump and
 9 ms per wheel step. No task during the background load ran longer than 0.1 s.
+
+## Session links
+
+A link straight to a session (`#/s/<id>`) opened it once the whole page script had run: the page
+asked for the session's record, waited for it, then asked for the first page of events. The first
+lines of the script now send both requests at once, and the labels and sub-sessions follow once the
+record says the session is there. A session whose first reads the server embeds in the page (the
+list's first row) sends neither. `test/viewer/viewer-fixes-browser.test.ts` checks which reads a
+link sends, and that each is sent once.
+
+Desk, Windows 11, Node 24.20, Nov 25, 2026, the built `cli.mjs`. A paired script opened a link to
+the oldest of five sessions of 2,000 events in headless Chrome with the cache off, 120 times per
+build in ABBA order, each build on its own throwaway store. Times are medians from the start of
+navigation. In brackets is the paired median difference with its 95% bootstrap interval.
+
+| Step | Before | After |
+| --- | --- | --- |
+| Events request sent | 148 ms | 93 ms (-56 [-72, -41]) |
+| Events loaded | 219 ms | 166 ms (-53 [-74, -29]) |
+| First timeline rows | 337 ms | 292 ms (-45 [-82, -12]) |
+| `DOMContentLoaded` | 143 ms | 153 ms (+9 [-9, 23]) |
+
+The rows came sooner in 79% of the pairs. Drawing them once the events arrive takes the same time in
+both builds, about 125 ms, so the gain is the time the events request no longer waits.
