@@ -1748,6 +1748,8 @@ function stableJson(v: unknown): string {
 }
 
 const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+/** The largest time in ms, either side of 1970, that a Date holds. */
+const MAX_DATE_MS = 8_640_000_000_000_000;
 
 /** Log time in ms: time_unix_nano, else observed time, else an ISO event.timestamp attribute. */
 function logTime(rec: OtelLogRecord): { ms: number; nanos: string } {
@@ -1823,7 +1825,9 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
 
   const suffix = name ? (AGENT_EVENT.exec(name)?.[2] ?? name) : undefined;
   const durationMs = num(a, "duration_ms");
-  const startTs = durationMs !== undefined ? ts - Math.round(durationMs) : ts;
+  // The start is the log's time less its duration, unless that is a time no Date holds.
+  const back = durationMs !== undefined ? ts - Math.round(durationMs) : ts;
+  const startTs = Math.abs(back) <= MAX_DATE_MS ? back : ts;
   const timing = durationMs !== undefined ? { durationMs } : {};
   const usage = usageOf(a);
   const model = str(a, "model", "gen_ai.response.model", "gen_ai.request.model");

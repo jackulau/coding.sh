@@ -62,12 +62,19 @@ export function jsonId(v: unknown, bytes: 8 | 16): string | undefined {
   throw new OtlpDecodeError(`invalid ${bytes === 16 ? "trace" : "span"} id ${JSON.stringify(v.slice(0, 64))}`);
 }
 
-/** fixed64 nanos as decimal string; accepts strings and numbers. */
+/** fixed64 holds times below 2^64 ns (the year 2554), each one a time a Date holds. */
+const FIXED64_END = 1n << 64n;
+
+/** fixed64 nanos as decimal string; accepts strings and numbers. A value protobuf cannot carry is unset ("0"). */
 function nanos(v: unknown): string {
-  if (typeof v === "string" && /^\d+$/.test(v)) return BigInt(v).toString();
-  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return BigInt(Math.round(v)).toString();
-  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return BigInt(Math.round(Number(v))).toString();
-  return "0";
+  let n: bigint | undefined;
+  if (typeof v === "string" && /^\d+$/.test(v)) {
+    // Past 20 digits, a value is past 2^64.
+    const digits = v.replace(/^0+(?=\d)/, "");
+    if (digits.length <= 20) n = BigInt(digits);
+  } else if (typeof v === "number" && Number.isFinite(v) && v >= 0) n = BigInt(Math.round(v));
+  else if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) n = BigInt(Math.round(Number(v)));
+  return n !== undefined && n >= 0n && n < FIXED64_END ? n.toString() : "0";
 }
 
 function int64(v: unknown): number | string | null {

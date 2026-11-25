@@ -171,6 +171,16 @@ describe("OTLP/JSON quirks", () => {
     assert.equal(jsonAnyValue({ string_value: true }), "true");
   });
 
+  it("reads a time outside fixed64 as unset, as protobuf cannot carry one", () => {
+    // 1e23 ns is past what fixed64 holds, and past what a Date holds.
+    const start = (t: unknown) => decodeTraceJson({ resourceSpans: [{ scopeSpans: [{ spans: [{ startTimeUnixNano: t }] }] }] })[0]!.scopeSpans[0]!.spans[0]!.startTimeUnixNano;
+    for (const t of ["99999999999999999999999", "18446744073709551616", "1e300", "-1e300", "-5", 1e300, "9".repeat(1_000_000)]) assert.equal(start(t), "0", String(t).slice(0, 30));
+    assert.equal(start("18446744073709551615"), "18446744073709551615");
+    assert.equal(start("0001767225600000000000"), "1767225600000000000");
+    assert.equal(start("1.5e18"), "1500000000000000000");
+    assert.equal(start(1767225600000000000), "1767225600000000000");
+  });
+
   it("rejects non-object bodies and non-array resourceSpans", () => {
     assert.throws(() => decodeTraceJson([]), OtlpDecodeError);
     assert.throws(() => decodeTraceJson("x"), OtlpDecodeError);

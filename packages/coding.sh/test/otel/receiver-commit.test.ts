@@ -17,9 +17,9 @@ import { MemBlobs, MemIndex } from "./_memstore.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`../fixtures/otel/${name}`, import.meta.url), "utf8");
 
-function post(base: string, data: string): Promise<{ status: number; body: string }> {
+function post(base: string, data: string, path = "/v1/traces"): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = request(new URL("/v1/traces", base), { method: "POST", agent: false, headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } }, (res) => {
+    const req = request(new URL(path, base), { method: "POST", agent: false, headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
       res.on("end", () => resolve({ status: res.statusCode!, body }));
@@ -68,6 +68,52 @@ describe("receiver group commit", () => {
       }
     }
     assert.ok(seen.size >= 6);
+  });
+});
+
+// A JSON time past what fixed64 holds is read as unset, and a log whose duration would put its start
+// before the earliest time a Date holds starts at the log's time. SQLite reads back no integer past
+// 2^53, and --json output holds no time a Date cannot: every stored time stays within +-8.64e15 ms.
+describe("times past what a Date holds", () => {
+  it("are not stored, and every session still lists", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cs-rx-time-"));
+    const store = await SqliteIndexStore.open(join(root, "index.db"));
+    const rx = await startReceiver({ port: 0, store, blobs: new MemBlobs() });
+    try {
+      const traceId = "0af7651916cd43dd8448eb211c80319c";
+      const far = "99999999999999999999999";
+      const attr = (key: string, v: string | number) => ({ key, value: typeof v === "string" ? { stringValue: v } : { doubleValue: v } });
+      const span = { traceId, spanId: "b7ad6b7169203331", name: "chat m", kind: 3, startTimeUnixNano: far, endTimeUnixNano: far, attributes: [attr("gen_ai.operation.name", "chat")] };
+      const traces = { resourceSpans: [{ resource: { attributes: [attr("service.name", "probe")] }, scopeSpans: [{ scope: { name: "s" }, spans: [span] }] }] };
+      const logs = (timeUnixNano: string, attributes: object[]) => ({
+        resourceLogs: [{ resource: { attributes: [attr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: [{ timeUnixNano, traceId, attributes }] }] }],
+      });
+      const prompt = logs(far, [attr("event.name", "user_prompt"), attr("prompt", "hi")]);
+      const call = logs("1767225603000000000", [attr("event.name", "api_request"), attr("model", "claude-sonnet-4-5"), attr("input_tokens", "1"), attr("output_tokens", "1"), attr("duration_ms", 1e300)]);
+      for (const [path, body] of [["/v1/traces", traces], ["/v1/logs", prompt], ["/v1/logs", call]] as const) {
+        const res = await post(rx.url, JSON.stringify(body), path);
+        assert.equal(res.status, 200, `${path} ${res.body}`);
+      }
+      const sessions = await store.listSessions({ limit: 100 });
+      assert.ok(sessions.length >= 1);
+      const inRange = (t: number | undefined, label: string) => t === undefined || assert.ok(Math.abs(t) <= 8_640_000_000_000_000, `${label}: ${t}`);
+      let calls = 0;
+      for (const s of sessions) {
+        inRange(s.startedAt, `${s.id} startedAt`);
+        inRange(s.endedAt, `${s.id} endedAt`);
+        for (const e of await store.listEvents(s.id)) {
+          inRange(e.ts, `${e.kind} ts`);
+          if (e.kind !== "llm.call" || e.durationMs !== 1e300) continue;
+          calls++;
+          assert.equal(e.ts, 1767225603000, "a call whose duration reaches before the earliest Date starts at its log's time");
+        }
+      }
+      assert.equal(calls, 1);
+    } finally {
+      await rx.close();
+      await store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
