@@ -601,7 +601,9 @@ export function ownCheckout(s: Session, checkouts: Checkouts | undefined, isChec
   return isCheckout(s.cwd, root);
 }
 
-const sessionCost = (s: Session): number => s.stats.usage?.estimatedCostUsd ?? s.stats.usage?.costUsd ?? 0;
+// costUsd is the whole cost; estimatedCostUsd is only the part of it priced from token counts.
+// A session with an estimate and no costUsd is not one the fold writes; its estimate still counts.
+const sessionCost = (s: Session): number => s.stats.usage?.costUsd ?? s.stats.usage?.estimatedCostUsd ?? 0;
 const roundUsd = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** One workflow agent of a run: its phase, label and state, and what it and the sessions under it cost (`work show`). */

@@ -1,7 +1,9 @@
 // Redaction runs before anything is written (index, blobs, sinks). Rules are
 // tuned for precision: they key on vendor prefixes or on an explicit secret
 // name next to the value, so ordinary code, paths and sha hashes pass through.
-import { statSync } from "node:fs";
+//
+// The hook's redaction rules (spool/redact.ts, bundled to hook-redact.mjs) include this file,
+// so it loads node:fs from process.getBuiltinModule, as spool/hook.ts says.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { weightsCheckpointOf } from "./weights.ts";
 
@@ -693,7 +695,7 @@ const ENV_PLACE_NAME = /^(?:OLD)?PWD$|^SESSION_MANAGER$|_(?:PATH|DIR|FILE|SOCK)$
 function isExistingPath(value: string): boolean {
   if (!/^(?:\/|[A-Za-z]:[\\/])/.test(value) || value.includes("\n")) return false;
   try {
-    return statSync(value, { throwIfNoEntry: false }) !== undefined;
+    return process.getBuiltinModule("node:fs").statSync(value, { throwIfNoEntry: false }) !== undefined;
   } catch {
     return false;
   }

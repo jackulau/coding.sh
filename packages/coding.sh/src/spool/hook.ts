@@ -49,13 +49,20 @@
 // events the hook starts a detached, lock-guarded `coding.sh ingest
 // --background` and does not wait for it (./kick.ts).
 //
-// Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts,
+// Built-in modules: node:fs and node:path only (here and in ./write.ts, ./kick.ts,
 // ./gate.ts, ./devin.ts and ../core/paths.ts, plus the pure
-// ../integrations/gateway/ids.ts).
+// ../integrations/gateway/ids.ts), and node:os only when HOME and USERPROFILE are
+// unset or ../core/lock.ts checks a lock's holder.
 // The redaction rules (./redact.ts with ../core/redact.ts and ../core/toml.ts,
 // bundled to dist/hook-redact.mjs) are imported only for a payload ./gate.ts
 // says may hold a secret; node:child_process only when an ingest starts.
-import { fstatSync, readSync, writeSync } from "node:fs";
+//
+// Every module the hook loads takes built-in modules from process.getBuiltinModule,
+// never from an import (test/verify/hook-imports.test.ts checks it). The first import
+// of a built-in makes Node build an ES module for it, which reads each of its exports:
+// for node:fs that loads Node's stream modules as well, several milliseconds of a hook
+// call. process.getBuiltinModule returns the module Node has already loaded. A node too old to
+// have it gets it from the first lines of hook.mjs (HOOK_BANNER in scripts/bundle.mjs).
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import { devinHookAgent } from "./devin.ts";
@@ -64,6 +71,8 @@ import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
 import { spawnedByFromEnv } from "./spawned.ts";
 import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError, payloadSessionId, recordDisabledSession, type RedactLine } from "./write.ts";
+
+const fs = process.getBuiltinModule("node:fs");
 
 const MAX_STDIN_BYTES = 64 * 1024 * 1024;
 /** A paused call's payload up to this size is parsed for its session id; a larger one is searched. */
@@ -76,7 +85,7 @@ const sleeper = new Int32Array(new SharedArrayBuffer(4));
 function readStdin(): { text: string; truncated: boolean } {
   let isChar = false;
   try {
-    isChar = fstatSync(0).isCharacterDevice();
+    isChar = fs.fstatSync(0).isCharacterDevice();
   } catch {
     return { text: "", truncated: false }; // fd 0 closed
   }
@@ -91,7 +100,7 @@ function readStdin(): { text: string; truncated: boolean } {
   for (;;) {
     let n: number;
     try {
-      n = readSync(0, buf, 0, buf.length, null);
+      n = fs.readSync(0, buf, 0, buf.length, null);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EAGAIN" || code === "EWOULDBLOCK") {
@@ -234,7 +243,7 @@ async function main(): Promise<void> {
   }
   if (out) {
     try {
-      writeSync(1, out);
+      fs.writeSync(1, out);
     } catch {
       // stdout closed: nothing to do.
     }

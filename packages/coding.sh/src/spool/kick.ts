@@ -18,9 +18,13 @@
 //
 // Skipped for eval runs (CODING_SH_RUN_ID: the runner ingests itself) and when
 // CODING_SH_NO_AUTO_INGEST=1.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+//
+// On the hook's hot path: it takes node:fs, and node:child_process when it starts an ingest,
+// from process.getBuiltinModule as ./hook.ts says.
 import { isLocked, wakeMarker } from "../core/lock.ts";
 import { paths } from "../core/paths.ts";
+
+const fs = process.getBuiltinModule("node:fs");
 
 /** Hook events that end a turn or a session, across agents. */
 export const END_EVENT = /^(stop|session[._-]?end|session\.idle|afteragent)$/i;
@@ -32,14 +36,14 @@ export function kickIngest(event: string, env: NodeJS.ProcessEnv = process.env, 
   if (!END_EVENT.test(event) || env.CODING_SH_RUN_ID || env.CODING_SH_NO_AUTO_INGEST === "1") return undefined;
   const p = paths(env);
   try {
-    writeFileSync(wakeMarker(p.ingestLock), "", { mode: 0o600 });
+    fs.writeFileSync(wakeMarker(p.ingestLock), "", { mode: 0o600 });
   } catch {
     // no spool dir yet: nothing for an ingest to miss
   }
   if (isLocked(p.ingestLock)) return undefined; // the live holder re-runs for the marker
   let cli: string;
   try {
-    cli = readFileSync(p.cliPointer, "utf8").trim();
+    cli = fs.readFileSync(p.cliPointer, "utf8").trim();
   } catch {
     return undefined; // init ran from source, or before this existed: reads ingest lazily
   }
@@ -53,7 +57,7 @@ export function kickIngest(event: string, env: NodeJS.ProcessEnv = process.env, 
  * and by init (`extra`: --backfill and its agents) when its import budget runs out.
  */
 export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner, extra: string[] = []): string | undefined {
-  if (!cli || !existsSync(cli)) return undefined;
+  if (!cli || !fs.existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
   const child = run(process.execPath, [cli, "ingest", "--background", ...extra], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
   // A spawn that fails (node gone after an upgrade, no process slots) reports it here, after this
@@ -77,9 +81,9 @@ export const START_EVENT = /^session[._-]?start$/i;
 export function kickProxy(event: string, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner): string | undefined {
   if (!START_EVENT.test(event) || env.CODING_SH_NO_PROXY_AUTOSTART === "1") return undefined;
   const p = paths(env);
-  if (!existsSync(p.proxyInstalls)) return undefined;
+  if (!fs.existsSync(p.proxyInstalls)) return undefined;
   try {
-    const pid = (JSON.parse(readFileSync(p.proxyState, "utf8")) as { pid?: unknown }).pid;
+    const pid = (JSON.parse(fs.readFileSync(p.proxyState, "utf8")) as { pid?: unknown }).pid;
     if (typeof pid === "number" && pid > 0) {
       process.kill(pid, 0);
       return undefined; // running
@@ -90,11 +94,11 @@ export function kickProxy(event: string, env: NodeJS.ProcessEnv = process.env, s
   }
   let cli: string;
   try {
-    cli = readFileSync(p.cliPointer, "utf8").trim();
+    cli = fs.readFileSync(p.cliPointer, "utf8").trim();
   } catch {
     return undefined;
   }
-  if (!cli || !existsSync(cli)) return undefined;
+  if (!cli || !fs.existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
   const child = run(process.execPath, [cli, "proxy", "--background"], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
   child.on("error", () => {}); // as in spawnBackgroundIngest: a failed spawn must not end the hook
