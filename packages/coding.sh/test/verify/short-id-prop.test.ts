@@ -25,6 +25,9 @@
 //   subagents are the id, and other ids are all listed. The references read are every prefix of
 //   each id, of what follows each `:sub:` in it and of it after `default/`; its parts cut to 1 to 9
 //   characters, all of them or the first alone; and `x_` with 1 to 7 of its alias digits.
+// - A reference that reads as several sessions makes findSessionRef throw AmbiguousRef, which holds
+//   the reference, up to 10 of the sessions, newest first, each with its printed reference, and
+//   whether there are more.
 //
 // Ids are drawn from stems that share long prefixes: UUIDs, T3 Code-like thread ids with
 // percent-encoding, plain ids over 40 characters, SDK ids under `default/` and other projects, `x_`
@@ -38,16 +41,16 @@
 // `default/` or not, whose own id starts with the first characters of the parent's id after
 // `default/`.
 //
-// The last test shows each check fails on a mutant of the shortener, the reader or the call
-// resolver.
+// The last test shows each check fails on a mutant of the shortener, the reader, the call resolver
+// or the session lookup.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 with a store);
 // CODING_SH_PROP_SEED=s replays one. The last test reads neither.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { findSessionRef, IdSet, matchRef, shortestRef, type RefMatch } from "../../src/core/session-ref.ts";
+import { AmbiguousRef, findSessionRef, IdSet, matchRef, shortestRef, type RefMatch } from "../../src/core/session-ref.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import type { IndexStore } from "../../src/core/types.ts";
+import type { IndexStore, Session } from "../../src/core/types.ts";
 import { CallRefError, resolveCall } from "../../src/proxy/calls.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -334,14 +337,15 @@ const CASE: Gen<string[]> = gen.map(
 
 // ---------------------------------------------------------------- checks
 
-/** What the checks run against: the real shortener, reader and call resolver, or a mutant of one. */
+/** What the checks run against: the real shortener, reader, call resolver and session lookup, or a mutant of one. */
 interface Subject {
   shorten: (set: IdSet, id: string) => string;
   read: (set: IdSet, ref: string) => RefMatch | undefined;
   call: (index: IndexStore, ref: string) => Promise<AgentEvent>;
+  find: (index: IndexStore, ref: string) => Promise<Session | undefined>;
 }
 
-const REAL: Subject = { shorten: shortestRef, read: matchRef, call: resolveCall };
+const REAL: Subject = { shorten: shortestRef, read: matchRef, call: resolveCall, find: findSessionRef };
 
 const count = (seen: Map<string, number> | undefined, key: string): void => {
   seen?.set(key, (seen.get(key) ?? 0) + 1);
@@ -361,21 +365,34 @@ function callEvent(sessionId: string, id: string, ts: number): AgentEvent {
   return { id, v: 0, sessionId, ts, agent: "claude-code", kind: "llm.call", model: "claude-opus-5-5", usage: { inputTokens: 1, outputTokens: 1 }, payload: {} };
 }
 
-/** A memory store with a session of 1 to 3 model calls per id: each printed reference opens its session, and its first and last calls after `#`. */
-async function checkStore(s: Subject, ids: readonly string[]): Promise<void> {
-  const set = new IdSet(ids);
+/** A memory store with a session per id, of 1 to 3 model calls, started in an order the ids' order does not give. */
+async function storeOf(ids: readonly string[]): Promise<{ index: MemoryIndexStore; calls: Map<string, AgentEvent[]>; sessions: Map<string, Session> }> {
+  const key = (id: string): string => `${aliasOf(id, 14)} ${id}`;
+  const rank = new Map([...ids].sort((a, b) => (key(a) < key(b) ? -1 : 1)).map((id, r) => [id, r]));
   const index = new MemoryIndexStore();
   const calls = new Map<string, AgentEvent[]>();
-  set.ids.forEach((id, i) => {
+  ids.forEach((id, i) => {
     const mine: AgentEvent[] = [];
-    for (let j = 0; j <= i % 3; j++) mine.push(callEvent(id, `e${i}.${j}`, 1000 * i + j));
+    for (let j = 0; j <= i % 3; j++) mine.push(callEvent(id, `e${i}.${j}`, 1000 * (rank.get(id) ?? 0) + j));
     calls.set(id, mine);
   });
   await index.putEvents([...calls.values()].flat());
-  for (const mine of calls.values()) await index.upsertSession(buildSession(mine));
+  const sessions = new Map<string, Session>();
+  for (const [id, mine] of calls) {
+    const session = buildSession(mine);
+    sessions.set(id, session);
+    await index.upsertSession(session);
+  }
+  return { index, calls, sessions };
+}
+
+/** Each printed reference opens its session, and its first and last calls after `#`. */
+async function checkStore(s: Subject, ids: readonly string[]): Promise<void> {
+  const set = new IdSet(ids);
+  const { index, calls } = await storeOf(set.ids);
   for (const id of set.ids) {
     const ref = s.shorten(set, id);
-    const found = await findSessionRef(index, ref);
+    const found = await s.find(index, ref);
     assert.equal(found?.id, id, `findSessionRef opens ${found ? q(found.id) : "nothing"} for ${q(ref)}, printed for ${q(id)}`);
     const mine = calls.get(id) ?? [];
     for (const [n, want] of [[1, mine[0]], [-1, mine[mine.length - 1]]] as const) {
@@ -445,6 +462,43 @@ function checkReads(s: Subject, ids: readonly string[], seen?: Map<string, numbe
   }
 }
 
+/** Each reference that reads as several sessions makes the lookup throw AmbiguousRef: the reference, up to 10 of them newest first as they print, and whether there are more. */
+async function checkAmbiguous(s: Subject, ids: readonly string[], seen?: Map<string, number>): Promise<void> {
+  const set = new IdSet(ids);
+  const { index, sessions } = await storeOf(set.ids);
+  const done = new Set<string>();
+  for (const ref of refsFor(set.ids)) {
+    const m = matchRef(set, ref);
+    if (!m || !("ambiguous" in m) || WORDS.has(ref)) continue;
+    const key = m.ambiguous.join("\n");
+    if (done.has(key)) continue;
+    done.add(key);
+    const n = m.ambiguous.length;
+    count(seen, n > 10 ? "more than 10 sessions" : "2 to 10 sessions");
+    const e: unknown = await s.find(index, ref).then(
+      (found) => assert.fail(`${q(ref)}, which reads as ${n} ids, opens ${found ? q(found.id) : "nothing"}`),
+      (x: unknown) => x,
+    );
+    assert.ok(e instanceof AmbiguousRef, `${q(ref)}, which reads as ${n} ids, throws ${String(e)}`);
+    const of = `the error for ${q(ref)}`;
+    assert.equal(e.ref, ref, `${of} holds the reference ${q(String(e.ref))}`);
+    assert.equal(e.more, n > 10, `${of} says there are${e.more ? "" : " no"} more than it lists, of ${n}`);
+    assert.equal(e.candidates.length, Math.min(n, 10), `${of} lists ${e.candidates.length} of its ${n} sessions`);
+    assert.equal(new Set(e.candidates.map((c) => c.id)).size, e.candidates.length, `${of} lists a session twice`);
+    for (const c of e.candidates) {
+      const stored = sessions.get(c.id);
+      assert.ok(stored && m.ambiguous.includes(c.id), `${of} lists ${q(c.id)}, which the reference does not read as`);
+      assert.equal(c.shortId, s.shorten(set, c.id), `${of} lists ${q(c.id)} as ${q(c.shortId)}, not as it prints`);
+      assert.deepEqual([c.agent, c.startedAt, c.title], [stored.agent, stored.startedAt, stored.title], `${of} lists ${q(c.id)} with another agent, start or title`);
+    }
+    const starts = e.candidates.map((c) => c.startedAt);
+    assert.ok(
+      starts.every((t, i) => i === 0 || starts[i - 1]! >= t),
+      `${of} lists its sessions started at ${starts.join(", ")}, not newest first`,
+    );
+  }
+}
+
 /** Fails unless every kind in `kinds` was seen; reports the counts. */
 function covered(t: { diagnostic: (m: string) => void }, seen: Map<string, number>, kinds: readonly string[]): void {
   t.diagnostic([...seen].map(([k, n]) => `${k}: ${n}`).join(", "));
@@ -481,7 +535,13 @@ test("a reference that is not an alias reads as the first of matchRef's steps th
   covered(t, seen, ["the exact id", "a 4-character prefix", "a longer prefix", "an SDK id without default/", "a subagent's own id", "a short subagent id", "nothing", "several ids"]);
 });
 
-test("each check fails on a mutant of the shortener, the reader or the call resolver", async (t) => {
+test("a reference that reads as several sessions throws AmbiguousRef: the reference, up to 10 of them newest first, and whether there are more", async (t) => {
+  const seen = new Map<string, number>();
+  await forAll(CASE, (ids) => checkAmbiguous(REAL, ids, seen), { runs: STORE_RUNS, label: "ambiguous" });
+  covered(t, seen, ["2 to 10 sessions"]);
+});
+
+test("each check fails on a mutant of the shortener, the reader, the call resolver or the session lookup", async (t) => {
   const eight: Subject = { ...REAL, shorten: (_set, id) => id.slice(0, 8) };
   const oneShort: Subject = {
     ...REAL,
@@ -530,6 +590,17 @@ test("each check fails on a mutant of the shortener, the reader or the call reso
       return matchRef(set, ref);
     },
   };
+  /** The real lookup, with the AmbiguousRef it throws changed by `edit`. */
+  const editAmbiguous = (edit: (e: AmbiguousRef) => AmbiguousRef): Subject => ({
+    ...REAL,
+    find: (index, ref) =>
+      findSessionRef(index, ref).catch((e: unknown) => {
+        throw e instanceof AmbiguousRef ? edit(e) : e;
+      }),
+  });
+  const oldestFirst = editAmbiguous((e) => new AmbiguousRef(e.ref, [...e.candidates].reverse(), e.more));
+  const wholeIds = editAmbiguous((e) => new AmbiguousRef(e.ref, e.candidates.map((c) => ({ ...c, shortId: c.id })), e.more));
+  const noRef = editAmbiguous((e) => new AmbiguousRef("", e.candidates, e.more));
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
     ["names, a shortener that prints 8 characters", () => failure(CASE, (ids) => checkNames(eight, ids), "eight"), /printed for .*, names (nothing|\d+ ids|")/],
     ["names, a shortener one character short", () => failure(CASE, (ids) => checkNames(oneShort, ids), "one short"), /printed for .*, names (nothing|\d+ ids|")/],
@@ -542,6 +613,9 @@ test("each check fails on a mutant of the shortener, the reader or the call reso
     ["reads, a reader that takes 3-character prefixes", () => failure(CASE, (ids) => checkReads(from3, ids), "from 3"), /reads as/],
     ["reads, a reader that takes prefixes from 5 characters", () => failure(CASE, (ids) => checkReads(from5, ids), "from 5"), /reads as/],
     ["reads, a reader that takes x_ and 7 digits for an alias", () => failure(CASE, (ids) => checkReads(sevenDigits, ids), "seven digits"), /reads as/],
+    ["ambiguous, a lookup that lists the sessions oldest first", () => failure(CASE, (ids) => checkAmbiguous(oldestFirst, ids), "oldest first"), /not newest first/],
+    ["ambiguous, a lookup that lists each session by its whole id", () => failure(CASE, (ids) => checkAmbiguous(wholeIds, ids), "whole ids"), /not as it prints/],
+    ["ambiguous, a lookup whose error drops the reference", () => failure(CASE, (ids) => checkAmbiguous(noRef, ids), "no ref"), /holds the reference/],
   ];
   for (const [label, run, why] of mutants) {
     const f = await run();
