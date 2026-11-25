@@ -105,12 +105,15 @@ test each hit.
 | `mcp` | event | MCP server of a tool call | `mcp:github` |
 | `error` | event | Error text of a failed call, or an error event's message, contains (case-insensitive) | `error:ENOENT` |
 | `event.duration` | event | Event duration | `event.duration>30s` |
-| `user` | event | User the app named (`langfuse.user.id`, `user.id` or `enduser.id`) | `user:alice` |
+| `user` | event | User the app named (the SDKs' `trace()` user id, `langfuse.user.id`, `user.id` or `enduser.id`) | `user:alice` |
 | `env` | event | Deployment environment (`langfuse.environment` or `deployment.environment.name`) | `env:production` |
 | `release` | event | Release or app version (`langfuse.release` or `service.version`) | `release:v1.4.*` |
 
-`user`, `env` and `release` read the session's start event, where the OpenTelemetry receiver puts the
-attributes of a trace's root span or resource. Beside other event keys they match on their own:
+`user`, `env` and `release` read a session's start events, where the OpenTelemetry receiver puts the
+attributes of a trace's root span or resource, and the SDKs' `trace()` puts its user id. An SDK
+conversation has one start event per `trace()` turn, and the session matches if any of them does.
+
+Beside other event keys they match on their own:
 `user:alice tool:Bash` is a session of alice's that ran Bash.
 
 ### has, is, sort and limit
