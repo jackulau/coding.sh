@@ -13,9 +13,10 @@
 //   codingsh.cmd. cmd runs with every variable set, so any %NAME% would expand.
 // - adapters/_shared/hooks.ts buildHookCommand and quoteArg: the hook command an agent's config
 //   holds, as sh reads it: /bin/sh outside Windows, and Git Bash, which runs it for Claude Code on
-//   Windows. The path is under /home, or under C:\Users with a name Windows allows. The extra
-//   arguments the adapters pass and the agent ids are checked at their source: each is a word sh,
-//   PowerShell and cmd read as is.
+//   Windows. The path is under /home, or under C:\Users with a name Windows allows. The agent ids
+//   and the words adapters add after the path (cursor's --echo-continue, antigravity's --reply={})
+//   are checked at their source: the ids and --echo-continue are words sh, PowerShell and cmd read
+//   as is, and cmd passes --reply={} on as is.
 // - bench/schedule.ts shq and cronLine: the crontab line of a scheduled bench. cron cuts the
 //   command at an unescaped %, then /bin/sh runs it. The working directory, the CLI's path, the
 //   report folder and the coding.sh home vary with the string; the bench name follows NAME_RE.
@@ -29,12 +30,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { ADAPTERS } from "../../src/adapters/index.ts";
+import type { Json } from "../../src/adapters/more/_util.ts";
+import { agyHookDef } from "../../src/adapters/more/antigravity.ts";
 import { buildHookCommand, hookPathForCommand, hookShFor, quoteArg as hookQuote } from "../../src/adapters/_shared/hooks.ts";
 import { benchHome, NAME_RE } from "../../src/bench/define.ts";
 import { cronLine, shq } from "../../src/bench/schedule.ts";
 import { shellQuote } from "../../src/cli/args.ts";
 import { quoteArg } from "../../src/cli/next-steps.ts";
-import { cmdToNode, cmdToShim, cronCommand, everyEnv, HOSTILE, psToCmdShim, psToNode, psToShim, shTokens, shWords, type PsVersion, type ShToken } from "./_shells.ts";
+import { cmdRun, cmdToNode, cmdToShim, cronCommand, crtArgv, everyEnv, HOSTILE, psToCmdShim, psToNode, psToShim, shTokens, shWords, type PsVersion, type ShToken } from "./_shells.ts";
 
 function boundFrom(env: NodeJS.ProcessEnv): number {
   const raw = env.CODING_SH_MODEL_BOUND ?? "0";
@@ -132,13 +135,21 @@ test("the hook command: sh and Git Bash get the hook's path back", (t) => {
   prove(t, "quoteArg under sh", ALPHABET, (s) => after("x")(words(`x ${hookQuote(s)}`)), (s) => [s]);
 });
 
-test("the hook command's other words are ones every shell reads as is", () => {
+test("the hook command's other words are ones the shells that run it read as is", () => {
   // A word with only these characters is bare in sh, PowerShell and cmd, and no shell expands it.
   const plain = /^[A-Za-z][A-Za-z0-9_-]*$/;
   for (const a of ADAPTERS) assert.match(a.id, plain, `agent id ${a.id}`);
-  // The only extra argument an adapter passes (cursor's beforeSubmitPrompt).
+  // The only extra argument an adapter gives buildHookCommand (cursor's beforeSubmitPrompt).
   assert.match("--echo-continue", /^--[a-z][a-z-]*$/);
   assert.equal(hookQuote("--echo-continue"), "--echo-continue");
+  // antigravity appends --reply={} to the command. cmd reads it as is, checked here. sh has no brace
+  // expansion and bash expands braces only around a comma or `..`, so both read it as is too; the sh
+  // model does not read braces, so that is not checked here.
+  const win = "C:\\Users\\user\\.coding.sh\\hook.mjs";
+  const command = (agyHookDef(win, "win32").Stop as Json[])[0]!.command;
+  assert.equal(typeof command, "string");
+  const r = cmdRun(String(command), everyEnv);
+  assert.deepEqual(r === undefined ? undefined : crtArgv(r).slice(1), [hookPathForCommand(win), "antigravity", "Stop", "--reply={}"]);
 });
 
 test("shq and cronLine: cron and sh read each path back, and cronLine refuses a line break", (t) => {
