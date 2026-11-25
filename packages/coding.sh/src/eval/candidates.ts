@@ -321,13 +321,16 @@ export function rejectSummary(cands: readonly Candidate[]): string {
     .join(", ");
 }
 
-/** A plain-text table: rank, score, session, why. `ref` names the session a wrapper recorded (rejectReason). */
-export function formatCandidates(cands: readonly Candidate[], ref?: (id: string) => string): string {
+/**
+ * A plain-text table: rank, score, session, why. `name` names a row's session and `ref` the session a
+ * wrapper recorded (rejectReason): each by its id unless given a function (core/session-ref.ts printedRefs).
+ */
+export function formatCandidates(cands: readonly Candidate[], ref?: (id: string) => string, name: (id: string) => string = (id) => id): string {
   if (!cands.length) return "No candidate sessions";
   const lines: string[] = [];
   for (const [i, c] of cands.entries()) {
     const title = (c.title ?? "").replace(/\s+/g, " ").trim();
-    const head = c.eligible ? `${String(i + 1).padStart(2)}. ${String(c.score).padStart(3)}  ${c.sessionId}` : `    rej  ${c.sessionId}`;
+    const head = c.eligible ? `${String(i + 1).padStart(2)}. ${String(c.score).padStart(3)}  ${name(c.sessionId)}` : `    rej  ${name(c.sessionId)}`;
     lines.push(`${head}  ${title.length > 60 ? `${title.slice(0, 59)}…` : title}`);
     lines.push(`         ${c.eligible ? c.reasons.join(", ") || "no signals" : `rejected: ${rejectReason(c, ref)}`}${c.verifierGuess ? `  · verifier: ${c.verifierGuess}` : ""}`);
   }

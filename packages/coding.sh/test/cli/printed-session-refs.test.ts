@@ -198,7 +198,7 @@ describe("eval new names a session whose id is latest by its alias when the ledg
   });
 });
 
-describe("eval candidates names the session a run -- wrapper recorded by a reference that opens it", () => {
+describe("eval candidates names each session by a reference that opens it", () => {
   let sb: Sandbox;
   let repo: { root: string; head: string };
   before(async () => {
@@ -229,6 +229,17 @@ describe("eval candidates names the session a run -- wrapper recorded by a refer
     // --json keeps the whole id.
     const j = await runCmd(evalCmd, sb, { action: "candidates", flags: { all: true }, json: true, cwd: repo.root });
     assert.equal(j.json.candidates.find((c: { sessionId: string }) => c.sessionId === "wrap-2")?.wrapped, SPACED);
+  });
+
+  test("each row names its own session by a reference that opens it", async () => {
+    const r = await runCmd(evalCmd, sb, { action: "candidates", flags: { all: true }, cwd: repo.root });
+    assert.equal(r.error, undefined, String(r.error?.message));
+    // A row starts with its rank and score, or rej, then the session.
+    const named = [...r.stdout.matchAll(/^(?: ?\d+\. +-?\d+| {4}rej) {2}(\S+)/gm)].map((m) => m[1]!);
+    const j = await runCmd(evalCmd, sb, { action: "candidates", flags: { all: true }, json: true, cwd: repo.root });
+    const ids = j.json.candidates.map((c: { sessionId: string }) => c.sessionId);
+    assert.ok(ids.includes(SPACED) && ids.includes("latest"), JSON.stringify(ids));
+    assert.deepEqual(await Promise.all(named.map((ref) => opens(sb, ref))), ids, r.stdout);
   });
 });
 

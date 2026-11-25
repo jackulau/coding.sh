@@ -2,7 +2,7 @@
 // best eval tasks (eval/candidates.ts). Read-only.
 import { resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
-import { shortener } from "../../core/session-ref.ts";
+import { printedRefs } from "../../core/session-ref.ts";
 import { formatCandidates, rankSessions, rejectSummary, startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SESSION_LIMIT, DEFAULT_SINCE_MS, recentSessions } from "../../eval/init.ts";
 import { parseAge, positiveInt } from "../args.ts";
@@ -32,8 +32,10 @@ export async function evalCandidates(c: CommandContext): Promise<number> {
       out.next("Look further back, or in every repo", `coding.sh eval candidates --since 90d${repo ? "" : " --repo all"}`);
       return 0;
     }
-    // The session a wrapper recorded, by a reference that opens it when pasted (core/session-ref.ts): its first 8 characters can name another session too.
-    out.print(formatCandidates(shown, shown.some((x) => x.wrapped) ? await shortener(ctx.index) : undefined));
+    // Each session by a reference that opens it when pasted (core/session-ref.ts): a row's own session whole when the
+    // id pastes as is, and the session a wrapper recorded short, though its first 8 characters can name another session too.
+    const refs = await printedRefs(ctx.index, { whole: shown.map((x) => x.sessionId), short: shown.flatMap((x) => (x.wrapped ? [x.wrapped] : [])) });
+    out.print(formatCandidates(shown, refs.short, refs.whole));
     const rej = rejectSummary(ranked);
     if (rej && !showAll) out.note(`${ranked.length - eligible.length} session(s) can't become a task: ${rej} (--all lists them)`);
     if (eligible.length) out.next("Turn the best ones into a suite", `coding.sh eval init --sessions${eligible[0]!.verifierGuess ? "" : " --verifier '<CMD>'"}`);
