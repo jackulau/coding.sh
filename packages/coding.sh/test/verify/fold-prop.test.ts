@@ -1,8 +1,8 @@
 // Folding a session (core/sessions.ts foldSession, sessionOf, buildSession), checked on real sessions:
 // every spool fixture under test/fixtures/adapters normalized by its adapter, and the Claude Code and
-// Codex transcript fixtures read by their backfill, priced as ingest prices them (core/pricing.ts
-// applyPricing). Each case takes one session, drops some of its events (a lost hook line), and splits
-// the rest into batches. The properties:
+// Codex transcript fixtures read by their backfill, stored as ingest stores them (source "transcript")
+// and priced as ingest prices them (core/pricing.ts applyPricing). Each case takes one session, drops
+// some of its events (a lost hook line), and splits the rest into batches. The properties:
 //
 // - Two batches equal one. Ingest saves the fold of a session's events so far (core/ingest.ts
 //   foldStoredSession, serialized with node:v8, only for a `simple` fold) and folds the next batch into
@@ -13,6 +13,10 @@
 // - Folding is deterministic. The same events give the same row when folded again, when read back as the
 //   store keeps them (JSON), and when the row they gave is `prev` (a stored session folded again).
 //   Folding leaves the events as they were.
+// - A fold with no events of its own keeps the stored row's end. Every fold works the end out again
+//   from the events; with none of its own (no events, or only enrichment: a gateway's copy of one),
+//   the row's end stays, inferred (stats.endInferred) or not. Each session is checked whole, as
+//   captured and without its session.end.
 // - A stat stays absent when no event feeds it. Every optional stat a row has reports something: a
 //   number that is not 0, a list with an item, an object with a field that does.
 //
@@ -112,7 +116,9 @@ before(async () => {
     for (const dir of b.dirs) {
       process.env[b.env] = join(FIXTURES, b.agent, dir);
       try {
-        events.push(...(await collect(must(adapter.backfill)(testCtx().ctx))));
+        // As ingest stores a backfilled event (core/ingest.ts backfillEvent): source "transcript",
+        // unless the adapter set one.
+        for (const e of await collect(must(adapter.backfill)(testCtx().ctx))) events.push(e.source === undefined ? { ...e, source: "transcript" } : e);
       } finally {
         delete process.env[b.env];
       }
@@ -200,6 +206,28 @@ test("folding is deterministic, keeps the events as they were, and a stored sess
     },
     { runs: 30, label: "deterministic" },
   );
+});
+
+test("a fold with no events of its own keeps the stored row's end, inferred or not", (t) => {
+  const ends = { inferred: 0, recorded: 0, none: 0 };
+  const endOf = (s: Session) => ({ endedAt: s.endedAt, endInferred: s.stats.endInferred });
+  for (const { id, events } of corpus) {
+    // As captured, and with no session.end (a transcript's quiet marker is one): some then end at
+    // their last activity (stats.endInferred).
+    for (const own of [byTime(events), byTime(events).filter((e) => e.kind !== "session.end")]) {
+      if (!own.length) continue;
+      const row = stored(buildSession(own));
+      ends[row.endedAt === undefined ? "none" : row.stats.endInferred ? "inferred" : "recorded"]++;
+      assert.deepEqual(endOf(buildSession([], row)), endOf(row), `${id}: a fold of no events changed the end`);
+      // Enrichment never decides a session's shape: a gateway's copy of an event is not its own.
+      for (const e of own) {
+        const copy: AgentEvent = { ...e, id: `${e.id}:enriched`, source: "gateway" };
+        assert.deepEqual(endOf(buildSession([copy], row)), endOf(row), `${id}: a fold of an enrichment copy of ${e.kind} ${e.id} changed the end`);
+      }
+    }
+  }
+  assert.ok(ends.inferred > 0 && ends.recorded > 0, `ends in the fixtures: ${JSON.stringify(ends)}`);
+  t.diagnostic(`${ends.inferred} inferred ends, ${ends.recorded} recorded, ${ends.none} none`);
 });
 
 test("a stat a session has reports something", async () => {
