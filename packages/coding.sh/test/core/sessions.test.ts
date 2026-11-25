@@ -876,6 +876,40 @@ describe("session usage rollup", () => {
     assert.deepEqual(buildSession(evs).stats.usage, r.usage);
   });
 
+  // A call was checked only against the first call to record its response id. With the wrapper first, two of its steps
+  // that carry its id were each nested in it, so neither was a repeat, and both counted.
+  it("calls nested in one billed wrapper that share its response id count once, with the wrapper first or last", () => {
+    const sorted = (evs: AgentEvent[]) => [...evs].sort((x, y) => x.ts - y.ts);
+    for (const wrapperFirst of [true, false]) {
+      const label = wrapperFirst ? "wrapper first" : "wrapper last";
+      const w = llm("w", undefined, undefined, { responseId: "gen_a" }, { ts: wrapperFirst ? 10 : 50 });
+      const k1 = llm("k1", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_a" }, { ts: 20 });
+      const k2 = llm("k2", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_a" }, { ts: 30 });
+      const evs = sorted([w, k1, k2, bill(w, 1, "gen_a")]);
+      const r = rollupUsage(evs);
+      assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 1 }, label);
+      assert.deepEqual(r.duplicate, { calls: 2, tokens: 10, costUsd: 0.5 }, label);
+      const s = buildSession(evs);
+      assert.deepEqual(s.stats.usage, r.usage, label);
+      assert.deepEqual(s.stats.duplicateUsage, r.duplicate, label);
+      // Every call billed for the generation.
+      const billedAll = sorted([w, k1, k2, bill(w, 1, "gen_a"), bill(k1, 1, "gen_a"), bill(k2, 1, "gen_a")]);
+      assert.deepEqual(rollupUsage(billedAll).usage, { inputTokens: 10, costUsd: 1 }, label);
+      // The second copy a level down, under a billed call with no usage.
+      const m = llm("m", "w", undefined, {}, { ts: 25 });
+      const deep = llm("k3", "m", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_a" }, { ts: 30 });
+      assert.deepEqual(rollupUsage(sorted([w, k1, m, deep, bill(w, 1, "gen_a"), bill(m, 0.5, "gen_m")])).usage, { inputTokens: 10, costUsd: 1.5 }, label);
+      // A wrapper over two steps, whose response id is the last step's, with that step recorded twice.
+      const w2 = llm("w2", undefined, undefined, { responseId: "gen_2" }, { ts: wrapperFirst ? 10 : 50 });
+      const s1 = llm("s1", "w2", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_1" }, { ts: 20 });
+      const s2 = llm("s2", "w2", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "gen_2" }, { ts: 30 });
+      const copy = llm("s2b", "w2", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true, responseId: "gen_2" }, { ts: 40 });
+      const steps = sorted([w2, s1, s2, copy, bill(w2, 2, "gen_2"), bill(s1, 1, "gen_1"), bill(s2, 2, "gen_2"), bill(copy, 2, "gen_2")]);
+      assert.deepEqual(rollupUsage(steps).usage, { inputTokens: 30, costUsd: 3 }, label);
+      assert.deepEqual(buildSession(steps).stats.usage, { inputTokens: 30, costUsd: 3 }, label);
+    }
+  });
+
   it("a billed wrapper that carries usage adds the bills of its steps for other generations", () => {
     const w = llm("w", undefined, { inputTokens: 30, costUsd: 0.75 }, { costEstimated: true });
     const k1 = llm("k1", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true });
