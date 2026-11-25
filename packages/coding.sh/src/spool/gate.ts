@@ -37,9 +37,11 @@
 // first pass runs before VENDOR and WORDS: VENDOR_PARTS and WORD_PARTS are short and quick
 // to compile, and every text VENDOR or WORDS matches also holds one of their parts.
 //
-// On the hook's hot path: node:fs and ../core/paths.ts only.
-import { existsSync, readFileSync } from "node:fs";
+// On the hook's hot path: node:fs, from process.getBuiltinModule as ./hook.ts says, and
+// ../core/paths.ts only.
 import { paths } from "../core/paths.ts";
+
+const fs = process.getBuiltinModule("node:fs");
 
 /**
  * The case-sensitive parts: each vendor prefix with as many token characters as its rule
@@ -139,7 +141,7 @@ export function isDefaultCaptureConfig(text: string | undefined): boolean {
 function readConfig(file: string): string | undefined {
   try {
     // existsSync first: a missing file is the common case, and a throw costs more than the check.
-    return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
   } catch {
     return undefined;
   }

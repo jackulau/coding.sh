@@ -341,7 +341,7 @@ function eventJson(e: AgentEvent, s: Session): Record<string, unknown> {
 /** What --run gets on stdin and --http gets as `session`: the session as show --json gives it, redacted. */
 async function sessionDoc(deps: MonitorDeps, s: Session, redactor: Redactor): Promise<unknown> {
   const [{ sessionJson }, events] = await Promise.all([import("../cli/common.ts"), deps.index.listEvents(s.id)]);
-  return redactor.value({ session: sessionJson(s, { derailEvents: true }), eventCount: s.stats.events, events: events.map((e) => eventJson(e, s)) });
+  return redactor.value({ session: sessionJson(s, { derailEvents: true, turnDurations: true }), eventCount: s.stats.events, events: events.map((e) => eventJson(e, s)) });
 }
 
 function runScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: RunMonitorsOptions): Scorer {

@@ -361,6 +361,47 @@ export interface WaitStats {
 }
 
 /**
+ * The kind of pushback the person's next prompt names on the agent's turn (core/pushback.ts):
+ * `intent` (not what they meant), `undo` (take it out), `redo` (do it again), `broken` (it does not
+ * work). A correction that names none of these has no kind.
+ */
+export type PushbackKind = "intent" | "undo" | "redo" | "broken";
+
+/**
+ * One model's turns in Session.stats.turnsByModel (core/turn-stats.ts). A turn is a prompt the
+ * person sent and the agent's work until their next prompt.
+ */
+export interface TurnTally {
+  /** Turns the model ran: it made most of the turn's main-thread model calls, or the turn made none and it is the session's model. */
+  turns: number;
+  /** Turns the person answered with a prompt that has text: what `pushback` counts out of. Absent when none. */
+  replied?: number;
+  /** Those prompts that name one of the four kinds of pushback on the turn before them, by kind. Other corrections are not counted. Absent when none did. */
+  pushback?: Partial<Record<PushbackKind, number>>;
+  /** Turns the person stopped, of the turns whose capture records it. Absent when none. */
+  cancelled?: number;
+  /**
+   * Turns whose capture does not record a turn the person stopped (docs/ADAPTERS.md): an agent that
+   * records none, a T3 Code thread built from T3 Code's own store, or a Claude Code turn whose prompt
+   * has no text (metadata mode), came from its OpenTelemetry export, or came from hooks that have not
+   * seen the turn end. Absent when none.
+   */
+  cancelNotRecorded?: number;
+  /** How long turns ran (ms), from the prompt to the end of the turn's last work, for up to 500 turns. Absent when none did any work. */
+  durationsMs?: number[];
+}
+
+/** Session.stats.edits and Session.stats.shells: tool calls of one kind that ended, and how many of them failed for real. */
+export interface CallTally {
+  calls: number;
+  /**
+   * Calls that failed for real (core/failures.ts): not a shell command whose exit 1 is an answer
+   * (no match, a probe, files that differ), not a call the person stopped. Absent when none.
+   */
+  failed?: number;
+}
+
+/**
  * One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls
  * printed or named (core/sessions.ts foldPrs; no network call).
  * - `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.
@@ -600,6 +641,17 @@ export interface Session {
     waits?: WaitStats;
     /** Pull requests the session opened, merged, closed or linked, oldest first: every one it opened, merged or closed, and the 20 latest it only linked. Unset when it touched none. */
     prs?: PullRequestRef[];
+    /**
+     * Turns by the model that ran them: how many, how the person's next prompt pushed back, how many
+     * the person stopped, and how long they ran (core/turn-stats.ts). Only in a session launched
+     * interactively that is not a subagent; the key "" holds the turns of a session with no model.
+     * Unset in other sessions, and when the person sent no prompt.
+     */
+    turnsByModel?: Record<string, TurnTally>;
+    /** File-edit calls (write, edit, patch, delete) on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended. */
+    edits?: CallTally;
+    /** Shell calls on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended. */
+    shells?: CallTally;
     /**
      * Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not
      * the agent's): the row then holds only what the events say directly (agent, start, end, cwd,

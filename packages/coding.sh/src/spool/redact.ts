@@ -11,9 +11,9 @@
 // The build bundles this file on its own, to dist/hook-redact.mjs, and the hook
 // imports it only when ./gate.ts says a payload needs it: the rules and the TOML
 // parser cost the hook more time to load than the rest of its work.
-// It imports node:fs plus core/redact.ts (which brings core/weights.ts and
-// core/ids.ts), core/paths.ts and core/toml.ts.
-import { readFileSync } from "node:fs";
+// It loads node:fs, from process.getBuiltinModule as ./hook.ts says, and imports
+// core/redact.ts (which brings core/weights.ts and core/ids.ts), core/paths.ts and
+// core/toml.ts.
 import type { AgentEvent } from "../schema/index.ts";
 import type { SpoolLine } from "../core/types.ts";
 import { createRedactor, redactForBlob, redactionCounts, redactionTally, type RedactionTally, type Redactor } from "../core/redact.ts";
@@ -46,7 +46,7 @@ export function spoolRedactor(env: NodeJS.ProcessEnv = process.env): Redactor {
 function userCaptureRules(env: NodeJS.ProcessEnv): { redact?: string[]; patterns?: string[] } {
   let text: string;
   try {
-    text = readFileSync(paths(env).config, "utf8");
+    text = process.getBuiltinModule("node:fs").readFileSync(paths(env).config, "utf8");
   } catch {
     return {};
   }

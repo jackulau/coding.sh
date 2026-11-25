@@ -147,6 +147,10 @@
     "title": "Compare two agents on your repo",
     "template": "v1:docs:coding.sh docs"
   },
+  "og/docs-how-to-compare-models": {
+    "title": "Compare models on your own sessions",
+    "template": "v1:docs:coding.sh docs"
+  },
   "og/docs-how-to-does-this-plugin-help": {
     "title": "Does this plugin help me?",
     "template": "v1:docs:coding.sh docs"

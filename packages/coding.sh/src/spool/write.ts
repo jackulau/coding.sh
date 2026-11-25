@@ -1,8 +1,9 @@
 // The spool writer: shared by the hook (src/spool/hook.ts, bundled to
 // dist/hook.mjs) and the `coding.sh run` wrapper (src/capture/wrapper.ts).
 //
-// This file is on the hook's hot path. It may only import node:fs, node:path
-// (and node:os via ../core/paths.ts) and type-only imports.
+// This file is on the hook's hot path. It may only load node:fs and node:path
+// (and node:os via ../core/paths.ts), from process.getBuiltinModule as ./hook.ts
+// says, and make type-only imports.
 //
 // Redaction: the caller says how to redact a line (AppendOptions.redact), and
 // appendSpool does it before any byte of the payload is written, inline or to a
@@ -30,10 +31,12 @@
 // the new line.
 //
 // Files are created 0600 and dirs 0700: payloads can hold prompts and secrets.
-import { closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
 import type { SpoolLine } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
+
+// node:fs is called through its module object, so a test that replaces fs.writeSync reaches these calls.
+const fs = process.getBuiltinModule("node:fs");
+const { join } = process.getBuiltinModule("node:path");
 
 /**
  * A serialized line above this many bytes (1024 with its newline, hook.sh's
@@ -90,7 +93,7 @@ export function spoolFile(agent: string, ts: number, env: NodeJS.ProcessEnv = pr
   const day = utcDay(ts);
   for (let n = 0; n < MAX_DAY_FILES; n++) {
     const file = join(dir, n ? `${day}.${n}.jsonl` : `${day}.jsonl`);
-    const st = statSync(file, { throwIfNoEntry: false });
+    const st = fs.statSync(file, { throwIfNoEntry: false });
     if (!st || st.size < SPOOL_FILE_CAP) return file;
   }
   return join(dir, `${day}.p${pid}.jsonl`);
@@ -98,11 +101,11 @@ export function spoolFile(agent: string, ts: number, env: NodeJS.ProcessEnv = pr
 
 function openAppend(file: string, dir: string): number {
   try {
-    return openSync(file, "a+", 0o600);
+    return fs.openSync(file, "a+", 0o600);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    return openSync(file, "a+", 0o600);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return fs.openSync(file, "a+", 0o600);
   }
 }
 
@@ -113,13 +116,13 @@ function openAppend(file: string, dir: string): number {
  */
 function truncateTo(fd: number, file: string, size: number): void {
   try {
-    ftruncateSync(fd, size);
+    fs.ftruncateSync(fd, size);
   } catch {
-    const w = openSync(file, "r+");
+    const w = fs.openSync(file, "r+");
     try {
-      ftruncateSync(w, size);
+      fs.ftruncateSync(w, size);
     } finally {
-      closeSync(w);
+      fs.closeSync(w);
     }
   }
 }
@@ -129,21 +132,21 @@ function append(file: string, dir: string, data: string): void {
   const fd = openAppend(file, dir);
   try {
     let buf = Buffer.from(data);
-    const { size } = fstatSync(fd);
+    const { size } = fs.fstatSync(fd);
     if (size > 0) {
       const last = Buffer.alloc(1);
-      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) buf = Buffer.concat([Buffer.from("\n"), buf]);
+      if (fs.readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) buf = Buffer.concat([Buffer.from("\n"), buf]);
     }
     let off = 0;
     try {
-      while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
+      while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
     } catch (e) {
       // Cut short (ENOSPC, EIO): take the fragment back off, since hook.sh appends without
       // looking at the file's end and its next line would be glued onto it. Only when the
       // file ends where this write stopped: a line another hook appended since stays.
       if (off > 0) {
         try {
-          if (fstatSync(fd).size === size + off) truncateTo(fd, file, size);
+          if (fs.fstatSync(fd).size === size + off) truncateTo(fd, file, size);
         } catch {
           // the fragment stays; readers skip it as a torn line
         }
@@ -152,7 +155,7 @@ function append(file: string, dir: string, data: string): void {
     }
   } finally {
     try {
-      closeSync(fd);
+      fs.closeSync(fd);
     } catch {
       // the bytes are written; a failed close must not make the caller undo them
     }
@@ -197,7 +200,7 @@ export function recordDisabledSession(id: string, env: NodeJS.ProcessEnv = proce
 export function readDisabledSessions(spoolDir: string): Set<string> {
   let text: string;
   try {
-    text = readFileSync(join(spoolDir, "disabled-sessions"), "utf8");
+    text = fs.readFileSync(join(spoolDir, "disabled-sessions"), "utf8");
   } catch {
     return new Set();
   }
@@ -254,18 +257,18 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv, opts: Appen
     const rawFile = join(rawDir, `${line.ts}-${line.pid}-${rand}.json`);
     const body = rawText ?? JSON.stringify(line.raw ?? null);
     try {
-      writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
+      fs.writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      mkdirSync(rawDir, { recursive: true, mode: 0o700 });
-      writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
+      fs.mkdirSync(rawDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
     }
     const { raw: _raw, ...rest } = line;
     try {
       append(file, dir, JSON.stringify({ ...rest, rawFile }) + "\n");
     } catch (e) {
       // Nothing will ever reference the side file: don't leave the payload (prompts, secrets) behind.
-      rmSync(rawFile, { force: true });
+      fs.rmSync(rawFile, { force: true });
       throw e;
     }
     return file;
@@ -277,7 +280,7 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv, opts: Appen
 /** The line's payload, reading the side file when it was too large to inline. */
 export function resolveRaw(line: SpoolLine): unknown {
   if (!line.rawFile) return line.raw;
-  const text = readFileSync(line.rawFile, "utf8");
+  const text = fs.readFileSync(line.rawFile, "utf8");
   try {
     return JSON.parse(text);
   } catch {

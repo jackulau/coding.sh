@@ -25,10 +25,12 @@
 // session's folder, a project's hook in the project root. From the root, a
 // .devin folder between the session's folder and the root is not seen.
 //
-// Imports node:fs, node:path and ../core/paths.ts only: the hook bundles it.
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+// Loads node:fs and node:path, from process.getBuiltinModule as ./hook.ts says, and imports
+// ../core/paths.ts only: the hook bundles it.
 import { userHome } from "../core/paths.ts";
+
+const fs = process.getBuiltinModule("node:fs");
+const { isAbsolute, join, relative, resolve, sep } = process.getBuiltinModule("node:path");
 
 /** Devin CLI's user config folder: $DEVIN_CONFIG_HOME/devin, else %APPDATA%\devin on Windows and ~/.config/devin elsewhere. */
 export function devinConfigDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
@@ -110,14 +112,14 @@ function commands(value: unknown, depth = 0, out: string[] = []): string[] {
 function isLiveDevinHook(cmd: string): boolean {
   const m = DEVIN_HOOK.exec(cmd);
   const path = m?.[1]?.replace(/\\(["\\$`])/g, "$1") ?? m?.[2];
-  return !!path && existsSync(path);
+  return !!path && fs.existsSync(path);
 }
 
 /** Adds to `out` the events of `file`'s hooks that run a coding.sh hook for Devin. `wrapped`: the hooks sit under "hooks". */
 function addHookEvents(file: string, wrapped: boolean, out: Set<string>): void {
   let value: unknown;
   try {
-    value = parseLoose(readFileSync(file, "utf8"));
+    value = parseLoose(fs.readFileSync(file, "utf8"));
   } catch {
     return; // missing or unreadable: no hooks there (Devin cannot read it either)
   }
@@ -149,7 +151,7 @@ export function devinHookEvents(env: NodeJS.ProcessEnv = process.env, cwd: strin
   addHookEvents(join(devinConfigDir(env), "config.json"), true, out);
   for (const dir of projectDirs(cwd, env.DEVIN_PROJECT_DIR)) {
     const devin = join(dir, ".devin");
-    if (!existsSync(devin)) continue;
+    if (!fs.existsSync(devin)) continue;
     for (const f of DEVIN_PROJECT_HOOK_FILES) addHookEvents(join(devin, f), f !== "hooks.v1.json", out);
   }
   return out;

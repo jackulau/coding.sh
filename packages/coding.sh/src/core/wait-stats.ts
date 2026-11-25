@@ -107,7 +107,9 @@ export function waitStatsState(): WaitStatsState {
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
 /** Who sent a main-thread prompt: the person, an agent, or the person stopping the turn. Undefined: harness markup. */
-function promptBy(e: AgentEvent): "person" | "agent" | "interrupt" | undefined {
+export type PromptBy = "person" | "agent" | "interrupt";
+
+function promptBy(e: AgentEvent): PromptBy | undefined {
   const text = str(e.payload.text) ?? "";
   if (e.payload.from === "agent" || TASK_NOTICE.test(text) || DELEGATED_NOTICE.test(text)) return "agent";
   if (INTERRUPTED.test(text)) return "interrupt";
@@ -220,7 +222,11 @@ function turnEnded(s: WaitStatsState, ts: number, restart: boolean): void {
   // Otherwise a second copy of the same end (another capture path): the wait keeps its start.
 }
 
-export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: AgentEvent, backfill: boolean): void {
+/**
+ * Folds the next event. For a prompt on the main thread, returns who sent it as this fold read it
+ * (a host's marker makes the person's an agent's), so core/turn-stats.ts reads it the same way.
+ */
+export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: AgentEvent, backfill: boolean): PromptBy | undefined {
   const thread = e.subagentId ?? "";
   // A resume: what waited ended where the session stopped, unanswered.
   if (e.kind === "session.start" && !thread && s.begun && s.last !== undefined && e.payload.source !== "compact") {
@@ -231,7 +237,7 @@ export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: Agent
   if (!thread && e.kind !== "notification") s.begun = true;
   if (e.kind === "notification" && str(e.payload.requestId)) {
     hostRequest(s, waiting, e, thread);
-    return;
+    return undefined;
   }
   switch (e.kind) {
     case "user.message": {
@@ -240,10 +246,13 @@ export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: Agent
       const by = promptBy(e);
       // A live copy of a marked prompt reads as the person's: only such a prompt is matched by time.
       const agent = by === "agent" || by === "person" ? marked(s, e, by === "person" && !backfill) : false;
-      if (by === "agent" || agent) agentPrompt(s, e.ts);
-      else if (by === "interrupt") turnEnded(s, e.ts, false);
+      if (by === "agent" || agent) {
+        agentPrompt(s, e.ts);
+        return "agent";
+      }
+      if (by === "interrupt") turnEnded(s, e.ts, false);
       else if (by === "person") personPrompt(s, e.ts);
-      break;
+      return by;
     }
     case "notification": {
       if (e.payload.type === HOST_AGENT_PROMPT) {
@@ -315,6 +324,7 @@ export function foldWaitStats(s: WaitStatsState, waiting: WaitingState, e: Agent
       break;
     }
   }
+  return undefined;
 }
 
 /** The person's prompt on the main thread: it answers what waited there; sent while the turn ran, it is a steer. */

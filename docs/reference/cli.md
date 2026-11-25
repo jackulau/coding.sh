@@ -59,7 +59,7 @@ Every command accepts these.
 | [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
-| [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
+| [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag, or a scorecard per model |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
 | [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
@@ -571,7 +571,7 @@ coding.sh sessions --agent codex --since 7d
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
-- With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
+- With --json each session is a digest: no stats.phases, no turn times in stats.turnsByModel, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has them all; --fields stats.phases, stats.turnsByModel or stats.derails prints them here.
 - In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
 - Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.
 - Without --include-runs the list leaves out sessions that ran with a run id (eval, compare, exp, or CODING_SH_RUN_ID set by hand) and ends with how many it left out; --json has that count as hiddenRuns, absent when there are none.
@@ -1214,7 +1214,7 @@ coding.sh cache doctor --json
 
 ## `coding.sh stats`
 
-Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag.
+Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag, or a scorecard per model.
 
 ```text
 coding.sh stats [options]
@@ -1223,7 +1223,8 @@ coding.sh stats [options]
 | Option | Default | Description |
 |---|---|---|
 | `-m, --measure <MEASURE>` | `sessions` | What the trend shows. One of: `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`. |
-| `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week) One of: `agent`, `model`, `repo`, `flag`. |
+| `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week). With --scorecard: one column per model (the default) or agent. One of: `agent`, `model`, `repo`, `flag`. |
+| `--scorecard` |  | Compare models side by side: turns, and counts with a 95% interval for pushback and its kinds, cancelled turns, the median turn, failed file edits and failed shell commands. |
 | `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--until <WHEN>` |  | Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now) |
@@ -1236,12 +1237,18 @@ coding.sh stats
 coding.sh stats --measure cost --by model --since 30d
 coding.sh stats --measure failure-rate --by agent --per week --since 90d
 coding.sh stats --by flag --where 'agent:codex' --json
+coding.sh stats --scorecard --since 90d
+coding.sh stats --scorecard --by agent --where 'repo:coding.sh' --json
 ```
 
 - Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
 - With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
 - Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.
 - --json also prints waits: how often and how long the window's sessions waited on you, by kind, subagents included. GET /api/metrics does not have it. A store other than SQLite stops reading them at 100,000 sessions and sets waits.truncated.
+- --scorecard prints one column per model, or per agent with --by agent. Turns, pushback, cancelled turns and the median turn count only top-level sessions launched interactively: a headless prompt is no person's reaction, and a subagent's prompt comes from its parent. A turn (a prompt and the work until the next one) counts under the model that made most of its model calls, or the session's model when it made none. Failed file edits and failed shell commands count the calls of every session, subagents and headless runs included, under that session's own model.
+- Pushback (4 kinds): of the turns you answered with a prompt, the ones whose prompt names one of four kinds: intent ("not what I meant", "that's wrong"), undo ("undo that"), redo ("try again") or broken ("still failing"). Other corrections, such as "no, use the other helper" or "you forgot the docs", do not count. Cancelled turns: the turns you stopped, counted only where the capture records it (claude-code, codex, opencode, cursor, pi; not a T3 Code thread read from its own store, nor a claude-code turn captured in metadata mode, over OpenTelemetry, or by hooks that have not seen it end). Other turns are left out of that row, and a note says how many; a column with only those turns says not recorded, never 0.
+- The failed rows count real failures only: not a shell command whose exit status is an answer (grep with no match, test -f, diff), and not a call you stopped. Each rate shows k/n, the percent and its 95% interval; the median turn has a 95% interval from 6 turns on. Every row but the pushback kinds also says how many sessions it read; a kind reads the same sessions as Pushback (4 kinds).
+- With exactly two columns, DIFFERENCE is the second minus the first, with its 95% interval; where that interval includes 0 it says no clear difference. The intervals treat each turn and each call as independent, so the real uncertainty is larger. The models did different tasks, so a difference can come from the task mix: coding.sh compare runs two of them on the same tasks. --all changes nothing with --scorecard, and --measure and --per do not work with it.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh sql`
