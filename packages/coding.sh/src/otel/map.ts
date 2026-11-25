@@ -545,7 +545,8 @@ function contentText(c: unknown, depth = 0): string {
 }
 
 function msgFromObj(o: Record<string, unknown>, depth: number): Msg[] {
-  // contentText reads no text past depth 8, so a deeper wrapper holds no message.
+  // contentText reads no text past depth 8: a message at depth 8 keeps its role without its text, and
+  // past it no message is read.
   if (depth > 8) return [];
   if (isObj(o.kwargs)) return msgFromObj({ ...o.kwargs, role: o.kwargs.role ?? o.kwargs.type }, depth + 1); // LangChain serialized
   if (isObj(o.message) && !("role" in o)) return msgFromObj(o.message, depth + 1); // gen_ai.choice body, OpenAI choices
@@ -872,7 +873,7 @@ class Draft {
   }
 
   set(key: string, v: unknown): this {
-    // A number past what a double holds is no JSON value: stored, it would read back as null.
+    // NaN, or a number past what a double holds, is no JSON value: stored, it would read back as null.
     if (v === undefined || v === null || v === "" || (typeof v === "number" && !Number.isFinite(v))) return this;
     this.payload[key] = v;
     return this;

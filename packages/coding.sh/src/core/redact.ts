@@ -1014,7 +1014,7 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met, 
       const out = mapStrings(JSON.parse(text), f, 0, undefined, true);
       return JSON.stringify(out) === text ? v : out;
     } catch {
-      return v; // a cycle, or too deep for the stack: the redaction walk replaces it
+      return v; // a cycle, or too deep for the stack: the walk that follows redacts it or replaces it
     }
   }
   if (Array.isArray(v)) {
