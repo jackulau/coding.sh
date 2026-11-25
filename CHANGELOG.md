@@ -521,6 +521,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** A Cursor subagent whose `agent_transcript_path` names no file, such as `/`, gets a child session of its own (`<session>:sub:<id>`), and ingest stores its start and end. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#subagents))
 - **Cost.** A Claude Code subagent transcript copied under another session is stored once, under the session that wrote it, even when its first line is cut short or corrupt, so its calls and cost count once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#subagents))
 - **Sessions.** A Claude Code prompt held in its transcript as two user entries with one `promptId` is one turn that ends once, and the turn's length runs to its end. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#turn))
+- **Capture.** An OpenCode session that two files under `storage/session` name is read once, from the first file, so backfill gives each of its events once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation))
 
 ## [0.1.7] - 2026-11-16
 
