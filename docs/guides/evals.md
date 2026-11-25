@@ -439,6 +439,34 @@ In an `exp run` dataset whose output is the proof itself, a `command` grader (se
 fields](#grader-fields)) can do the same: write the output next to its own copy of the statements,
 then run the checker.
 
+#### Attempts, cost and reuse
+
+Anthropic's [formal verification work](https://www.anthropic.com/research/formal-verification) gave
+each task 3 attempts at a 5M-token budget and audited patches for reward hacking. Agents that could
+copy each other's proofs in a shared workspace needed 17% fewer tokens than agents working alone.
+Each part maps onto what coding.sh already has:
+
+- **Attempts.** `compare --k 3` runs each task 3 times per arm, and the report adds `pass@3`,
+  `pass^3` and `flaky tasks` (see [Efficiency, reliability and tasks
+  needed](#efficiency-reliability-and-tasks-needed)).
+- **Cost per proof.** `cost / solved` and `tokens / solved` divide each arm's agent cost and tokens
+  by its passing runs. Compare has no cap on one attempt's tokens: `--trial-timeout` caps its time,
+  and `--max-cost` the whole comparison's spend.
+- **One attempt's agents.** Each run tags its sessions with its run id, so `coding.sh tree <run id>
+  --run` shows every agent and subagent of one attempt, with each one's cost, tokens and time, and
+  the totals.
+- **Shared work.** Subagents in one attempt share its work tree, so they can reuse each other's
+  lemmas. Compare a bundle that points them at a shared lemma file with one that does not, on
+  `tokens / solved`.
+- **Cost by subagent.** `coding.sh usage --by subagent` splits the cost of child sessions by
+  subagent type (see [Track cost](../how-to/track-cost.md#cost-by-mcp-server-skill-or-subagent)).
+- **Reuse across tasks.** `compare --sequential --carry <path>` carries that path of the agent's
+  home from each task to the next, so a lemma library kept there carries over. The work tree is not
+  carried (see [Sequential runs](#sequential-runs)).
+- **Reward hacking.** `coding.sh sessions --where 'run:run_* flag:test-tamper'` lists trial
+  sessions that changed a test or statement to pass a failing check, or added an escape hatch such
+  as `sorry`. [Witness audits](#witness-audits) replay more checks on passing runs.
+
 ## Datasets and experiments
 
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
