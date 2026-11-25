@@ -1019,7 +1019,9 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met, 
   }
   if (Array.isArray(v)) {
     // A loop, not map: one stack frame a level, so an array is followed as deep as an object.
-    const n = v.length;
+    // Its length is read as map reads it (ToLength): an array Proxy's can be a fraction or below 0.
+    const len = Math.floor(v.length);
+    const n = len > 0 ? len : 0;
     const out: unknown[] = new Array(n);
     for (let i = 0; i < n; i++) if (i in v) out[i] = mapStrings(v[i], f, depth + 1, met, copy);
     if (!same) return out;
