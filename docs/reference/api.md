@@ -625,7 +625,7 @@ instruction files, unapproved actions, and tool errors and fold errors.
 | `stats.usage.estimatedCostUsd` | The part of `costUsd` that was estimated (in the example, all of it) |
 | `stats.usage.estimatedCostByTier` | The estimate totalled by `priceTier`. Left out when every call was standard |
 | `stats.usage.estimatedCostByTokenType` | The estimate in USD by token type: `cacheRead`, `cacheWrite` (1-hour writes included), `input` (uncached) and `output`. The parts add up to `estimatedCostUsd`. Left out when there is no estimate, or when an estimated call has no split |
-| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out of `stats.usage`. `calls` counts the calls nested in another call, whose figures the outer call took, and the copies of a response already counted. `tokens` and `costUsd` are what was left out, such as an estimate a gateway's bill replaced or a bill a reported cost covered |
+| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out of `stats.usage`. `calls` counts the calls nested in another call, whose figures the outer call took, and the copies of a response already counted. `tokens` and `costUsd` are what was left out, such as the estimate of a call nested in a billed call, or a bill a reported cost covered |
 
 Each estimated `llm.call` has `payload.costEstimated: true`. It adds `payload.pricedAs` when a
 sibling model's price was used, and `payload.priceTier` when it was priced at batch, flex, priority,
@@ -649,7 +649,14 @@ calls nested in it, also when a billed call is above it.
 A call that carries the response id of a call counted before it is a copy, and is left out with the
 calls nested in it. When one of the two is nested in the other, at any depth, they are one response
 seen at two levels, as when a gateway's generation id is on a wrapper and on its last step, and
-neither counts as a copy.
+neither counts as a copy. Two calls with one id where neither is nested in the other are copies,
+also when both are nested in a call with that id. A nested call is checked after the call it is
+nested in, whatever their times, so one left out with a copy makes no later call a copy.
+
+A call nested in a call that carries usage of its own, with no billed call between them, is not
+checked for copies. It counts within the outer call as above, or is left out with it, and its
+response id makes no later call a copy. Nor is a billed call with no usage and no calls nested in
+it checked. It has no tokens, and a gateway bill counts once per generation, as below.
 
 A gateway bill linked to two copies of one call, such as the proxy's copy and the agent's own
 record, counts once.
