@@ -908,7 +908,9 @@ export const claudeCode: Adapter = {
   // 22 (0.1.8): a hook prompt takes the time on its transcript entry, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]"). That prompt carries the stopped turn's promptId, so it opens no turn of its own and a stopped turn ends once (one with no promptId still opens a turn).
   // 23 (0.1.8): a subagent transcript copied into another session whose first line is cut short or corrupt is still
   //    found to be a copy (its owner is read from the next entry), so it is stored once.
-  parseVersion: 23,
+  // 24 (0.1.8): a user entry with the promptId of the turn it is in, other than a stop prompt (such as a skill's text
+  //    with no isMeta flag), adds to that turn, which ends once: one turn.end, with the turn's own duration.
+  parseVersion: 24,
 
   detect() {
     const dir = claudeConfigDir();

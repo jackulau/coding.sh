@@ -1152,7 +1152,9 @@ export const t3code: Adapter = {
   // 15 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A provider instance id (claudeHub, codex-work) maps to the agent its driver kind names.
   // 16 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
   // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a notification (HOST_AGENT_PROMPT) names it before its prompt in a Codex or Claude transcript. A thread a person started has an interactive launch (host-link launch), except one another adapter imports (OpenCode, Cursor, Pi).
-  parseVersion: 17,
+  // 18 (0.1.8): in a Claude transcript, a user entry with the promptId of the turn it is in, other than a stop prompt,
+  //    adds to that turn, which ends once: one turn.end, with the turn's own duration.
+  parseVersion: 18,
 
   async detect() {
     const env = process.env;

@@ -601,8 +601,10 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
  * 2: a running run is named by its persisted script's meta.name, not its id.
  * 3: an agent's shell call reads the last jest, vitest, node:test or mocha summary in its output, not the first.
  * 4: the failed and null shares are of the agents that ran, cached agents left out.
+ * 5: a user entry with the promptId of an agent's open turn, other than a stop prompt, adds to that turn, which
+ *    ends once, at its end.
  */
-const IMPORT_VERSION = 4;
+const IMPORT_VERSION = 5;
 
 /** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {
