@@ -272,6 +272,8 @@ Nested model calls, such as a framework's span around the provider's call, count
 
 A wrapper's bill can be for its last step's generation, when the gateway's id is on both. The bill then covers that step and replaces the cost of any call between the two, and the other steps keep their own costs. Of a call between them and a copy of it that no bill covers, the call between counts, at the wrapper's bill, in any order.
 
+A call between is checked for copies only when the nearest model call above it that carries usage or a gateway bill has no usage of its own, as when it is nested directly in the wrapper. A copy of one that is not checked counts too.
+
 A billed call nested in a call that was not billed, at any depth, counts at its bill, in place of the outer call's cost, estimated or reported.
 
 A record not ingested yet shows as `pending`. Run the command again a minute later.

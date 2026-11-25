@@ -1316,6 +1316,20 @@ describe("session usage rollup", () => {
     }
   });
 
+  it("a call between nested in a call with usage of its own is not checked for copies, so a copy of it counts too", () => {
+    const w = llm("w", undefined, undefined);
+    const m = llm("m", "w", { inputTokens: 10, costUsd: 1 }, { responseId: "gen_m" });
+    const r = llm("r", "m", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    const k = llm("k", "r", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_w" });
+    const top = llm("x", undefined, { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" }, { traceId: "t2" });
+    for (const { label, evs } of runs([w, m, r, k, top], [bill(w, 2, "gen_w")])) {
+      const got = rollupUsage(evs);
+      // The wrapper's bill for the outer call between, $2, and the copy's own $3.
+      assert.deepEqual(got.usage, { inputTokens: 20, costUsd: 5 }, label);
+      assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 4.25 }, label);
+    }
+  });
+
   it("model calls nested in each other in a loop count under the first billed one, else the first of them", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);
