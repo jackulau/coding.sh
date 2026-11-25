@@ -22,12 +22,18 @@
 //   nested call reported, 0 included, beats the wrapper's estimate, $0 included. The estimated part
 //   is the sum of the estimates counted, and its splits by token type and by tier add up to it. What
 //   was left out is the duplicate count, tokens and cost.
+// - A run of responses recorded on several paths counts each response's tokens once, whatever order
+//   its calls arrive in, and the rest are the tokens left out. A path records the whole run, as
+//   top-level calls or as steps nested in a call a gateway billed that has no usage of its own. That
+//   wrapper may carry its last step's response id, and a step may be recorded twice on its path,
+//   beside itself or under another billed call nested in the wrapper.
 //
 // Calls are drawn over every model in the built-in table, with provider prefixes, dated and variant
 // suffixes, family fallbacks and an unknown model; prompts near each long-context threshold; and the
 // service tiers, speeds and geographies adapters record. A session's calls are drawn over a
-// `[prices]` row of 0 too, so a wrapper's estimate can be $0. No gateway companions are drawn: they
-// carry what a gateway billed minus the call's own cost, which can be negative. Billed calls are
+// `[prices]` row of 0 too, so a wrapper's estimate can be $0. A session draws no gateway companions:
+// they carry what a gateway billed minus the call's own cost, which can be negative. A run draws them
+// only to bill its wrappers, and its check covers tokens, not cost. The cost of billed calls is
 // covered in test/core/sessions.test.ts.
 //
 // The last test shows each check fails on a mutant of the table, the pricer, the estimate or the fold.
@@ -531,6 +537,96 @@ function checkSession(s: Subject, c: SessionCase): void {
   close(dup?.costUsd ?? 0, Math.max(0, x.leftOut.cost), "the cost left out");
 }
 
+// ---------------------------------------------------------------- a run recorded more than once
+
+/** A step recorded a second time on its path: beside itself, or under another billed call nested in the wrapper. */
+interface RunCopy {
+  /** The step, modulo the run's length. */
+  of: number;
+  under: boolean;
+}
+
+/** How a path records the whole run. */
+interface RunPath {
+  /** As steps nested in a call a gateway billed that has no usage of its own, else as top-level calls. */
+  wrapped: boolean;
+  /** The wrapper carries its last step's response id, as a gateway's generation id is on a wrapper and on its last step. */
+  wrapperId: boolean;
+  copy?: RunCopy;
+}
+
+interface RunCase {
+  /** Each response's input and output tokens. */
+  responses: [number, number][];
+  paths: RunPath[];
+  /** A sort key for each event, in the order they are made: the events arrive in key order. */
+  keys: number[];
+}
+
+/** Up to 4 responses on 3 paths of at most 9 events each. */
+const RUN_KEYS = 27;
+
+const runGen: Gen<RunCase> = gen.record<RunCase>({
+  responses: gen.array(gen.tuple<[number, number]>(gen.int(1, 1000), gen.int(0, 1000)), { minLength: 1, maxLength: 4 }),
+  paths: gen.array(
+    gen.record<RunPath>({
+      wrapped: gen.weighted(0.7),
+      wrapperId: gen.weighted(0.6),
+      copy: gen.frequency([1, gen.constant<RunCopy | undefined>(undefined)], [2, gen.record<RunCopy>({ of: gen.int(0, 3), under: gen.bool })]),
+    }),
+    { minLength: 1, maxLength: 3 },
+  ),
+  keys: gen.array(gen.int(0, 1000), { minLength: RUN_KEYS, maxLength: RUN_KEYS }),
+});
+
+/** A run case's events in the order they arrive, 10 ms apart. */
+function runEvents(c: RunCase): AgentEvent[] {
+  const made: AgentEvent[] = [];
+  const event = (id: string, kind: AgentEvent["kind"], o: Partial<AgentEvent>): void => {
+    made.push({ id, v: 0, sessionId: "s", ts: 0, agent: "claude-code", kind, payload: {}, ...o });
+  };
+  // Response i as a call, top-level or at a span.
+  const step = (id: string, i: number, at: Partial<AgentEvent> = {}): void => {
+    const [input, output] = c.responses[i] ?? [0, 0];
+    event(id, "llm.call", { usage: { inputTokens: input, outputTokens: output }, payload: { responseId: `resp_${i}` }, ...at });
+  };
+  // A call with no usage of its own, and the gateway companion that billed it.
+  const billedCall = (id: string, payload: Record<string, unknown>, at: Partial<AgentEvent>): void => {
+    event(id, "llm.call", { payload, ...at });
+    event(`${id}-bill`, "span", { source: "gateway", parentId: id, payload: { gateway: "vercel", billedCostUsd: 0.01 }, usage: { costUsd: 0.01 } });
+  };
+  const last = c.responses.length - 1;
+  for (const [p, path] of c.paths.entries()) {
+    if (!path.wrapped) {
+      for (const i of c.responses.keys()) step(`p${p}s${i}`, i);
+      continue;
+    }
+    const traceId = `trace${p}`;
+    billedCall(`p${p}`, path.wrapperId ? { responseId: `resp_${last}` } : {}, { traceId, spanId: "w" });
+    for (const i of c.responses.keys()) step(`p${p}s${i}`, i, { traceId, spanId: `s${i}`, parentSpanId: "w" });
+    if (!path.copy) continue;
+    if (path.copy.under) billedCall(`p${p}m`, {}, { traceId, spanId: "m", parentSpanId: "w" });
+    step(`p${p}copy`, path.copy.of % c.responses.length, { traceId, spanId: "copy", parentSpanId: path.copy.under ? "m" : "w" });
+  }
+  const order = made.map((e, i) => ({ e, key: c.keys[i] ?? 0, i })).sort((a, b) => a.key - b.key || a.i - b.i);
+  return order.map(({ e }, rank) => ({ ...e, ts: 1000 + 10 * rank }));
+}
+
+function checkRun(s: Subject, c: RunCase): void {
+  const events = runEvents(c);
+  const stats = s.fold(events).stats;
+  const u = stats.usage ?? {};
+  const want: Record<(typeof TOKEN_KEYS)[number], number> = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  for (const [input, output] of c.responses) {
+    want.inputTokens += input;
+    want.outputTokens += output;
+  }
+  const arrival = events.map((e) => e.id).join(" ");
+  for (const k of TOKEN_KEYS) assert.equal(u[k] ?? 0, want[k], `${k}: ${u[k] ?? 0}, the responses add up to ${want[k]} (in order: ${arrival})`);
+  const all = events.reduce((a, e) => a + (e.kind === "llm.call" ? tokensOf(e) : 0), 0);
+  assert.equal(stats.duplicateUsage?.tokens ?? 0, all - want.inputTokens - want.outputTokens, `the tokens left out (in order: ${arrival})`);
+}
+
 // ---------------------------------------------------------------- tests
 
 test("every rate in the price table is sound: finite, cache reads at most input, long context at least the rate it replaces", (t) => {
@@ -607,6 +703,22 @@ test("a session's tokens and cost are the sums over the calls it counts, and wha
     { runs: SESSION_RUNS, label: "session cost" },
   );
   t.diagnostic(`${seen.calls} calls: ${seen.estimated} estimated, ${seen.wrapped} under a wrapper (${seen.free} with a cost reported under an estimate of $0), ${seen.leftOut} left out`);
+});
+
+test("a run of responses recorded on several paths counts each response's tokens once, whatever order its calls arrive in", async (t) => {
+  const seen = { paths: 0, wrapped: 0, named: 0, copies: 0 };
+  await forAll(
+    runGen,
+    (c) => {
+      checkRun(REAL, c);
+      seen.paths += c.paths.length;
+      seen.wrapped += c.paths.filter((p) => p.wrapped).length;
+      seen.named += c.paths.filter((p) => p.wrapped && p.wrapperId).length;
+      seen.copies += c.paths.filter((p) => p.wrapped && p.copy).length;
+    },
+    { runs: SESSION_RUNS, label: "runs" },
+  );
+  t.diagnostic(`${seen.paths} paths: ${seen.wrapped} wrapped (${seen.named} with their last step's response id), ${seen.copies} with a step recorded twice`);
 });
 
 test("each check fails on a mutant of the table, the pricer, the estimate or the fold", async (t) => {
@@ -743,6 +855,7 @@ test("each check fails on a mutant of the table, the pricer, the estimate or the
     ["raise, claude-opus-5-5 1-hour writes at half the 5-minute rate", () => failure(raiseGen(only("claude-opus-5-5", halfHour)), (r) => checkRaise(only("claude-opus-5-5", halfHour), r), "cheap 1-hour writes"), /the cost fell .* when cacheWrite1h rose/],
     ["session, a fold that drops the last call", () => failure(sessionGen(lastCallDropped), (c) => checkSession(lastCallDropped, c), "last call dropped"), /add up to|left out/],
     ["session, a fold that ignores response ids", () => failure(sessionGen(noResponseIds), (c) => checkSession(noResponseIds, c), "no response ids"), /add up to/],
+    ["runs, a fold that ignores response ids", () => failure(runGen, (c) => checkRun(noResponseIds, c), "runs with no response ids"), /add up to/],
     ["session, a fold that ignores parent spans", () => failure(sessionGen(noParents), (c) => checkSession(noParents, c), "no parent spans"), /add up to/],
     ["session, a fold where a wrapper's estimate of $0 beats a nested call's reported cost", () => failure(sessionGen(zeroEstimateKept), (c) => checkSession(zeroEstimateKept, c), "zero estimate kept"), /add up to/],
   ];
