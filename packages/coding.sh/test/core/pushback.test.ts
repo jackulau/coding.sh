@@ -2,7 +2,7 @@
 // tool and the eval candidates use, and pushbackKind, the narrow one the model scorecard counts.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { isPushback, PUSHBACK_KINDS, pushbackKind, type PushbackKind } from "../../src/core/pushback.ts";
+import { isPushback, KIND_ALTERNATIVES, PUSHBACK_KINDS, pushbackKind, type PushbackKind } from "../../src/core/pushback.ts";
 
 describe("isPushback", () => {
   test("keeps its broad reading: any prompt that opens with no, wait, stop or actually", () => {
@@ -265,5 +265,13 @@ describe("pushbackKind", () => {
     assert.equal(pushbackKind(`${"a ".repeat(200)} you broke it`), undefined);
     assert.equal(pushbackKind("   "), undefined);
     assert.equal(pushbackKind(""), undefined);
+  });
+
+  test("looks for an alternative's first word before it reads back", () => {
+    // A lookbehind that opens an alternative runs at every position of the prompt. The lookahead on
+    // the first word in front of it changes no kind: test/verify/pushback-prop.test.ts checks that.
+    for (const [kind, parts] of KIND_ALTERNATIVES) {
+      for (const p of parts) assert.doesNotMatch(p, /^\(\?<[=!]/, `${kind}: ${p.slice(0, 80)}`);
+    }
   });
 });

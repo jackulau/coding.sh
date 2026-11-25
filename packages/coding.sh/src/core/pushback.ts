@@ -102,10 +102,17 @@ const SAME_AS = String.raw`(?!\s+(?:handling|handler|handlers|class|classes|form
 /** Words that can stand for the work at the start of a report: "the build broke", "now the tests fail". */
 const WORK = String.raw`(?:the |all the |all )?(?:build|builds|tests?|ci|checks|app|page|site|server|everything)`;
 
-const any = (parts: string[]): RegExp => new RegExp(parts.join("|"), "i");
+/**
+ * Where one of `words` starts. It goes first in an alternative that opens with a lookbehind (GUARD,
+ * COND, ASK_YOU and the like), so the lookbehind runs only where the alternative's first word starts,
+ * not at every position of the prompt. `words` are the words the alternative starts with, so it
+ * changes no match.
+ */
+const at = (words: string): string => String.raw`(?=\b(?:${words})\b)`;
 
-const KIND_PATTERNS: [PushbackKind, RegExp][] = [
-  ["intent", any([
+/** Each kind's alternatives, the kinds in the order pushbackKind tries them (exported for tests). */
+export const KIND_ALTERNATIVES: readonly (readonly [PushbackKind, readonly string[]])[] = [
+  ["intent", [
     String.raw`\bnot what (?:i|we)(?:'m| am|'re| are| was| were)? (?:meant|mean|asked|asking|wanted|want|said|requested|intended|had in mind|discussed|agreed|described|expected|expecting|looking for|needed(?! to\b)|need(?! to\b))\b(?!,?\s+but\s+(?:it|that|this)(?:'s|\s+is)?\s+(?:works?|worked|fine|ok|okay|good|nice|better)\b)`,
     String.raw`\byou (?:misunderstood|misread|misinterpreted|misheard|got (?:it|me|that) wrong)\b`,
     String.raw`\bi (?:didn'?t|did not|never) (?:ask(?:ed)? (?:for|you)|want(?:ed)? (?:you|that|this|it|a|an|the|those|these)|(?:say|said) (?:that|this|to|you|it)|mean(?:t)? (?:that|this|it|the))\b`,
@@ -121,66 +128,68 @@ const KIND_PATTERNS: [PushbackKind, RegExp][] = [
     // "I asked for a bar chart, not a pie chart"; not "I wanted to add a test, not a big deal".
     String.raw`\bi (?:asked(?: you)?(?: for| to)?|wanted|said|meant) [^.!?;\n]{1,60}?, not (?!(?:a )?(?:big deal|problem|issue|priority|blocker|rush|worry)\b)(?:a|an|the|to)\b`,
     String.raw`\b(?:you did|that'?s|that is|this is|it'?s|it is) (?:the )?(?:exact )?opposite of what (?:i|we)\b`,
-    GUARD + String.raw`\byou (?:were|weren'?t|were not) supposed to\b`,
-  ])],
-  ["undo", any([
+    at("you") + GUARD + String.raw`\byou (?:were|weren'?t|were not) supposed to\b`,
+  ]],
+  ["undo", [
     LEAD + String.raw`(?:undo|revert|roll ?back|back out)\b(?:${DONE}|${OBJECT})` + ON_FAIL + AGENTS,
-    GUARD + String.raw`\b(?:undo|revert|roll ?back|back out)\s+(?:it|them|everything|your|all (?:of )?(?:it|them|your))\b` + ON_FAIL + AGENTS,
-    GUARD + String.raw`\b(?:undo|revert|roll ?back|back out)\s+(?:that|this|those|these|all (?:of )?(?:that|this|those|these|the)|the (?:last|previous|latest|recent)|the (?:changes?|edits?|commits?))\b` + ON_FAIL + AGENTS,
+    at("undo|revert|roll ?back|back out") + GUARD + String.raw`\b(?:undo|revert|roll ?back|back out)\s+(?:it|them|everything|your|all (?:of )?(?:it|them|your))\b` + ON_FAIL + AGENTS,
+    at("undo|revert|roll ?back|back out") + GUARD + String.raw`\b(?:undo|revert|roll ?back|back out)\s+(?:that|this|those|these|all (?:of )?(?:that|this|those|these|the)|the (?:last|previous|latest|recent)|the (?:changes?|edits?|commits?))\b` + ON_FAIL + AGENTS,
     // "reverse your changes"; not "then reverse it so the newest is first".
-    GUARD + String.raw`\breverse\s+(?:it|them|that|this|those|these|everything|all|the|what|your)\b` + OWNED,
-    GUARD + FEATURE_BEFORE + String.raw`\b(?:revert|roll ?back|go back) to (?:the )?(?:previous|original|old|last|earlier|prior)\b` + ON_FAIL + AGENTS,
-    GUARD + TIMED + FEATURE_BEFORE + String.raw`\bput (?:it|that|this|them|those|these|everything|the \w+(?: \w+)?) back\b` + TIMED_AFTER,
-    GUARD + TIMED + FEATURE_BEFORE + String.raw`\b(?:change|set|switch|turn|move) (?:it|that|this|them) back\b` + TIMED_AFTER,
-    ASK_YOU + String.raw`\b(?:remove (?:that|those)|take (?:that|those|it|them|this|these) out)\b(?=\s*(?:[.!?,;:]|$|again\b|please\b|too\b|now\b|entirely\b|completely\b))`,
-    ASK_YOU + String.raw`\bremove (?:it|this|them|these) again\b`,
+    at("reverse") + GUARD + String.raw`\breverse\s+(?:it|them|that|this|those|these|everything|all|the|what|your)\b` + OWNED,
+    at("revert|roll ?back|go back") + GUARD + FEATURE_BEFORE + String.raw`\b(?:revert|roll ?back|go back) to (?:the )?(?:previous|original|old|last|earlier|prior)\b` + ON_FAIL + AGENTS,
+    at("put") + GUARD + TIMED + FEATURE_BEFORE + String.raw`\bput (?:it|that|this|them|those|these|everything|the \w+(?: \w+)?) back\b` + TIMED_AFTER,
+    at("change|set|switch|turn|move") + GUARD + TIMED + FEATURE_BEFORE + String.raw`\b(?:change|set|switch|turn|move) (?:it|that|this|them) back\b` + TIMED_AFTER,
+    at("remove|take") + ASK_YOU + String.raw`\b(?:remove (?:that|those)|take (?:that|those|it|them|this|these) out)\b(?=\s*(?:[.!?,;:]|$|again\b|please\b|too\b|now\b|entirely\b|completely\b))`,
+    at("remove") + ASK_YOU + String.raw`\bremove (?:it|this|them|these) again\b`,
     String.raw`\b(?:remove|delete|drop|discard|undo|revert|get rid of|take out|throw away|back out) (?:what|everything|all|whatever) you (?:just |already )?(?:added|wrote|did|changed|made|put|created)\b`,
     String.raw`\b(?:remove|delete|drop|discard|get rid of|throw away) (?:all )?(?:of )?(?:your (?:changes?|edits?|additions?|code)|the (?:changes?|edits?|additions?|code|lines?) you (?:just |already )?(?:made|added|did|wrote|put))\b`,
-    GUARD + TIMED + FEATURE_BEFORE + String.raw`\brestore (?:it|that|this|the (?:original|old|previous))\b` + TIMED_AFTER,
-    GUARD + TIMED + FEATURE_BEFORE + String.raw`\bback to (?:how|what|the way) it was\b` + TIMED_AFTER,
-  ])],
-  ["redo", any([
+    at("restore") + GUARD + TIMED + FEATURE_BEFORE + String.raw`\brestore (?:it|that|this|the (?:original|old|previous))\b` + TIMED_AFTER,
+    at("back") + GUARD + TIMED + FEATURE_BEFORE + String.raw`\bback to (?:how|what|the way) it was\b` + TIMED_AFTER,
+  ]],
+  ["redo", [
     LEAD + String.raw`(?:try (?:it |that |this )?again${LATER}|redo${DONE}|retry${DONE}|start (?:over|again|from scratch)\b${FEATURE}(?!\s+(?:on|for)\b)|do (?:it|that|this) over)`,
     REACT + String.raw`start (?:over|again|from scratch)\b`,
-    COND + String.raw`\b(?:please|pls|can you|could you|let'?s|just) try (?:it |that |this )?again\b` + LATER,
-    COND + String.raw`\btry (?:it |that |this )?again[\s.!]*$`,
+    at("please|pls|can you|could you|let'?s|just") + COND + String.raw`\b(?:please|pls|can you|could you|let'?s|just) try (?:it |that |this )?again\b` + LATER,
+    at("try") + COND + String.raw`\btry (?:it |that |this )?again[\s.!]*$`,
     String.raw`\bredo (?:it|that|this|them|those|everything|the (?:whole|entire)\b|the (?:changes?|edits?|work|implementation|fix|refactor|design|layout|thing|code|tests?|function|file|page|ui)\b)`,
-    COND + String.raw`\bstart (?:over|from scratch)\b` + FEATURE + String.raw`(?!\s+(?:on|for)\b)`,
+    at("start") + COND + String.raw`\bstart (?:over|from scratch)\b` + FEATURE + String.raw`(?!\s+(?:on|for)\b)`,
     // "do it again but with tabs"; not "do that again for the users table".
     LEAD + String.raw`do (?:it|that|this) again\b(?=\s*(?:[.!?,;:]|$|but\b|please\b|properly\b|correctly\b|right\b))`,
     String.raw`\bgive it another (?:try|shot|go|attempt)\b`,
     String.raw`\bi (?:don'?t|do not) like (?:it|them|(?:that|this|those|these)(?=\s*(?:[.!?,;:)]|$|(?:at all|either|one|ones|much|very much|so much|anymore|any more)\b))|(?:the|this|that|these|those|your) (?:result|results|change|changes|approach|way|design|look|output|names?|naming|style|implementation|fix|solution|code|answer|ui|layout|wording|version))\b(?!\s+(?:when|if|how)\b)`,
     LEAD + String.raw`(?:don'?t|do not) like (?:it|this|that|them)\b(?=\s*(?:[.!?,;:]|$|at all\b|much\b|either\b))`,
     String.raw`\bnot (?:happy|satisfied) with (?:it|that|this|the (?:result|results|change|changes|approach|output|fix|solution))\b`,
-  ])],
-  ["broken", any([
-    GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:broken|failing|fails|failed|crashing|crashes|crashed|erroring|errors out|throwing|throws|hangs|hanging|red|wrong|not (?:working|work|fixed|passing|compiling|building|right)|(?:doesn'?t|does not|won'?t|will not) (?:work|pass|compile|build|start|run))\b` + BEFORE_YOU + KNOWN,
+  ]],
+  ["broken", [
+    at("still") + GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:broken|failing|fails|failed|crashing|crashes|crashed|erroring|errors out|throwing|throws|hangs|hanging|red|wrong|not (?:working|work|fixed|passing|compiling|building|right)|(?:doesn'?t|does not|won'?t|will not) (?:work|pass|compile|build|start|run))\b` + BEFORE_YOU + KNOWN,
     // Not the person's own "I didn't fix it".
-    GUARD + String.raw`(?<!\bi (?:\w+ )?)\b(?:didn'?t|did not) (?:work(?! on\b)|fix|help|solve|change anything|do anything)\b`,
-    GUARD + String.raw`\b(?:it|that|this|they) (?:still )?(?:doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not) (?:work|working|fixed|compile|compiling)\b` + NOT_YET,
-    GUARD + String.raw`\b(?:it'?s|it is|that'?s|that is|this is) (?:still )?not (?:working|fixed|compiling)\b` + NOT_YET,
+    at("didn'?t|did not") + GUARD + String.raw`(?<!\bi (?:\w+ )?)\b(?:didn'?t|did not) (?:work(?! on\b)|fix|help|solve|change anything|do anything)\b`,
+    at("it|that|this|they") + GUARD + String.raw`\b(?:it|that|this|they) (?:still )?(?:doesn'?t|does not|don'?t|do not|isn'?t|is not|aren'?t|are not) (?:work|working|fixed|compile|compiling)\b` + NOT_YET,
+    at("it'?s|it is|that'?s|that is|this is") + GUARD + String.raw`\b(?:it'?s|it is|that'?s|that is|this is) (?:still )?not (?:working|fixed|compiling)\b` + NOT_YET,
     LEAD + String.raw`(?:still )?(?:doesn'?t|does not|not|isn'?t|is not) (?:work|working)\b(?=\s*(?:[.!?,;:]|$|(?:for me|either|now|at all)\b))`,
-    GUARD + String.raw`\byou(?:'ve| have| just)? (?:broke|broken)\b` + SPLIT,
+    at("you") + GUARD + String.raw`\byou(?:'ve| have| just)? (?:broke|broken)\b` + SPLIT,
     // "that broke the build" opens its clause; "the change that broke login" names a change.
-    GUARD + String.raw`(?:(?<=^|[.!?,;:]\s*|\b(?:and|but|so|now|ok|okay|no|nope|hmm+|ugh+|well|actually|wait|sorry)\s+)that|\b(?:this|it|your (?:change|edit|fix|commit|code|patch|update)s?)) (?:broke|has broken|have broken)\b` + SPLIT,
-    GUARD + String.raw`\b(?:you(?:'ve| have)?|that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:just )?(?:made|has made|have made) (?:it|things|this|that|everything|the \w+(?: \w+)?) worse\b`,
+    at("that|this|it|your") + GUARD + String.raw`(?:(?<=^|[.!?,;:]\s*|\b(?:and|but|so|now|ok|okay|no|nope|hmm+|ugh+|well|actually|wait|sorry)\s+)that|\b(?:this|it|your (?:change|edit|fix|commit|code|patch|update)s?)) (?:broke|has broken|have broken)\b` + SPLIT,
+    at("you|that|this|it|your") + GUARD + String.raw`\b(?:you(?:'ve| have)?|that|this|it|your (?:change|edit|fix|commit|code|patch|update)s?) (?:just )?(?:made|has made|have made) (?:it|things|this|that|everything|the \w+(?: \w+)?) worse\b`,
     LEAD + String.raw`(?:it'?s|it is|that'?s|that is|this is|things are|everything is) (?:even |much |way |a lot |now )?worse\b(?=\s*(?:[.!?,;:]|$|now\b|than (?:before|it was)\b))`,
     // Only at the start: mid-sentence it is usually a check that passed ("ran the formatter, nothing changed").
     LEAD + String.raw`(?:still )?nothing (?:has |have )?(?:changed|happened)\b(?=\s*(?:[.!?,;:]|$))(?![\s,.!;:-]*(?:great|good|nice|perfect|awesome|excellent|as expected|as intended|which is (?:good|great|fine|expected)|so (?:the|it|that|we)\b))`,
-    GUARD + String.raw`\b(?:get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws|throwing|threw|shows|showing|showed|gives|giving|gave|returns|returning|returned)\s+(?:the\s+)?same (?:error|errors|failure|failures|exception|crash|problem|issue)\b` + SAME_AS,
+    at("get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws|throwing|threw|shows|showing|showed|gives|giving|gave|returns|returning|returned") + GUARD + String.raw`\b(?:get|getting|got|see|seeing|saw|have|having|has|had|hit|hitting|throws|throwing|threw|shows|showing|showed|gives|giving|gave|returns|returning|returned)\s+(?:the\s+)?same (?:error|errors|failure|failures|exception|crash|problem|issue)\b` + SAME_AS,
     LEAD + String.raw`(?:still )?(?:the )?same (?:error|errors|failure|failures|exception|crash)\b` + SAME_AS,
     LEAD + String.raw`(?:still )?(?:the )?same (?:issue|problem)\b(?=\s*(?:[.!?;:]|$|again\b|as before\b))`,
-    GUARD + String.raw`\bsame (?:error|errors|failure|exception|crash) (?:as before|again)\b`,
-    GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:get|getting|see|seeing|have|having)(?: (?:the|an|this|that|a))? (?:error|errors|failure|failures|exception|crash)\b` + BEFORE_YOU + KNOWN,
-    GUARD + String.raw`\b(?:fails|failing|failed|broken|crashing|crashes|crashed) again\b`,
+    at("same") + GUARD + String.raw`\bsame (?:error|errors|failure|exception|crash) (?:as before|again)\b`,
+    at("still") + GUARD + ASKED + OUTSIDE + String.raw`\bstill (?:get|getting|see|seeing|have|having)(?: (?:the|an|this|that|a))? (?:error|errors|failure|failures|exception|crash)\b` + BEFORE_YOU + KNOWN,
+    at("fails|failing|failed|broken|crashing|crashes|crashed") + GUARD + String.raw`\b(?:fails|failing|failed|broken|crashing|crashes|crashed) again\b`,
     // "the build broke", "now the tests fail", "tests are failing now", "getting a 500 now".
     LEAD + WORK + String.raw` broke\b(?=\s*(?:[.!?,;:]|$|again\b|now\b))`,
     LEAD + String.raw`now,? (?:${WORK}|it|they) (?:fails?|failing|crash(?:es|ing)?|breaks|broke|errors(?: out)?|throws|hangs|(?:is|are) (?:failing|crashing|broken|erroring))\b` + UNEXPECTED,
     LEAD + String.raw`(?:${WORK}|it|they)(?:'s|'re|\s+is|\s+are)?\s+(?:failing|crashing|broken|erroring|fails|crashes) now\b` + UNEXPECTED,
     LEAD + String.raw`(?:now )?(?:i'?m )?(?:getting|seeing) (?:a |an )?(?:[45]\d\d|error|errors|exception|crash|blank page|white screen)\b(?: \w+)? now\b(?! and then\b)` + UNEXPECTED,
     LEAD + String.raw`(?:the )?(?:page|screen|app|site|window|output) is (?:blank|empty|white) now\b` + UNEXPECTED,
-  ])],
+  ]],
 ];
+
+const KIND_PATTERNS = KIND_ALTERNATIVES.map(([kind, parts]) => [kind, new RegExp(parts.join("|"), "i")] as const);
 
 /**
  * The kind of pushback a follow-up prompt is, or undefined when it is none of them. Reads the
