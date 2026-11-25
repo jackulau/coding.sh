@@ -87,3 +87,12 @@ export function envLine(env: NodeJS.ProcessEnv, name: string, value: string, pla
   if (!windowsShell(env, platform)) return `export ${name}=${shellQuote(value)}`;
   return `$env:${name} = '${value.replace(/['‘’‚‛]/g, "$&$&")}'`;
 }
+
+/**
+ * An environment variable as a printed message names it: `$NAME` in sh. PowerShell and cmd
+ * (windowsShell) get `$env:NAME`, the form envLine sets it with: in PowerShell `$NAME` is a
+ * shell variable, and cmd has no `$` form.
+ */
+export function envRef(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform = process.platform): string {
+  return windowsShell(env, platform) ? `$env:${name}` : `$${name}`;
+}

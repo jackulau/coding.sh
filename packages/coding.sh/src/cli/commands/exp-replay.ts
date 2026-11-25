@@ -21,7 +21,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str } from "../common.ts";
 import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
-import { cliCommand, envLine } from "../next-steps.ts";
+import { cliCommand, envLine, envRef } from "../next-steps.ts";
 import { CliError, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { callOrFail } from "./diff-calls.ts";
@@ -121,16 +121,16 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
     out.print(`${plural(cases.length, "call")} × 2 arms × ${n}: ${plural(est.calls, "model call")}, ~${tokens(est.inputTokens)} input tokens, ${estText} (input uncached, output as recorded)`);
     out.print(`A ${arms[0].label}`);
     out.print(`B ${arms[1].label}`);
-    for (const p of providers) if (!hasReplayAuth(p, c.env)) out.print(`needs $${REPLAY_KEY_ENV[p]} to run`);
+    for (const p of providers) if (!hasReplayAuth(p, c.env)) out.print(`needs ${envRef(c.env, REPLAY_KEY_ENV[p])} to run`);
     return 0;
   }
   for (const p of providers) {
     const key = REPLAY_KEY_ENV[p];
     if (!hasReplayAuth(p, c.env)) {
-      throw new CliError(`exp replay calls the ${p === "anthropic" ? "Anthropic" : "OpenAI"} API with your own key, and $${key} is not set`, {
+      throw new CliError(`exp replay calls the ${p === "anthropic" ? "Anthropic" : "OpenAI"} API with your own key, and ${envRef(c.env, key)} is not set`, {
         reason: "missing_api_key",
         // A shell comment, not parentheses: the whole line runs as printed in sh and PowerShell.
-        next: [`${envLine(c.env, key, "...")}   # the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in $${REPLAY_OAUTH_ENV} works too` : ""}`, `See the cost first: ${dryRunCommand(c)}`],
+        next: [`${envLine(c.env, key, "...")}   # the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in ${envRef(c.env, REPLAY_OAUTH_ENV)} works too` : ""}`, `See the cost first: ${dryRunCommand(c)}`],
       });
     }
   }
