@@ -77,8 +77,12 @@ export interface Derail {
 const POLL_TOOLS = new Set(["BashOutput", "TaskOutput", "AgentOutputTool", "KillShell", "KillBash", "write_stdin", "read_output", "check_background", "list_agents"]);
 /** Waiting tools by name: wait, wait_agent, sleep… */
 const POLL_NAME = /^(?:wait|sleep)/i;
-/** MCP servers that drive a browser or a desktop: every tool they have acts on a changing world. */
-const UI_SERVER = /^mcp__[^_]*(?:browser|chrome|playwright|puppeteer|computer|devtools|desktop|cua)[^_]*__/i;
+/** Words in the name of an MCP server that drives a browser or a desktop: every tool it has acts on a changing world. */
+const UI_SERVER = /browser|chrome|playwright|puppeteer|computer|devtools|desktop|cua/i;
+/** The server in an mcp__<server>__<tool> name: up to its first underscore, which must start the `__`. */
+const MCP_SERVER = /^mcp__([^_]*)__/i;
+/** A tool of a UI server. The server is captured first and its words tested after, so the name is read in linear time. */
+const uiServerTool = (tool: string): boolean => UI_SERVER.test(MCP_SERVER.exec(tool)?.[1] ?? "");
 /** Tools that hand work to another agent: the main agent is making progress through it. */
 const DELEGATE_TOOL = /^(?:Task|Agent|spawn_agent|send_message|send_input|followup_task|delegate\w*)$/i;
 /** Shell commands that write files: an edit made through the shell. */
@@ -521,7 +525,7 @@ function newCall(s: DerailState, e: AgentEvent, index: number, tool: string, inp
     interrupted: false,
     benign: false,
     label: label(tool, input),
-    poll: POLL_TOOLS.has(tool) || POLL_NAME.test(base) || UI_SERVER.test(tool) || UI_TOOL.test(base) || WAIT_COMMAND.test(cmd),
+    poll: POLL_TOOLS.has(tool) || POLL_NAME.test(base) || uiServerTool(tool) || UI_TOOL.test(base) || WAIT_COMMAND.test(cmd),
     editTool,
     delegate: DELEGATE_TOOL.test(base),
     shellWrite: SHELL_WRITE.test(cmd),
