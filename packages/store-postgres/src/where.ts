@@ -106,8 +106,8 @@ export const KEY_SQL: Record<string, string[]> = {
   // payload.error of a failed call, or the message of an error event.
   error: [jstr("e.payload", "error"), `(CASE WHEN e.kind = 'error' THEN ${jstr("e.payload", "message")} END)`],
   "event.duration": ["e.duration_ms"],
-  // Read from the session's start event.
-  user: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "user")} END)`],
+  // Read from the session's start event; the SDKs' trace() records its user as userId.
+  user: ["user", "userId"].map((f) => `(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", f)} END)`),
   env: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "environment")} END)`],
   release: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "release")} END)`],
 };
