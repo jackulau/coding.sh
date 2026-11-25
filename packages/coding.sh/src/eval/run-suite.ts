@@ -32,9 +32,11 @@ export function trialsFromRuns(tasks: readonly EvalTask[], runs: readonly RunRes
  * Tasks drafted from sessions that went wrong (tag `captured-failure`, see eval/init.ts):
  * which of them the agent now solves in most of its trials. One line, or none when the
  * suite has no such task. The production→CI loop: a failure captured once is checked on
- * every pull request, and the report says when a change fixes it.
+ * every pull request, and the report says when a change fixes it. `ref` names each source
+ * session (eval run passes the shortest reference that opens it).
  */
-export function capturedFailuresLine(tasks: readonly Pick<EvalTask, "id" | "name" | "tags" | "sourceSessionId">[], trials: readonly TaskTrials[], tag = "captured-failure", max = 5): string | undefined {
+export function capturedFailuresLine(tasks: readonly Pick<EvalTask, "id" | "name" | "tags" | "sourceSessionId">[], trials: readonly TaskTrials[], o: { ref?: (id: string) => string; tag?: string; max?: number } = {}): string | undefined {
+  const { ref = (id: string) => id, tag = "captured-failure", max = 5 } = o;
   const captured = tasks.filter((t) => t.tags.includes(tag));
   if (!captured.length) return undefined;
   const byId = new Map(trials.map((t) => [t.id, t]));
@@ -42,7 +44,7 @@ export function capturedFailuresLine(tasks: readonly Pick<EvalTask, "id" | "name
     const known = (byId.get(t.id)?.trials ?? []).filter((x) => !x.unknown);
     return known.length > 0 && known.filter((x) => x.pass).length * 2 > known.length;
   });
-  const names = now.slice(0, max).map((t) => `${t.name}${t.sourceSessionId ? ` (session ${t.sourceSessionId})` : ""}`);
+  const names = now.slice(0, max).map((t) => `${t.name}${t.sourceSessionId ? ` (session ${ref(t.sourceSessionId)})` : ""}`);
   const more = now.length > max ? `, and ${now.length - max} more` : "";
   return `captured failures: ${now.length} of ${captured.length} now pass${names.length ? `: ${names.join(", ")}${more}` : ""}`;
 }

@@ -963,7 +963,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/eval-run.ts",
-      "max": 16,
+      "max": 15,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
