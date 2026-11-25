@@ -121,7 +121,8 @@ export function jsonAnyValue(v: unknown, depth = 0): OtelValue {
   if (depth > MAX_DEPTH) throw new OtlpDecodeError("AnyValue nested too deeply");
   if (!isObj(v)) return null;
   let x: unknown;
-  if ((x = get(v, "stringValue")) !== undefined) return typeof x === "string" ? x : String(x);
+  // An object or array is no string: it is read as no value, and a number or boolean as its text.
+  if ((x = get(v, "stringValue")) !== undefined) return typeof x === "string" ? x : typeof x === "object" && x !== null ? null : String(x);
   if ((x = get(v, "boolValue")) !== undefined) return x === true || x === "true";
   if ((x = get(v, "intValue")) !== undefined) return int64(x);
   if ((x = get(v, "doubleValue")) !== undefined) return double(x);

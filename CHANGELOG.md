@@ -519,6 +519,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** On Windows, `coding.sh init` no longer writes a hook command that cmd.exe or PowerShell would read differently: for a hook path with `%`, `$`, a backtick or a curly double quote, it says to set `CODING_SH_HOME` to a folder without them. Claude Code, Amp, OpenCode and Pi keep their hooks, and Copilot CLI's PowerShell command single-quotes the path. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#hook-command))
 - **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **OTel.** A model call span whose messages are wrapped in thousands of nested `kwargs` or `message` objects is stored, and the receiver no longer answers 503 to it. Messages wrapped more than eight levels deep are left out of the call. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
+- **OTel.** An OTLP/JSON attribute whose `stringValue` holds an object or array is read as no value, and the rest of the request is stored. The receiver no longer answers 500 to such a request. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
 
 ## [0.1.7] - 2026-11-16
 

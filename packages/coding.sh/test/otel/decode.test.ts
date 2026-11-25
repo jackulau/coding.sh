@@ -160,6 +160,17 @@ describe("OTLP/JSON quirks", () => {
     assert.deepEqual(jsonAnyValue({ arrayValue: {} }), []);
   });
 
+  it("reads a stringValue that holds an object or array as no value, and a number or boolean as its text", () => {
+    // An object or array, one level deep or many, is read as no value.
+    assert.equal(jsonAnyValue({ stringValue: { toString: 1 } }), null);
+    assert.equal(jsonAnyValue({ stringValue: [{ toString: 1 }] }), null);
+    let deep: unknown = 1;
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    assert.equal(jsonAnyValue({ stringValue: deep }), null);
+    assert.equal(jsonAnyValue({ stringValue: 5 }), "5");
+    assert.equal(jsonAnyValue({ string_value: true }), "true");
+  });
+
   it("rejects non-object bodies and non-array resourceSpans", () => {
     assert.throws(() => decodeTraceJson([]), OtlpDecodeError);
     assert.throws(() => decodeTraceJson("x"), OtlpDecodeError);
