@@ -357,6 +357,88 @@ removes it) is applied after setup instead, as an agent's run sees it.
 [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) walks through a full set of hand-written
 tasks, from a stub CLI to the compare report.
 
+#### Proof tasks
+
+A task can grade proofs the way it grades code: the verifier runs the proof checker, such as
+`coqc`, `lake build`, `dafny verify` or `cargo verus`. It must also fail when the agent changes the
+statements it proves, or leaves a proof unfinished in a way the checker accepts. This Lean task
+does both:
+
+```
+tasks/prove-add-comm/
+  task.json          {"name": "prove-add-comm", "tags": ["proofs"],
+                      "verifier": {"command": "sh verify.sh", "timeoutMs": 3600000},
+                      "meta": {"testGlobs": ["Spec.lean", "lakefile.lean", "lean-toolchain"]}}
+  instruction.md     Prove each theorem in Proofs.lean. Keep its name. Do not change Spec.lean.
+  repo/              Spec.lean, Proofs.lean (every proof is sorry), lakefile.lean, lean-toolchain
+  tests/verify.sh    the verifier, below
+  tests/spec.sha256  the hashes of Spec.lean, lakefile.lean and lean-toolchain
+  tests/Check.lean   ties each proof to its statement and prints the axioms it uses
+  reference.patch    a correct proof, for eval validate
+  near-misses/edits-spec.patch   a run that weakens a statement in Spec.lean
+```
+
+`Spec.lean` holds each statement as a definition, such as `def AddComm : Prop := forall a b : Nat,
+a + b = b + a`. `Proofs.lean` imports it and starts as `theorem add_comm' : AddComm := by sorry`.
+The hidden `Check.lean`:
+
+```lean
+import Proofs
+
+example : AddComm := add_comm'
+#print axioms add_comm'
+```
+
+The verifier, `tests/verify.sh`:
+
+```sh
+sha256sum -c spec.sha256 || exit 1
+lake build || exit 1
+lake env lean Check.lean > axioms.txt || exit 1
+cat axioms.txt
+if grep -q sorryAx axioms.txt; then echo "a proof uses sorry"; exit 1; fi
+```
+
+Make the hash file from inside `repo/`, and again whenever the spec changes on purpose:
+`sha256sum Spec.lean lakefile.lean lean-toolchain > ../tests/spec.sha256`. Where `sha256sum` is
+missing, `shasum -a 256` makes and checks the same file.
+
+Each check stops a different way to pass without a proof:
+
+- The hash check fails a run that edited a statement, the build file or the toolchain: a build file
+  can pass options to the checker, and `lean-toolchain` picks the checker's version. Pin
+  `lake-manifest.json` too when there are dependencies.
+- The `example` line fails a proof whose theorem no longer has the pinned statement. Without it,
+  `theorem add_comm' : True := trivial` would pass.
+- Lean reports `sorry` as a warning, so `lake build` passes with one left in, but `#print axioms`
+  lists `sorryAx`. It also lists axioms the agent declared: to refuse them, allow only `propext`,
+  `Classical.choice` and `Quot.sound`.
+
+In Rocq, `Print Assumptions` does the same job: it prints `Closed under the global context` when a
+proof assumes nothing, and otherwise lists the axioms it uses, admitted lemmas included. For another
+checker, fail on its own report of what a proof assumes, where it has one.
+
+`meta.testGlobs` adds the pinned files to compare's tamper check of the agent's diff. An edit to one
+of them is flagged and counts in the `tamper rate` row, and a [repair round](#repair-rounds) that
+makes one ends the loop. The hash check is what fails the run; the flag shows the agent tried.
+Leave the proof files out, since the agent is meant to edit them.
+
+`eval validate` then checks the verifier: the start tree, with every proof `sorry`, must fail,
+`reference.patch` must pass, and `edits-spec.patch` must fail. It notes that it found no impossible
+variant, since the hidden files hold no test assertion to flip.
+
+Proof checks can be slow. The verifier gets 10 minutes unless `verifier.timeoutMs` sets another
+limit, as in the example. The agent gets 30 minutes a run unless `compare --trial-timeout <SEC>`
+sets another.
+
+Keep `.lake` in `repo/.gitignore`. Under [verifier isolation](#verifier-isolation), files git
+ignores never reach the verifier, so it builds the agent's sources, not build output the agent left
+behind.
+
+In an `exp run` dataset whose output is the proof itself, a `command` grader (see [Grader
+fields](#grader-fields)) can do the same: write the output next to its own copy of the statements,
+then run the checker.
+
 ## Datasets and experiments
 
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
