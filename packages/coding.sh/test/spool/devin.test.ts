@@ -28,7 +28,7 @@ before(() => {
 after(() => rmSync(root, { recursive: true, force: true }));
 
 /** A hook entry as `coding.sh init` writes it for Devin. */
-const ours = (event: string, path = hook) => ({ type: "command", command: buildHookCommand(path, "devin", event), timeout: 10 });
+const ours = (event: string, path = hook, platform: NodeJS.Platform = process.platform) => ({ type: "command", command: buildHookCommand(path, "devin", event, [], platform), timeout: 10 });
 
 describe("devinConfigDir", () => {
   it("DEVIN_CONFIG_HOME, else %APPDATA% on Windows and ~/.config elsewhere", () => {
@@ -90,12 +90,13 @@ describe("devinHookEvents", () => {
     // Written by hand, so a backslash path stays raw (a folder named `hand\made` outside Windows).
     const hand = join(root, "hand\\made", "hook.mjs");
     write(hand, "");
-    // buildHookCommand escapes the $ in a path; it is read back without the escape.
+    // buildHookCommand escapes the $ in a path for sh; it is read back without the escape. On
+    // Windows init refuses such a path for Devin, so the command is the one built outside Windows.
     const dollar = install(join(root, "a$b"));
     const project = join(root, "p0");
     write(
       join(project, ".devin", "hooks.v1.json"),
-      JSON.stringify({ Stop: [{ hooks: [{ type: "command", command: `node "${hand}" devin Stop` }] }], SessionEnd: [{ hooks: [ours("SessionEnd", dollar)] }] }),
+      JSON.stringify({ Stop: [{ hooks: [{ type: "command", command: `node "${hand}" devin Stop` }] }], SessionEnd: [{ hooks: [ours("SessionEnd", dollar, "linux")] }] }),
     );
     assert.deepEqual([...devinHookEvents({ HOME: join(root, "u5") }, project)].sort(), ["SessionEnd", "Stop"]);
   });

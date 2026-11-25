@@ -127,3 +127,40 @@ describe("init's commands to run next keep every flag", () => {
     });
   }
 });
+
+describe("init on Windows, with a hook path cmd.exe or PowerShell would read differently", { skip: process.platform !== "win32" && "agents run hooks under cmd.exe or PowerShell only on Windows" }, () => {
+  let env: TmpEnv;
+  let home = "";
+  const run = (args: string[]) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: env.home, env: { ...process.env, CODING_SH_HOME: home, CODING_SH_HOOK_SOURCE: join(env.root, "dist", "hook.mjs"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" }, encoding: "utf8", timeout: 120_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  before(() => {
+    env = tmpEnv();
+    // The data folder, and so the hook path, is under a folder named a$b.
+    home = join(env.root, "a$b", "coding.sh");
+    writeFile(join(env.root, "dist", "hook.mjs"), "// hook\n");
+    process.env.CLAUDE_CONFIG_DIR = join(env.home, ".claude");
+    fakeBin(env, "agy", "1.3.0");
+    fakeBin(env, "claude", "2.1.319 (Claude Code)");
+  });
+  after(() => env.restore());
+
+  test("says why for that agent and how to move the folder, and still sets up Claude Code", () => {
+    const init = ["init", "--no-mcp", "--no-import", "--agent", "antigravity", "--agent", "claude-code"];
+    const reason = /^the hook path .*a\$b.*hook\.mjs has a \$, which cmd\.exe or PowerShell would read differently; set CODING_SH_HOME .*setx CODING_SH_HOME/;
+    const dry = run([...init, "--dry-run", "--json"]);
+    assert.equal(dry.status, 1, dry.stderr);
+    const agents = (JSON.parse(dry.stdout) as { agents: { id: string; error: string | null; changes: unknown[] }[] }).agents;
+    assert.match(agents.find((a) => a.id === "antigravity")?.error ?? "", reason);
+    assert.equal(agents.find((a) => a.id === "claude-code")?.error, null);
+    assert.ok(agents.find((a) => a.id === "claude-code")?.changes.length);
+
+    const r = run([...init, "--yes"]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /✗ can't install hooks: the hook path .*a\$b.*hook\.mjs has a \$, /);
+    assert.match(r.stderr, /^✓ Set up Claude Code \(hooks\)$/m);
+    assert.match(readFileSync(join(env.home, ".claude", "settings.json"), "utf8"), /hook\.mjs\\" claude-code /);
+  });
+});
