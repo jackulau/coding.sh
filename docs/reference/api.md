@@ -662,9 +662,9 @@ copy. Two calls where neither is nested in the other are copies, also when both 
 with that id.
 
 Of two copies, the one checked first counts, unless the other ranks higher: a billed call, or one
-with a billed call nested in it at any depth, ranks first, then a call a bill above it covers, then
-any other. A copy checked later that is nested in neither level of a response seen at two levels is
-left out, whatever its rank.
+with a billed call nested in it at any depth, ranks first, then a call a bill above it covers, or
+whose cost such a bill replaces, then any other. A copy checked later that is nested in neither
+level of a response seen at two levels is left out, whatever its rank.
 
 Calls are checked in time order, but a nested call is checked after the call it is nested in,
 whatever their times, so one left out with a copy makes no later call a copy. Calls that came before

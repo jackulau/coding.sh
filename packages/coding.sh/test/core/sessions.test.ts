@@ -1256,6 +1256,51 @@ describe("session usage rollup", () => {
     assert.deepEqual(usageOf([r, k, bill(k, 2, "gen_w")]), { inputTokens: 10, costUsd: 2 }, "the bill on the step");
   });
 
+  // A call between a billed call and the step its bill is for counts at that bill, but it ranked as low as a copy of it with
+  // no bill, so a copy checked first counted its own cost beside the bill.
+  it("an unbilled copy of a call between a billed call and the step its bill is for is left out, in any order", () => {
+    const w = llm("w", undefined, undefined);
+    const r = llm("r", "w", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    const k = llm("k", "r", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true, responseId: "gen_w" });
+    const top = llm("x", undefined, { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" }, { traceId: "t2" });
+    const beside = llm("x", "w", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    // A call with no usage between the billed call and the call that has the copy.
+    const m = llm("m", "w", undefined);
+    const under = llm("r", "m", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" });
+    const cases: [string, AgentEvent[]][] = [
+      ["a copy at the top", [w, r, k, top]],
+      ["a copy beside it", [w, r, k, beside]],
+      ["a call with no usage between", [w, m, under, k, top]],
+    ];
+    for (const [name, calls] of cases) {
+      for (const { label, evs } of runs(calls, [bill(w, 2, "gen_w")])) {
+        const what = `${name}: ${label}`;
+        const got = rollupUsage(evs);
+        assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, what);
+        // The copy, the $3 between them and the step's estimate are left out.
+        assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, what);
+        const s = buildSession(evs);
+        assert.deepEqual(s.stats.usage, got.usage, what);
+        assert.deepEqual(s.stats.duplicateUsage, got.duplicate, what);
+      }
+    }
+    // A copy billed for its own generation counts at that bill, and the call between them is left out with the step
+    // nested in it: $2 and $4.
+    for (const { label, evs } of runs([w, r, k, top], [bill(w, 2, "gen_w"), bill(top, 4, "gen_r")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 6 }, `a billed copy: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 2, tokens: 20, costUsd: 3.25 }, `a billed copy: ${label}`);
+    }
+    // A copy nested in another billed call: each bill counts once, $2 and $5.
+    const w2 = llm("w2", undefined, undefined, {}, { traceId: "t2" });
+    const inner = llm("x", "w2", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_r" }, { traceId: "t2" });
+    for (const { label, evs } of runs([w, r, k, w2, inner], [bill(w, 2, "gen_w"), bill(w2, 5, "gen_w2")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 7 }, `a copy in another billed call: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, `a copy in another billed call: ${label}`);
+    }
+  });
+
   it("model calls nested in each other in a loop count under the first of them", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);
