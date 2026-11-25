@@ -827,6 +827,37 @@ describe("session usage rollup", () => {
     assert.deepEqual(buildSession(evs).stats.usage, { inputTokens: 10, costUsd: 0 });
   });
 
+  it("a billed wrapper that carries usage adds the bills of its steps for other generations", () => {
+    const w = llm("w", undefined, { inputTokens: 30, costUsd: 0.75 }, { costEstimated: true });
+    const k1 = llm("k1", "w", { inputTokens: 10, costUsd: 0.25 }, { costEstimated: true });
+    const k2 = llm("k2", "w", { inputTokens: 20, costUsd: 0.5 }, { costEstimated: true });
+    const evs = [w, k1, k2, bill(w, 2, "gen_2"), bill(k1, 1, "gen_1"), bill(k2, 2, "gen_2")];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { inputTokens: 30, costUsd: 3 });
+    assert.deepEqual(r.duplicate, { calls: 2, tokens: 30, costUsd: 2 });
+    assert.deepEqual(buildSession(evs).stats.usage, r.usage);
+  });
+
+  // A billed call above a call that reported its own cost added the bills nested under it, which that cost covers.
+  it("a cost a call reported covers the bills nested in it, also under a billed call", () => {
+    const reported = llm("r", undefined, { inputTokens: 10, costUsd: 2 });
+    const k = llm("k", "r", undefined);
+    assert.deepEqual(rollupUsage([reported, k, bill(k, 5)]).usage, { inputTokens: 10, costUsd: 2 });
+    const w = llm("w", undefined, undefined);
+    const r2 = llm("r2", "w", { inputTokens: 10, costUsd: 2 });
+    const k2 = llm("k2", "r2", undefined);
+    const evs = [w, r2, k2, bill(w, 1), bill(k2, 5)];
+    const r = rollupUsage(evs);
+    // The wrapper counts at its bill, without the $2 nested in it, and the $2 covers the $5 bill below it.
+    assert.deepEqual(r.usage, { inputTokens: 10, costUsd: 1 });
+    assert.deepEqual(r.duplicate, { calls: 2, tokens: 0, costUsd: 7 });
+    assert.deepEqual(buildSession(evs).stats.usage, r.usage);
+    // A billed call that reported a cost too counts at its bill, and adds the bill nested in it.
+    const both = llm("b", undefined, { inputTokens: 10, costUsd: 4 });
+    const k3 = llm("k3", "b", undefined);
+    assert.deepEqual(rollupUsage([both, k3, bill(both, 1, "gen_b"), bill(k3, 5, "gen_k")]).usage, { inputTokens: 10, costUsd: 6 });
+  });
+
   it("model calls nested in each other in a loop count under the first of them", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);

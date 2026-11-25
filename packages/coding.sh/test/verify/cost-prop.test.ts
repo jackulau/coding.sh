@@ -26,8 +26,9 @@
 // Calls are drawn over every model in the built-in table, with provider prefixes, dated and variant
 // suffixes, family fallbacks and an unknown model; prompts near each long-context threshold; and the
 // service tiers, speeds and geographies adapters record. A session's calls are drawn over a
-// `[prices]` row of 0 too, so a wrapper's estimate can be $0. Gateway companions are left out: they
-// carry what a gateway billed minus the call's own cost, which can be negative.
+// `[prices]` row of 0 too, so a wrapper's estimate can be $0. No gateway companions are drawn: they
+// carry what a gateway billed minus the call's own cost, which can be negative. Billed calls are
+// covered in test/core/sessions.test.ts.
 //
 // The last test shows each check fails on a mutant of the table, the pricer, the estimate or the fold.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200 per call, 100 per session);

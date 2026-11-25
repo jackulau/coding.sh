@@ -621,7 +621,7 @@ instruction files, unapproved actions, and tool errors and fold errors.
 | `stats.usage.estimatedCostUsd` | The part of `costUsd` that was estimated (in the example, all of it) |
 | `stats.usage.estimatedCostByTier` | The estimate totalled by `priceTier`. Left out when every call was standard |
 | `stats.usage.estimatedCostByTokenType` | The estimate in USD by token type: `cacheRead`, `cacheWrite` (1-hour writes included), `input` (uncached) and `output`. The parts add up to `estimatedCostUsd`. Left out when there is no estimate, or when an estimated call has no split |
-| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out because an enclosing call or an earlier copy of the same response already counted it |
+| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out of `stats.usage`. `calls` counts the calls nested in another call, whose figures the outer call took, and the copies of a response already counted. `tokens` and `costUsd` are what was left out, such as an estimate a gateway's bill replaced or a bill a reported cost covered |
 
 Each estimated `llm.call` has `payload.costEstimated: true`. It adds `payload.pricedAs` when a
 sibling model's price was used, and `payload.priceTier` when it was priced at batch, flex, priority,
@@ -634,9 +634,13 @@ counts once. The outer call keeps its own figures and takes the rest from the ca
 cost a nested call reported, even $0, beats an estimate on the outer call, and so does a gateway's
 bill for it, even when it has no usage of its own.
 
-A call a gateway billed counts at the billed cost, $0 included, without its nested calls' cost on
-top. A nested call the gateway billed adds its bill, unless that bill is for the same generation.
-When the billed call carries no usage of its own, it counts their tokens.
+A call a gateway billed counts at the billed cost, without its nested calls' cost on top, and adds
+the bills of the calls nested in it, except a bill for its own generation. When it carries no usage
+of its own, it counts their tokens. A bill of $0 counts as $0 when the call has a cost of its own or
+calls nested in it.
+
+A call the gateway did not bill keeps a cost it reported, and that cost covers the bills of the
+calls nested in it, also when a billed call is above it.
 
 A gateway bill linked to two copies of one call, such as the proxy's copy and the agent's own
 record, counts once.
