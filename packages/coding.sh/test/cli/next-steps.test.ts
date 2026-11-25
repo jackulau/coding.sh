@@ -148,6 +148,9 @@ describe("an argument in a printed command", () => {
     for (const [env, platform] of [[{}, "linux"], [{}, "darwin"], [{ MSYSTEM: "MINGW64" }, "win32"], [{ SHELL: "/usr/bin/bash" }, "win32"]] as const) {
       assert.equal(quoteArg("C:\\my store", env, platform), "'C:\\my store'");
       assert.equal(quoteArg("it's", env, platform), "'it'\\''s'");
+      // zsh reads a word that starts with = as a command's path.
+      assert.equal(quoteArg("=x", env, platform), "'=x'");
+      assert.equal(quoteArg("a=b", env, platform), "a=b");
       assert.equal(runCommand(env, "<cmd>", platform), "coding.sh run -- <cmd>");
     }
   });
@@ -159,8 +162,9 @@ describe("an argument in a printed command", () => {
     // cmd keeps single quotes.
     assert.equal(q("it's"), `"it's"`);
     assert.equal(q("x&y"), '"x&y"');
-    // PowerShell drops the first bare -- given to a script, stops parsing at --%, splits -x:y and a,b, and splats @x.
-    for (const s of ["--", "--%", "-x:y", "a,b", "@scope/pkg"]) assert.equal(q(s), `"${s}"`);
+    // PowerShell drops the first bare -- given to a script, stops parsing at --%, splits -x:y, -x.y and a,b, and splats @x.
+    for (const s of ["--", "--%", "-x:y", "-x.y", "a,b", "@scope/pkg"]) assert.equal(q(s), `"${s}"`);
+    assert.equal(q("--x.y"), "--x.y");
     // Node reads \" as a quote: a trailing backslash is doubled inside the quotes.
     assert.equal(q("C:\\my store\\"), '"C:\\my store\\\\"');
     assert.equal(q(""), '""');
@@ -188,7 +192,7 @@ describe("an argument in a printed command", () => {
 describe("a printed command, run as printed", () => {
   const win = process.platform === "win32";
   // Arguments a shell would split, expand, drop or keep quotes on, printed bare.
-  const both = ["compare", "--store", "C:\\my store\\", "two words", "it's", "a,b", "-x:y", "--", "@scope/pkg", "x&y", "--label=a b", "pkg@1.0"];
+  const both = ["compare", "--store", "C:\\my store\\", "two words", "it's", "a,b", "-x:y", "-x.y", "--", "@scope/pkg", "x&y", "--label=a b", "pkg@1.0"];
   // No form keeps these in both PowerShell and cmd: they get PowerShell's quoting.
   const dollar = ["$HOME", "a`b", "it's $5"];
   const shells = [
