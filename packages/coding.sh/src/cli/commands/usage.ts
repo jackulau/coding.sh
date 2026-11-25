@@ -122,8 +122,12 @@ export const vsPublished = (g: Row): string => {
   return `${pct(b.rate)} (${pt > 0 ? "+" : pt < 0 ? "-" : "±"}${Math.abs(pt)}pt)`;
 };
 
-/** `$1.23`, `~$1.23` when part of it is estimated, `≥$1.23` (a lower bound) when some sessions in the row have tokens but no cost. */
-const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.costPartial ? "≥" : ""}${g.estimatedCostUsd ? "~" : ""}${usd(g.costUsd)}`);
+/**
+ * `$1.23`, `~$1.23` when part of it is estimated, `≥$1.23` (a lower bound) when some sessions in the row have tokens but no cost.
+ * estimatedCostUsd is present only when part of the cost is estimated; rounded to 4 places it can be 0.
+ */
+const estimated = (g: Row): boolean => g.estimatedCostUsd !== undefined;
+const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.costPartial ? "≥" : ""}${estimated(g) ? "~" : ""}${usd(g.costUsd)}`);
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -214,7 +218,7 @@ export async function run(c: CommandContext): Promise<number> {
     );
     out.note(`TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. ${baseline ? "CACHE HIT = the prompt-cache hit rate, " : "CACHE READ = "}cache reads / all prompt tokens. SESSIONS and TOKENS count subagents.`);
     if (baseline) out.note(CACHE_BASELINE_NOTE);
-    if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
+    if (r.groups.some(estimated)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
     if (r.groups.some((g) => g.costPartial)) out.note("≥ = some sessions in the row have tokens but no price; the cost is a lower bound.");
     const tiers = Object.entries(r.total.estimatedCostByTier ?? {});
     if (tiers.length) out.note(`Estimated at non-standard rates: ${tiers.map(([t, v]) => `${t} ${usd(v)}`).join(", ")}`);

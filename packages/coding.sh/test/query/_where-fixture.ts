@@ -38,7 +38,8 @@ export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
     // user:, env: and release: read the session's start event (OTel and Langfuse trace attributes).
     event("s1", 0, { agent: "codex", kind: "session.start", payload: { user: "u1", environment: "production", release: "1.4.0" } }),
     event("s2", 0, { kind: "session.start", payload: { user: "u2", environment: "staging" } }),
-    event("s3", 0, { kind: "session.start", payload: {} }),
+    // The SDKs' trace() records its user as userId.
+    event("s3", 0, { kind: "session.start", payload: { userId: "u3" } }),
   ];
   return { sessions, events };
 }
@@ -201,7 +202,10 @@ export const QUERIES = [
   "event.duration:1s..2s",
   "user:u1",
   "user:u1,u2",
+  "user:u3",
+  "user:u1,u3",
   "-user:u1",
+  "-user:u3",
   "user:u1 tool:Bash",
   "user:u1 tool:Bash ok:false",
   "-(user:u1 tool:Read)",
