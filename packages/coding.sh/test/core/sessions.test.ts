@@ -1330,13 +1330,17 @@ describe("session usage rollup", () => {
     }
   });
 
-  it("model calls nested in each other in a loop count under the first billed one, else the first of them", () => {
+  it("model calls nested in each other in a loop count under a billed one, else the first by span id, in any order", () => {
     const a = llm("a", "b", undefined);
     const b = llm("b", "a", undefined);
-    const r = rollupUsage([a, b, bill(a, 1), bill(b, 2)]);
-    assert.deepEqual(r.usage, { costUsd: 3 });
-    assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 });
-    assert.deepEqual(rollupUsage([llm("x", "y", { inputTokens: 5 }), llm("y", "x", { inputTokens: 5 })]), { usage: { inputTokens: 5 }, duplicate: { calls: 1, tokens: 5 } });
+    for (const { label, evs } of runs([a, b], [bill(a, 1), bill(b, 2)])) {
+      const r = rollupUsage(evs);
+      assert.deepEqual(r.usage, { costUsd: 3 }, `billed with no usage: ${label}`);
+      assert.deepEqual(r.duplicate, { calls: 1, tokens: 0 }, `billed with no usage: ${label}`);
+    }
+    for (const { label, evs } of runs([llm("x", "y", { inputTokens: 5 }), llm("y", "x", { inputTokens: 5 })], [])) {
+      assert.deepEqual(rollupUsage(evs), { usage: { inputTokens: 5 }, duplicate: { calls: 1, tokens: 5 } }, `5 tokens each: ${label}`);
+    }
     // A billed call in a loop is the outer one, whichever came first, so its bill is for the step nested in the call
     // below it and replaces that call's cost, as with no loop: $2. The first to arrive was the outer one, so the total
     // depended on the order.
@@ -1360,6 +1364,28 @@ describe("session usage rollup", () => {
       const got = rollupUsage(evs);
       assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 2 }, `a copy at the top: ${label}`);
       assert.deepEqual(got.duplicate, { calls: 3, tokens: 20, costUsd: 6.25 }, `a copy at the top: ${label}`);
+    }
+    // Of two billed calls in a loop, or two calls with no bill, the one whose span id sorts first is the outer one. The
+    // first to arrive was, so the totals depended on the order.
+    const ba = llm("a", "b", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_x" });
+    const bb = llm("b", "a", { inputTokens: 10, costUsd: 3 }, { responseId: "gen_y" });
+    // A copy of a: the outer call, billed, so the copy is left out.
+    const copy = llm("x", undefined, { inputTokens: 10, costUsd: 3 }, { responseId: "gen_x" }, { traceId: "t2" });
+    for (const { label, evs } of runs([ba, bb, copy], [bill(ba, 1, "gen_a"), bill(bb, 2, "gen_b")])) {
+      const got = rollupUsage(evs);
+      assert.deepEqual(got.usage, { inputTokens: 10, costUsd: 3 }, `two billed calls: ${label}`);
+      assert.deepEqual(got.duplicate, { calls: 2, tokens: 20, costUsd: 3 }, `two billed calls: ${label}`);
+    }
+    // Two bills for one generation count once, the outer call's.
+    const na = llm("a", "b", undefined);
+    const nb = llm("b", "a", undefined);
+    for (const { label, evs } of runs([na, nb], [bill(na, 1, "gen_a"), bill(nb, 2, "gen_a")])) {
+      assert.deepEqual(rollupUsage(evs), { usage: { costUsd: 1 }, duplicate: { calls: 1, tokens: 0, costUsd: 2 } }, `one generation: ${label}`);
+    }
+    const ua = llm("a", "b", { inputTokens: 10, costUsd: 1 }, { responseId: "ga" });
+    const ub = llm("b", "a", { inputTokens: 20, costUsd: 2 }, { responseId: "gb" });
+    for (const { label, evs } of runs([ua, ub], [])) {
+      assert.deepEqual(rollupUsage(evs), { usage: { inputTokens: 10, costUsd: 1 }, duplicate: { calls: 1, tokens: 20, costUsd: 2 } }, `no bills: ${label}`);
     }
   });
 
