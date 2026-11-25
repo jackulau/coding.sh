@@ -3,7 +3,7 @@
 // name next to the value, so ordinary code, paths and sha hashes pass through.
 //
 // The hook's redaction rules (spool/redact.ts, bundled to hook-redact.mjs) include this file,
-// so it loads node:fs from process.getBuiltinModule, as spool/hook.ts says.
+// so it loads node:fs and node:util from process.getBuiltinModule, as spool/hook.ts says.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { weightsCheckpointOf } from "./weights.ts";
 
@@ -760,43 +760,184 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   // In PII_KINDS order (cards before phone numbers), after the secret rules.
   if (pii.size) rules.push(...piiRules(PII_KINDS.filter((k) => pii.has(k))));
   rules.push(...patternRules(opts.patterns ?? []));
+  // By position in `rules`, the redactor's public array: built again when that array changes.
+  let ix = needleIndex(rules);
+  // marks[i] === scanned in apply: the text it scanned last holds a needle of rules[i].
+  let marks = new Float64Array(rules.length);
+  let mark = 0;
+  const reindex = (): void => {
+    ix = needleIndex(rules);
+    marks = new Float64Array(rules.length);
+  };
 
-  const string = (s: string, tally?: RedactionTally): string => {
-    if (!tally) return apply(s);
+  const string = (s: string, tally?: RedactionTally, only?: RuleFilter): string => {
+    if (!tally) return apply(s, undefined, only);
     let placeholders: Record<string, number> | undefined;
     const out = apply(s, (kind, m) => {
       if (kind === "private-key" ? !isPlaceholderPrivateKey(m) : !isPlaceholderSecret(m)) return;
       placeholders ??= {};
       placeholders[kind] = (placeholders[kind] ?? 0) + 1;
-    });
+    }, only);
     if (out !== s) tallyChange(tally, s, out, placeholders);
     else if (!tally.preexisting && s.includes("[redacted:")) tally.preexisting = true;
     return out;
   };
 
-  const apply = (s: string, onMatch?: OnMatch): string => {
+  const apply = (s: string, onMatch?: OnMatch, only?: RuleFilter): string => {
     let out = s;
-    let lower: string | undefined;
-    for (const r of rules) {
+    // `only`, from a text that holds `s`, skips the rules it holds no needle of until a rule
+    // changes `s`. On that text itself it is the whole needle check.
+    let at = ix;
+    let live = only?.ix === at ? only.live : undefined;
+    let exact = live !== undefined && only!.text === s;
+    // The mark of `out`'s scan in `marks`; 0 until the first rule with needles scans it.
+    let scanned = 0;
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i]!;
+      if (r !== ix.rules[i]) reindex();
+      if (ix !== at) {
+        // Built again for changed rules: `only` and the scan hold the old positions.
+        at = ix;
+        live = undefined;
+        exact = false;
+        scanned = 0;
+      }
       // On the text as the rules before left it: a marker they wrote can hold a needle.
-      const need = needles.get(r);
-      if (need && !holdsAny(need.fold ? (lower ??= out.toLowerCase()) : out, need.any)) continue;
+      if (ix.gated[i]) {
+        if (live && !live[i]) continue;
+        if (!exact) {
+          if (scanned === 0) markNeedles(ix, out, marks, (scanned = ++mark));
+          if (marks[i] !== scanned) continue;
+        }
+      }
       const next = applyRule(r, out, onMatch);
+      // A callback that redacted another text marked that text's needles: scan `out` again.
+      if (mark !== scanned) scanned = 0;
       if (next === out) continue;
       out = next;
-      lower = undefined;
+      live = undefined;
+      exact = false;
+      scanned = 0;
     }
     return out;
   };
 
   const value = <T>(v: T, tally?: RedactionTally): T => walk(v, tally ? (x) => string(x, tally) : apply, 0, tally) as T;
 
-  return {
+  /** Which rules `text` holds a needle of, as apply checks them (a rule without needles always runs). */
+  const filter = (text: string): RuleFilter => {
+    if (ix.rules.length !== rules.length || rules.some((r, i) => r !== ix.rules[i])) reindex();
+    const live = new Uint8Array(rules.length);
+    markNeedles(ix, text, live, 1);
+    for (let i = 0; i < rules.length; i++) if (!ix.gated[i]) live[i] = 1;
+    return { live, text, ix };
+  };
+
+  const redactor: Redactor = {
     rules,
-    string,
+    string: (s, tally) => string(s, tally),
     value,
     event: (e, tally) => ({ ...e, payload: value(e.payload, tally) }),
   };
+  passes.set(redactor, {
+    filter,
+    string,
+    // A string redactArgv rewrote, and a subtree too deep to walk, are new text: the full check.
+    // redactBlobValue only serializes the result, so what comes out the same is not copied.
+    value: (v, tally, only) => walk(v, (x) => string(x, tally, only), 0, tally, (x) => string(x, tally), true),
+  });
+  return redactor;
+}
+
+/**
+ * The rules a text can match by their needles (RuleNeedles): `live[i]` for `rules[i]`. Taken on a
+ * value's JSON text, it holds for every string in the value: no needle holds a character that JSON
+ * escapes (`"`, `\`, a control character, a lone surrogate), so the text holds every needle a string
+ * holds, lower-cased or not. A rule that changes a string makes new text (a marker can hold a
+ * needle), so apply drops the filter from then on.
+ */
+interface RuleFilter {
+  live: Uint8Array;
+  text: string;
+  /** The index it was taken with: `live` holds that index's positions. */
+  ix: NeedleIndex;
+}
+
+/** A redactor's passes with the rules limited by a RuleFilter, for redactBlobValue. */
+interface FilteredPasses {
+  filter(text: string): RuleFilter;
+  string(s: string, tally: RedactionTally, only: RuleFilter): string;
+  value(v: unknown, tally: RedactionTally, only: RuleFilter): unknown;
+}
+
+const passes = new WeakMap<Redactor, FilteredPasses>();
+
+/**
+ * A redactor's rule needles by their first two characters, so one pass over a text finds the
+ * rules it holds a needle of (a check per rule would scan the text once per needle).
+ */
+interface NeedleIndex {
+  /** The rules it was built for, in order. */
+  rules: readonly RedactRule[];
+  /** `gated[i]`: rules[i] runs only on a text that holds one of its needles. */
+  gated: Uint8Array;
+  /** By two ASCII characters `a`, `b` at a position (`a << 7 | b`): 1 + the bucket of needles that start with them. */
+  exact: Uint16Array;
+  /** The same for the `fold` needles, looked for in the lower-cased text; absent without one. */
+  fold?: Uint16Array;
+  buckets: { text: string; rules: number[] }[][];
+}
+
+/** Every built-in needle starts with two ASCII characters. A rule with a needle that does not runs on every text. */
+const indexableNeedle = (n: string): boolean => n.length >= 2 && n.charCodeAt(0) < 128 && n.charCodeAt(1) < 128;
+
+function needleIndex(rules: readonly RedactRule[]): NeedleIndex {
+  const gated = new Uint8Array(rules.length);
+  const exact = new Uint16Array(1 << 14);
+  let fold: Uint16Array | undefined;
+  const buckets: NeedleIndex["buckets"] = [];
+  const entries = new Map<string, { text: string; rules: number[] }>();
+  for (let i = 0; i < rules.length; i++) {
+    const need = needles.get(rules[i]!);
+    if (!need || !need.any.every(indexableNeedle)) continue;
+    gated[i] = 1;
+    const table = need.fold ? (fold ??= new Uint16Array(1 << 14)) : exact;
+    for (const text of need.any) {
+      const key = (need.fold ? "fold:" : "exact:") + text;
+      let entry = entries.get(key);
+      if (!entry) {
+        entries.set(key, (entry = { text, rules: [] }));
+        const slot = (text.charCodeAt(0) << 7) | text.charCodeAt(1);
+        if (!table[slot]) table[slot] = buckets.push([]);
+        buckets[table[slot]! - 1]!.push(entry);
+      }
+      if (!entry.rules.includes(i)) entry.rules.push(i);
+    }
+  }
+  return { rules: rules.slice(), gated, exact, fold, buckets };
+}
+
+/** Sets `marks[i] = mark` for each gated rule whose needles `s` holds, as holdsAny would find them. */
+function markNeedles(ix: NeedleIndex, s: string, marks: Float64Array | Uint8Array, mark: number): void {
+  scanNeedles(s, ix.exact, ix.buckets, marks, mark);
+  if (ix.fold) scanNeedles(s.toLowerCase(), ix.fold, ix.buckets, marks, mark);
+}
+
+function scanNeedles(s: string, table: Uint16Array, buckets: NeedleIndex["buckets"], marks: Float64Array | Uint8Array, mark: number): void {
+  // A needle is two characters or more, so the last position starts none.
+  const end = s.length - 1;
+  for (let i = 0; i < end; i++) {
+    const a = s.charCodeAt(i);
+    if (a > 127) continue;
+    const b = s.charCodeAt(i + 1);
+    if (b > 127) {
+      i++;
+      continue;
+    }
+    const bucket = table[(a << 7) | b]!;
+    if (bucket === 0) continue;
+    for (const entry of buckets[bucket - 1]!) if (s.startsWith(entry.text, i)) for (const r of entry.rules) marks[r] = mark;
+  }
 }
 
 /** `s` with one rule applied. */
@@ -816,12 +957,51 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
   return s.replace(r.pattern, marker(r.kind));
 }
 
-/** A new value with `f` applied to every string in it (keys are kept). */
-function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
+/**
+ * True for an object or array as JSON.parse makes them: JSON.stringify writes its own keys, as it
+ * would a copy's. A Date, a boxed string or anything with toJSON serializes as something else.
+ */
+function isJsonData(v: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(v);
+  return (Array.isArray(v) ? proto === Array.prototype : proto === Object.prototype || proto === null) && typeof (v as { toJSON?: unknown }).toJSON !== "function";
+}
+
+/** Sets an own data property, as JSON.parse does (a `__proto__` key too). */
+function defineOwn(o: Record<string, unknown>, k: string, value: unknown): void {
+  Object.defineProperty(o, k, { value, writable: true, enumerable: true, configurable: true });
+}
+
+/** True when `o` has `k` as an own data property: not a getter, and not deleted or a hole. */
+function hasValue(o: object, k: string | number): boolean {
+  const d = Object.getOwnPropertyDescriptor(o, k);
+  return d !== undefined && "value" in d;
+}
+
+let utilTypes: typeof import("node:util").types | undefined;
+/** True for a Proxy. node:util is loaded on first use (see the top of this file). */
+const isProxy = (v: object) => (utilTypes ??= process.getBuiltinModule("node:util").types).isProxy(v);
+
+/** What mapStrings met in a value besides plain parsed JSON. */
+interface Met {
+  /** A Proxy, a getter, a hole, a value isJsonData rejects, or a subtree too deep to follow. */
+  other: boolean;
+}
+
+/**
+ * `v` with `f` applied to every string in it (keys are kept). An object or array that comes out
+ * the same is `v` itself when it is plain parsed JSON: JSON data (isJsonData), not a Proxy, and
+ * with no getter. Anything else within 64 levels is a new value, built from one read of each
+ * property. A subtree deeper than that is followed through its JSON text. Both set `met.other`.
+ */
+function mapStrings(v: unknown, f: (s: string) => string, depth = 0, met?: Met): unknown {
   if (typeof v === "string") return f(v);
-  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (v === null || typeof v !== "object") return v;
+  const same = !isProxy(v) && isJsonData(v);
+  if (!same && met) met.other = true;
+  if (v instanceof Uint8Array) return v;
   // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
   if (depth > 64) {
+    if (met) met.other = true;
     try {
       const text = JSON.stringify(v);
       if (text === undefined) return v;
@@ -831,10 +1011,32 @@ function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
       return v; // a cycle, or too deep for the stack: the redaction walk replaces it
     }
   }
-  if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
-  return out;
+  if (Array.isArray(v)) {
+    const out = v.map((x) => mapStrings(x, f, depth + 1, met));
+    if (!same) return out;
+    // A getter read again can give another value: keep the copy of what it gave once.
+    for (let i = 0; i < v.length; i++) {
+      if (hasValue(v, i)) continue;
+      if (met) met.other = true;
+      return out;
+    }
+    return out.every((x, i) => x === v[i]) ? v : out;
+  }
+  const entries = Object.entries(v);
+  let out: Record<string, unknown> | undefined = same ? undefined : {};
+  for (let i = 0; i < entries.length; i++) {
+    const [k, x] = entries[i]!;
+    const y = mapStrings(x, f, depth + 1, met);
+    const getter = same && !hasValue(v, k);
+    if (getter && met) met.other = true;
+    if (!out) {
+      if (y === x && !getter) continue;
+      out = {};
+      for (let j = 0; j < i; j++) defineOwn(out, entries[j]![0], entries[j]![1]);
+    }
+    defineOwn(out, k, y);
+  }
+  return out ?? v;
 }
 
 /** The document in a string that looks like a JSON object or array; anything else is undefined. */
@@ -861,7 +1063,12 @@ const JSON_STRING_DEPTH = 3;
  */
 export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
   if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
-  const docs = mapStrings(v, (s) => {
+  return r.value(documentsRedacted(r, v, tally, level), tally);
+}
+
+/** `v` with each string that holds a JSON document redacted as that document: redactForBlob's first step. */
+function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met): unknown {
+  return mapStrings(v, (s) => {
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
@@ -874,13 +1081,41 @@ export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, le
     }
     for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     return clean;
-  });
-  return r.value(docs, tally);
+  }, 0, met);
 }
 
-/** The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too. */
+/**
+ * The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too.
+ * For an object or array that is plain parsed JSON (what JSON.parse returns), the rules are first
+ * limited to those whose needles its JSON text holds (RuleFilter): each string's own check is then
+ * needed only for those, and the text pass needs none while the walk changed nothing. The walks
+ * copy only what they change, so a value with nothing to redact is serialized once. A value that
+ * holds anything else (Met) takes every rule on the walk's copy, as redactForBlob does. The output
+ * is the same.
+ */
 export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally): string {
-  const clean = redactForBlob(r, v, tally);
+  const p = passes.get(r);
+  if (!p || typeof v !== "object" || v === null) return blobText(r, redactForBlob(r, v, tally), tally);
+  const met: Met = { other: false };
+  const docs = documentsRedacted(r, v, tally, 0, met);
+  // A getter, a Proxy or toJSON could give the filter's text one value and the walk another.
+  if (met.other) return blobText(r, r.value(docs, tally), tally);
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(docs);
+  } catch {
+    // not serializable: the walk and the serializing below report it as before
+  }
+  const only = text === undefined ? undefined : p.filter(text);
+  const clean = only ? p.value(docs, tally, only) : r.value(docs, tally);
+  if (typeof clean === "string") return clean;
+  // A walk that changed nothing gives `docs` back: its text is the one the filter was taken on.
+  const out = only && clean === docs ? only.text : (JSON.stringify(clean) ?? "");
+  return only && out === only.text ? p.string(out, tally, only) : r.string(out, tally);
+}
+
+/** A redacted value's blob text: a string as it is; anything else serialized, with the string rules on that text. */
+function blobText(r: Redactor, clean: unknown, tally: RedactionTally): string {
   return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
 }
 
@@ -948,27 +1183,40 @@ export function redactArgv<T>(args: readonly T[]): T[] {
   return out;
 }
 
-function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally): unknown {
+/**
+ * `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text.
+ * `keep`: an object or array that comes out the same is returned as is when it is JSON data (isJsonData), for a caller
+ * that only serializes the result. Without it every object and array is a new one.
+ */
+function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false): unknown {
   if (typeof v === "string") return redact(v);
   if (v === null || typeof v !== "object") return v;
-  if (depth > 64) return tooDeep(v, redact, tally);
+  if (depth > 64) return tooDeep(v, full, tally);
   // Arrays may be argv (wrapper session.start args, tool command vectors).
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
     if (tally) for (let i = 0; i < argv.length; i++) if (argv[i] !== v[i] && typeof v[i] === "string") tallyChange(tally, v[i] as string, argv[i] as string);
-    return argv.map((x) => walk(x, redact, depth + 1, tally));
+    const out = argv.map((x, i) => walk(x, x === v[i] ? redact : full, depth + 1, tally, full, keep));
+    return keep && isJsonData(v) && out.every((x, i) => x === v[i]) ? v : out;
   }
   if (v instanceof Uint8Array) return v;
-  const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+  const entries = Object.entries(v as Record<string, unknown>);
+  let out: Record<string, unknown> | undefined = keep && isJsonData(v) ? undefined : {};
+  for (let i = 0; i < entries.length; i++) {
+    const [k, x] = entries[i]!;
     const secretKey = typeof x === "string" && x.length > 0 && isSecretAttrKey(k) && !isAlreadyRedacted(x);
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")
-      : walk(x, redact, depth + 1, tally);
-    Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
+      : walk(x, redact, depth + 1, tally, full, keep);
+    if (!out) {
+      if (val === x) continue;
+      out = {};
+      for (let j = 0; j < i; j++) defineOwn(out, entries[j]![0], entries[j]![1]);
+    }
+    defineOwn(out, k, val);
   }
-  return out;
+  return out ?? v;
 }
 
 /**
