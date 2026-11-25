@@ -3,7 +3,7 @@
 // isolation. See docs/ADAPTERS.md.
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
@@ -26,6 +26,7 @@ import {
   emitDerived,
   hasFlag,
   hasOurHooks,
+  INTERRUPT_PROMPT,
   isObj,
   isolatedHome,
   lineRaw,
@@ -45,6 +46,7 @@ import {
   runHeadless,
   str,
   toMs,
+  typedText,
   walkFiles,
   which,
   firingKey,
@@ -112,6 +114,8 @@ const FLUSH_SLACK_MS = 2_000;
  * flushed around Stop). A prompt after untilTs opens the next turn and ends
  * the window: an ingest that runs once a `--resume` has started, or a re-parse
  * with the whole transcript on disk, reads the same turn the Stop's own ingest did.
+ * A turn the person stopped (Esc) fires no Stop: Claude Code writes an interrupt
+ * prompt after it, and the window reads back over each such turn before its own.
  *
  * `lost`: the window can't be read as it was when the line was captured. The
  * file is gone, or it has grown and the turn starts before the tail read here.
@@ -135,14 +139,149 @@ async function transcriptWindow(path: string, untilTs: number, whole = false): P
     }
     end = i;
   }
-  const lost = start < 0 && size > TRANSCRIPT_TAIL_BYTES;
+  let lost = start < 0 && size > TRANSCRIPT_TAIL_BYTES;
   start = Math.max(start, 0);
+  let prev = promptBefore(entries, start);
+  while (isInterrupt(entries[start]) || (prev >= 0 && isInterrupt(entries[prev]))) {
+    if (prev < 0) {
+      // The stopped turn starts before the tail read here.
+      lost ||= size > TRANSCRIPT_TAIL_BYTES;
+      start = 0;
+      break;
+    }
+    start = prev;
+    prev = promptBefore(entries, start);
+  }
   // Hook output written before the prompt (SessionStart's, on the first turn or
   // after a compaction) reaches no Stop window otherwise: since the previous prompt.
-  let prev = start - 1;
-  while (prev > 0 && !(isObj(entries[prev]) && promptText(entries[prev] as Record<string, unknown>) !== undefined)) prev--;
   const hooks = entries.slice(Math.max(prev, 0), start).filter((e) => isObj(e) && e.type === "attachment" && /^hook_/.test(str(obj(e.attachment).type) ?? ""));
   return { entries: [...hooks, ...entries.slice(start, end)], lost };
+}
+
+/** Index of the last prompt entry before `i`, or -1. */
+function promptBefore(entries: unknown[], i: number): number {
+  let j = i - 1;
+  while (j >= 0 && !(isObj(entries[j]) && promptText(entries[j] as Record<string, unknown>) !== undefined)) j--;
+  return j;
+}
+
+/** The prompt Claude Code writes after a turn the person stopped. */
+function isInterrupt(e: unknown): boolean {
+  return isObj(e) && INTERRUPT_PROMPT.test(promptText(e) ?? "");
+}
+
+/**
+ * How far before its UserPromptSubmit line a prompt's transcript entry may be stamped (Claude Code 2.1.319
+ * stamped it 85 to 98 ms before the hook ran), and how far after. Narrow before: the same prompt sent
+ * again seconds later must not take the first one's time while its own entry is not yet written.
+ */
+const PROMPT_ENTRY_BEFORE_MS = 2_000;
+const PROMPT_ENTRY_AFTER_MS = 10_000;
+/** A transcript line that can hold a prompt: a user entry. Checked before parsing; typedText leaves out tool results. */
+const USER_LINE = /"type"\s*:\s*"user"/;
+const foldSpace = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** The prompt entries in the last TRANSCRIPT_TAIL_BYTES of a transcript, read at one size and mtime. */
+interface PromptIndex {
+  size: number;
+  mtimeMs: number;
+  /** Each entry's time, by its whitespace-folded typed text. */
+  times: Map<string, number[]>;
+  /** The time on the first full line read that has one, whatever its type: where the tail starts. Infinity for none. */
+  first: number;
+  /** The tail read is the whole file. */
+  whole: boolean;
+}
+
+/** Indexes by transcript path, the one used last at the end: the prompt lines of one ingest read each transcript once. */
+const promptIndexes = new Map<string, PromptIndex>();
+const PROMPT_INDEXES_KEPT = 16;
+
+/** For tests: forget the transcripts read. */
+export function resetPromptIndexes(): void {
+  promptIndexes.clear();
+}
+
+async function promptIndex(path: string): Promise<PromptIndex> {
+  const st = await stat(path);
+  let index = promptIndexes.get(path);
+  if (index?.size !== st.size || index.mtimeMs !== st.mtimeMs) index = await readPromptIndex(path);
+  promptIndexes.delete(path);
+  promptIndexes.set(path, index);
+  if (promptIndexes.size > PROMPT_INDEXES_KEPT) promptIndexes.delete(promptIndexes.keys().next().value!);
+  return index;
+}
+
+async function readPromptIndex(path: string): Promise<PromptIndex> {
+  const fh = await open(path, "r");
+  let text: string;
+  let st: { size: number; mtimeMs: number };
+  let whole: boolean;
+  try {
+    st = await fh.stat();
+    const from = Math.max(0, st.size - TRANSCRIPT_TAIL_BYTES);
+    const buf = Buffer.alloc(st.size - from);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    text = buf.subarray(0, bytesRead).toString("utf8");
+    if (from > 0) text = text.slice(text.indexOf("\n") + 1); // the first line is partial
+    whole = from === 0;
+  } finally {
+    await fh.close();
+  }
+  const times = new Map<string, number[]>();
+  let first = Infinity;
+  for (const l of text.split("\n")) {
+    const user = USER_LINE.test(l);
+    if (!user && first !== Infinity) continue;
+    let e: unknown;
+    try {
+      e = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (!isObj(e)) continue;
+    const ts = toMs(e.timestamp, 0);
+    if (first === Infinity && ts > 0) first = ts;
+    if (!user || e.isSidechain === true) continue;
+    const typed = typedText(e);
+    if (typed === undefined) continue;
+    const key = foldSpace(typed);
+    const list = times.get(key);
+    if (list) list.push(ts);
+    else times.set(key, [ts]);
+  }
+  return { size: st.size, mtimeMs: st.mtimeMs, times, first, whole };
+}
+
+/**
+ * The time on the transcript entry of the prompt a UserPromptSubmit line
+ * carries: the entry with the same typed text, the latest at or before the line
+ * within PROMPT_ENTRY_BEFORE_MS, else the first after it within
+ * PROMPT_ENTRY_AFTER_MS. Claude Code stamps the entry before the hook runs, but
+ * may write it after. Undefined when no entry matches. `ctx.missing` hears of a
+ * transcript that is gone, or that has grown past the line: no entry matches and
+ * the tail read starts later than PROMPT_ENTRY_BEFORE_MS before the line.
+ */
+async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
+  if (!path) return undefined;
+  let index: PromptIndex;
+  try {
+    index = await promptIndex(path);
+  } catch {
+    ctx.missing?.(path, sessionId);
+    return undefined;
+  }
+  let before: number | undefined;
+  let after: number | undefined;
+  for (const ts of index.times.get(foldSpace(prompt)) ?? []) {
+    if (ts <= at - PROMPT_ENTRY_BEFORE_MS || ts > at + PROMPT_ENTRY_AFTER_MS) continue;
+    if (ts <= at) before = Math.max(before ?? ts, ts);
+    else after = Math.min(after ?? ts, ts);
+  }
+  // No entry, and the tail read starts inside the window or after it: the entry may be in the part not read.
+  const reached = index.whole || index.first <= at - PROMPT_ENTRY_BEFORE_MS;
+  if (before === undefined && after === undefined && !reached) ctx.missing?.(path, sessionId);
+  return before ?? after;
 }
 
 /** The plugins' hook commands under the config dir a transcript lives in (<dir>/projects/<slug>/…). */
@@ -263,8 +402,13 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode), entrypoint: line.entrypoint }, raw.source === "resume" ? {} : { key: ["start"] });
       break;
     case "UserPromptSubmit": {
-      const t = await clipText(ctx, str(raw.prompt) ?? "");
-      em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
+      const prompt = str(raw.prompt) ?? "";
+      const t = await clipText(ctx, prompt);
+      // The turn's first model call starts at the time on the prompt's transcript entry, before this hook ran:
+      // the prompt takes that time, less 1 ms so it sorts before the call.
+      const entry = inChild ? undefined : await promptEntryTs(ctx, str(raw.transcript_path), sessionId, prompt, line.ts);
+      const said = em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
+      if (entry !== undefined) said.ts = entry - 1;
       break;
     }
     case "PreToolUse": {
@@ -290,7 +434,8 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       const w = await windowEvents(ctx, str(raw.transcript_path), line.ts, sessionId, undefined, line.runId, false);
       extra.push(...w.events);
       if (w.model) em.base.model ??= w.model;
-      if (!w.events.some((e) => e.kind === "assistant.message") && str(raw.last_assistant_message)) {
+      // The window can also hold turns the person stopped: only a reply in the turn that ended counts here.
+      if (!w.events.some((e) => e.kind === "assistant.message" && e.turnId === w.turnId) && str(raw.last_assistant_message)) {
         const t = await clipText(ctx, raw.last_assistant_message as string);
         em.emit("assistant.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
       }
@@ -755,7 +900,8 @@ export const claudeCode: Adapter = {
   // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
   // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
   // 21 (0.1.8): a fork's inheritedTokens skips a token count below 0 or not a finite number in the parent's Agent call, as an estimate does.
-  parseVersion: 21,
+  // 22 (0.1.8): a hook prompt takes the time on its transcript entry, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]"). That prompt carries the stopped turn's promptId, so it opens no turn of its own and a stopped turn ends once (one with no promptId still opens a turn).
+  parseVersion: 22,
 
   detect() {
     const dir = claudeConfigDir();

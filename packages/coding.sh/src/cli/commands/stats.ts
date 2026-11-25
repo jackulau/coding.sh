@@ -1,9 +1,11 @@
 // coding.sh stats [--measure M] [--by agent|model|repo|flag] [--per day|week] [--since 30d] [--until ...] [--where q] [--all] [--json]
+// coding.sh stats --scorecard [--by model|agent] [--since 30d] [--until ...] [--where q] [--json]
 //
 // Time-bucketed metrics (src/viewer/metrics.ts, the same engine as GET
 // /api/metrics and the viewer's Metrics page). Without --by: one row per day
 // or week. With --by: one row per group with its totals and a trend of the
-// chosen measure. --json prints the MetricSeries document.
+// chosen measure. --json prints the MetricSeries document. --scorecard prints
+// the model scorecard instead (stats-scorecard.ts).
 import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricsSpec, type MetricTotals } from "../../viewer/metrics.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
@@ -15,6 +17,7 @@ import { findSessions } from "../../query/run.ts";
 import { andQuery, parseWhere, type Query } from "../../query/where.ts";
 import { retrievalTotals, type RetrievalTotals } from "../../core/retrieval.ts";
 import type { WaitKind } from "../../schema/index.ts";
+import { runScorecard, scorecardBy } from "./stats-scorecard.ts";
 
 interface WaitSum {
   count: number;
@@ -160,6 +163,7 @@ function bucketLabel(t: number, per: MetricBucket): string {
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
+  const card = c.flags.scorecard === true ? scorecardBy(c) : undefined;
   const measure = (str(c.flags.measure) ?? "sessions") as MetricMeasure;
   if (!(METRIC_MEASURES as readonly string[]).includes(measure)) throw new UsageError(`--measure must be one of ${METRIC_MEASURES.join(", ")}`, { reason: "invalid_argument" });
   const by = str(c.flags.by) as MetricGroup | undefined;
@@ -174,6 +178,7 @@ export async function run(c: CommandContext): Promise<number> {
   const window = timeWindow({ since: sinceWhen, until: untilWhen }, where);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    if (card) return runScorecard(c, ctx, { by: card, since, until, where, window, backlog });
     let m;
     let waits: Record<string, unknown> | undefined;
     try {

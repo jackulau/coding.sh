@@ -131,6 +131,35 @@ Harness surfaces:
   `skill://<name>/…` resource. Nothing is run. Verified for Codex by
   `scripts/e2e/codex-skill-capture.mjs`.
 
+## Stopped turns
+
+How each agent marks a turn the person stopped, which `stats.turnsByModel.<model>.cancelled`
+counts (`STOPPED` in `src/core/turn-stats.ts`):
+
+| Agent | What marks a stopped turn |
+|---|---|
+| Claude Code | A prompt that starts `[Request interrupted by user`. On hook capture, also a tool call the person cut short (`PostToolUseFailure` with `is_interrupt: true`) |
+| Codex | `turn_aborted`, read as a `turn.end` whose `status` is its reason, else `aborted`. `interrupted` and `aborted` count; `replaced` and `review_ended` do not |
+| OpenCode | `session.execution.interrupted` |
+| Cursor CLI | The stop hook's `status: "aborted"` |
+| Pi | `agent_settled` with `aborted`, or an assistant message whose stop reason is `aborted` |
+
+Other agents mark none, or coding.sh has no capture that shows how they mark one. A thread built
+from T3 Code's own store marks none either, whatever agent ran it: coding.sh reads only whether
+each of its turns completed. Those turns count in `stats.turnsByModel.<model>.cancelNotRecorded`,
+and `coding.sh stats --scorecard` leaves them out of its cancelled row and names the capture they
+came from (`t3code` for a thread built from T3 Code's store).
+
+A Claude Code stop is a prompt's text, so a Claude Code turn whose prompt has no text
+(`capture.mode = "metadata"`) or came from its OpenTelemetry export counts there too, under
+`claude-code`. In metadata mode the stop itself counts as the person's next prompt.
+
+Claude Code fires no `Stop` hook on a turn the person stopped. The next `Stop` reads the transcript
+back over the stopped turns and records each stop's prompt. A stop that cut a tool call short also
+shows in that call's `PostToolUseFailure`. On hook capture, a turn with neither, such as one stopped
+just before the session ended, counts in `cancelNotRecorded`: hooks cannot tell it from a turn
+still running.
+
 ## Replay
 
 `coding.sh replay` rebuilds the files a session touched from its tool calls (see
@@ -249,7 +278,9 @@ order.
 - **Codex:** new hooks fire only once the user trusts them by hash, and `codex exec` skips untrusted hooks silently. Eval runs pass `--dangerously-bypass-hook-trust`. For user installs, `doctor` reports untrusted hooks and tells the user to run `/hooks`. Never write trust hashes ourselves.
 - **Codex:** `-s read-only` fires no hooks. SessionEnd has a 1s default and a 3s hard cap. The sandbox blocks network from hooks (spool-to-file is safe). Tool names `shell_command`/`apply_patch` changed upstream, so normalize defensively.
 - **Claude Code:** the model reads as unknown when large tool results fill the transcript tail; scan backwards further. `SubagentStop` lacks `tool_use_id`. Old `Task` matchers never fire; use `Agent`.
-- **Claude Code:** a `Stop` line's model calls and replies are read from the transcript it names: the turn from the last prompt at or before the Stop to the next prompt, within the last 8 MB of the file. A `claude -p --resume` or a queued prompt can write the next prompt within 2 s of the Stop, so the window ends there. When the transcript is gone (an eval run's temporary home) or the turn is no longer in the last 8 MB, the adapter says so (`NormalizeContext.missing`) and a re-parse keeps the session's stored hook rows.
+- **Claude Code:** a `Stop` line's model calls and replies are read from the transcript it names: the turn from the last prompt at or before the Stop to the next prompt, within the last 8 MB of the file. A `claude -p --resume` or a queued prompt can write the next prompt within 2 s of the Stop, so the window ends there. When the transcript is gone (an eval run's temporary home) or the turn is no longer in the last 8 MB, the adapter says so (`NormalizeContext.missing`) and a re-parse keeps the session's stored hook rows. For a hook prompt with no entry, it says so only when the file is over 8 MB and the first full line with a time in its last 8 MB, whatever its type, is stamped later than 2 s before the hook line.
+- **Claude Code:** fires no `Stop` on a turn the person stopped. A `Stop`'s read also goes back over the stopped turns before it, which end in a `[Request interrupted by user` prompt, and gets their model calls and stop prompts. What the transcript holds is verified by `scripts/e2e/claude-stop-capture.mjs` (Claude Code 2.1.319, headless, no hooks installed): a stop while the model writes adds a `[Request interrupted by user]` prompt; a stop during a Bash call adds a rejected tool result, then `[Request interrupted by user for tool use]`. Each carries the `promptId` of the turn it stopped.
+- **Claude Code:** stamps a prompt's transcript entry before its `UserPromptSubmit` hook runs, but may write it to the file only after the hook. A hook prompt takes the time of the entry with the same text, less 1 ms: the latest at or before the hook line within 2 s, else the first after it within 10 s. With no such entry it keeps the hook's time. A model call that starts at the entry then stays in the prompt's turn.
 - **Claude Code:** files a Bash command edits (`sed -i`, heredoc writes, `tee`) are in the tool result's `toolUseResult.bashEditDiff` (per-file hunks, plus `changedFiles` past the first few), which becomes `file.change`. It is on by default only in auto and bypass-permissions modes; `CLAUDE_CODE_BASH_EDIT_DIFF=true` or the `bashEditDiffEnabled` setting turns it on elsewhere. The diff lists every file that changed while the command ran, including ones it never touched (a `git rebase`, a test run's output, another agent in the same checkout), so `test-tamper` only counts a file the command names. A file the command does not name becomes no `file.change` when a git command brought it in (`checkout`, `switch`, `merge`, `pull`, `rebase`, `reset`, …), when every stage of the command only reads, waits or prints (`cat`, `grep`, `git status`, `git fetch`, `sleep`, …), or when the command starts with `cd` to an absolute path outside the session's folder. Other unnamed files, such as a script's or a build's output, stay.
 - **Claude Code:** context loaded mid-session is only in transcript `attachment` lines, never in hooks: `nested_memory` (Claude Code's instructions file from a subdirectory), `dynamic_skill` (a nested `.claude/skills` became available) and `invoked_skills` (skills restored after a compaction). A Skill call's "Base directory for this skill" line names the skill's folder. Each becomes a `notification` with `payload.kind: "harness.loaded"` and `loadedBy`, paths and skill names (never the text). Live windows read them too; the attachment's uuid keys the event, so backfill and live capture store it once.
 - **Claude Code:** a model fallback is only in the transcript, as a `system` line. `model_fallback` (`originalModel`, `fallbackModel`, `trigger` such as `overloaded`, `direction`) is written when the main model kept failing and Claude Code moved to `--fallback-model` for the rest of the turn; `model_refusal_fallback` is written when a refusal was routed to another model. Each becomes a `notification` with `payload.kind: "model.fallback"`, tags the session `model:fallback`, and makes the model change around it a `model:switch`, the switch back on the next turn included. Live windows read them too, keyed by the line's uuid. Verified by `scripts/e2e/claude-fallback-capture.mjs` (Claude Code 2.1.319, a stub model that answers 529 overloaded); the stub cannot make the API route a refusal, so 2.1.319 writes `model_refusal_no_fallback` there and the `model_refusal_fallback` tests build the record by hand in the same shape.
@@ -409,8 +440,10 @@ Apps in production don't use an adapter. They send data over the network to `cod
 
 - OTel logs are for an agent whose hooks don't record to this store. Where both do, each prompt is
   stored twice, once from the hook and once from the log, because the two carry different prompt
-  ids. Devin CLI's logs (scope `ai.devin.local.events`) add a session's start and end as
-  notifications.
+  ids.
+- Turns (`stats.turnsByModel`) count such a prompt once. They take the prompt from the hook or the
+  transcript. A prompt from OTel logs or spans counts only until the session has one of those.
+- Devin CLI's logs (scope `ai.devin.local.events`) add a session's start and end as notifications.
 - A span or a log record named `weights.edit` with `coding_sh.weights.*` attributes is stored as
   the weight edit event the SDKs send (`notification`, `payload.kind: "weights.edit"`); the
   attributes are listed in [reference/api.md](reference/api.md).

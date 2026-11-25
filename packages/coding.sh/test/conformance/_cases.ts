@@ -50,6 +50,7 @@ export const BACKFILL_CASES: BackfillCase[] = [
   { name: "claude-code/fallback", adapter: claudeCode, real: false, setup: () => (process.env.CLAUDE_CONFIG_DIR = fx("claude-code", "fallback", "config")) },
   { name: "claude-code/real", adapter: claudeCode, real: true, setup: () => (process.env.CLAUDE_CONFIG_DIR = fx("claude-code", "real", "config")) },
   { name: "claude-code/hooks-real", adapter: claudeCode, real: true, setup: () => (process.env.CLAUDE_CONFIG_DIR = fx("claude-code", "hooks-real", "config")) },
+  { name: "claude-code/stop", adapter: claudeCode, real: true, setup: () => (process.env.CLAUDE_CONFIG_DIR = fx("claude-code", "stop", "config")) },
   { name: "codex/home", adapter: codex, real: false, setup: () => (process.env.CODEX_HOME = fx("codex", "home")) },
   { name: "codex/cut", adapter: codex, real: true, setup: () => (process.env.CODEX_HOME = fx("codex", "cut")) },
   { name: "cursor/config", adapter: cursor, real: false, setup: () => (process.env.CURSOR_DATA_DIR = fx("cursor", "config")) },

@@ -111,6 +111,7 @@ describe("a 12-hour session", () => {
     assert.equal(doc.subagentCount, doc.subagents.length);
     // show says where each derail starts; the event is one --limit away.
     assert.ok(doc.session.stats.derails!.every((d) => typeof d.eventId === "string" && typeof d.index === "number"));
+    assert.ok(Object.values(doc.session.stats.turnsByModel ?? {}).some((t) => (t.durationsMs?.length ?? 0) > 0), "show keeps each model's turn times");
   });
 
   test("show --json --limit lists events without what the session says for all of them; --all lists every one", () => {
@@ -126,18 +127,22 @@ describe("a 12-hour session", () => {
     assert.equal(all.events.length, all.eventCount);
   });
 
-  test("each sessions --json row is under 2.25 KB: stats without phases, derails without their event", () => {
+  test("each sessions --json row is under 2.5 KB: stats without phases or turn times, derails without their event", () => {
     const { sessions } = JSON.parse(cli("sessions", "--json", "--limit", "10")) as { sessions: Session[] };
     assert.ok(sessions.length >= 2);
     for (const s of sessions) {
       const bytes = Buffer.byteLength(JSON.stringify(s));
-      // Was 2 KB. stats.retrieval, seven counts of fixed size (about 115 bytes), took the 12-hour
-      // session's row from 1,974 to 2,089 bytes, and stats.waits (one kind here, five at most) to
-      // 2,205. Phases and derail events, which grow with the session, stay out.
-      assert.ok(bytes < 2304, `the row of ${s.id} is ${bytes} bytes`);
+      // Was 2 KB, then 2.25 KB. stats.retrieval, seven counts of fixed size (about 115 bytes), took
+      // the 12-hour session's row from 1,974 to 2,089 bytes, stats.waits (one kind here, five at
+      // most) to 2,205, and the counts in stats.turnsByModel (one model here), stats.edits and
+      // stats.shells to 2,323. Phases, derail events and each model's turn times (up to 500), which
+      // grow with the session, stay out.
+      assert.ok(bytes < 2560, `the row of ${s.id} is ${bytes} bytes`);
       assert.equal(s.stats.phases, undefined);
+      for (const t of Object.values(s.stats.turnsByModel ?? {})) assert.equal(t.durationsMs, undefined, "a row keeps each model's counts, not its turn times");
     }
     const main = sessions.find((s) => s.id === m.sessionId)!;
+    assert.ok(Object.values(main.stats.turnsByModel ?? {}).some((t) => t.turns > 0), "the row has the session's turns");
     assert.equal(main.stats.derails!.length, m.derails.length);
     for (const d of main.stats.derails!) assert.deepEqual(Object.keys(d).filter((k) => k === "eventId" || k === "index"), [], "a row's derail says what happened and when");
     assert.ok(main.stats.usage && main.stats.latency && main.stats.events > 200, "every other stat is as stored");
@@ -153,6 +158,8 @@ describe("a 12-hour session", () => {
     assert.deepEqual(Object.keys(main.stats.phases![0]!), ["kind"]);
     assert.equal(main.stats.derails!.length, m.derails.length);
     assert.ok(main.stats.derails!.every((d) => typeof d.eventId === "string"));
+    const turns = (JSON.parse(cli("sessions", "--json", "--limit", "10", "--fields", "id,stats.turnsByModel")) as { sessions: Session[] }).sessions.find((r) => r.id === m.sessionId)!;
+    assert.ok(Object.values(turns.stats.turnsByModel ?? {}).some((t) => (t.durationsMs?.length ?? 0) > 0), "--fields stats.turnsByModel keeps the turn times");
 
     const shown = JSON.parse(cli("show", m.sessionId, "--json", "--fields", "session.id,eventCount,phases.kind")) as Record<string, unknown>;
     assert.deepEqual(Object.keys(shown), ["session", "eventCount", "phases"]);

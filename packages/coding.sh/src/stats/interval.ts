@@ -42,6 +42,42 @@ export function newcombeDiff(x1: number, n1: number, x2: number, n2: number, z =
   };
 }
 
+/**
+ * A distribution-free interval for the median of a sorted sample (default 95%): the order
+ * statistics x(l) and x(n + 1 − l), where l is the largest rank with P(B ≤ l − 1) ≤ α/2 for
+ * B ~ Bin(n, 1/2). It covers at least the level asked for and assumes only independent draws.
+ * Below 6 values no rank qualifies at 95%, and the bounds are -Infinity and Infinity. An empty
+ * sample gives p = NaN.
+ */
+export function medianInterval(sorted: readonly number[], level = 0.95): Interval {
+  const n = sorted.length;
+  if (n === 0) return { p: NaN, lo: -Infinity, hi: Infinity };
+  const p = quantileSorted(sorted, 0.5);
+  const tail = (1 - level) / 2;
+  // P(B = i) from i = 0 up, kept in logs: 2^-n underflows to 0 for a large n.
+  let logP = -n * Math.LN2;
+  let cdf = 0;
+  let l = 0;
+  for (let i = 0; i < n; i++) {
+    cdf += Math.exp(logP);
+    if (cdf > tail) break;
+    l = i + 1;
+    logP += Math.log(n - i) - Math.log(i + 1);
+  }
+  if (l === 0) return { p, lo: -Infinity, hi: Infinity };
+  return { p, lo: sorted[l - 1]!, hi: sorted[n - l]! };
+}
+
+/**
+ * The difference b − a of two independent estimates, from each one's own interval: the
+ * construction newcombeDiff applies to two Wilson intervals, here for any two (two medians'
+ * medianInterval). Its bounds are infinite when either interval's are.
+ */
+export function intervalDiff(a: Interval, b: Interval): Interval {
+  const d = b.p - a.p;
+  return { p: d, lo: d - Math.hypot(b.p - b.lo, a.hi - a.p), hi: d + Math.hypot(b.hi - b.p, a.p - a.lo) };
+}
+
 export interface BootstrapOpts {
   iters?: number;
   seed?: number;

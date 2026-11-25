@@ -4,7 +4,7 @@
 // a skill is listed or opened, and unknown exposure never counts as "did not
 // fire". This is the minimal reader the compare item gate needs; `harness
 // usage` (AA-1) builds on it. Pure: no I/O.
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { commandOf } from "./sessions.ts";
 import { inputPaths, pathEndsWith } from "./tool-paths.ts";
 import { matchGlob } from "../runner/glob.ts";
@@ -78,7 +78,7 @@ function globsOf(v: FrontmatterValue | undefined): string[] {
 export function harnessItem(path: string, text: string): HarnessItem | undefined {
   const p = path.replace(/\\/g, "/").replace(/^~\//, "");
   const base = p.split("/").pop() ?? p;
-  const id = createHash("sha256").update(path).digest("hex").slice(0, 12);
+  const id = hash("sha256", path, "hex").slice(0, 12);
   const fm = parseFrontmatter(text).data;
   if (CONTEXT.has(base)) return { id, path, kind: "context", name: base, tier: "always", globs: [] };
   const rule = /(?:^|\/)\.claude\/rules\/(.+)\.md$/.exec(p);

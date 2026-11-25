@@ -279,6 +279,35 @@ store sizes.
 The store is now mostly the index (1.43 MB per 1,000 events). The largest part left there is
 `search_extra`, which copies each `tool.end` output for full-text search (22.6 MB of the 142.6).
 
+### Redaction of raw blobs
+
+With blobs in a pack, the largest cost left in ingest was redacting each hook line's raw payload
+before it is stored. Four changes make that cheaper, with no change to what is stored:
+
+- The secret rules' needles are checked once per payload, on its JSON text. Each string then runs
+  only the rules whose needles that text holds.
+- One pass over a text finds every needle, indexed by their first two characters.
+- Redaction copies only the strings a rule changes. A payload with nothing to redact is stored as
+  it came.
+- Blob refs and fold keys are hashed with one `node:crypto` call each.
+
+The faster path is for plain parsed JSON, what `JSON.parse` returns and what a hook line holds.
+Any other value is redacted as before. A test redacts every line of every recorded adapter
+fixture both ways and checks that the text and the counts match.
+
+Paired on a Windows machine that was running other tests (`bench.mjs ingest --baseline`, 8
+interleaved pairs, a 100k-event corpus):
+
+| | before | after | |
+| --- | --- | --- | --- |
+| Ingest | 3,399 events/s (29.5 s) | 4,666 events/s (21.5 s) | +1,267 events/s, 95% CI [799, 1,712] |
+| Store size | 1.43 MB / 1k events | 1.43 MB / 1k events | unchanged |
+| Blobs | 33.8 MB in one file | 33.8 MB in one file | unchanged |
+
+The load makes these rates lower than the desk runs above, so only the paired difference is a
+result. A second check ingested one 5,000-event corpus with each build into the same folder and
+compared every table of `index.db` and `blobs/pack.db`: only the write times differ.
+
 ## Repo facet
 
 `sessions --facets` and the viewer's filter list count sessions per repo. A session's repo is a
