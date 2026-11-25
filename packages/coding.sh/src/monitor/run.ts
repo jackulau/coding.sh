@@ -8,11 +8,12 @@
 // monitors.json, so an ingest never fails because of a monitor.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import type { AgentEvent, Config, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import { supervise } from "../core/children.ts";
 import { acquireLock, LockBusyError } from "../core/lock.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
+import { readTextFileSync } from "../core/text-file.ts";
 import { sleepUnless } from "../jobs/retry.ts";
 import type { ChatProvider } from "../judge/providers.ts";
 import { findSessions } from "../query/run.ts";
@@ -314,7 +315,7 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
 
 function readRubric(def: MonitorDef): string {
   try {
-    return readFileSync(def.rubric!, "utf8");
+    return readTextFileSync(def.rubric!);
   } catch (e) {
     throw new Error(`cannot read the rubric ${def.rubric}: ${(e as Error).message}`);
   }

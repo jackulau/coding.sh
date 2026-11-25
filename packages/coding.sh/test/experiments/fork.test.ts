@@ -272,27 +272,31 @@ describe("CLI: replay --fork against a stub API", () => {
     const n = await toolStep();
     const r = await cli(["replay", SESSION, "--step", String(n), "--fork", "--with", "CLAUDE.md=fixed.md"]);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /\$ANTHROPIC_API_KEY is not set/);
+    // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows, which read the variable as $env:NAME.
+    assert.match(r.stderr, process.platform === "win32" ? /\$env:ANTHROPIC_API_KEY is not set/ : /\$ANTHROPIC_API_KEY is not set/);
     assert.equal(sent.length, 0);
   });
 
   it("a fork without a key names it as the user's shell sets it, in a line that runs as printed", async () => {
     const before = sent.length;
     const n = await toolStep();
-    const next = async (extra: NodeJS.ProcessEnv) => {
+    const err = async (extra: NodeJS.ProcessEnv) => {
       const r = await cli(["replay", SESSION, "--step", String(n), "--fork", "--with", "CLAUDE.md=fixed.md", "--json"], extra);
       assert.equal(r.status, 1, r.stderr);
       const line = r.stderr.split(/\r?\n/).find((l) => l.startsWith('{"status":"error"'));
       assert.ok(line, r.stderr);
-      return (JSON.parse(line) as { next: string[] }).next;
+      return JSON.parse(line) as { message: string; next: string[] };
     };
-    // The note after the line is a comment in sh and in PowerShell, so the whole line runs.
-    const or = "   # or a subscription token in $CLAUDE_CODE_OAUTH_TOKEN";
-    assert.deepEqual(await next({ SHELL: "/bin/bash" }), ["Next:", `export ANTHROPIC_API_KEY=...${or}`]);
+    // sh, and Git Bash on Windows (MSYSTEM), read $NAME. The note after the line is a comment in sh
+    // and in PowerShell, so the whole line runs.
+    const sh = { status: "error", reason: "missing_api_key", message: "--fork calls the Anthropic API, and $ANTHROPIC_API_KEY is not set", next: ["Next:", "export ANTHROPIC_API_KEY=...   # or a subscription token in $CLAUDE_CODE_OAUTH_TOKEN"] };
+    assert.deepEqual(await err({ SHELL: "/bin/bash" }), sh);
+    assert.deepEqual(await err({ MSYSTEM: "MINGW64" }), sh);
     // env sets no SHELL or MSYSTEM: PowerShell or cmd on Windows.
-    const plain = await next({});
-    assert.deepEqual(plain, ["Next:", `${process.platform === "win32" ? "$env:ANTHROPIC_API_KEY = '...'" : "export ANTHROPIC_API_KEY=..."}${or}`]);
-    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain[1]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    const plain = await err({});
+    const ps = { status: "error", reason: "missing_api_key", message: "--fork calls the Anthropic API, and $env:ANTHROPIC_API_KEY is not set", next: ["Next:", "$env:ANTHROPIC_API_KEY = '...'   # or a subscription token in $env:CLAUDE_CODE_OAUTH_TOKEN"] };
+    assert.deepEqual(plain, process.platform === "win32" ? ps : sh);
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([plain.next[1]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
     assert.equal(sent.length, before);
   });
 

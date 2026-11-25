@@ -1155,7 +1155,7 @@ describe("cli QA regressions", () => {
     for (const name of ["workflows", "workflow", "wf"]) {
       const r = cli(h, [name, "--help"]);
       assert.equal(r.status, 0, `${name}: ${r.stderr}`);
-      assert.match(r.stdout, /coding\.sh workflows <action>/);
+      assert.match(r.stdout, new RegExp(`${esc(BIN)} workflows <action>`));
     }
     const root = cli(h, ["--help"]);
     const evaluate = root.stdout.split(/\n(?=\S)/).find((s) => s.startsWith("Evaluate")) ?? "";

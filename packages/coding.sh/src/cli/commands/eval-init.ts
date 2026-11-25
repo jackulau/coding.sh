@@ -5,6 +5,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SINCE_MS, initSuite, InitError, type InitOpts, type InitResult, type InitSource } from "../../eval/init.ts";
@@ -165,15 +166,17 @@ export async function evalInit(c: CommandContext): Promise<number> {
   const workRoot = flags.validate === true ? await mkdtemp(join(tmpdir(), "codingsh-init-validate-")) : undefined;
   if (workRoot) o.validate = { workRoot, k: positiveInt(flags["validate-k"], "validate-k") ?? 1 };
 
-  const r = await withContext(c, async (ctx) => {
+  const { r, ref } = await withContext(c, async (ctx) => {
     // The session that just ended may still be in the ingest its hook started: wait for it, then ingest the rest.
     if (o.source === "sessions") await autoIngest(ctx, { lockWaitMs: SESSION_INGEST_WAIT_MS });
     // `latest` and id prefixes, as in `eval new`.
     if (o.sessionIds) o.sessionIds = await Promise.all(o.sessionIds.map(async (id) => (await resolveSession(ctx, id)).id));
+    // Rows and notes name each session by a reference that opens it when pasted back.
+    const ref = o.source === "sessions" ? await shortener(ctx.index) : (id: string) => id;
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);
     const spin = workRoot ? out.spin("Drafting and validating tasks…") : undefined;
     try {
-      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env), quoteArg: (s) => quoteArg(s, c.env) });
+      return { r: await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env), quoteArg: (s) => quoteArg(s, c.env), ref }), ref };
     } catch (e) {
       if (e instanceof InitError || e instanceof DraftError) {
         throw new CliError(commandsForShell(e.message, c.env), {
@@ -188,11 +191,11 @@ export async function evalInit(c: CommandContext): Promise<number> {
       if (workRoot) await rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   });
-  render(c, r, root);
+  render(c, r, root, ref);
   return 0;
 }
 
-function render(c: CommandContext, r: InitResult, root: string): void {
+function render(c: CommandContext, r: InitResult, root: string, ref: (id: string) => string): void {
   const { out } = c;
   if (out.json) {
     out.data({ outcome: "created", ...r, notes: r.notes.map((n) => commandsForShell(n, c.env)), run: commandsForShell(r.run, c.env), dir: toPosix(relative(root, r.dir)) || "." });
@@ -204,7 +207,7 @@ function render(c: CommandContext, r: InitResult, root: string): void {
   out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${fromCwd(r.dir)}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
   if (resolve(root) !== resolve(c.cwd)) out.note(`Suites live at the repo root, ${fromCwd(root)}`);
   for (const f of r.files) out.note(fromCwd(f) + (f.endsWith("/") ? "/" : ""));
-  for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${t.sessionId.slice(0, 8)}`);
+  for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${ref(t.sessionId)}`);
   for (const n of r.notes) out.warn(commandsForShell(n, c.env));
   out.note("");
   out.note(

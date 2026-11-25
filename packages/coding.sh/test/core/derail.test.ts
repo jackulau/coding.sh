@@ -7,7 +7,7 @@ import { DERAIL_THRESHOLDS, derailsOf, derailState, detectDerails, foldDerails, 
 import { buildSession } from "../../src/core/sessions.ts";
 import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS } from "../../src/core/waiting.ts";
 import { createGrader } from "../../src/graders/index.ts";
-import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
+import type { AgentEvent, EventKind, Usage } from "../../src/schema/index.ts";
 
 const MIN = 60_000;
 let n = 0;
@@ -171,6 +171,56 @@ describe("derail detection", () => {
       assert.deepEqual(flags(shell), []);
       reset();
       assert.deepEqual(flags(circle(120, 12)), [], "no edits anywhere: a question, not a task");
+    });
+
+    it("reads a token count below 0 or not a finite number as absent in the context size", () => {
+      // 90 reads that cycle through 12 files at a 100k context, then one more model call and a repeated read.
+      const stretch = (last: Usage) => {
+        const out = [...edit("a.ts", "1", "2")];
+        for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls + 10; i++) out.push(llm(100_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
+        return [...out, ev("llm.call", { ok: true }, { usage: last }), ...read("src/f0.ts", "body again")];
+      };
+      // 160k fresh input tokens: the context grew, whatever the bad cache read says.
+      reset();
+      const grew = detectDerails(stretch({ inputTokens: 160_000, cacheReadTokens: -100_000, outputTokens: 50 }));
+      assert.deepEqual(grew.map((d) => d.flag), ["no-progress"]);
+      assert.match(grew[0]!.detail, /context 100k → 160k tokens/);
+      // An infinite cache write is no growth.
+      reset();
+      assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, cacheWriteTokens: Number.POSITIVE_INFINITY, outputTokens: 50 })), []);
+    });
+
+    it("does not start the context size at a call with a token count below 0 or not a finite number", () => {
+      // The first model call in the stretch reports a bad cache read, so its size is only its 60k fresh
+      // input tokens: as the start, the 100k calls after it would look like growth. Then 90 reads cycle
+      // through 12 files at a 100k context: no growth.
+      const stretch = (first: Usage) => {
+        const out = [...edit("a.ts", "1", "2"), llm(100_000), ...read("src/f0.ts"), ev("llm.call", { ok: true }, { usage: first })];
+        for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls + 10; i++) out.push(llm(100_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
+        return out;
+      };
+      for (const cacheReadTokens of [-10_000, Number.NaN]) {
+        reset();
+        const events = stretch({ inputTokens: 60_000, cacheReadTokens, outputTokens: 50 });
+        assert.deepEqual(flags(events), [], `cache read ${cacheReadTokens}`);
+        // Stored, NaN reads back as null.
+        assert.deepEqual(flags(JSON.parse(JSON.stringify(events))), [], `stored cache read ${cacheReadTokens}`);
+      }
+      reset();
+      assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, outputTokens: 50 })), []);
+    });
+
+    it("keeps the context size a stretch reached when a later call has a token count below 0 or not a finite number", () => {
+      // 79 reads cycle through 12 files while the context grows from 101k to 179k. Then a call reports a
+      // bad cache read, so its size is only its 500 fresh input tokens, and an 80th read: the context grew.
+      reset();
+      const events = [...edit("a.ts", "1", "2")];
+      for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls - 1; i++) events.push(llm(101_000 + i * 1_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
+      events.push(ev("llm.call", { ok: true }, { usage: { inputTokens: 500, cacheReadTokens: -179_500, outputTokens: 50 } }), ...read("src/f0.ts", "body again"));
+      const d = detectDerails(events);
+      assert.deepEqual(d.map((x) => x.flag), ["no-progress"]);
+      assert.match(d[0]!.detail, /context 102k → 179k tokens/);
+      assert.deepEqual(flags(JSON.parse(JSON.stringify(events))), ["no-progress"], "stored");
     });
 
     it("reads Antigravity's run_command line: a shell write is progress, a read is not", () => {

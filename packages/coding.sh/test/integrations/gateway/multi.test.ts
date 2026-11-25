@@ -188,7 +188,7 @@ describe("gateway lookups (documented shapes, stubbed fetch)", () => {
     const c = createOpenRouterClient({ baseUrl: "https://openrouter.ai/api/v1", apiKey: KEY, fetch: s.fetch, retry: NO_RETRY });
     await assert.rejects(c.generation(OR_GEN), (e: Error) => !e.message.includes(KEY));
     const env = { HOME: tmp() };
-    assert.deepEqual(lookupClient(gatewayConfig("openrouter", env)), { missing: "key", detail: "export OPENROUTER_API_KEY=…" });
+    assert.deepEqual(lookupClient(gatewayConfig("openrouter", env)), { missing: "key" });
     assert.equal((lookupClient(gatewayConfig("cloudflare", { ...env, CLOUDFLARE_API_TOKEN: "t" })) as { missing: string }).missing, "config");
     assert.equal((lookupClient(gatewayConfig("requesty", { ...env, REQUESTY_API_KEY: "r" })) as { missing: string }).missing, "none");
   });

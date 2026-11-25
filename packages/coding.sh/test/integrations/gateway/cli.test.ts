@@ -119,7 +119,8 @@ describe("coding.sh gateway (CLI)", () => {
     const { env } = home();
     const r = await cli(env, ["compare", "a", "b", "--gateway", "--yes"]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /--gateway needs an AI Gateway key in \$AI_GATEWAY_API_KEY/);
+    // home() sets no SHELL or MSYSTEM: PowerShell or cmd on Windows, which read the variable as $env:NAME.
+    assert.match(r.stderr, process.platform === "win32" ? /--gateway needs an AI Gateway key in \$env:AI_GATEWAY_API_KEY/ : /--gateway needs an AI Gateway key in \$AI_GATEWAY_API_KEY/);
   });
 });
 
@@ -213,7 +214,7 @@ describe("coding.sh gateway with other gateways (CLI)", () => {
     const { env } = home();
     const r = await cli(env, ["compare", "a", "b", "--gateway", "openrouter", "--yes"]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /--gateway openrouter needs a key in \$OPENROUTER_API_KEY \(OpenRouter\)/);
+    assert.match(r.stderr, process.platform === "win32" ? /--gateway openrouter needs a key in \$env:OPENROUTER_API_KEY \(OpenRouter\)/ : /--gateway openrouter needs a key in \$OPENROUTER_API_KEY \(OpenRouter\)/);
     const bad = await cli(env, ["compare", "a", "b", "--gateway=helicone", "--yes"]);
     assert.equal(bad.code, 2);
     assert.match(bad.stderr, /--gateway must be one of vercel, openrouter, litellm, ramp/);

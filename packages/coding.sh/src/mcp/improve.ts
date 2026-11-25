@@ -115,8 +115,8 @@ async function summaries(ctx: Context, root: string, opts: ChangeOptions, change
   return withHeadless(changes, leftOut, HEADLESS_ARG).map((e) => changeSummary(e, { ...o, headlessLeftOut: leftOut.get(e.change.commit) }));
 }
 
-/** The improve tool: ranked issues with the line that fixes each, then the recent harness changes' verdicts. */
-export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: string; env: NodeJS.ProcessEnv; now: number }): Promise<Obj> {
+/** The improve tool: ranked issues with the line that fixes each, then the recent harness changes' verdicts. `c.ref` names a session in a `next` command (default the id). */
+export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: string; env: NodeJS.ProcessEnv; now: number; ref?: (id: string) => string }): Promise<Obj> {
   const p = await place(ctx, a.repo, c.cwd, c.env);
   const from = since(a.since, "14d", c.now);
   const agents = a.agent ? [a.agent] : [];
@@ -152,7 +152,7 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
         ...(i.usd !== undefined ? { usd: i.usd } : {}),
         ...(i.causes ? { causes: i.causes.map((k) => ({ cause: k.cause, breaks: k.breaks, usd: k.usd, fix: k.fix })) } : {}),
         ...(i.rule && !i.quietSince ? { line: i.rule, file: p.root ? targetFile(p.root, agentsOf) : "AGENTS.md or CLAUDE.md" } : {}),
-        next: stepsFor(i, k + 1, { provider }).map((s) => s.command),
+        next: stepsFor(i, k + 1, { provider, ref: c.ref }).map((s) => s.command),
       };
     }),
     ...(issues.length > top.length ? { more: issues.length - top.length } : {}),

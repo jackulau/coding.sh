@@ -83,6 +83,17 @@ describe("initSuite: cases", () => {
     assert.deepEqual([again.spec.task, again.spec.trials, again.spec.purpose], [{ kind: "http", url: "http://localhost:1/x" }, 5, "capability"]);
   });
 
+  it("reads a cases file that Windows PowerShell wrote in UTF-16", async () => {
+    // `>` and Out-File in Windows PowerShell 5.1 write UTF-16LE with a byte order mark.
+    const root = await project();
+    const text = '{"input":"charged twice","expected":"billing"}\r\n{"input":"crash","expected":"bug"}\r\n';
+    await writeFile(join(root, "cases.jsonl"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]));
+    const r = await initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", command: "node app.mjs" }, deps());
+    const s = await loadSuite(r.dir);
+    assert.equal((s.spec.graders![0] as { kind: string }).kind, "exact", "every case has an answer");
+    assert.ok(r.notes.some((n) => /2 cases/.test(n)));
+  });
+
   it("--force keeps files you added or changed unless forceAll", async () => {
     const root = await project();
     await writeFile(join(root, "cases.jsonl"), '{"input":"crash","expected":"bug"}\n');

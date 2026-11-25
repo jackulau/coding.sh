@@ -563,6 +563,13 @@ describe("session usage rollup", () => {
     assert.deepEqual(buildSession([snap]).stats.usage, { outputTokens: 40 });
   });
 
+  it("stats.inheritedTokens skips a count below 0 or not a finite number", () => {
+    const fork = (inheritedTokens: number) => ev("notification", { kind: "fork", toolUseId: "tu1", inheritedTokens });
+    for (const bad of [-5, Number.POSITIVE_INFINITY, Number.NaN]) assert.equal(buildSession([fork(bad)]).stats.inheritedTokens, undefined, String(bad));
+    // A bad count or 0 leaves room for a valid one; the first valid one stays.
+    assert.equal(buildSession([fork(-5), fork(0), fork(20_470), fork(30_000)]).stats.inheritedTokens, 20_470);
+  });
+
   it("a nested call that reports a cost of 0 beats the wrapper's estimate, as does a reported part too small to change the sum", () => {
     // A free model, or a gateway that bills nothing, under a wrapper priced at $4.
     const wrapper = ev("llm.call", { costEstimated: true }, { model: "claude-opus-5-5", traceId: "t", spanId: "w", usage: { inputTokens: 1_000_000, costUsd: 4 } });

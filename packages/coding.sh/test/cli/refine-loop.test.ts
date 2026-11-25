@@ -15,11 +15,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { cliCommand } from "../../src/cli/next-steps.ts";
+import { cliCommand, nextStepBin } from "../../src/cli/next-steps.ts";
 import { ASK_USER } from "../../src/cli/output.ts";
 import { appendLedger, type ProposeEntry } from "../../src/refine/ledger.ts";
 import { claimSession, putSession, retrySession } from "../helpers-decision.ts";
 import { CLI } from "../_cli.ts";
+import { NO_USER_SHELL, runEnvLines } from "./_env-lines.ts";
 
 const TEST_RULE = "TEST-RULE: run npm test before you say you are done.";
 const RETRY_RULE = "RETRY-RULE: when a command fails, read the error and fix the command before you run it again.";
@@ -305,7 +306,7 @@ describe("cli refine loop", () => {
     assert.match(readFileSync(join(e.repo, "CLAUDE.md"), "utf8"), new RegExp(`<!-- coding\\.sh:refine ${prop.id} begin -->\\n${TEST_RULE}\\n<!-- coding\\.sh:refine ${prop.id} end -->\\n$`));
   });
 
-  it("propose without an API key names the proposer, not the judge, and points at improve", async () => {
+  it("propose without an API key names the proposer, not the judge, prints the line that sets the key, and points at improve", async () => {
     const e = await setup("propose-nokey");
     const { ANTHROPIC_API_KEY: _k, ANTHROPIC_BASE_URL: _b, ...env } = e.env;
     const p = await cli({ ...e, env }, ["refine", "propose", "--json"]);
@@ -313,7 +314,16 @@ describe("cli refine loop", () => {
     const err = JSON.parse(p.stderr) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "missing_key");
     assert.equal(err.message, "refine asks a model to write the edit: set ANTHROPIC_API_KEY");
-    assert.ok(err.next.some((n: string) => /^(?:coding\.sh|codingsh) improve$/.test(n)), err.next.join("\n"));
+    // The line that sets the key in the user's shell, the way that needs no key as its comment, then
+    // that command. An env with no SHELL or MSYSTEM is PowerShell's on Windows.
+    const later = "   # or, without an API key, list what to fix and the line that fixes it:";
+    const set = process.platform === "win32" ? "$env:ANTHROPIC_API_KEY = '...'" : "export ANTHROPIC_API_KEY=...";
+    assert.deepEqual(err.next, [`${set}${later}`, `${nextStepBin(env)} improve`]);
+    if (!NO_USER_SHELL) assert.deepEqual(runEnvLines([err.next[0]!], ["ANTHROPIC_API_KEY"]), { ANTHROPIC_API_KEY: "..." });
+    for (const sh of [{ SHELL: "/bin/bash" }, { MSYSTEM: "MINGW64" }]) {
+      const s = await cli({ ...e, env: { ...env, ...sh } }, ["refine", "propose", "--json"]);
+      assert.deepEqual((JSON.parse(s.stderr) as { next: string[] }).next, [`export ANTHROPIC_API_KEY=...${later}`, "coding.sh improve"], JSON.stringify(sh));
+    }
   });
 
   it("a command inside a hint or a log line runs in the user's shell", async () => {

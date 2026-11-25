@@ -24,6 +24,7 @@ import type { BlobStore, IndexStore, Label, Score, Session, SessionFilter } from
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
+import { shortener } from "../core/session-ref.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { checkpointRuns, checkpointSessions, withSessions } from "../experiments/checkpoints.ts";
 import { compareExperiments } from "../experiments/compare.ts";
@@ -95,6 +96,12 @@ export interface ViewerOptions {
   playground?: PlaygroundSource;
   /** Draw the first sessions page on the server and embed the first responses. Default: true. */
   serverRender?: boolean;
+  /**
+   * Give each session record a `shortId` (ViewerHandlerOptions.shortIds). Default: true, for a viewer of
+   * the CLI's own store. `coding.sh ui --store` turns it off: its copied commands name a session by the
+   * whole id, and it does not read every id of a team store.
+   */
+  shortIds?: boolean;
 }
 
 /** Forks behind /api/sessions/<id>/fork: what a fork at step N starts from, and the fork itself. */
@@ -272,6 +279,12 @@ export interface ViewerHandlerOptions {
   playground?: PlaygroundSource;
   /** Draw the first sessions page on the server and embed the first responses. Default: true. */
   serverRender?: boolean;
+  /**
+   * Give a session record (GET /api/sessions/<id>) a `shortId`: the shortest reference that opens the
+   * session from the CLI on this store (core/session-ref.ts), which the page's copied commands use.
+   * For a viewer of the CLI's own store (startViewer). Default: none; the commands use the id.
+   */
+  shortIds?: boolean;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -281,6 +294,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
   const page = await loadPage();
   const labeller = currentUser();
   const experiments = opts.experiments ?? indexExperiments(opts.index);
+  const shortIds = opts.shortIds ? cachedShortener(opts.index) : undefined;
 
   const unauthorizedPage = (res: ServerResponse) => sendUnauthorizedPage(res, opts.unauthorizedText, opts.basicRealm);
   const apiCtx = (access: { by?: string; project?: string }): ApiCtx => ({
@@ -301,6 +315,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     replayBaseline: opts.replayBaseline,
     fork: opts.fork,
     playground: opts.playground,
+    shortIds,
   });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -432,6 +447,8 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     ...(opts.fork ? { fork: opts.fork } : {}),
     ...(opts.playground ? { playground: opts.playground } : {}),
     ...(opts.serverRender !== undefined ? { serverRender: opts.serverRender } : {}),
+    // By default this viewer reads the CLI's own store, so the shortest reference that opens a session here opens it from the CLI.
+    shortIds: opts.shortIds ?? true,
   });
 
   const server = createServer((req, res) => {
@@ -545,6 +562,8 @@ interface ApiCtx {
   replayBaseline?: (s: Session) => Baseline | undefined;
   fork?: ForkSource;
   playground?: PlaygroundSource;
+  /** The shortest reference to each stored session, when a session record carries one (ViewerHandlerOptions.shortIds). */
+  shortIds?: () => Promise<(id: string) => string>;
 }
 
 /** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
@@ -564,6 +583,24 @@ function modelCache(ctx: ApiCtx): ModelCache {
 }
 function cachedModel(ctx: ApiCtx, s: Session) {
   return modelCache(ctx).get(ctx.index, s);
+}
+
+/** How long one read of the store's ids serves later session records, as for the MCP tools (mcp/tools.ts). */
+const SHORT_IDS_MS = 5_000;
+
+/** A shortener (core/session-ref.ts) for `index` that reads the stored ids again at most once per SHORT_IDS_MS. */
+function cachedShortener(index: IndexStore): () => Promise<(id: string) => string> {
+  let hit: { at: number; get: Promise<(id: string) => string> } | undefined;
+  return () => {
+    const now = Date.now();
+    if (hit && now - hit.at < SHORT_IDS_MS) return hit.get;
+    const entry = { at: now, get: shortener(index) };
+    hit = entry;
+    entry.get.catch(() => {
+      if (hit === entry) hit = undefined;
+    });
+    return entry.get;
+  };
 }
 /** Sessions up to this many events get their spans folded inline on the outline; longer ones in the background. */
 export const OUTLINE_INLINE_EVENTS = 20_000;
@@ -724,7 +761,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         // has them. Eval assets belong to no project: a project-scoped key sees none.
         const hashes = s.stats.weightEdits?.checkpoints;
         const runs = hashes?.length && ctx.project === undefined && ctx.experiments ? await checkpointRuns(ctx.experiments, hashes) : [];
-        return sendJsonCompressed(req, res, runs.length ? { ...s, checkpointExperiments: runs } : s);
+        // The page's copied commands name the session by a reference that opens it: a full id can need quoting, or be `latest`.
+        const shortId = ctx.shortIds ? await ctx.shortIds().then((short) => short(s.id), () => undefined) : undefined;
+        const body: Session & { checkpointExperiments?: typeof runs; shortId?: string } = { ...s };
+        if (runs.length) body.checkpointExperiments = runs;
+        if (shortId !== undefined) body.shortId = shortId;
+        return sendJsonCompressed(req, res, body);
       }
       if (sub === "events") {
         await visibleSession(ctx, sessionId);

@@ -583,6 +583,30 @@ describe("claude-code fork subagents", () => {
     assertGolden("claude-code/golden/fork.golden.json", summarize(events.filter((e) => e.sessionId === CHILD)));
   });
 
+  it("inheritedTokens skips a token count below 0 in the parent's Agent call, as an estimate does", async () => {
+    const dir = join(env.home, "fork-bad-count");
+    cpSync(CONFIG, dir, { recursive: true });
+    const sub = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
+    // The copy of the parent's Agent call in the fork's transcript reports a cache read of -10 instead of 20,000.
+    const edited = readFileSync(sub, "utf8")
+      .split("\n")
+      .map((l) => {
+        const e = l ? JSON.parse(l) : undefined;
+        if (e?.type !== "assistant" || !e.message.content.some((b: { id?: string }) => b.id === "toolu_mw9alcc13")) return l;
+        e.message.usage.cache_read_input_tokens = -10;
+        return JSON.stringify(e);
+      });
+    writeFile(sub, edited.join("\n"));
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    try {
+      const child = buildSession((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
+      // 40 input, 400 cache-write and 30 output tokens. Before, the -10 was added in: 460.
+      assert.equal(child.stats.inheritedTokens, 40 + 400 + 30);
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = CONFIG;
+    }
+  });
+
   it("live SubagentStop and PostToolUse(Agent) windows skip the parent's context too, with the backfill's ids", async () => {
     const { ctx } = testCtx();
     const back = new Set((await collect(claudeCode.backfill!(ctx))).map((e) => e.id));

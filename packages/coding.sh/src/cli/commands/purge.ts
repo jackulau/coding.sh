@@ -14,11 +14,12 @@
 //
 // A recording job (exp run --record or --replay) holds its model calls in memory until it ends.
 // Purge waits for live jobs up to CODING_SH_PURGE_WAIT_MS, then exits 1 naming the experiment.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { loadConfig } from "../../core/config.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
+import { readTextFileSync } from "../../core/text-file.ts";
 import { fileUrlPath, parseStoreUrl } from "../../store/factory.ts";
 import { findRuleMatches, MAX_FILE_BYTES, MAX_RULE_VALUES, MIN_LITERAL_LENGTH, purgeLiterals, removeIndexCopies, RuleTooBroad, type PurgeResult } from "../../store/purge.ts";
 import { UsageError } from "../args.ts";
@@ -66,7 +67,7 @@ export function parseRules(raw: readonly string[]): RegExp[] {
 function readLiterals(source: string, cwd: string): string[] {
   let text: string;
   try {
-    text = source === "-" ? readFileSync(0, "utf8") : readFileSync(resolve(cwd, source), "utf8");
+    text = readTextFileSync(source === "-" ? 0 : resolve(cwd, source));
   } catch (e) {
     // Neither the path nor the error (which repeats it) is shown: `--literal <secret>` is an easy slip.
     const code = (e as NodeJS.ErrnoException).code;
