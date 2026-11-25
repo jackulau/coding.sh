@@ -1,0 +1,465 @@
+// The person's turns in a Claude Code session its hooks captured, stored the way ingest stores them: each
+// spool line through normalize when the hook starts an ingest (a Stop or a SessionEnd), source "hook" on the
+// events that name none, then buildSession. The transcript entries are synthetic, shaped like the hooks-real
+// fixture's (Claude Code 2.1.319, no api-request records: a call starts at the entry before it).
+import assert from "node:assert/strict";
+import { appendFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { claudeCode, resetPromptIndexes } from "../../src/adapters/claude-code.ts";
+import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
+import { defaultConfig } from "../../src/core/config.ts";
+import { backfill as importTranscripts, ingest as ingestSpool } from "../../src/core/ingest.ts";
+import { buildSession } from "../../src/core/sessions.ts";
+import type { SpoolLine } from "../../src/core/types.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
+import { spoolFile } from "../../src/spool/write.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
+import { testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+
+const SID = "6f1e2d3c-4b5a-4968-8778-a6b5c4d3e2f1";
+const MODEL = "claude-opus-4-5";
+const T = Date.parse("2026-11-09T07:00:00.000Z");
+const iso = (at: number) => new Date(T + at).toISOString();
+
+type Entry = Record<string, unknown>;
+const entry = (uuid: string, at: number, rest: Entry): Entry => ({ uuid, timestamp: iso(at), sessionId: SID, cwd: "/work/demo", entrypoint: "cli", isSidechain: false, ...rest });
+const prompt = (uuid: string, at: number, content: string): Entry => entry(uuid, at, { type: "user", promptId: `p-${uuid}`, message: { role: "user", content } });
+const reply = (msg: string, at: number, block: Entry, stop = "end_turn"): Entry =>
+  entry(`${msg}-${at}`, at, { type: "assistant", message: { id: msg, type: "message", role: "assistant", model: MODEL, content: [block], stop_reason: stop, usage: { input_tokens: 10, output_tokens: 20 } } });
+const result = (id: string, at: number, promptId: string, content: string): Entry =>
+  entry(`r-${id}`, at, { type: "user", promptId, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: true }] } });
+// The prompt Claude Code writes when the person presses Esc.
+const stopPrompt = (uuid: string, at: number, promptId: string, text = "[Request interrupted by user for tool use]"): Entry =>
+  entry(uuid, at, { type: "user", promptId, message: { role: "user", content: [{ type: "text", text }] } });
+const bash = { tool_name: "Bash", tool_input: { command: "npm run migrate" }, tool_use_id: "toolu_b1" };
+const bashUse = { type: "tool_use", id: "toolu_b1", name: "Bash", input: bash.tool_input };
+
+let t: TmpEnv;
+let transcript: string;
+before(() => {
+  t = tmpEnv();
+  transcript = join(t.home, ".claude", "projects", "-work-demo", `${SID}.jsonl`);
+});
+after(() => t.restore());
+
+const line = (event: string, at: number, raw: Entry = {}, path = transcript): SpoolLine => ({
+  v: 0,
+  agent: "claude-code",
+  event,
+  ts: T + at,
+  pid: 7000,
+  cwd: "/work/demo",
+  entrypoint: "cli",
+  raw: { session_id: SID, transcript_path: path, cwd: "/work/demo", hook_event_name: event, ...raw },
+});
+const stop = (at: number, said: string) => line("Stop", at, { stop_hook_active: false, last_assistant_message: said });
+
+/** Ingests spool lines: normalize, and source "hook" on the events that name none. */
+async function ingest(lines: SpoolLine[]): Promise<AgentEvent[]> {
+  const { ctx } = testCtx();
+  const out: AgentEvent[] = [];
+  for (const l of lines) for (const e of await claudeCode.normalize(l, ctx)) out.push({ ...e, source: e.source ?? "hook" });
+  return out;
+}
+
+/**
+ * A live capture: the transcript grows as the session goes, and each Stop or SessionEnd ingests the lines
+ * written since the last ingest, reading the transcript as it is then. Lines left at the end are ingested last.
+ */
+async function live(entries: Entry[], lines: SpoolLine[]): Promise<AgentEvent[]> {
+  writeFile(transcript, "");
+  const out: AgentEvent[] = [];
+  let written = 0;
+  let pending: SpoolLine[] = [];
+  const write = (until: number) => {
+    for (; written < entries.length && Date.parse(entries[written]!.timestamp as string) <= until; written++) appendFileSync(transcript, `${JSON.stringify(entries[written])}\n`);
+  };
+  for (const l of lines) {
+    write(l.ts);
+    pending.push(l);
+    if (l.event === "Stop" || l.event === "SessionEnd") {
+      out.push(...(await ingest(pending)));
+      pending = [];
+    }
+  }
+  write(Infinity);
+  out.push(...(await ingest(pending)));
+  return out;
+}
+
+/** The same lines ingested again with the whole transcript on disk: a late ingest, or a reparse. */
+async function later(entries: Entry[], lines: SpoolLine[]): Promise<AgentEvent[]> {
+  writeFile(transcript, entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+  return ingest(lines);
+}
+
+/** A backfill of the transcript (no hooks). */
+async function backfill(entries: Entry[]): Promise<AgentEvent[]> {
+  const conv = new ClaudeTranscriptConverter(testCtx().ctx, { agent: "claude-code", mode: "full", sessionId: SID, source: `${SID}.jsonl` });
+  for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+  return (await conv.finish(true)).map((e) => ({ ...e, source: e.source ?? "transcript" }));
+}
+
+const turns = (events: AgentEvent[]) => buildSession(events).stats.turnsByModel;
+const rows = (events: AgentEvent[]) => events.map((e) => `${e.kind} ${e.id} ${e.ts - T}`).sort();
+const prompts = (events: AgentEvent[]) => events.filter((e) => e.kind === "user.message" && !e.subagentId).sort((a, b) => a.ts - b.ts);
+
+describe("claude-code hook capture: the person's turns", () => {
+  it("a turn the person stopped (Esc during a tool call) counts as cancelled, with the stopped turn's call and stop prompt", async () => {
+    // No Stop fires for the first turn: Claude Code writes the stop prompt after it, and the hooks report the call cut short.
+    const entries = [
+      prompt("u1", 0, "Run the migration"),
+      reply("m1", 2000, bashUse, "tool_use"),
+      result("toolu_b1", 9000, "p-u1", "[Request interrupted by user for tool use]"),
+      stopPrompt("u2", 9000, "p-u1"),
+      prompt("u3", 30_000, "use the other approach"),
+      reply("m2", 34_000, { type: "text", text: "Done another way." }),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Run the migration" }),
+      line("PreToolUse", 2010, bash),
+      line("PostToolUseFailure", 9010, { ...bash, error: "Interrupted by user", is_interrupt: true }),
+      line("UserPromptSubmit", 30_010, { prompt: "use the other approach" }),
+      stop(34_100, "Done another way."),
+    ];
+    const hooked = await live(entries, lines);
+    assert.equal(new Set(hooked.map((e) => e.id)).size, hooked.length, "no row stored twice");
+    assert.deepEqual(rows(await later(entries, lines)), rows(hooked), "a later ingest stores the same rows");
+    // Each prompt takes its transcript entry's time, less 1 ms. The stop prompt comes with the Stop's window.
+    assert.deepEqual(prompts(hooked).map((e) => [e.ts - T, e.payload.text]), [
+      [-1, "Run the migration"],
+      [9000, "[Request interrupted by user for tool use]"],
+      [29_999, "use the other approach"],
+    ]);
+    const full = await backfill(entries);
+    const ids = new Set(full.map((e) => e.id));
+    for (const e of hooked.filter((e) => e.kind === "llm.call" || (e.kind === "user.message" && e.ts === T + 9000))) assert.ok(ids.has(e.id), `the backfill's ${e.kind} has the same id`);
+    assert.equal(hooked.filter((e) => e.kind === "llm.call").length, 2, "the stopped turn's call too");
+    assert.deepEqual(turns(hooked), { [MODEL]: { turns: 2, replied: 1, cancelled: 1, durationsMs: [9011, 4101] } });
+    assert.deepEqual(turns(full), { [MODEL]: { turns: 2, replied: 1, cancelled: 1, durationsMs: [9000, 4000] } });
+  });
+
+  it("a turn stopped while the model wrote its reply counts as cancelled, as does each of two stopped turns in a row", async () => {
+    const entries = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 5000, "Explain the cache in one line"),
+      reply("m1", 7000, bashUse, "tool_use"),
+      result("toolu_b1", 8000, "p-u3", "[Request interrupted by user for tool use]"),
+      stopPrompt("u4", 8000, "p-u3"),
+      prompt("u5", 20_000, "Just say it"),
+      reply("m2", 22_000, { type: "text", text: "It keeps answers." }),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 5010, { prompt: "Explain the cache in one line" }),
+      line("PreToolUse", 7010, bash),
+      line("UserPromptSubmit", 20_010, { prompt: "Just say it" }),
+      stop(22_100, "It keeps answers."),
+    ];
+    const hooked = await live(entries, lines);
+    assert.deepEqual(turns(hooked), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 3001, 2101] } });
+    const full = await backfill(entries);
+    assert.deepEqual(turns(full), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1500, 3000, 2000] } });
+    // A stop prompt carries the promptId of the turn it stopped: that turn ends once, at the stop.
+    assert.deepEqual(full.filter((e) => e.kind === "turn.end").map((e) => [e.ts - T, e.payload.durationMs]), [[1500, 1500], [8000, 3000], [22_000, 2000]]);
+    assert.equal(new Set(full.map((e) => e.id)).size, full.length, "no event twice");
+    assert.equal(buildSession(full).stats.turns, 3);
+  });
+
+  it("a turn ends with its own work, not the next turn's first call: a 2-minute gap still gives two 3 s turns", async () => {
+    const entries = [
+      prompt("u1", 0, "Add a test for the parser"),
+      reply("m1", 3000, { type: "text", text: "Added." }),
+      prompt("u2", 123_000, "Now update the docs"),
+      reply("m2", 126_000, { type: "text", text: "Updated." }),
+    ];
+    // Each UserPromptSubmit hook runs 150 ms after the time Claude Code stamped on the prompt.
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 150, { prompt: "Add a test for the parser" }),
+      stop(3100, "Added."),
+      line("UserPromptSubmit", 123_150, { prompt: "Now update the docs" }),
+      stop(126_100, "Updated."),
+    ];
+    const hooked = await live(entries, lines);
+    assert.equal(new Set(hooked.map((e) => e.id)).size, hooked.length, "the second Stop reads only its own turn");
+    assert.deepEqual(rows(await later(entries, lines)), rows(hooked));
+    assert.deepEqual(prompts(hooked).map((e) => e.ts - T), [-1, 122_999]);
+    assert.deepEqual(turns(hooked), { [MODEL]: { turns: 2, replied: 1, durationsMs: [3101, 3101] } });
+    assert.deepEqual(turns(await backfill(entries)), { [MODEL]: { turns: 2, replied: 1, durationsMs: [3000, 3000] } });
+  });
+
+  it("a hook turn with no end seen counts in cancelNotRecorded, unless its hooks saw a tool call the person cut short", async () => {
+    const entries = [
+      prompt("u1", 0, "Add a test for the parser"),
+      reply("m1", 3000, { type: "text", text: "Added." }),
+      prompt("u2", 60_000, "Run the whole suite"),
+      reply("m2", 62_000, bashUse, "tool_use"),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 150, { prompt: "Add a test for the parser" }),
+      stop(3100, "Added."),
+      line("UserPromptSubmit", 60_150, { prompt: "Run the whole suite" }),
+      line("PreToolUse", 62_010, bash),
+    ];
+    assert.deepEqual(turns(await live(entries, lines)), { [MODEL]: { turns: 2, replied: 1, cancelNotRecorded: 1, durationsMs: [3101, 2011] } });
+    // The person stops the turn while the model writes, then quits: SessionEnd reads no transcript, so the stop prompt is not seen.
+    const quit = [...entries.slice(0, 3), stopPrompt("u3", 61_000, "p-u2", "[Request interrupted by user]")];
+    const ended = [...lines.slice(0, 4), line("SessionEnd", 70_000, { reason: "prompt_input_exit" })];
+    assert.deepEqual(turns(await live(quit, ended)), { [MODEL]: { turns: 2, replied: 1, cancelNotRecorded: 1, durationsMs: [3101] } });
+    // Stopped during the tool call, then quit: the hooks report the call cut short (PostToolUseFailure, is_interrupt).
+    const cut = [...entries, result("toolu_b1", 65_000, "p-u2", "[Request interrupted by user for tool use]"), stopPrompt("u3", 65_000, "p-u2")];
+    const cutLines = [...lines, line("PostToolUseFailure", 65_010, { ...bash, error: "Interrupted by user", is_interrupt: true }), line("SessionEnd", 70_000, { reason: "prompt_input_exit" })];
+    assert.deepEqual(turns(await live(cut, cutLines)), { [MODEL]: { turns: 2, replied: 1, cancelled: 1, durationsMs: [3101, 5011] } });
+  });
+});
+
+describe("claude-code hook capture: the time on a prompt's transcript entry", () => {
+  const missing = async (l: SpoolLine): Promise<{ said: string[][]; ts: number[] }> => {
+    const said: string[][] = [];
+    const events = await claudeCode.normalize(l, { ...testCtx().ctx, missing: (path, session) => void said.push([path, session]) });
+    return { said, ts: events.filter((e) => e.kind === "user.message").map((e) => e.ts - T) };
+  };
+
+  it("a slash command's prompt takes the time of the entry that records it, and a prompt the transcript does not hold keeps the hook's", async () => {
+    writeFile(transcript, `${JSON.stringify(prompt("c1", 0, "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>src</command-args>"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "/review src" })), { said: [], ts: [-1] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "something else" })), { said: [], ts: [150] });
+    // A prompt with the same text 20 s earlier is too far away to be this one.
+    assert.deepEqual(await missing(line("UserPromptSubmit", 20_000, { prompt: "/review src" })), { said: [], ts: [20_000] });
+  });
+
+  it("a prompt sent again 6 s later keeps its hook's time until its own entry is written, then takes that entry's", async () => {
+    // Claude Code stamps each entry about 90 ms before the hook runs, and may write it after the hook.
+    resetPromptIndexes();
+    writeFile(transcript, [prompt("u1", 0, "yes"), reply("m1", 2000, { type: "text", text: "Done." })].map((e) => `${JSON.stringify(e)}\n`).join(""));
+    assert.deepEqual(await missing(line("UserPromptSubmit", 90, { prompt: "yes" })), { said: [], ts: [-1] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 6090, { prompt: "yes" })), { said: [], ts: [6090] }, "not the first yes's time");
+    appendFileSync(transcript, `${JSON.stringify(prompt("u2", 6000, "yes"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 6090, { prompt: "yes" })), { said: [], ts: [5999] });
+    // A hook that ran up to 2 s after the entry's stamp still takes its time.
+    assert.deepEqual(await missing(line("UserPromptSubmit", 7900, { prompt: "yes" })), { said: [], ts: [5999] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 8000, { prompt: "yes" })), { said: [], ts: [8000] });
+    rmSync(transcript);
+  });
+
+  it("a prompt entry with a tool_result object in a field its text does not come from still gives its time", async () => {
+    resetPromptIndexes();
+    writeFile(transcript, `${JSON.stringify({ ...prompt("u1", 0, "Add a test"), origin: { type: "tool_result", tool_use_id: "toolu_x" } })}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [], ts: [-1] });
+    // A tool result with the same text is not a prompt.
+    resetPromptIndexes();
+    writeFile(transcript, `${JSON.stringify(result("toolu_x", 0, "p-u1", "Add a test"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [], ts: [150] });
+    rmSync(transcript);
+  });
+
+  it("says when the transcript is gone, or has grown past the prompt, so a reparse keeps the stored rows", async () => {
+    const gone = join(t.home, "runs", "run_1", "home", ".claude", "projects", "-work-demo", `${SID}.jsonl`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" }, gone)), { said: [[gone, SID]], ts: [150] });
+    writeFile(transcript, `${JSON.stringify(prompt("u1", 0, "Add a test"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [], ts: [-1] });
+    // An hour later the session reads nine 1 MiB tool results: the 8 MB read from the end starts after the prompt.
+    const big = JSON.stringify(result("toolu_pad", 3_600_000, "p-u9", "x".repeat(1024 * 1024)));
+    appendFileSync(transcript, `${Array.from({ length: 9 }, () => big).join("\n")}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" })), { said: [[transcript, SID]], ts: [150] });
+    rmSync(transcript);
+  });
+
+  it("says nothing of a prompt with no entry when the last 8 MB starts 2 s or more before it, at a reply or a tool result", async () => {
+    // A turn that read big files, then a prompt whose entry Claude Code writes after its hook ran. The 8 MB read
+    // from the end starts inside the 2 MiB result, so its first full line is the reply at 50 s.
+    const read = (msg: string, at: number, id: string) => reply(msg, at, { type: "tool_use", id, name: "Read", input: { file_path: `/work/demo/${id}.log` } }, "tool_use");
+    const entries = [prompt("u1", 0, "Read the logs"), read("m1", 1000, "toolu_r0"), result("toolu_r0", 1500, "p-u1", "x".repeat(2 * 1024 * 1024))];
+    for (let i = 1; i <= 7; i++) entries.push(read(`m${i + 1}`, 49_900 + i * 100, `toolu_r${i}`), result(`toolu_r${i}`, 49_950 + i * 100, "p-u1", "x".repeat(1024 * 1024)));
+    resetPromptIndexes();
+    writeFile(transcript, entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+    assert.deepEqual(await missing(line("UserPromptSubmit", 60_090, { prompt: "Now commit it" })), { said: [], ts: [60_090] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 52_000, { prompt: "Now commit it" })), { said: [], ts: [52_000] });
+    // Within 2 s of where the read starts, the entry may be in the part not read.
+    assert.deepEqual(await missing(line("UserPromptSubmit", 51_999, { prompt: "Now commit it" })), { said: [[transcript, SID]], ts: [51_999] });
+    rmSync(transcript);
+  });
+
+  it("reads the transcript once for each size and mtime it has, and finds what a fresh read finds as it grows", async () => {
+    // Two "yes" prompts two minutes apart, one entry stamped after its hook ran, and a prompt the transcript never holds.
+    const entries = [
+      prompt("u1", 0, "yes"),
+      reply("m1", 2000, { type: "text", text: "Done." }),
+      prompt("u2", 60_000, "Add  a\ntest"),
+      reply("m2", 62_000, { type: "text", text: "Added." }),
+      prompt("u3", 120_000, "yes"),
+    ];
+    const lines = [
+      line("UserPromptSubmit", 90, { prompt: "yes" }),
+      line("UserPromptSubmit", 60_090, { prompt: "Add a test" }),
+      line("UserPromptSubmit", 119_950, { prompt: "yes" }),
+      line("UserPromptSubmit", 125_000, { prompt: "never written" }),
+    ];
+    resetPromptIndexes();
+    writeFile(transcript, "");
+    const cached: unknown[] = [];
+    const fresh: unknown[] = [];
+    for (const e of entries) {
+      appendFileSync(transcript, `${JSON.stringify(e)}\n`);
+      for (const l of lines) cached.push(await missing(l));
+      for (const l of lines) {
+        resetPromptIndexes();
+        fresh.push(await missing(l));
+      }
+    }
+    assert.deepEqual(cached, fresh);
+    assert.deepEqual(cached.slice(-4), [
+      { said: [], ts: [-1] },
+      { said: [], ts: [59_999] },
+      { said: [], ts: [119_999] },
+      { said: [], ts: [125_000] },
+    ]);
+  });
+
+  it("keeps the last 16 transcripts read: a rewrite that keeps the size and mtime is not read again", async () => {
+    const at = (path: string) => line("UserPromptSubmit", 150, { prompt: "Add a test" }, path);
+    const stamp = 1_800_000_000; // whole seconds, which utimes sets exactly
+    const rewrite = (path: string, ms: number) => {
+      writeFile(path, `${JSON.stringify(prompt("u1", ms, "Add a test"))}\n`);
+      utimesSync(path, stamp, stamp);
+    };
+    resetPromptIndexes();
+    rewrite(transcript, 0);
+    const { size } = statSync(transcript);
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] });
+    rewrite(transcript, 50);
+    assert.deepEqual([statSync(transcript).size, statSync(transcript).mtimeMs], [size, stamp * 1000]);
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] }, "answered from the index");
+    for (let i = 0; i < 15; i++) {
+      rewrite(join(t.home, "other", `a${i}.jsonl`), 0);
+      await missing(at(join(t.home, "other", `a${i}.jsonl`)));
+    }
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [-1] }, "15 others read since: still kept");
+    for (let i = 0; i < 16; i++) {
+      rewrite(join(t.home, "other", `b${i}.jsonl`), 0);
+      await missing(at(join(t.home, "other", `b${i}.jsonl`)));
+    }
+    assert.deepEqual(await missing(at(transcript)), { said: [], ts: [49] }, "16 others read since: read again");
+    resetPromptIndexes();
+    rmSync(transcript);
+  });
+});
+
+describe("claude-code hook capture, then a transcript import", () => {
+  const writeLines = (path: string, rows: unknown[]) => writeFile(path, rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  /** A store, with the two ways events reach it, and the stop prompts and turns it then holds. */
+  function store() {
+    const index = new MemoryIndexStore();
+    const opts = { config: defaultConfig(process.env), index, blobs: new MemoryBlobStore(), env: process.env };
+    return {
+      ingestHook: () => ingestSpool({ ...opts, adapters: new Map([[claudeCode.id, claudeCode]]) }),
+      importTranscript: () => importTranscripts({ ...opts, adapters: [claudeCode] }),
+      stops: async () => (await index.listEvents(SID, { kinds: ["user.message"] })).filter((e) => String(e.payload.text).startsWith("[Request interrupted")).map((e) => [e.ts - T, e.source]),
+      turns: async () => (await index.getSession(SID))?.stats.turnsByModel,
+    };
+  }
+
+  it("a second stop that only the import reads counts as cancelled, not as a copy of the first stop's prompt", async () => {
+    const entries = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 5000, "Explain the cache in one line"),
+      reply("m1", 7000, { type: "text", text: "It keeps answers." }),
+      prompt("u4", 60_000, "Now the eviction"),
+      stopPrompt("u5", 61_000, "p-u4", "[Request interrupted by user]"),
+    ];
+    // The Stop reads the first stop prompt. The person stops the last turn while the model writes, then
+    // quits: SessionEnd reads no transcript, so only an import reads the second.
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 5010, { prompt: "Explain the cache in one line" }),
+      stop(7100, "It keeps answers."),
+      line("UserPromptSubmit", 60_010, { prompt: "Now the eviction" }),
+      line("SessionEnd", 70_000, { reason: "prompt_input_exit" }),
+    ];
+    resetPromptIndexes();
+    writeLines(transcript, entries);
+    writeLines(spoolFile("claude-code", T), lines);
+    const s = store();
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "hook"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 1, cancelNotRecorded: 1, durationsMs: [1501, 2101] } });
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "hook"], [61_000, "transcript"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 2101, 1001] } });
+    rmSync(transcript);
+  });
+
+  it("a second stop seconds after the first counts as cancelled, not as a copy of the first stop's prompt", async () => {
+    // As above, with the second stop 4.8 s after the first: both write the same prompt.
+    const entries = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 2000, "Explain the cache in one line"),
+      reply("m1", 3000, { type: "text", text: "It keeps answers." }),
+      prompt("u4", 5800, "Now the eviction"),
+      stopPrompt("u5", 6300, "p-u4", "[Request interrupted by user]"),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 2010, { prompt: "Explain the cache in one line" }),
+      stop(3100, "It keeps answers."),
+      line("UserPromptSubmit", 5810, { prompt: "Now the eviction" }),
+      line("SessionEnd", 70_000, { reason: "prompt_input_exit" }),
+    ];
+    resetPromptIndexes();
+    writeLines(transcript, entries);
+    writeLines(spoolFile("claude-code", T), lines);
+    const s = store();
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "hook"]]);
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "hook"], [6300, "transcript"]]);
+    assert.deepEqual(await s.turns(), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 1101, 501] } });
+    rmSync(transcript);
+  });
+
+  it("a stop that a Stop reads after an import is kept when the import stored another stop seconds before it", async () => {
+    const first = [
+      prompt("u1", 0, "Explain the cache"),
+      stopPrompt("u2", 1500, "p-u1", "[Request interrupted by user]"),
+      prompt("u3", 2000, "Explain the cache in one line"),
+      reply("m1", 3000, { type: "text", text: "It keeps answers." }),
+    ];
+    const rest = [
+      prompt("u4", 4500, "Now the eviction"),
+      stopPrompt("u5", 5000, "p-u4", "[Request interrupted by user]"),
+      prompt("u6", 5500, "Just the eviction"),
+      reply("m2", 6500, { type: "text", text: "Oldest first." }),
+    ];
+    const lines = [
+      line("SessionStart", -1000, { source: "startup" }),
+      line("UserPromptSubmit", 10, { prompt: "Explain the cache" }),
+      line("UserPromptSubmit", 2010, { prompt: "Explain the cache in one line" }),
+      stop(3100, "It keeps answers."),
+      line("UserPromptSubmit", 4510, { prompt: "Now the eviction" }),
+      line("UserPromptSubmit", 5510, { prompt: "Just the eviction" }),
+      stop(6600, "Oldest first."),
+    ];
+    resetPromptIndexes();
+    writeLines(transcript, first);
+    const s = store();
+    await s.importTranscript();
+    assert.deepEqual(await s.stops(), [[1500, "transcript"]]);
+    // The session goes on; its hooks' spool is ingested next, with the second stop in the last Stop's window.
+    writeLines(transcript, [...first, ...rest]);
+    writeLines(spoolFile("claude-code", T), lines);
+    await s.ingestHook();
+    assert.deepEqual(await s.stops(), [[1500, "transcript"], [5000, "hook"]]);
+    assert.equal((await s.turns())?.[MODEL]?.cancelled, 2);
+    rmSync(transcript);
+  });
+});
