@@ -54,7 +54,7 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   model: {},
   // At bound 1, the first attribute value at each position set to each AnyValue: 5,232 requests.
   "otlp-any": { bound: 1 },
-  // At bound 1, the header, limit, nested, time and metrics cases and every deep case: 577 requests.
+  // At bound 1, the header, limit, nested, time and metrics cases and every deep case: 579 requests.
   "otlp-http": { bound: 1 },
   // At bound 1, the first node at each position set to each value or left out: 4,217 requests.
   "otlp-json-1": { bound: 1 },

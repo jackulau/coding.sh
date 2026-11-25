@@ -40,6 +40,7 @@ import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { validEvent } from "../../src/core/ingest.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 import type { IndexStore } from "../../src/core/types.ts";
+import { ProtoWriter } from "../../src/otel/proto.ts";
 import { startReceiver, type Receiver } from "../../src/otel/receiver.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
@@ -632,9 +633,46 @@ export function* deepCases(depths: readonly number[]): Generator<Case> {
   }
 }
 
+/** A length as protobuf writes it, by the writer the encoder uses. */
+const varint = (n: number): number[] => Array.from(new ProtoWriter().varint(n).finish());
+
 /**
- * A chat span with an attribute whose value is an arrayValue, or a kvlistValue, nested `depth` deep: as JSON,
- * and as protobuf up to 1,000 deep. Both decoders refuse nesting past 32 (src/otel/json.ts, src/otel/proto.ts).
+ * The AnyValue `{ stringValue: "x" }` inside `depth` arrayValues, or kvlistValues with the key "a", as protobuf:
+ * each level's length is worked out from the inside, then the bytes are written from the outside in, so no call
+ * recurses and none copies a level into the one above it.
+ */
+function nestedProto(kind: "arrayValue" | "kvlistValue", depth: number): Uint8Array {
+  // Field numbers from the .proto, each length-delimited (wire type 2): AnyValue string_value 1, array_value 5,
+  // kvlist_value 6; ArrayValue and KeyValueList values 1; KeyValue key 1, value 2.
+  const leaf = [0x0a, 0x01, 0x78];
+  const heads: number[][] = [];
+  let size = leaf.length;
+  for (let i = 0; i < depth; i++) {
+    let head: number[];
+    if (kind === "arrayValue") {
+      const list = 1 + varint(size).length + size;
+      head = [0x2a, ...varint(list), 0x0a, ...varint(size)];
+    } else {
+      const kv = 3 + 1 + varint(size).length + size;
+      const list = 1 + varint(kv).length + kv;
+      head = [0x32, ...varint(list), 0x0a, ...varint(kv), 0x0a, 0x01, 0x61, 0x12, ...varint(size)];
+    }
+    heads.push(head);
+    size += head.length;
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (let i = heads.length - 1; i >= 0; i--) {
+    out.set(heads[i]!, at);
+    at += heads[i]!.length;
+  }
+  out.set(leaf, at);
+  return out;
+}
+
+/**
+ * A chat span with an attribute whose value is an arrayValue, or a kvlistValue, nested `depth` deep, as JSON
+ * and as protobuf. Both decoders refuse nesting past 32 (src/otel/json.ts, src/otel/proto.ts).
  */
 export function* nestedCases(depths: readonly number[]): Generator<Case> {
   const kinds = [
@@ -649,10 +687,14 @@ export function* nestedCases(depths: readonly number[]): Generator<Case> {
       // Built as text: JSON.stringify recurses, and the deepest of these would run out of stack.
       const text = JSON.stringify(span(attrs(marker))).replace(JSON.stringify(marker), nest(depth, open, close, JSON.stringify(leaf)));
       yield { name: `a span attribute that is an ${kind} nested ${depth} deep`, route: "/v1/traces", headers: JSON_TYPE, body: Buffer.from(text), allow: [200, 400] };
-      if (depth > 1000) continue;
-      let v: unknown = leaf;
-      for (let i = 0; i < depth; i++) v = wrap(v);
-      yield { name: `a span attribute that is an ${kind} nested ${depth} deep, as protobuf`, route: "/v1/traces", headers: PROTO_TYPE, body: Buffer.from(encodeTraces(span(attrs(v)))), allow: [200, 400] };
+      // Built as bytes for the same reason: the protobuf encoder makes a few calls a level.
+      const pb = encodeTraces(span(attrs(nestedProto(kind, depth))));
+      if (depth <= 64) {
+        let v: unknown = leaf;
+        for (let i = 0; i < depth; i++) v = wrap(v);
+        assert.deepEqual(pb, encodeTraces(span(attrs(v))), `an ${kind} nested ${depth} deep is the bytes the encoder writes`);
+      }
+      yield { name: `a span attribute that is an ${kind} nested ${depth} deep, as protobuf`, route: "/v1/traces", headers: PROTO_TYPE, body: Buffer.from(pb), allow: [200, 400] };
     }
   }
 }

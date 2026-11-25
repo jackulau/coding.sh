@@ -12,7 +12,7 @@
 // - a chat span whose message attributes (gen_ai.input.messages and nine others a mapper reads as JSON)
 //   hold a document nested 3,000, 12,000 and 60,000 deep, in five shapes (_otlp.ts deepCases);
 // - a chat span with an attribute that is an arrayValue or a kvlistValue nested 32, 33, 1,000 and 100,000
-//   deep, as JSON, and as protobuf up to 1,000 (_otlp.ts nestedCases);
+//   deep, as JSON and as protobuf (_otlp.ts nestedCases);
 // - a span start and a Claude Code log time, in a trace and not, past what fixed64 holds, negative, and past
 //   what a Date holds (_otlp.ts timeCases);
 // - a metrics body that is each value of otlp-json-1.test.ts, and whose resourceMetrics, or the first of
@@ -28,7 +28,7 @@
 //   events and sessions hold only values JSON keeps as they are.
 //
 // Bounds: every variant above but the deep ones. CODING_SH_MODEL_BOUND=1 or more posts every deep case,
-// 577 requests in all; at 0, the default, every 13th deep case and the FIXED case below, 440 in all.
+// 579 requests in all; at 0, the default, every 13th deep case and the FIXED case below, 442 in all.
 import { test } from "node:test";
 import { modelBound } from "./_common.ts";
 import { checkCases, deepCases, FIXTURES, headerCases, limitCases, loadFixture, metricsCases, nestedCases, sampled, timeCases } from "./_otlp.ts";
