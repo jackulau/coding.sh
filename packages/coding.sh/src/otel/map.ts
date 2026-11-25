@@ -545,6 +545,8 @@ function contentText(c: unknown, depth = 0): string {
 }
 
 function msgFromObj(o: Record<string, unknown>, depth: number): Msg[] {
+  // contentText reads no text past depth 8, so a deeper wrapper holds no message.
+  if (depth > 8) return [];
   if (isObj(o.kwargs)) return msgFromObj({ ...o.kwargs, role: o.kwargs.role ?? o.kwargs.type }, depth + 1); // LangChain serialized
   if (isObj(o.message) && !("role" in o)) return msgFromObj(o.message, depth + 1); // gen_ai.choice body, OpenAI choices
   const role = normRole(o.role ?? (typeof o.type === "string" && /^(human|ai|user|assistant|system|tool)$/.test(o.type) ? o.type : undefined));
