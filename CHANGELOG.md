@@ -520,6 +520,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **Capture.** A spool file that ends in a blank line is now read to its end, so `coding.sh gc` can delete it and ingest stops opening it again on every run. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Capture.** A spool line that the POSIX sh hook wrote right after a torn fragment ending inside a character is now read at the byte where it starts, so ingest and a re-parse give its events the same ids. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
+- **Capture.** The scrub of a past day no longer blanks a whole spool line that the POSIX sh hook wrote right after a torn fragment when either holds a secret: the line is redacted in place like any other, and only a fragment that holds a secret is blanked, so a re-parse still reads the line. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 
 ## [0.1.7] - 2026-11-16
 
