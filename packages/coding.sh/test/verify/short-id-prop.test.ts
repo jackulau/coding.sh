@@ -16,6 +16,15 @@
 //   reads those words as the newest session), the shortest alias that names the id alone and starts
 //   no stored id takes its place, unless every alias length is taken. `latest` and `last` then print
 //   the shortest alias that names them alone anyway: matchRef reads an alias before a prefix.
+// - A reference that is not an alias (`x_` and 8 to 14 alias digits) reads as matchRef's comment
+//   says, worked out here by scanning every id: the id itself; else a prefix of 4 or more
+//   characters; else, with a `/` and not under `default/`, that id under `default/` or a prefix of
+//   one; else, with 4 or more characters and no `:`, an id in which `:sub:` is followed by it; else
+//   a short subagent id: as many `:sub:` parts as the id, none empty, the first of 4 or more
+//   characters, each a prefix of the id's. The first step that finds ids decides: an id and its
+//   subagents are the id, and other ids are all listed. The references read are every prefix of
+//   each id, of what follows each `:sub:` in it and of it after `default/`; its parts cut to 1 to 9
+//   characters, all of them or the first alone; and `x_` with 1 to 7 of its alias digits.
 //
 // Ids are drawn from stems that share long prefixes: UUIDs, T3 Code-like thread ids with
 // percent-encoding, plain ids over 40 characters, SDK ids under `default/` and other projects, `x_`
@@ -29,13 +38,14 @@
 // `default/` or not, whose own id starts with the first characters of the parent's id after
 // `default/`.
 //
-// The last test shows each check fails on a mutant of the shortener or of the call resolver.
+// The last test shows each check fails on a mutant of the shortener, the reader or the call
+// resolver.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 with a store);
 // CODING_SH_PROP_SEED=s replays one. The last test reads neither.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { findSessionRef, IdSet, matchRef, shortestRef } from "../../src/core/session-ref.ts";
+import { findSessionRef, IdSet, matchRef, shortestRef, type RefMatch } from "../../src/core/session-ref.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import { CallRefError, resolveCall } from "../../src/proxy/calls.ts";
@@ -73,12 +83,14 @@ function names(set: IdSet, ref: string, id: string): boolean {
   return m !== undefined && "id" in m && m.id === id;
 }
 
-/** What matchRef takes `ref` to, for a message. */
-function named(set: IdSet, ref: string): string {
-  const m = matchRef(set, ref);
+/** What a match names, for a message. */
+function shown(m: RefMatch | undefined): string {
   if (!m) return "nothing";
-  return "id" in m ? q(m.id) : `${m.ambiguous.length} ids`;
+  return "id" in m ? q(m.id) : `${m.ambiguous.length} ids (${m.ambiguous.map(q).join(", ")})`;
 }
+
+/** What matchRef takes `ref` to, for a message. */
+const named = (set: IdSet, ref: string): string => shown(matchRef(set, ref));
 
 /** A subagent's own id: the part after its last `:sub:`, or "" for a top-level id. */
 function ownId(id: string): string {
@@ -154,6 +166,64 @@ function expected(set: IdSet, id: string): { ref: string; form: string } {
   const alias = aliasFor(set, id) ?? (WORDS.has(form) ? aliasFor(set, id, true) : undefined);
   return { ref: alias ?? form, form };
 }
+
+/** The one id `ids` stand for: the shortest when every other is a subagent of it, else all of them. */
+function groupOf(ids: readonly string[]): RefMatch {
+  const head = ids.reduce((a, b) => (b.length < a.length ? b : a));
+  return ids.every((x) => x === head || x.startsWith(`${head}${SUB}`)) ? { id: head } : { ambiguous: [...ids] };
+}
+
+/**
+ * What `ref`, not an alias, reads as among `ids`, found by scanning them in the order matchRef's
+ * comment gives (see the header), and the step that decides. `min` is the shortest prefix read.
+ */
+function readOf(ids: readonly string[], ref: string, min = 4): { step: string; match?: RefMatch } {
+  if (!ref) return { step: "nothing" };
+  if (ids.includes(ref)) return { step: "the exact id", match: { id: ref } };
+  const scoped = `default/${ref}`;
+  const parts = ref.split(SUB);
+  const steps: [step: string, applies: boolean, takes: (x: string) => boolean][] = [
+    [ref.length === min ? `a ${min}-character prefix` : "a longer prefix", ref.length >= min, (x) => x.startsWith(ref)],
+    ["an SDK id without default/", ref.includes("/") && !ref.startsWith("default/"), (x) => x === scoped || (!ids.includes(scoped) && x.startsWith(scoped))],
+    ["a subagent's own id", ref.length >= min && !ref.includes(":"), (x) => x.includes(`${SUB}${ref}`)],
+    [
+      "a short subagent id",
+      parts.length >= 2 && parts[0]!.length >= min && parts.every((p) => p),
+      (x) => {
+        const xs = x.split(SUB);
+        return xs.length === parts.length && xs.every((p, i) => p.startsWith(parts[i]!));
+      },
+    ],
+  ];
+  for (const [step, applies, takes] of steps) {
+    const found = applies ? ids.filter(takes) : [];
+    if (found.length) return { step, match: groupOf(found) };
+  }
+  return { step: "nothing" };
+}
+
+/** The references the reads check reads for `ids` (see the header). */
+function refsFor(ids: readonly string[]): Set<string> {
+  const refs = new Set<string>();
+  const prefixes = (s: string): void => {
+    for (let k = 1; k <= s.length; k++) refs.add(s.slice(0, k));
+  };
+  for (const id of ids) {
+    prefixes(id);
+    for (let at = id.indexOf(SUB); at >= 0; at = id.indexOf(SUB, at + 1)) prefixes(id.slice(at + SUB.length));
+    if (id.startsWith("default/")) prefixes(id.slice("default/".length));
+    const parts = id.split(SUB);
+    for (let k = 1; k <= 9; k++) {
+      refs.add(parts.map((p) => p.slice(0, k)).join(SUB));
+      refs.add([parts[0]!.slice(0, k), ...parts.slice(1)].join(SUB));
+    }
+    for (let k = 1; k <= 7; k++) refs.add(aliasOf(id, k));
+  }
+  return refs;
+}
+
+/** `m` with an ambiguous list sorted, for comparing. */
+const sorted = (m: RefMatch | undefined): RefMatch | undefined => (m && "ambiguous" in m ? { ambiguous: [...m.ambiguous].sort() } : m);
 
 // ---------------------------------------------------------------- ids
 
@@ -264,13 +334,14 @@ const CASE: Gen<string[]> = gen.map(
 
 // ---------------------------------------------------------------- checks
 
-/** What the checks run against: the real shortener and call resolver, or a mutant of one. */
+/** What the checks run against: the real shortener, reader and call resolver, or a mutant of one. */
 interface Subject {
   shorten: (set: IdSet, id: string) => string;
+  read: (set: IdSet, ref: string) => RefMatch | undefined;
   call: (index: IndexStore, ref: string) => Promise<AgentEvent>;
 }
 
-const REAL: Subject = { shorten: shortestRef, call: resolveCall };
+const REAL: Subject = { shorten: shortestRef, read: matchRef, call: resolveCall };
 
 const count = (seen: Map<string, number> | undefined, key: string): void => {
   seen?.set(key, (seen.get(key) ?? 0) + 1);
@@ -361,6 +432,19 @@ function checkShortest(s: Subject, ids: readonly string[], seen?: Map<string, nu
   }
 }
 
+/** Each reference that is not an alias reads as the scan finds (readOf). */
+function checkReads(s: Subject, ids: readonly string[], seen?: Map<string, number>): void {
+  const set = new IdSet(ids);
+  for (const ref of refsFor(set.ids)) {
+    if (ALIAS_FORM.test(ref)) continue;
+    const want = readOf(set.ids, ref);
+    count(seen, want.step);
+    if (want.match && "ambiguous" in want.match) count(seen, "several ids");
+    const got = s.read(set, ref);
+    assert.deepEqual(sorted(got), sorted(want.match), `${q(ref)} reads as ${shown(got)}, not ${shown(want.match)} (${want.step})`);
+  }
+}
+
 /** Fails unless every kind in `kinds` was seen; reports the counts. */
 function covered(t: { diagnostic: (m: string) => void }, seen: Map<string, number>, kinds: readonly string[]): void {
   t.diagnostic([...seen].map(([k, n]) => `${k}: ${n}`).join(", "));
@@ -391,7 +475,13 @@ test("a printed reference is the shortest the rules allow, and an alias only whe
   covered(t, seen, ["the whole id", "an 8-character prefix", "a prefix over 8 characters", "a prefix of a subagent's own id", "a short subagent form", "an alias", "no free alias", "latest or last", "a prefix that names the id where a longer one does not", "a subagent of an empty id"]);
 });
 
-test("each check fails on a mutant of the shortener or the call resolver", async (t) => {
+test("a reference that is not an alias reads as the first of matchRef's steps that finds ids", async (t) => {
+  const seen = new Map<string, number>();
+  await forAll(CASE, (ids) => checkReads(REAL, ids, seen), { runs: RUNS, label: "reads" });
+  covered(t, seen, ["the exact id", "a 4-character prefix", "a longer prefix", "an SDK id without default/", "a subagent's own id", "a short subagent id", "nothing", "several ids"]);
+});
+
+test("each check fails on a mutant of the shortener, the reader or the call resolver", async (t) => {
   const eight: Subject = { ...REAL, shorten: (_set, id) => id.slice(0, 8) };
   const oneShort: Subject = {
     ...REAL,
@@ -430,6 +520,16 @@ test("each check fails on a mutant of the shortener or the call resolver", async
     },
   };
   const allAlias: Subject = { ...REAL, shorten: (_set, id) => aliasOf(id, 8) };
+  const from3: Subject = { ...REAL, read: (set, ref) => readOf(set.ids, ref, 3).match };
+  const from5: Subject = { ...REAL, read: (set, ref) => readOf(set.ids, ref, 5).match };
+  const sevenDigits: Subject = {
+    ...REAL,
+    read: (set, ref) => {
+      const ids = /^x_.{7}$/.test(ref) ? set.byAlias(ref.slice(2)) : [];
+      if (ids.length) return ids.length === 1 ? { id: ids[0]! } : { ambiguous: ids };
+      return matchRef(set, ref);
+    },
+  };
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
     ["names, a shortener that prints 8 characters", () => failure(CASE, (ids) => checkNames(eight, ids), "eight"), /printed for .*, names (nothing|\d+ ids|")/],
     ["names, a shortener one character short", () => failure(CASE, (ids) => checkNames(oneShort, ids), "one short"), /printed for .*, names (nothing|\d+ ids|")/],
@@ -439,6 +539,9 @@ test("each check fails on a mutant of the shortener or the call resolver", async
     ["shortest, a shortener one character long", () => failure(CASE, (ids) => checkShortest(oneLong, ids), "one long"), /is not the reference the rules pick/],
     ["shortest, a shortener that never prints an alias", () => failure(CASE, (ids) => checkShortest(noAlias, ids), "no alias"), /needs an alias/],
     ["shortest, a shortener that always prints an alias", () => failure(CASE, (ids) => checkShortest(allAlias, ids), "all alias"), /is not needed/],
+    ["reads, a reader that takes 3-character prefixes", () => failure(CASE, (ids) => checkReads(from3, ids), "from 3"), /reads as/],
+    ["reads, a reader that takes prefixes from 5 characters", () => failure(CASE, (ids) => checkReads(from5, ids), "from 5"), /reads as/],
+    ["reads, a reader that takes x_ and 7 digits for an alias", () => failure(CASE, (ids) => checkReads(sevenDigits, ids), "seven digits"), /reads as/],
   ];
   for (const [label, run, why] of mutants) {
     const f = await run();
