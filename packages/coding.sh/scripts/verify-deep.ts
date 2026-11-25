@@ -63,6 +63,8 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "redact-tally-prop": { runs: 10000 },
   // About 3 minutes and 6.5 GB of heap. At bound 3 the first run alone has 3,443,232 states and needs 8 GB.
   "refold-model": { bound: 2 },
+  // Runs each model next to the real shell: 20 to 40 seconds on Windows, under a second elsewhere.
+  "shell-models": {},
   "short-id-prop": { runs: 10000 },
   // About 1.5 minutes and 2 GB of heap.
   "work-model": { bound: 1 },
