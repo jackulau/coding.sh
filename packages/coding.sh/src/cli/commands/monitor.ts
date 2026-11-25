@@ -10,7 +10,7 @@
 // in serve's writer (src/monitor/run.ts). Their definitions and state are in
 // <CODING_SH_HOME>/monitors.json.
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseSince, UsageError } from "../args.ts";
 import { num, str, withContext } from "../common.ts";
@@ -18,6 +18,7 @@ import { ago, CliError, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { SIGNING_NOTES } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
+import { readTextFileSync } from "../../core/text-file.ts";
 import { sleepUnless } from "../../jobs/retry.ts";
 import { parseWhere } from "../../query/where.ts";
 import { judgeProviderKind, KEY_ENV, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
@@ -73,7 +74,7 @@ async function add(c: CommandContext): Promise<number> {
   if (judge) {
     const file = resolve(c.cwd, judge);
     if (!existsSync(file) || !statSync(file).isFile()) throw new UsageError(`--judge: no rubric file at ${judge}`, { reason: "not_found" });
-    if (!readFileSync(file, "utf8").trim()) throw new UsageError(`--judge: ${judge} is empty; write the rubric the judge scores against`, { reason: "bad_arg" });
+    if (!readTextFileSync(file).trim()) throw new UsageError(`--judge: ${judge} is empty; write the rubric the judge scores against`, { reason: "bad_arg" });
     def.rubric = file;
     if (provider) def.provider = provider;
     if (model) def.model = model;
