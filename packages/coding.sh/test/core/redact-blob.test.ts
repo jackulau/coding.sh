@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { rawBlob as sharedRawBlob } from "../../src/adapters/_shared/normalize.ts";
 import { rawBlob as moreRawBlob } from "../../src/adapters/more/_util.ts";
 import { defaultConfig } from "../../src/core/config.ts";
@@ -183,6 +186,37 @@ describe("redactBlobValue copies only what redaction changes", () => {
       assert.equal(out, want.text, label);
       assert.equal(JSON.stringify(tally), want.tally, label);
       assert.ok(!out.includes(SECRET), label);
+    }
+  });
+});
+
+describe("redactBlobValue on the recorded adapter fixtures", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "adapters");
+
+  it("gives the text and counts of redactForBlob and the text pass for every JSON line", () => {
+    const values: Array<[label: string, v: unknown]> = [];
+    const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((p) => p.endsWith(".jsonl")).sort();
+    for (const rel of files) {
+      for (const [n, line] of readFileSync(join(root, rel), "utf8").split("\n").entries()) {
+        const t = line.trim();
+        if (!t.startsWith("{") && !t.startsWith("[")) continue;
+        try {
+          values.push([`${rel}:${n + 1}`, JSON.parse(t)]);
+        } catch {
+          continue; // a line cut short, as a recording can end
+        }
+      }
+    }
+    assert.ok(values.length > 500, `${values.length} lines`);
+    for (const r of [redactor, createRedactor({ redact: ["secrets", "email"], patterns: ["INTERNAL-[A-Z]+"] })]) {
+      for (const [label, v] of values) {
+        const want = redactionTally();
+        const clean = redactForBlob(r, v, want);
+        const expected = typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", want);
+        const got = redactionTally();
+        assert.equal(redactBlobValue(r, v, got), expected, label);
+        assert.equal(JSON.stringify(got), JSON.stringify(want), label);
+      }
     }
   });
 });
