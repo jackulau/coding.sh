@@ -130,6 +130,18 @@ describe("one work item per workflow run", () => {
     assert.equal(agents.find((a) => a.sessionId === "lead:sub:b1")!.sessions, 2);
   });
 
+  test("a session whose cost is partly estimated counts all of it, as an agent, a phase, a run and an item", () => {
+    // As the fold writes it: costUsd is the whole cost, estimatedCostUsd the part priced from token counts.
+    const partly = { usage: { costUsd: 1.6, estimatedCostUsd: 0.1 } } as Partial<Session["stats"]>;
+    const sessions = fleet().map((s) => (s.id === "lead:sub:y1" ? { ...s, stats: { ...s.stats, ...partly } } : s));
+    const run = queue(sessions, { all: true }).items.find((i) => i.workflow?.id === "run-b-12345678")!;
+    assert.equal(run.costUsd, 3);
+    assert.equal(run.workflow!.phases.find((p) => p.name === "build")!.costUsd, 2.6);
+    assert.equal(itemWorkflowAgents(run, sessions, NOW).find((a) => a.sessionId === "lead:sub:y1")!.costUsd, 1.6);
+    const solo = queue([sess("solo", HOUR, { stats: partly })], { all: true }).items[0]!;
+    assert.equal(solo.costUsd, 1.6);
+  });
+
   test("the run items' ids and startedBy are the same with and without the lead session", () => {
     const withLead = queue(fleet(), { all: true }).items.filter((i) => i.workflow);
     const without = queue(fleet().filter((s) => s.id !== "lead"), { all: true }).items.filter((i) => i.workflow);
