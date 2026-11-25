@@ -38,7 +38,7 @@ import {
   planNestedInstall,
   planNestedUninstall,
   promptText,
-  readHeadText,
+  readHead,
   readJsonl,
   readJsonlTail,
   splitLines,
@@ -496,20 +496,25 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
 const SUBAGENT_FILE = /[\\/]([^\\/]+)[\\/]subagents[\\/](?:workflows[\\/]([^\\/]+)[\\/])?agent-([^\\/]+)\.jsonl$/;
 
 /**
- * The session that wrote a subagent transcript: its first entry's `sessionId`
- * (read from the first 64 KB). Claude Code copies subagent transcripts into
- * other session dirs (a fork, a workflow run resumed with `resumeFromRunId`,
- * a symlinked run dir) and the copies keep the writer's `sessionId`.
+ * The session that wrote a subagent transcript: the `sessionId` of its first
+ * entry that has one (read from the first 64 KB). Claude Code copies subagent
+ * transcripts into other session dirs (a fork, a workflow run resumed with
+ * `resumeFromRunId`, a symlinked run dir) and the copies keep the writer's
+ * `sessionId`. A line that does not parse is skipped, as the converter skips
+ * it, unless it runs past those 64 KB.
  */
 export async function subagentOwner(path: string): Promise<string | undefined> {
-  const head = await readHeadText(path, 64 * 1024);
-  for (const line of head?.split("\n") ?? []) {
+  const head = await readHead(path, 64 * 1024);
+  const lines = head?.text.split("\n") ?? [];
+  for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
-      return /"sessionId":"([^"\\]+)"/.exec(line)?.[1]; // a first line longer than the head: its sessionId key comes before the message
+      // A line longer than the head (a first entry over 64 KB): its sessionId key comes before the message.
+      if (head?.more && i === lines.length - 1) return /"sessionId":"([^"\\]+)"/.exec(line)?.[1];
+      continue; // cut short or corrupt
     }
     const sid = str(obj(entry).sessionId);
     if (sid) return sid;
@@ -901,7 +906,9 @@ export const claudeCode: Adapter = {
   // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
   // 21 (0.1.8): a fork's inheritedTokens skips a token count below 0 or not a finite number in the parent's Agent call, as an estimate does.
   // 22 (0.1.8): a hook prompt takes the time on its transcript entry, less 1 ms, not the time the hook ran. A Stop's window also reads the turns the person stopped since the last Stop, and keeps the prompt that records each stop ("[Request interrupted by user]"). That prompt carries the stopped turn's promptId, so it opens no turn of its own and a stopped turn ends once (one with no promptId still opens a turn).
-  parseVersion: 22,
+  // 23 (0.1.8): a subagent transcript copied into another session whose first line is cut short or corrupt is still
+  //    found to be a copy (its owner is read from the next entry), so it is stored once.
+  parseVersion: 23,
 
   detect() {
     const dir = claudeConfigDir();

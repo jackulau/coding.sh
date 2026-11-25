@@ -519,6 +519,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** On Windows, `coding.sh init` no longer writes a hook command that cmd.exe or PowerShell would read differently: for a hook path with `%`, `$`, a backtick or a curly double quote, it says to set `CODING_SH_HOME` to a folder without them. Claude Code, Amp, OpenCode and Pi keep their hooks, and Copilot CLI's PowerShell command single-quotes the path. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#hook-command))
 - **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **Capture.** A Cursor subagent whose `agent_transcript_path` names no file, such as `/`, gets a child session of its own (`<session>:sub:<id>`), and ingest stores its start and end. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#subagents))
+- **Cost.** A Claude Code subagent transcript copied under another session is stored once, under the session that wrote it, even when its first line is cut short or corrupt, so its calls and cost count once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#subagents))
 
 ## [0.1.7] - 2026-11-16
 
