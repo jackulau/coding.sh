@@ -178,6 +178,20 @@ describe("SqliteIndexStore", () => {
     await s.close();
   });
 
+  it("metricRows reads a stats number past 2^53 as listSessions does", async () => {
+    // SQLite gives node an integer past 2^53 only as a BigInt. A session with a token count of 1e17 reads
+    // back as a number in metricRows, as it does in listSessions, so stats and alerts can read it.
+    const s = tracked(await SqliteIndexStore.open(join(root, "big-stats.db")));
+    const big = 1e17;
+    const usage = { inputTokens: big, outputTokens: 2 ** 53 + 2, costUsd: big };
+    const latency = { llmCalls: 1, llmP95Ms: big, ttftP50Ms: big };
+    await s.upsertSession({ id: "big", agent: "claude-code", startedAt: 1_700_000_000_000, stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage, latency }, flags: [] });
+    const rows = await s.metricRows({});
+    assert.deepEqual(rows.map((r) => [r.startedAt, r.inputTokens, r.outputTokens, r.costUsd, r.llmCalls, r.llmP95Ms, r.ttftP50Ms]), [[1_700_000_000_000, big, 2 ** 53 + 2, big, 1, big, big]]);
+    assert.deepEqual((await s.listSessions({}))[0]?.stats.usage, usage);
+    await s.close();
+  });
+
   it("session_facets holds exactly the distinct (key, value, session) of the events, with repeats deduped in a batch", async () => {
     const path = join(root, "facets.db");
     const s = tracked(await SqliteIndexStore.open(path));

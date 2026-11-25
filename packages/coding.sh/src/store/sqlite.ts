@@ -1610,7 +1610,11 @@ export class SqliteIndexStore implements IndexStore {
     const sql = `SELECT s.id, s.parent_session_id, s.started_at, s.agent, s.model, coalesce(json_extract(s.repo, '$.main'), s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}, ${x("waits")} AS waits
       FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
     const keys = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "toolCalls", "toolErrors", "llmCalls", "llmErrors", "llmP95Ms", "ttftP50Ms"] as const;
-    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => {
+    // SQLite gives an integer past 2^53, such as a token count of 1e17, only as a BigInt: read as a
+    // number it throws. Integers come as BigInts here, and num() makes each a number.
+    const statement = this.db.prepare(sql);
+    statement.setReadBigInts(true);
+    return (statement.all(...params) as Row[]).map((r) => {
       const m: MetricRow = { id: String(r.id), startedAt: num(r.started_at) ?? 0, agent: String(r.agent), flags: parse<string[]>(r.flags) ?? [], toolCalls: 0, toolErrors: 0 };
       if (typeof r.parent_session_id === "string") m.parentSessionId = r.parent_session_id;
       if (typeof r.model === "string") m.model = r.model;

@@ -522,6 +522,7 @@ grouped by area, with links to the docs for the details.
 - **OTel.** An OTLP/JSON attribute whose `stringValue` holds an object or array is read as no value, and the rest of the request is stored. The receiver no longer answers 500 to such a request. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
 - **OTel.** An OTLP/JSON time past 2^64 ns is read as unset and no longer breaks `sessions`, `status`, `show` or `stats` for the whole store. A log whose `duration_ms` puts its start out of the date range starts at the log's time, and its session's `--json` output no longer fails. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
 - **OTel.** An attribute double that JSON cannot carry, such as `1e400` in OTLP/JSON or NaN in protobuf, is kept as its protojson string (`"Infinity"`, `"NaN"`) instead of `null`, and a time to first token or token rate past what a number holds is left out. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
+- **Stats.** A session whose stats hold an integer past 2^53, such as a token count of 1e17, no longer makes `stats`, alert checks and `GET /api/metrics` fail for the whole store with "Value is too large to be represented as a JavaScript number". ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-stats))
 
 ## [0.1.7] - 2026-11-16
 
