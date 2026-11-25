@@ -503,6 +503,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** In PowerShell and cmd, missing-key errors that stop a command, `exp replay --dry-run`, `gateway status` and `doctor` name a variable `$env:NAME` where they printed `$NAME`. The `toolevals`, `exp ab`, `refine` and `gateway status --credits` missing-key errors now print the line that sets the key, as the others do, and keep their other next steps. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#errors-exit-1))
 - **CLI.** `gateway status --credits` with a gateway that has no credits API, such as `--gateway litellm`, says so and names the gateways that have one. Before, it said `--credits needs a key in` and named no key. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-gateway-status))
 - **Query.** `user:` in `--where` finds sessions whose SDK `trace()` named a user (`userId` in TypeScript, `user_id` in Python), in SQLite and the Postgres and ClickHouse stores. It read only the user from OpenTelemetry attributes, so no SDK session matched. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#tool-and-event-keys))
+- **Cost.** `coding.sh usage` marks a row with `~` whenever part of its cost is estimated, even when the estimate rounds to $0.0000, and prints the note that explains `~`. Before, such a row read as all reported. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 
 ## [0.1.7] - 2026-11-16
 
