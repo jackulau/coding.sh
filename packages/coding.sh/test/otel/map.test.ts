@@ -284,6 +284,15 @@ describe("llm.call timing", () => {
     ];
     assert.equal((await call(llmSpan(both, [], "strands.telemetry.tracer"))).payload.ttftMs, 840);
   });
+
+  it("leaves out a time to first token or a token rate past what a number holds", async () => {
+    // 1e303 s times 1e6 is Infinity, as is 1e307 tokens over 1.5 s: neither is a JSON number.
+    const ttft = await call(llmSpan([{ key: "gen_ai.response.time_to_first_chunk", value: { doubleValue: 1e303 } }]));
+    assert.equal(ttft.payload.ttftMs, undefined);
+    const rate = await call(llmSpan([{ key: "gen_ai.usage.output_tokens", value: { doubleValue: 1e307 } }]));
+    assert.equal(rate.usage?.outputTokens, 1e307);
+    assert.equal(rate.payload.tokensPerSec, undefined);
+  });
 });
 
 describe("enrichSpan hook", () => {
