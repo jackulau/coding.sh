@@ -122,9 +122,9 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   "failure-streak": { title: "Hits a long run of tool errors", fix: "Tell the agent to read the error first.", rule: () => RETRY_RULE, behavior: "unchanged-retry" },
   looping: { title: "Repeats the same actions in a loop", fix: "Tell the agent to stop and rethink after two identical attempts.", rule: () => RETRY_RULE, behavior: "unchanged-retry" },
   "test-tamper": {
-    title: "Skips, deletes or weakens tests to get them passing",
+    title: "Skips, deletes or weakens tests or proofs to get them passing",
     fix: "Forbid it in a protected line.",
-    rule: () => "Never skip, delete or weaken a test to make it pass.",
+    rule: () => "Never skip, delete or weaken a test or a theorem statement to make it pass.",
   },
   "duplicate-fetch": {
     title: "Reads the same file or page again with nothing changed",

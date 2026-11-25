@@ -230,7 +230,7 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `repeated-tool-failure` | Had the same tool fail three times in a row with similar input. A search that found nothing is not a failure. |
 | `no-verification` | Changed files, but no test, type check, lint or build ran. |
 | `compaction` | Had its context compacted. |
-| `test-tamper` | Edited a test or test config to hide failures: a skip marker, a deleted test file, or an assertion change that alone turned a run green. |
+| `test-tamper` | Edited a test or test config to hide failures: a skip marker, a deleted test file, or an assertion change that alone turned a run green. In proofs: a theorem statement or spec change that turned a failing proof check green, an escape hatch such as `sorry` or `Admitted` left in, or a flag that skips a check that failed. |
 | `duplicate-fetch` | Repeated three or more read-only calls in one context with the same result and no edit in between. |
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
 | `refusal` | Had a model call stop on a refusal (`refusal`, `content_filter` or `safety`). |

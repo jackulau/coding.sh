@@ -69,6 +69,13 @@ describe("simpleCommands", () => {
     assert.deepEqual(argv(cmd), [["cat", "x"]]);
     assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
   });
+
+  it("keeps the operator after each command", () => {
+    const seps = (cmd: string) => simpleCommands(cmd).map((c) => c.sep);
+    assert.deepEqual(seps("a && b | c; d"), ["&&", "|", ";", undefined]);
+    assert.deepEqual(seps("a & b\nc || d"), ["&", "\n", "||", undefined]);
+    assert.deepEqual(seps("lake build 2>&1 | tail -5"), ["|", undefined]);
+  });
 });
 
 /** One command through each agent's shell tool, shaped as its adapter stores the call. */

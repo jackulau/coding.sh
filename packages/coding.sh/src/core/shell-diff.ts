@@ -136,6 +136,27 @@ export function stripHeredocs(command: string): string {
   return lines.join("\n");
 }
 
+/** One line of a unified diff hunk: context (" "), added ("+") or removed ("-"). */
+export type DiffLine = { t: " " | "+" | "-"; s: string };
+
+/** The hunks of a unified diff, lines in order (file headers skipped). */
+export function diffHunks(diff: string): DiffLine[][] {
+  const hunks: DiffLine[][] = [];
+  let h: DiffLine[] | undefined;
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ ") || l.startsWith("--- ")) continue;
+    if (l.startsWith("@@")) {
+      hunks.push((h = []));
+      continue;
+    }
+    const t = l[0];
+    if (t !== "+" && t !== "-" && t !== " ") continue;
+    if (!h) hunks.push((h = []));
+    h.push({ t, s: l.slice(1) });
+  }
+  return hunks;
+}
+
 export interface SimpleCommand {
   /** The command word as written (`./bin/tool`, `rm`), after env assignments and `sudo`, `env`, `time`, `nohup`, `command`. */
   name: string;
@@ -147,6 +168,8 @@ export interface SimpleCommand {
   redirects: { path: string; append: boolean }[];
   /** The directory an earlier `cd`/`pushd` in the same command moved to (relative paths are under it). */
   dir?: string;
+  /** The operator after the command (`|`, `&&`, `||`, `;`, `&` or a newline); absent for the last one. */
+  sep?: string;
 }
 
 /**
@@ -204,7 +227,11 @@ export function simpleCommands(command: string): SimpleCommand[] {
   let dir: string | undefined;
   let cd: ((to: string) => string) | undefined;
   const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
-  for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
+  // Odd entries are the operators between the segments.
+  const parts = text.split(/(&&|\|\||[;|&\n])/);
+  for (let n = 0; n < parts.length; n += 2) {
+    const seg = parts[n] as string;
+    const sep = parts[n + 1];
     const words = wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.
     const rest: string[] = [];
@@ -222,7 +249,9 @@ export function simpleCommands(command: string): SimpleCommand[] {
     const name = rest[k] ?? "";
     const cmd = name.includes("/") ? name.replace(/^.*\//, "") : name;
     const args = rest.slice(k + 1);
-    out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
+    const c: SimpleCommand = { name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) };
+    if (sep !== undefined) c.sep = sep;
+    out.push(c);
     if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
   }
   return out;
