@@ -162,7 +162,12 @@ describe("claude-code hook capture: the person's turns", () => {
     ];
     const hooked = await live(entries, lines);
     assert.deepEqual(turns(hooked), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1501, 3001, 2101] } });
-    assert.deepEqual(turns(await backfill(entries)), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1500, 3000, 2000] } });
+    const full = await backfill(entries);
+    assert.deepEqual(turns(full), { [MODEL]: { turns: 3, replied: 2, cancelled: 2, durationsMs: [1500, 3000, 2000] } });
+    // A stop prompt carries the promptId of the turn it stopped: that turn ends once, at the stop.
+    assert.deepEqual(full.filter((e) => e.kind === "turn.end").map((e) => [e.ts - T, e.payload.durationMs]), [[1500, 1500], [8000, 3000], [22_000, 2000]]);
+    assert.equal(new Set(full.map((e) => e.id)).size, full.length, "no event twice");
+    assert.equal(buildSession(full).stats.turns, 3);
   });
 
   it("a turn ends with its own work, not the next turn's first call: a 2-minute gap still gives two 3 s turns", async () => {

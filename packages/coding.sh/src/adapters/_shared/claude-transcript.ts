@@ -478,12 +478,19 @@ export class ClaudeTranscriptConverter {
     this.push(em);
   }
 
-  /** Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, `prompts`, or `always`). */
+  /**
+   * Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, `prompts`, or `always`).
+   * An entry keyed like the turn that just ended starts none: the stop prompt carries the promptId of the turn the
+   * person stopped, and ending that turn again would give a second turn.end its id.
+   */
   private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>, always = false): Promise<void> {
     await this.endTurn(ts, lineNo);
-    this.turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
-    this.turnStartTs = ts;
-    this.turnEnded = false;
+    const turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
+    if (turnId !== this.turnId) {
+      this.turnId = turnId;
+      this.turnStartTs = ts;
+      this.turnEnded = false;
+    }
     this.boundary = true;
     if (this.opts.mode !== "full" && !this.opts.prompts && !always) return;
     const em = this.em(ts, lineNo);
