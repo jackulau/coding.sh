@@ -495,10 +495,13 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const j = at.get(e);
     return i !== undefined && j !== undefined && i < j && j < i + size.get(a)!;
   };
-  // The calls whose cost a bill above them covers, and the billed calls billed for a generation a call above them was.
-  // A billed call covers the calls nested in it, unless one of them carries its generation id, as its response id or a
-  // bill's: then the bill is that call's, and covers it and the calls nested in it, while the others keep their costs.
+  // The calls whose cost a bill above them covers. A billed call covers the calls nested in it, unless one of them carries
+  // its generation id, as its response id or a bill's: then the bill is that call's, and covers it and the calls nested in
+  // it, while the others keep their costs.
   const covered = new Set<AgentEvent>();
+  // The bills (call id and generation) for a generation a billed call above was billed for: copies of that call's bill.
+  // And the billed calls with no other bill, which count none.
+  const sharedBills = new Set<string>();
   const shared = new Set<AgentEvent>();
   if (billed.size) {
     const idOf = (g: string): string => g.slice(g.indexOf("\u0000") + 1);
@@ -556,7 +559,9 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
       // It carries the generation of a billed call above it: that bill is its own.
       const mine = carried(c).some((id) => (idsAbove.get(id) ?? 0) > 0);
       if (cover > 0 || mine) covered.add(c);
-      if (gens.some((g) => (gensAbove.get(g) ?? 0) > 0)) shared.add(c);
+      const copies = gens.filter((g) => (gensAbove.get(g) ?? 0) > 0);
+      for (const g of copies) sharedBills.add(`${c.id}\u0000${g}`);
+      if (copies.length && copies.length === gens.length && !plain.has(c.id)) shared.add(c);
       const covers = mine || (billed.has(c.id) && (plain.has(c.id) || !gens.some((g) => carriedBelow(c, idOf(g)))));
       const n = size.get(c)!;
       if (n > 1 && (covers || gens.length)) {
@@ -712,8 +717,8 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   }
   // The counted calls with nested calls, folded first, so a companion knows whether the call it billed is in a count. Down
   // each tree, a call that keeps its own cost counts it unless a bill covers it, and covers the calls nested in it. A
-  // billed call counts its bill unless a billed call above it has its generation; a nested call billed for another
-  // generation adds its bill: its own cost here, the rest in its companion.
+  // billed call counts its bills, but not one for a generation a billed call above it has; a nested call billed for
+  // another generation adds its bill: its own cost here, the rest in its companion.
   const folds = new Map<AgentEvent, Folded>();
   const costed = new Set<string>();
   for (const r of sorted) {
@@ -741,7 +746,8 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     folds.set(r, f);
   }
   // The companion that holds each generation's bill: the first whose call is counted, then the first whose call is in
-  // the events with no usage (its companion holds the whole bill), else the first.
+  // the events with no usage (its companion holds the whole bill), else the first. A copy of the bill of a call above
+  // its call holds none.
   const isCounted = (id: string): boolean => usageCalls.has(id) && (!dropped.has(id) || costed.has(id));
   const billOf = new Map<string, AgentEvent>();
   if (billed.size) {
@@ -752,7 +758,7 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const rank = (id: string): number => (isCounted(id) ? 2 : present.has(id) && !usageCalls.has(id) ? 1 : 0);
     for (const e of sorted) {
       const g = generationOf(e);
-      if (!g || (dropped.has(e.parentId!) && !costed.has(e.parentId!))) continue;
+      if (!g || (dropped.has(e.parentId!) && !costed.has(e.parentId!)) || sharedBills.has(`${e.parentId}\u0000${g}`)) continue;
       const held = billOf.get(g);
       if (!held || rank(e.parentId!) > rank(held.parentId!)) billOf.set(g, e);
     }

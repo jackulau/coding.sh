@@ -776,6 +776,24 @@ describe("session usage rollup", () => {
     assert.deepEqual(rollupUsage([wrapper, a, b, bill(wrapper, 0.5), bill(a, 1), bill(b, 2)]).usage, { inputTokens: 30, costUsd: 3.5 });
   });
 
+  // A nested call billed for its wrapper's generation counted none of its bills, so its bill for a generation of its own
+  // went missing too.
+  it("a nested call billed for its wrapper's generation and for one of its own adds the bill of its own", () => {
+    const w = llm("w", undefined, undefined);
+    for (const usage of [undefined, { inputTokens: 10, costUsd: 0.25 }]) {
+      const k = llm("k", "w", usage, usage ? { costEstimated: true } : {});
+      for (const { label, evs } of runs([w, k], [bill(w, 2, "gen_w"), bill(k, 2, "gen_w"), bill(k, 1, "gen_k")])) {
+        const r = rollupUsage(evs);
+        // The wrapper's bill and the call's own, without the copy of the wrapper's.
+        assert.deepEqual(r.usage, usage ? { inputTokens: 10, costUsd: 3 } : { costUsd: 3 }, label);
+        assert.deepEqual(r.duplicate, { calls: 1, tokens: 0, costUsd: usage ? 1.75 : 2 }, label);
+        const s = buildSession(evs);
+        assert.deepEqual(s.stats.usage, r.usage, label);
+        assert.deepEqual(s.stats.duplicateUsage, r.duplicate, label);
+      }
+    }
+  });
+
   it("a billed call with no usage nested in a billed wrapper adds its bill, at any depth", () => {
     const wrapper = llm("w", undefined, undefined);
     const inner = llm("k", "w", undefined);
