@@ -9,7 +9,7 @@ const nodeCrypto = () => (cryptoModule ??= process.getBuiltinModule("node:crypto
 
 /** sha256 hex of a string (utf8) or bytes. */
 export function sha256Hex(data: string | Uint8Array): string {
-  return nodeCrypto().createHash("sha256").update(data).digest("hex");
+  return nodeCrypto().hash("sha256", data, "hex");
 }
 
 /**
