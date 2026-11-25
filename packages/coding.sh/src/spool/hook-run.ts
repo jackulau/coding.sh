@@ -82,9 +82,11 @@ function readStdin(io: HookIO): { text: string; truncated: boolean } {
     idleSince = 0;
     if (truncated) continue; // keep draining so the writer never sees EPIPE
     const room = MAX_STDIN_BYTES - total;
-    chunks.push(Buffer.from(buf.subarray(0, Math.min(n, room))));
-    total += Math.min(n, room);
-    if (n >= room) truncated = true;
+    // Cut only when stdin holds more than the cap: a payload of exactly MAX_STDIN_BYTES is whole.
+    if (n > room) truncated = true;
+    const take = Math.min(n, room);
+    if (take > 0) chunks.push(Buffer.from(buf.subarray(0, take)));
+    total += take;
   }
   let text = Buffer.concat(chunks, total).toString("utf8");
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);

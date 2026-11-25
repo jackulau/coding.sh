@@ -519,6 +519,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** On Windows, `coding.sh init` no longer writes a hook command that cmd.exe or PowerShell would read differently: for a hook path with `%`, `$`, a backtick or a curly double quote, it says to set `CODING_SH_HOME` to a folder without them. Claude Code, Amp, OpenCode and Pi keep their hooks, and Copilot CLI's PowerShell command single-quotes the path. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#hook-command))
 - **Capture.** Email redaction, which `email` or `pii` in `capture.redact` turns on, takes time in proportion to the text it reads. It redacts the same addresses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **Capture.** A hook payload longer than 1023 bytes keeps its content when redaction makes it 1023 bytes or shorter: the payload goes to a side file, so the event keeps its prompt or tool call. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
+- **Capture.** A hook payload of exactly 64 MB is kept whole and no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 
 ## [0.1.7] - 2026-11-16
 
