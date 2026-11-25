@@ -105,6 +105,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Cost.** `coding.sh work show`, `work --json` and the Work page count a session's whole cost when part of it is estimated from token counts. Before, an item, a workflow phase or an agent with some reported and some estimated cost counted only the estimated part. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#workflow-runs)
 - **Sessions.** When a shell line that reads files fails, `stats.retrieval` drops a file only when an error line names its base name whole. Before, an error about `data.ts` or `a.tsx` also dropped `a.ts`, so a file the agent read counted as not read. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid))
 - **Evals.** For a `coding.sh run --` session, `eval new` and `eval candidates` no longer take code (`sh -c "npm run build"`), a `NAME=value` setting or a path with a space in it for the task prompt. A session whose command has no other prompt argument is left out as having no prompt. [docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/session-to-eval.md#one-session-at-a-time)
 - **Capture.** T3 Code threads an import left when it ran out of time are read by the next import. Before, they waited until T3 Code wrote to its store again, and an import out of time from the start read none of them. [Host apps](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
