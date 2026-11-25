@@ -373,7 +373,10 @@ export function positiveInt(v: FlagValue, name: string): number | undefined {
   return v;
 }
 
-/** `s` as one shell word: left alone when it is plain, else single-quoted. For a command a hint prints. */
+/**
+ * `s` as one shell word: left alone when it is plain, else single-quoted. For a command a hint prints.
+ * A word that starts with `=` is quoted: zsh reads `=name` as the path of the command `name`.
+ */
 export function shellQuote(s: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+  return /^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+=:,./-]*$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
