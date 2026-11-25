@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { execFileSync, spawn } from "../../packages/coding.sh/src/core/spawn.ts";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const PKG = "@anthropic-ai/claude-code@2.1.319";
 const isWin = process.platform === "win32";
@@ -38,7 +39,7 @@ const outDir = args.includes("--out") ? resolve(args[args.indexOf("--out") + 1])
 const keep = args.includes("--keep");
 if (!outDir) throw new Error("--out <dir> is required");
 
-const root = mkdtempSync(join(tmpdir(), "csh-cc-capture-"));
+const root = mkdtempSync(join(tempBase(tmpdir()), "csh-cc-capture-"));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
 // npm -g puts command shims in <prefix>/bin on POSIX and in <prefix> itself on Windows.
