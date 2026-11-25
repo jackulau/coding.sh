@@ -188,8 +188,8 @@ interface PromptIndex {
   mtimeMs: number;
   /** Each entry's time, by its whitespace-folded typed text. */
   times: Map<string, number[]>;
-  /** The oldest time on a user line read (0 for a line with none), Infinity for none. */
-  oldest: number;
+  /** The time on the first full line read that has one, whatever its type: where the tail starts. Infinity for none. */
+  first: number;
   /** The tail read is the whole file. */
   whole: boolean;
 }
@@ -230,9 +230,10 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
     await fh.close();
   }
   const times = new Map<string, number[]>();
-  let oldest = Infinity;
+  let first = Infinity;
   for (const l of text.split("\n")) {
-    if (!USER_LINE.test(l) || TOOL_RESULT_LINE.test(l)) continue;
+    const user = USER_LINE.test(l) && !TOOL_RESULT_LINE.test(l);
+    if (!user && first !== Infinity) continue;
     let e: unknown;
     try {
       e = JSON.parse(l);
@@ -241,8 +242,8 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
     }
     if (!isObj(e)) continue;
     const ts = toMs(e.timestamp, 0);
-    oldest = Math.min(oldest, ts);
-    if (e.isSidechain === true) continue;
+    if (first === Infinity && ts > 0) first = ts;
+    if (!user || e.isSidechain === true) continue;
     const typed = typedText(e);
     if (typed === undefined) continue;
     const key = foldSpace(typed);
@@ -250,7 +251,7 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
     if (list) list.push(ts);
     else times.set(key, [ts]);
   }
-  return { size: st.size, mtimeMs: st.mtimeMs, times, oldest, whole };
+  return { size: st.size, mtimeMs: st.mtimeMs, times, first, whole };
 }
 
 /**
@@ -259,7 +260,8 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
  * within PROMPT_ENTRY_BEFORE_MS, else the first after it within
  * PROMPT_ENTRY_AFTER_MS. Claude Code stamps the entry before the hook runs, but
  * may write it after. Undefined when no entry matches. `ctx.missing` hears of a
- * transcript that is gone, or that has grown past the line.
+ * transcript that is gone, or that has grown past the line: no entry matches and
+ * the tail read starts later than PROMPT_ENTRY_BEFORE_MS before the line.
  */
 async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
   if (!path) return undefined;
@@ -277,8 +279,8 @@ async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, se
     if (ts <= at) before = Math.max(before ?? ts, ts);
     else after = Math.min(after ?? ts, ts);
   }
-  // No entry, and the tail read does not reach back past the window: the entry may be in the part not read.
-  const reached = index.whole || index.oldest <= at - PROMPT_ENTRY_BEFORE_MS;
+  // No entry, and the tail read starts inside the window or after it: the entry may be in the part not read.
+  const reached = index.whole || index.first <= at - PROMPT_ENTRY_BEFORE_MS;
   if (before === undefined && after === undefined && !reached) ctx.missing?.(path, sessionId);
   return before ?? after;
 }

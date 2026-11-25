@@ -255,6 +255,21 @@ describe("claude-code hook capture: the time on a prompt's transcript entry", ()
     rmSync(transcript);
   });
 
+  it("says nothing of a prompt with no entry when the last 8 MB starts 2 s or more before it, at a reply or a tool result", async () => {
+    // A turn that read big files, then a prompt whose entry Claude Code writes after its hook ran. The 8 MB read
+    // from the end starts inside the 2 MiB result, so its first full line is the reply at 50 s.
+    const read = (msg: string, at: number, id: string) => reply(msg, at, { type: "tool_use", id, name: "Read", input: { file_path: `/work/demo/${id}.log` } }, "tool_use");
+    const entries = [prompt("u1", 0, "Read the logs"), read("m1", 1000, "toolu_r0"), result("toolu_r0", 1500, "p-u1", "x".repeat(2 * 1024 * 1024))];
+    for (let i = 1; i <= 7; i++) entries.push(read(`m${i + 1}`, 49_900 + i * 100, `toolu_r${i}`), result(`toolu_r${i}`, 49_950 + i * 100, "p-u1", "x".repeat(1024 * 1024)));
+    resetPromptIndexes();
+    writeFile(transcript, entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+    assert.deepEqual(await missing(line("UserPromptSubmit", 60_090, { prompt: "Now commit it" })), { said: [], ts: [60_090] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 52_000, { prompt: "Now commit it" })), { said: [], ts: [52_000] });
+    // Within 2 s of where the read starts, the entry may be in the part not read.
+    assert.deepEqual(await missing(line("UserPromptSubmit", 51_999, { prompt: "Now commit it" })), { said: [[transcript, SID]], ts: [51_999] });
+    rmSync(transcript);
+  });
+
   it("reads the transcript once for each size and mtime it has, and finds what a fresh read finds as it grows", async () => {
     // Two "yes" prompts two minutes apart, one entry stamped after its hook ran, and a prompt the transcript never holds.
     const entries = [
