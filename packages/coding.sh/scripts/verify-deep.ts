@@ -33,8 +33,8 @@ export interface Knobs {
 /**
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
- * are rough. A property file without a time takes under half a minute. Every file together: about 14
- * minutes.
+ * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
+ * 16 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
@@ -46,7 +46,16 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "cost-prop": { runs: 10000 },
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
+  // 1000 seeded cases for each of its two properties, then the fixed cases.
+  "hook-entry": { runs: 1000 },
   "hook-imports": {},
+  // At bound 2, every payload cut to its first k bytes for every k, and with each of its bytes deleted in
+  // turn: 49,071 calls. About 50 seconds.
+  "hook-truncate-1": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 49,871 calls. About 50 seconds.
+  "hook-truncate-2": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 51,525 calls. About 35 seconds.
+  "hook-truncate-3": { bound: 2 },
   "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
