@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -9,6 +9,7 @@ import {
   continuationRef,
   continuationTask,
   injectContext,
+  loadContextFiles,
   parseResponse,
   planContinuation,
   prefixProblems,
@@ -176,5 +177,21 @@ describe("replay noise (EM-19)", () => {
     assert.ok(noise.lo < 0.5 && noise.hi > 0.5);
     assert.equal(actionsDiffer({ type: "text" }, { type: "text" }), undefined);
     assert.equal(replayNoise({ runs: [] }, cases), undefined);
+  });
+});
+
+describe("continuation context files", () => {
+  it("reads a file that Windows PowerShell wrote as the same text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cont-files-"));
+    try {
+      // `>` and Out-File write UTF-16LE with a byte order mark, Out-File -Encoding utf8 UTF-8 with one.
+      const text = "# Notes\r\nUse tabs. Caf\u00e9 \u2713\r\n";
+      writeFileSync(join(dir, "plain.md"), text);
+      writeFileSync(join(dir, "utf16.md"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]));
+      writeFileSync(join(dir, "utf8-bom.md"), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, "utf8")]));
+      assert.deepEqual(loadContextFiles(["plain.md", "utf16.md", "utf8-bom.md"], dir).map((f) => f.text), [text, text, text]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

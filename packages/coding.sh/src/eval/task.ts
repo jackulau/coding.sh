@@ -8,6 +8,7 @@ import { join, relative, resolve } from "node:path";
 import { isPlumbing, shellParts } from "../core/failing-command.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { commandLineOf, isShellCall } from "../core/shell-tools.ts";
+import { readTextFile } from "../core/text-file.ts";
 import { stringifyToml } from "../core/toml.ts";
 import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, RepoState, Session } from "../core/types.ts";
 import { safeJoin, safeWrite, toPosix } from "../runner/fsutil.ts";
@@ -277,7 +278,7 @@ export async function readInstructionArg(value: string, cwd: string): Promise<st
   if (value.startsWith("@") && value.length > 1) {
     const path = resolve(cwd, value.slice(1));
     try {
-      text = await readFile(path, "utf8");
+      text = await readTextFile(path);
     } catch (e) {
       throw new Error(`can't read instruction file ${path}: ${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`);
     }

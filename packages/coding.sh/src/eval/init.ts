@@ -18,6 +18,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { version } from "../cli/meta.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { failureFlags } from "../core/sessions.ts";
+import { readTextFile } from "../core/text-file.ts";
 import { stringifyToml } from "../core/toml.ts";
 import type { BlobStore, EvalTask, IndexStore, Session } from "../core/types.ts";
 import { parseCases, formatFromPath, slugify } from "../datasets/dataset.ts";
@@ -474,7 +475,7 @@ async function fromSkill(o: InitOpts, name: string, dir: string): Promise<Built>
   if (!should.length && !shouldNot.length && !o.draft && existsSync(own)) {
     let spec;
     try {
-      spec = parseTriggerSpec(await readFile(own, "utf8"), own);
+      spec = parseTriggerSpec(await readTextFile(own), own);
     } catch (e) {
       throw new InitError(e instanceof TriggerSpecError ? e.message : `can't read ${own}: ${(e as Error).message}`);
     }
@@ -560,7 +561,7 @@ async function fromCases(o: InitOpts, name: string, dir: string): Promise<Built>
   let drafted = false;
   if (o.casesFile) {
     const file = resolve(o.cwd ?? o.root, o.casesFile);
-    const text = await readFile(file, "utf8").catch(() => {
+    const text = await readTextFile(file).catch(() => {
       throw new InitError(`can't read ${file}`);
     });
     cases = parseCases(text, formatFromPath(file)) as InitCase[];
