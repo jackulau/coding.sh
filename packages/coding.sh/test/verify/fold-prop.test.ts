@@ -46,6 +46,9 @@
 //   its own, else the one it asked for), the earlier one on a tie; with no main-thread call, the one
 //   most calls ran on; with no call that names one, the last model an event named. stats.models counts
 //   the calls by model when two or more ran them. A gateway's copy is no call of the session's.
+// - A session's phases (stats.phases) count one copy of each call (core/call-copies.ts): with a call its
+//   own capture recorded, they are the phases of its events without the proxy's copies, but for where
+//   each starts and ends in the events; with none, the proxy's calls are its calls.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -931,6 +934,78 @@ test("a session's model is the one most of its main-thread calls ran on, and it 
       assert.deepEqual(row.stats.models, want.models, want.why);
     },
     { runs: 1000, label: "models" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** A generated event: what the fold reads to outline a session, from the agent's own capture or the proxy. */
+interface PhaseEvent {
+  kind: "user.message" | "llm.call" | "context.compact" | "session.start";
+  /** Minutes after T0: a gap of 30 minutes or more opens an idle phase (outline.ts IDLE_PHASE_MS). */
+  at: number;
+  /** A model call's source: the proxy's copy, the agent's transcript, or its hook (none). */
+  source: "proxy" | "transcript" | undefined;
+  /** A model call's input tokens. */
+  tokens: number;
+}
+
+const phaseEventGen: Gen<PhaseEvent> = gen.record<PhaseEvent>({
+  kind: gen.pick(["user.message", "llm.call", "llm.call", "llm.call", "context.compact", "session.start"] as const),
+  at: gen.pick([0, 1, 2, 40, 41, 90]),
+  source: gen.pick([undefined, "transcript", "proxy", "proxy"] as const),
+  tokens: gen.int(1, 9),
+});
+
+function phaseEvents(rs: PhaseEvent[]): AgentEvent[] {
+  return rs.map((r, i): AgentEvent => {
+    const payload: Record<string, unknown> = r.kind === "user.message" ? { text: `prompt ${i}` } : {};
+    const e: AgentEvent = { id: `phase-${i}`, v: 0, sessionId: "phase-session", ts: T0 + r.at * 60_000, agent: "claude-code", kind: r.kind, payload };
+    if (r.kind === "llm.call") {
+      e.usage = { inputTokens: r.tokens, outputTokens: 1 };
+      if (r.source !== undefined) e.source = r.source;
+    }
+    return e;
+  });
+}
+
+const isProxyCopy = (e: AgentEvent) => e.kind === "llm.call" && e.source === "proxy";
+
+/** A row's phases, without where each starts and ends in the session's events: the proxy's copies move that. */
+const phasesOf = (s: Session) => s.stats.phases?.map(({ from: _from, to: _to, ...p }) => p);
+
+test("a session's phases count one copy of each call: without the proxy's when its own capture recorded calls", async (t) => {
+  const seen: Record<string, number> = {
+    "calls of its own": 0,
+    "only the proxy's calls": 0,
+    "a phase that opens after the proxy's first call": 0,
+    "the proxy's calls that change the phases": 0,
+  };
+  await forAll(
+    gen.array(phaseEventGen, { minLength: 1, maxLength: 8 }),
+    (rs) => {
+      const events = phaseEvents(rs);
+      const row = buildSession(events);
+      const rest = events.filter((e) => !isProxyCopy(e));
+      if (rest.some((e) => e.kind === "llm.call")) {
+        seen["calls of its own"]!++;
+        const sans = buildSession(rest);
+        const first = byTime(events).find(isProxyCopy);
+        if (first && sans.stats.phases?.some((p) => p.startTs > first.ts)) seen["a phase that opens after the proxy's first call"]!++;
+        assert.deepEqual(phasesOf(row), phasesOf(sans));
+        return;
+      }
+      seen["only the proxy's calls"]!++;
+      if (rest.length && !isDeepStrictEqual(phasesOf(row), phasesOf(buildSession(rest)))) seen["the proxy's calls that change the phases"]!++;
+      // The proxy's calls are the session's calls: the phases are those the same calls give from a hook.
+      const hooked = events.map((e) => {
+        if (!isProxyCopy(e)) return e;
+        const { source: _source, ...own } = e;
+        return own;
+      });
+      assert.deepEqual(row.stats.phases, buildSession(hooked).stats.phases);
+    },
+    { runs: 1000, label: "phases" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
