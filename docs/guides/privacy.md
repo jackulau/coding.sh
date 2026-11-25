@@ -178,8 +178,10 @@ coding.sh purge --literal leaked.txt --dry-run
 coding.sh purge --literal leaked.txt
 ```
 
-`--literal -` reads the values from stdin. To remove every value of one shape, pass a regular
-expression; write the shape, not the secret, because it sits on the command line:
+`--literal -` reads the values from stdin. The values can be UTF-8, or UTF-16 or UTF-8 with a byte
+order mark as Windows PowerShell writes them with `>` and `Out-File`. To remove every value of one
+shape, pass a regular expression; write the shape, not the secret, because it sits on the command
+line:
 
 ```sh
 coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run

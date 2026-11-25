@@ -6,11 +6,12 @@
 // Reuses the existing runners: repo tasks go through runner/experiment.ts (the
 // engine behind `compare`) with one harness arm; cases through
 // experiments/run.ts (`exp run`); a skill's triggers through `eval trigger`.
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { ADAPTERS, getAdapter } from "../../adapters/index.ts";
 import { repoRoot } from "../../core/git.ts";
 import { sortableId } from "../../core/ids.ts";
+import { readTextFile } from "../../core/text-file.ts";
 import type { EvalTask, HarnessBundle } from "../../core/types.ts";
 import type { Context } from "../../core/context.ts";
 import { assignSplits, loadDatasetFile, addCases } from "../../datasets/dataset.ts";
@@ -284,7 +285,7 @@ function duplicatesLine(d: readonly { dropped: string; kept: string }[]): string
 
 async function runTriggers(c: CommandContext, s: LoadedSuite, k: number): Promise<SuiteOutcome> {
   const specFile = resolve(s.dir, s.spec.triggers ?? "triggers.toml");
-  const todo = (await readFile(specFile, "utf8").catch(() => "")).split("\n").filter((l) => !l.trimStart().startsWith("#") && l.includes(TODO)).length;
+  const todo = (await readTextFile(specFile).catch(() => "")).split("\n").filter((l) => !l.trimStart().startsWith("#") && l.includes(TODO)).length;
   if (todo) {
     throw new CliError(`Suite ${s.spec.name}: ${plural(todo, "prompt")} in ${toPosix(relative(c.cwd, specFile)) || specFile} still say ${TODO}`, {
       reason: "draft_suite",
