@@ -868,6 +868,21 @@ describe("appendSpool", () => {
     assert.deepEqual(existsSync(rawDir) ? readdirSync(rawDir) : [], [], "payload not orphaned");
   });
 
+  test("a payload too long to inline goes to a side file even when redaction makes it short enough", () => {
+    const env = { ...process.env, CODING_SH_HOME: freshHome() };
+    // The hook leaves a payload over MAX_INLINE_LINE_BYTES unparsed: no raw, and the text in rawText.
+    const key = ["gh", "p_", "R4nd0mT0k3nV4lu3xQ9zLm2Wp8Ks5Yt7Hc1D"].join("");
+    const head = `{"prompt":"${key} `;
+    const text = head + "x".repeat(MAX_INLINE_LINE_BYTES + 1 - head.length - 2) + '"}';
+    assert.equal(Buffer.byteLength(text), MAX_INLINE_LINE_BYTES + 1);
+    const line: SpoolLine = { v: 0, agent: "fake", event: "UserPromptSubmit", ts: Date.now(), pid: 778, cwd: "/r", raw: undefined };
+    const f = appendSpool(line, env, { rawText: text, ...R(env) })!;
+    const last = JSON.parse(readFileSync(f, "utf8").trim().split("\n").pop()!) as SpoolLine;
+    assert.deepEqual(last.redactions, { "github-token": 1 });
+    assert.ok(last.rawFile, "the payload is not dropped");
+    assert.deepEqual(resolveRaw(last), JSON.parse(text.replace(key, "[redacted:github-token]")));
+  });
+
   test("starts on a fresh line after a torn fragment, so the fragment cannot swallow the new line", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const base: SpoolLine = { v: 0, agent: "fake", event: "Stop", ts: Date.now(), pid: 555, cwd: "/r", raw: { a: 1 } };
