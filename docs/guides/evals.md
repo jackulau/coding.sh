@@ -139,8 +139,8 @@ pass@2  100.0%  a task counts when any of 2 trials passes
 pass^2  0.0%  a task counts only when all 2 trials pass
 
 task                     passed         first failure
------------------------  ------  -----  ---------------------------
-make-sum-js-add-its-two     1/2  flaky  coding.sh show a902e2be-c74
+-----------------------  ------  -----  -----------------------
+make-sum-js-add-its-two     1/2  flaky  coding.sh show a902e2be
 
 flaky: make-sum-js-add-its-two. These pass some trials and fail others; pass^2 counts them as failures.
 1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures

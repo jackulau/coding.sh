@@ -9,6 +9,7 @@ import { autoIngest, list, num, readIngest, resolveSession, str, withContext } f
 import { ago, CliError, plural } from "../cli/output.ts";
 import type { CommandContext } from "../cli/types.ts";
 import type { Context } from "../core/context.ts";
+import { shortener } from "../core/session-ref.ts";
 import { FileEvalStore } from "../datasets/store.ts";
 import type { Score, ScoreConfig, ScoreDataType, ScoreFilter, ScoreTarget } from "../core/types.ts";
 import { addScore, addScoreConfig, listScoreConfigs, listScores, SCORE_DATA_TYPES, SCORE_TARGETS, ScoreError, whoami } from "./scores.ts";
@@ -109,8 +110,11 @@ async function add(c: CommandContext, ctx: Context): Promise<number> {
     return 0;
   }
   c.out.print(r.score.id);
-  c.out.ok(`${r.changed ? (r.created || replaced ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} (${r.score.dataType}) on ${r.score.target} ${r.score.targetId}`);
-  if (replaced) c.out.warn(`--id ${r.score.id} held ${replaced.name} = ${shown(replaced)} on ${replaced.target} ${replaced.targetId}; that score is replaced. Give another --id to keep both.`);
+  // A session by a reference that opens it when pasted (core/session-ref.ts): a full id can need quoting, or be `latest`.
+  const ref = r.score.target === "session" || replaced?.target === "session" ? await shortener(ctx.index) : undefined;
+  const on = (s: Score) => `on ${s.target} ${ref && s.target === "session" ? ref(s.targetId) : s.targetId}`;
+  c.out.ok(`${r.changed ? (r.created || replaced ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} (${r.score.dataType}) ${on(r.score)}`);
+  if (replaced) c.out.warn(`--id ${r.score.id} held ${replaced.name} = ${shown(replaced)} ${on(replaced)}; that score is replaced. Give another --id to keep both.`);
   return 0;
 }
 
