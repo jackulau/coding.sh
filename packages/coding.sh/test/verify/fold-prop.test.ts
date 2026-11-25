@@ -49,6 +49,9 @@
 // - A session's phases (stats.phases) count one copy of each call (core/call-copies.ts): with a call its
 //   own capture recorded, they are the phases of its events without the proxy's copies, but for where
 //   each starts and ends in the events; with none, the proxy's calls are its calls.
+// - A shell call that writes files (a redirect, sed -i, tee) counts them when it ends, unless the user
+//   stopped it or turned it down (it never ran); one with no usable id (none, an empty one, or one that
+//   is no string) counts them as it starts, however it ends. stats.filesChanged counts a file once.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -1006,6 +1009,80 @@ test("a session's phases count one copy of each call: without the proxy's when i
       assert.deepEqual(row.stats.phases, buildSession(hooked).stats.phases);
     },
     { runs: 1000, label: "phases" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** A generated shell call: what the fold reads to count the files it writes. */
+interface ShellCall {
+  /** payload.toolUseId on its start and end: an id of its own, an empty one, none, or one that is no string. */
+  id: "own" | "" | undefined | 7;
+  /** How it ended: it ran (and passed or failed), the user stopped it or turned it down, or no end came. */
+  end: "ok" | "failed" | "stopped" | "turned down" | "none";
+  /** The file it writes: calls often share one. */
+  file: "a.txt" | "src/b.ts" | "notes.md";
+  /** How it writes the file. */
+  how: "redirect" | "sed" | "tee";
+  /** Seconds after T0 that it started; its end comes a second later. */
+  at: number;
+}
+
+const shellCallGen: Gen<ShellCall> = gen.record<ShellCall>({
+  id: gen.pick(["own", "own", "", undefined, 7] as const),
+  end: gen.pick(["ok", "failed", "stopped", "turned down", "none"] as const),
+  file: gen.pick(["a.txt", "src/b.ts", "notes.md"] as const),
+  how: gen.pick(["redirect", "sed", "tee"] as const),
+  at: gen.int(0, 6),
+});
+
+/** The fold's reading of a tool call's id (sessions.ts, filesChanged): a string that is not empty. */
+const usableId = (c: ShellCall) => c.id === "own";
+
+function shellEvents(cs: ShellCall[]): AgentEvent[] {
+  const commands = { redirect: (f: string) => `echo x > ${f}`, sed: (f: string) => `sed -i 's/a/b/' ${f}`, tee: (f: string) => `echo x | tee ${f} > /dev/null` };
+  const ends = {
+    ok: { ok: true },
+    failed: { ok: false, output: "Exit code 1\n1 failing" },
+    stopped: { ok: false, interrupted: true },
+    "turned down": { ok: false, output: "The user doesn't want to proceed with this tool use." },
+  };
+  return cs.flatMap((c, i): AgentEvent[] => {
+    const id = c.id === "own" ? { toolUseId: `call-${i}` } : c.id === undefined ? {} : { toolUseId: c.id };
+    const at = (s: number, kind: EventKind, payload: Record<string, unknown>): AgentEvent => ({ id: `shell-${i}-${kind}`, v: 0, sessionId: "shell-session", ts: T0 + s * 1000, agent: "claude-code", kind, cwd: "/work/demo", payload });
+    const start = at(c.at, "tool.start", { tool: "Bash", ...id, input: { command: commands[c.how](c.file) } });
+    return c.end === "none" ? [start] : [start, at(c.at + 1, "tool.end", { tool: "Bash", ...id, ...ends[c.end] })];
+  });
+}
+
+test("a shell call's files count when it ends unless it never ran, and as it starts when it has no usable id", async (t) => {
+  const seen: Record<string, number> = {
+    "no id": 0,
+    "an empty id": 0,
+    "an id that is no string": 0,
+    "a call of its own id stopped or turned down": 0,
+    "a call of its own id with no end": 0,
+    "a call that failed": 0,
+    "a call with no usable id that never ran to its end": 0,
+    "a file two calls write": 0,
+  };
+  await forAll(
+    gen.array(shellCallGen, { minLength: 1, maxLength: 5 }),
+    (cs) => {
+      const counted = new Set(cs.filter((c) => !usableId(c) || c.end === "ok" || c.end === "failed").map((c) => c.file));
+      for (const c of cs) {
+        if (c.id === undefined) seen["no id"]!++;
+        if (c.id === "") seen["an empty id"]!++;
+        if (c.id === 7) seen["an id that is no string"]!++;
+        if (usableId(c) && (c.end === "stopped" || c.end === "turned down")) seen["a call of its own id stopped or turned down"]!++;
+        if (usableId(c) && c.end === "none") seen["a call of its own id with no end"]!++;
+        if (c.end === "failed") seen["a call that failed"]!++;
+        if (!usableId(c) && (c.end === "stopped" || c.end === "turned down" || c.end === "none")) seen["a call with no usable id that never ran to its end"]!++;
+      }
+      if (new Set(cs.map((c) => c.file)).size < cs.length) seen["a file two calls write"]!++;
+      assert.equal(buildSession(shellEvents(cs)).stats.filesChanged, counted.size, [...counted].join(", "));
+    },
+    { runs: 1000, label: "shell files" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
