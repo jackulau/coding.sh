@@ -109,8 +109,10 @@ test each hit.
 | `env` | event | Deployment environment (`langfuse.environment` or `deployment.environment.name`) | `env:production` |
 | `release` | event | Release or app version (`langfuse.release` or `service.version`) | `release:v1.4.*` |
 
-`user`, `env` and `release` read the session's start event, where the OpenTelemetry receiver puts the
-attributes of a trace's root span or resource, and the SDKs' `trace()` puts its user id.
+`user`, `env` and `release` read a session's start events, where the OpenTelemetry receiver puts the
+attributes of a trace's root span or resource, and the SDKs' `trace()` puts its user id. An SDK
+conversation has one start event per `trace()` turn, and the session matches if any of them does.
+
 Beside other event keys they match on their own:
 `user:alice tool:Bash` is a session of alice's that ran Bash.
 
