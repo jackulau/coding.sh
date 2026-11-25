@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { callCopies } from "../../core/call-copies.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
+import { shortener } from "../../core/session-ref.ts";
 import { changeKey, failureFlags, FLAGS, llmCallFailed } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import { isAgentPromptMark } from "../../core/waiting.ts";
@@ -18,7 +19,7 @@ import type { CheckpointRun } from "../../experiments/checkpoints.ts";
 import type { DurableStats, Usage, WaitKind } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
-import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
+import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { ago, clean, CliError, duration, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
@@ -578,8 +579,9 @@ export async function run(c: CommandContext): Promise<number> {
         subagentCount,
         subagents: treeJson(subagents.roots),
       };
-      // The count alone does not say where the rest are.
-      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${wholeRef(s.id)} --json` });
+      // The count alone does not say where the rest are. The command names the session by a
+      // reference that opens it when pasted (core/session-ref.ts): an id can hold a space or be `latest`.
+      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${(await shortener(ctx.index))(s.id)} --json` });
       doc.skills = skills?.used ?? [];
       doc.comments = comments;
       if (runs.length) doc.checkpointExperiments = runs;
@@ -675,7 +677,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.print();
       out.print(out.style("Subagents", "bold"));
       printTree(out, pageTree(tree, 0, SUBAGENT_TEXT_LIMIT).roots);
-      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${wholeRef(s.id)} lists them all`);
+      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${(await shortener(ctx.index))(s.id)} lists them all`);
     }
     return 0;
   }, { create: false });

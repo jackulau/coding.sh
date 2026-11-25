@@ -10,7 +10,7 @@ import { buildRunTree, buildSessionTree, buildSubtree, pageTree, TREE_PAGE_NODES
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { printedRefs } from "../../core/session-ref.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, wholeRef, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -160,6 +160,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (tree.ancestors?.length) out.print(out.style(ancestorsLine(tree.ancestors, refs.short), "faint"));
     for (const r of tree.roots) printNode(out, r, true, r.depth, refs.whole);
 
+    // The Fix first line and the next steps name a session as the id column does (refs.whole), by a
+    // reference that opens it when pasted (core/session-ref.ts): an id can hold a space or be `latest`.
     const worst = worstNode(tree.roots);
     if (worst) {
       out.print();
@@ -167,9 +169,9 @@ export async function run(c: CommandContext): Promise<number> {
       const which = fixFirstRole(worst.depth, w.parent?.type);
       out.print(out.style("Fix first", "bold"));
       out.print(`  ${which} ${refs.whole(w.id)}: ${worstFirst(w.flags).join(", ")}`);
-      out.next("Open it", `coding.sh show ${wholeRef(w.id)}`);
+      out.next("Open it", `coding.sh show ${refs.whole(w.id)}`);
     }
-    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${wholeRef(tree.roots[0]!.session.id)} --all`);
+    if (tree.ancestors?.length) out.next("See the whole run", `coding.sh tree ${refs.whole(tree.roots[0]!.session.id)} --all`);
     return 0;
   }, { create: false });
 }

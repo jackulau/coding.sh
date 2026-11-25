@@ -844,7 +844,8 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const { improveReport } = await import("./improve.ts");
         const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
-        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}), ...(a.headless === true ? { headless: true } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+        // `next` names each example session by a reference that opens it, as the other tools list them.
+        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}), ...(a.headless === true ? { headless: true } : {}) }, { cwd: c.cwd, env: c.env, now: c.now(), ref: await shortIds(ctx) });
       },
     },
     {
@@ -1192,7 +1193,8 @@ function toolDefs(): PagedTool[] {
               ...(strArg(a, "url") ? { url: strArg(a, "url")! } : {}),
               ...(strArg(a, "description") ? { description: strArg(a, "description")! } : {}),
             },
-            { index: ctx.index, blobs: ctx.blobs, now: c.now() },
+            // Notes name a session by a reference that opens it, as the other tools list them.
+            { index: ctx.index, blobs: ctx.blobs, now: c.now(), ref: strArg(a, "source") === "sessions" ? await shortIds(ctx) : undefined },
           );
         } catch (e) {
           // The message says when replacing needs the user's approval; a structured field would cost context on every turn.

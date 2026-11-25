@@ -116,6 +116,8 @@ export interface InitDeps {
   startReadable?: (root: string) => boolean | Promise<boolean>;
   /** One argument of a command a note names, quoted for the user's shell (the CLI's quoteArg; default sh quoting). */
   quoteArg?: (s: string) => string;
+  /** How a note names a session: a reference that opens it when pasted (core/session-ref.ts shortener; default the id). */
+  ref?: (id: string) => string;
 }
 
 export interface InitResult {
@@ -338,10 +340,11 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
       });
     } catch (e) {
       // eval init takes no --instruction: name the command that does.
+      const id = deps.ref ? deps.ref(s.id) : s.id;
       const why = e instanceof NoInstructionError
-        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${(deps.quoteArg ?? shellWord)(o.verifier)}` : ""}`
+        ? `session ${id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${(deps.quoteArg ?? shellWord)(o.verifier)}` : ""}`
         : e instanceof Error ? e.message : String(e);
-      notes.push(`skipped session ${s.id}: ${why}`);
+      notes.push(`skipped session ${id}: ${why}`);
       continue;
     }
     let d = slug(task.name).slice(0, 48) || "task";
