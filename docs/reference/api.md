@@ -653,22 +653,22 @@ call between the two, as a bill nested in them would. The other nested calls kee
 
 Two calls that share a response id, directly or through other calls, are copies of one response: one
 counts, and the others are left out with the calls nested in them. A generation id a gateway billed a
-call for is one of its response ids, unless a billed call above it has that generation, so two calls
-billed for one generation are copies.
+call for is one of its response ids, unless a billed call above it has that generation. So two calls
+billed for one generation are copies when no billed call above either of them has it.
 
 When one of two calls with one id is nested in the other, at any depth, they are one response seen at
 two levels, as when a gateway's generation id is on a wrapper and on its last step, and neither is a
 copy. Two calls where neither is nested in the other are copies, also when both are nested in a call
 with that id.
 
-Of two copies, the earlier counts, unless the later one ranks higher: a billed call, or one with a
-billed call nested in it at any depth, ranks first, then a call a bill above it covers, then any
-other. A later copy nested in neither level of a response seen at two levels is left out, whatever
-its rank.
+Of two copies, the one checked first counts, unless the other ranks higher: a billed call, or one
+with a billed call nested in it at any depth, ranks first, then a call a bill above it covers, then
+any other. A copy checked later that is nested in neither level of a response seen at two levels is
+left out, whatever its rank.
 
-A nested call is checked after the call it is nested in, whatever their times, so one left out with a
-copy makes no later call a copy. Calls that came before the call they are nested in wait for it, and
-are checked right after it, in time order.
+Calls are checked in time order, but a nested call is checked after the call it is nested in,
+whatever their times, so one left out with a copy makes no later call a copy. Calls that came before
+the call they are nested in wait for it, and are checked right after it, in time order.
 
 A call is not checked for copies when the nearest model call above it that carries usage or a
 gateway bill has usage of its own. It counts within that call as above, or is left out with it, and

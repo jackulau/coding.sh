@@ -266,7 +266,7 @@ For each linked call, coding.sh reads the generation record. It tries the index 
 
 Each linked call gets a companion `vercel.ai_gateway.generation` span. The span stores the cost difference against what the call already reported. Session totals then add the bills, each generation once (the gateway debit, plus the provider's charge for BYOK), to the costs no bill covers. A copy that does not count (below) is left out with the calls nested in it and all their bills. Re-runs are no-ops.
 
-A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, counts once. When only one copy is linked, or has a linked call nested in it, that copy counts, in any order. When both are, the earlier one counts, and the other's bills are left out with it.
+A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, counts once. When only one copy is linked, or has a linked call nested in it, that copy counts, in any order. When both are, the one checked first counts, and the other's bills are left out with it. Calls are checked in time order, but a call nested in another is checked after that call.
 
 Nested model calls, such as a framework's span around the provider's call, count once. A billed call counts at its bill, plus the bills of the calls nested in it, unless one is for the same generation. When it has no usage of its own, it counts their tokens.
 
