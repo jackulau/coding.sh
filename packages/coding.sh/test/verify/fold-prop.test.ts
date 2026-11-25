@@ -42,6 +42,10 @@
 //   it. With none, or once reopened, a session whose own events all came live (OTel, an SDK or the
 //   proxy) under an id that is none of their trace ids, or all from recorded history, ends at the end
 //   of its last event (stats.endInferred); any other has no end. A gateway's copy changes none of it.
+// - A session's model is the one most of its main-thread calls ran on (a call's response model, else
+//   its own, else the one it asked for), the earlier one on a tie; with no main-thread call, the one
+//   most calls ran on; with no call that names one, the last model an event named. stats.models counts
+//   the calls by model when two or more ran them. A gateway's copy is no call of the session's.
 //
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 30, more for the generated sessions);
 // CODING_SH_PROP_SEED=s replays one.
@@ -802,6 +806,131 @@ test("a session ends at its last session.end unless activity over 5 s later reop
       assert.deepEqual({ endedAt: row.endedAt, endInferred: row.stats.endInferred }, want, why);
     },
     { runs: 1000, label: "end" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** A generated event: a model call, or another event, that may name models. */
+interface ModelEvent {
+  kind: "llm.call" | "user.message" | "notification";
+  at: number;
+  /** payload.responseModel: a name, an empty one, none, or a value that is no string. */
+  response: unknown;
+  /** The event's model field. */
+  model: string | undefined;
+  /** payload.requestModel. */
+  request: unknown;
+  /** The subagent whose call it is, or none for the main thread's. */
+  subagent: "agent-1" | "agent-2" | undefined;
+  source: "transcript" | "otel-span" | "sdk" | undefined;
+  /** A gateway's copy of the event. */
+  copy: boolean;
+}
+
+const modelEventGen: Gen<ModelEvent> = gen.record<ModelEvent>({
+  kind: gen.pick(["llm.call", "llm.call", "llm.call", "llm.call", "user.message", "notification"] as const),
+  at: gen.int(0, 4),
+  response: gen.pick<unknown>([undefined, undefined, undefined, "model-a", "model-c", "", 7]),
+  model: gen.pick([undefined, "model-a", "model-b", "model-b", "model-c", ""]),
+  request: gen.pick<unknown>([undefined, undefined, "model-b", "model-c", null]),
+  subagent: gen.frequency<ModelEvent["subagent"]>([4, gen.constant(undefined)], [1, gen.pick(["agent-1", "agent-2"] as const)]),
+  source: gen.pick([undefined, "transcript", "otel-span", "sdk"] as const),
+  copy: gen.weighted(1 / 6),
+});
+
+function modelEvents(rs: ModelEvent[]): AgentEvent[] {
+  return rs.map((r, i): AgentEvent => {
+    const payload: Record<string, unknown> = {};
+    if (r.response !== undefined) payload.responseModel = r.response;
+    if (r.request !== undefined) payload.requestModel = r.request;
+    const e: AgentEvent = { id: `model-${i}`, v: 0, sessionId: "model-session", ts: T0 + r.at * 1000, agent: "claude-code", kind: r.kind, payload };
+    if (r.model !== undefined) e.model = r.model;
+    if (r.subagent !== undefined && r.kind === "llm.call") e.subagentId = r.subagent;
+    const source = r.copy ? "gateway" : r.source;
+    if (source !== undefined) e.source = source;
+    return e;
+  });
+}
+
+/** The model that served a call: the response's, else the event's, else the one requested (modelOf). */
+const servedBy = (r: ModelEvent): string | undefined => [r.response, r.model, r.request].find((m): m is string => typeof m === "string" && m !== "");
+
+/** How many of the calls ran on each model, in the order each model first ran one. */
+function callsByModel(calls: ModelEvent[]): Map<string, number> {
+  const n = new Map<string, number>();
+  for (const r of calls) {
+    const m = servedBy(r);
+    if (m) n.set(m, (n.get(m) ?? 0) + 1);
+  }
+  return n;
+}
+
+/** The models that ran the most calls, the first to run one first. */
+function mostUsed(n: Map<string, number>): string[] {
+  const most = Math.max(...n.values());
+  return [...n].filter(([, k]) => k === most).map(([m]) => m);
+}
+
+/**
+ * A session's model and its calls by model, from the docs of mainModelOf, modelOf and
+ * Session.stats.models, given its own events in time order: the model most main-thread calls ran on,
+ * the earlier one on a tie; with no main-thread call, the one most calls ran on (no doc says which on
+ * a tie); with no call that names a model, the last model an event named. Calls by model when two or
+ * more models ran them, a subagent's calls with the rest.
+ */
+function modelOfRun(own: ModelEvent[]): { model: (string | undefined)[]; models: Record<string, number> | undefined; why: string } {
+  const calls = own.filter((r) => r.kind === "llm.call");
+  const all = callsByModel(calls);
+  const models = all.size > 1 ? Object.fromEntries(all) : undefined;
+  const main = callsByModel(calls.filter((r) => r.subagent === undefined));
+  if (main.size) {
+    const [first, ...tied] = mostUsed(main);
+    return { model: [first], models, why: tied.length ? "a tie on the main thread" : "the main thread's most used" };
+  }
+  if (all.size) return { model: mostUsed(all), models, why: "only a subagent's calls" };
+  const named = own.findLast((r) => r.model)?.model;
+  return { model: [named], models, why: named ? "the last model an event named" : "no model" };
+}
+
+test("a session's model is the one most of its main-thread calls ran on, and it counts calls by model", async (t) => {
+  const seen: Record<string, number> = {
+    "the main thread's most used": 0,
+    "a tie on the main thread": 0,
+    "only a subagent's calls": 0,
+    "the last model an event named": 0,
+    "no model": 0,
+    "a main model that is not the last one named": 0,
+    "a subagent's model with more calls than the main thread's": 0,
+    "a response's model over the event's": 0,
+    "a requested model alone": 0,
+    "two or more models": 0,
+    "a gateway's copy that would change it": 0,
+  };
+  await forAll(
+    gen.array(modelEventGen, { minLength: 1, maxLength: 8 }),
+    (rs) => {
+      // The fold reads events in time order, keeping the order of events at the same time.
+      const all = [...rs].sort((a, b) => a.at - b.at);
+      // Enrichment never decides a session's shape.
+      const own = all.filter((r) => !r.copy);
+      const want = modelOfRun(own);
+      seen[want.why]!++;
+      const calls = own.filter((r) => r.kind === "llm.call");
+      const main = want.why.includes("main thread") ? want.model[0]! : undefined;
+      if (main && main !== own.findLast((r) => r.model)?.model) seen["a main model that is not the last one named"]!++;
+      const byModel = callsByModel(calls);
+      if (main && [...byModel.values()].some((n) => n > byModel.get(main)!)) seen["a subagent's model with more calls than the main thread's"]!++;
+      if (calls.some((r) => typeof r.response === "string" && r.response && r.model && r.model !== r.response)) seen["a response's model over the event's"]!++;
+      if (calls.some((r) => servedBy(r) !== undefined && servedBy({ ...r, request: undefined }) === undefined)) seen["a requested model alone"]!++;
+      if (want.models) seen["two or more models"]!++;
+      const ifOwn = modelOfRun(all);
+      if (!isDeepStrictEqual(ifOwn.model, want.model) || !isDeepStrictEqual(ifOwn.models, want.models)) seen["a gateway's copy that would change it"]!++;
+      const row = buildSession(modelEvents(rs));
+      assert.ok(want.model.includes(row.model), `model ${row.model}, want ${want.model.join(" or ")} (${want.why})`);
+      assert.deepEqual(row.stats.models, want.models, want.why);
+    },
+    { runs: 1000, label: "models" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
