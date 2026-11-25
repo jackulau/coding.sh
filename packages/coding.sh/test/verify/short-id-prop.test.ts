@@ -28,6 +28,14 @@
 // - A reference that reads as several sessions makes findSessionRef throw AmbiguousRef, which holds
 //   the reference, up to 10 of the sessions, newest first, each with its printed reference, and
 //   whether there are more.
+// - `latest` and `last` open the session latestSession's comment names, worked out here from the
+//   stored sessions, newest first as the store lists them: of the top-level sessions without a run
+//   id (of all top-level sessions when each has one), the newest that is not empty
+//   (isEmptySession), else the newest. When the one that is not empty is no wrapper and has no
+//   snapshot of its own, start or end, they open the newest wrapper that was running when it
+//   started (it started at or before then and ended at or after, or runs still), unless both name
+//   a directory and the two differ (wrapperAround's code; its comment does not say), and else the
+//   session itself.
 //
 // Ids are drawn from stems that share long prefixes: UUIDs, T3 Code-like thread ids with
 // percent-encoding, plain ids over 40 characters, SDK ids under `default/` and other projects, `x_`
@@ -41,16 +49,24 @@
 // `default/` or not, whose own id starts with the first characters of the parent's id after
 // `default/`.
 //
+// Latest cases hold Claude Code, Codex and wrapper sessions that start and end on the same few
+// seconds, so starts and ends coincide: some empty, some with a run id (a wrapper only where every
+// session has one), a start or end snapshot, no end yet, or one of two directories or none; up to
+// 200 empty sessions newer than those; and newer subagents that are not empty, which are never the
+// latest. A case holds at most 200 top-level sessions without a run id and fewer than 20 wrappers,
+// all started within seconds: latestSession reads no further than the newest 200 sessions, and
+// looks for the wrapper among the newest 20 of the 6 hours before, bounds its comment does not give.
+//
 // The last test shows each check fails on a mutant of the shortener, the reader, the call resolver
 // or the session lookup.
-// CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 with a store);
+// CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 in the store and AmbiguousRef tests);
 // CODING_SH_PROP_SEED=s replays one. The last test reads neither.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { AmbiguousRef, findSessionRef, IdSet, matchRef, shortestRef, type RefMatch } from "../../src/core/session-ref.ts";
-import { buildSession } from "../../src/core/sessions.ts";
-import type { IndexStore, Session } from "../../src/core/types.ts";
+import { buildSession, isEmptySession } from "../../src/core/sessions.ts";
+import type { IndexStore, Session, SessionFilter } from "../../src/core/types.ts";
 import { CallRefError, resolveCall } from "../../src/proxy/calls.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -499,6 +515,189 @@ async function checkAmbiguous(s: Subject, ids: readonly string[], seen?: Map<str
   }
 }
 
+// ---------------------------------------------------------------- the newest session
+
+/** Directories a latest case's sessions ran in: none, or one of two. */
+const CWDS = [undefined, "/work/demo", "/work/other"];
+/** The first second of a latest case. */
+const T0 = Date.UTC(2026, 0, 1);
+
+/** A session of a latest case. */
+interface Row {
+  agent: string;
+  /** Its start, in seconds after T0. */
+  at: number;
+  /** How many seconds it ran, or null when it has not ended. */
+  ran: number | null;
+  /** A run id, unless it is a wrapper (a case with `trials` gives every session one). */
+  run: boolean;
+  /** A turn: with neither one nor a start snapshot, the session is empty. */
+  work: boolean;
+  /** A snapshot at its start (repo.snapshot). */
+  start: boolean;
+  /** A snapshot at its end (endSnapshot). */
+  end: boolean;
+  /** Its directory, from CWDS. */
+  cwd: number;
+}
+
+/**
+ * A latest case: its sessions, how many empty sessions without a run id are newer, how many
+ * subagents are newer still, and whether every top-level session has a run id (then none is newer).
+ */
+interface Latest {
+  rows: Row[];
+  lead: number;
+  subs: number;
+  trials: boolean;
+}
+
+/**
+ * A session of a latest case. Wrappers are seldom other than empty, so the newest that is not is
+ * often an agent's, and some start a second after every agent session.
+ */
+const ROW: Gen<Row> = gen.chain(gen.frequency<string>([3, gen.constant("claude-code")], [1, gen.constant("codex")], [2, gen.constant("wrapper")]), (agent) => {
+  const wrapper = agent === "wrapper";
+  return gen.record<Row>({
+    agent: gen.constant(agent),
+    at: gen.int(0, wrapper ? 4 : 3),
+    ran: gen.frequency<number | null>([3, gen.int(0, 2)], [1, gen.constant(null)]),
+    run: gen.weighted(0.15),
+    work: gen.weighted(wrapper ? 0.2 : 0.6),
+    start: gen.weighted(wrapper ? 0.1 : 0.2),
+    end: gen.weighted(0.2),
+    cwd: gen.int(0, 2),
+  });
+});
+/** Up to 16 sessions, so fewer than 20 wrappers; the empty ones ahead of them number about 50, about 150 or near 200 now and then, where latestSession's reads of 50 at a time end. */
+const LATEST: Gen<Latest> = gen.record<Latest>({
+  rows: gen.array(ROW, { maxLength: 16, avgLength: 10 }),
+  lead: gen.frequency([10, gen.constant(0)], [3, gen.int(1, 3)], [1, gen.int(47, 53)], [1, gen.int(147, 153)], [1, gen.int(190, 200)]),
+  subs: gen.frequency([3, gen.constant(0)], [1, gen.int(1, 2)]),
+  trials: gen.weighted(0.1),
+});
+
+/** The session of row `r`. */
+function rowSession(id: string, r: Row): Session {
+  const startedAt = T0 + r.at * 1000;
+  const s: Session = { id, agent: r.agent, startedAt, flags: [], stats: { events: 1, turns: r.work ? 1 : 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } };
+  if (r.ran !== null) s.endedAt = startedAt + r.ran * 1000;
+  if (r.run && r.agent !== "wrapper") s.runId = "run-1";
+  const cwd = CWDS[r.cwd];
+  if (cwd) s.cwd = cwd;
+  if (r.start) s.repo = { root: "/work/demo", head: "0".repeat(40), snapshot: "1".repeat(40) };
+  if (r.end) s.endSnapshot = "2".repeat(40);
+  return s;
+}
+
+/** A memory store with a latest case's sessions, and every session as it lists them, newest first. */
+async function latestStore(c: Latest): Promise<{ index: MemoryIndexStore; listed: Session[] }> {
+  const index = new MemoryIndexStore();
+  const sessions = c.rows.map((r, i) => rowSession(`row-${i}`, r));
+  if (c.trials) for (const s of sessions) s.runId = "run-1";
+  // At most 200 top-level sessions without a run id (see the header).
+  const lead = c.trials ? 0 : Math.min(c.lead, 200 - sessions.filter((s) => s.runId === undefined).length);
+  for (let i = 0; i < lead; i++) sessions.push(rowSession(`lead-${i}`, { agent: "claude-code", at: 6 + (i % 3), ran: 1, run: false, work: false, start: false, end: false, cwd: i % 3 }));
+  for (let i = 0; i < c.subs; i++) {
+    const sub = rowSession(`sub-${i}`, { agent: "claude-code", at: 9, ran: null, run: false, work: true, start: false, end: false, cwd: 1 });
+    sub.parent = { sessionId: i === 0 && sessions[0] ? sessions[0].id : "gone" };
+    sessions.push(sub);
+  }
+  for (const s of sessions) await index.upsertSession(s);
+  return { index, listed: await index.listSessions() };
+}
+
+/** True when wrapper `w` was running when `s` started: it started at or before then, and ended at or after or runs still. */
+const runningAt = (w: Session, s: Session): boolean => w.startedAt <= s.startedAt && (w.endedAt === undefined || w.endedAt >= s.startedAt);
+/** False only when both name a directory and the two differ. */
+const sameDir = (w: Session, s: Session): boolean => !w.cwd || !s.cwd || w.cwd === s.cwd;
+
+/** What `latest` should open among `listed` (every session, newest first), and why (see the header). */
+interface LatestPick {
+  want: Session | undefined;
+  why: string;
+  /** The newest session that is not empty, of those that count. */
+  hit?: Session;
+  /** How many sessions that count are newer than `hit`. */
+  at: number;
+  /** True when every top-level session has a run id. */
+  runs: boolean;
+}
+
+function latestOf(listed: readonly Session[]): LatestPick {
+  const top = listed.filter((s) => !s.parent);
+  const organic = top.filter((s) => s.runId === undefined);
+  const runs = organic.length === 0 && top.length > 0;
+  const pool = runs ? top : organic;
+  const of = runs ? " (every session has a run id)" : "";
+  const at = pool.findIndex((s) => !isEmptySession(s));
+  const hit = pool[at];
+  if (!hit) return { want: pool[0], why: `every session is empty, so the newest${of}`, at, runs };
+  const own = hit.agent === "wrapper" ? "it is a wrapper" : hit.repo?.snapshot || hit.endSnapshot ? "it has a snapshot of its own" : undefined;
+  if (own) return { want: hit, why: `the newest session that is not empty${of}; ${own}`, hit, at, runs };
+  const wrapper = top.find((w) => w.agent === "wrapper" && runningAt(w, hit) && sameDir(w, hit));
+  if (wrapper) return { want: wrapper, why: `the newest wrapper running when ${q(hit.id)}, the newest session that is not empty${of}, started`, hit, at, runs };
+  return { want: hit, why: `the newest session that is not empty${of}; no wrapper was running when it started`, hit, at, runs };
+}
+
+/** `latest` and `last` open the session latestOf names. */
+async function checkLatest(s: Subject, c: Latest, seen?: Map<string, number>): Promise<void> {
+  const { index, listed } = await latestStore(c);
+  const { want, why, hit, at, runs } = latestOf(listed);
+  if (runs) count(seen, "only sessions with a run id");
+  if (listed.some((x) => x.parent)) count(seen, "a newer subagent");
+  if (!hit) count(seen, "only empty sessions");
+  else {
+    if (at > 0) count(seen, "a newer empty session");
+    if (at >= 50) count(seen, "at least 50 newer empty sessions");
+    if (at >= 150) count(seen, "at least 150 newer empty sessions");
+    const wrappers = listed.filter((w) => w.agent === "wrapper" && !w.parent && w !== hit);
+    if (hit.agent === "wrapper") count(seen, "a wrapper that is not empty");
+    else if (wrappers.some((w) => runningAt(w, hit) && sameDir(w, hit))) {
+      if (hit.repo?.snapshot && !hit.endSnapshot) count(seen, "a session in a wrapper with only a start snapshot of its own");
+      if (!hit.repo?.snapshot && hit.endSnapshot) count(seen, "a session in a wrapper with only an end snapshot of its own");
+    }
+    if (want && want !== hit) {
+      count(seen, "a session in a wrapper");
+      if (want.startedAt === hit.startedAt) count(seen, "a session that started with its wrapper");
+      if (want.endedAt === hit.startedAt) count(seen, "a wrapper that ended as its session started");
+      if (want.endedAt === undefined) count(seen, "a wrapper still running");
+      if (!want.cwd !== !hit.cwd) count(seen, "a wrapper or a session with no directory");
+      if (want.cwd && want.cwd === hit.cwd) count(seen, "a wrapper in the session's directory");
+    }
+    if (hit.agent !== "wrapper" && !hit.repo?.snapshot && !hit.endSnapshot) {
+      if (wrappers.some((w) => runningAt(w, hit) && !sameDir(w, hit))) count(seen, "a wrapper in another directory");
+      if (wrappers.some((w) => w.startedAt > hit.startedAt && sameDir(w, hit))) count(seen, "a wrapper that started after the session");
+      if (wrappers.some((w) => w.endedAt !== undefined && w.endedAt < hit.startedAt && sameDir(w, hit))) count(seen, "a wrapper that ended before the session started");
+    }
+  }
+  for (const word of WORDS) {
+    const got = await s.find(index, word);
+    assert.equal(got?.id, want?.id, `${q(word)} opens ${got ? q(got.id) : "nothing"}, not ${want ? q(want.id) : "nothing"}: ${why}`);
+  }
+}
+
+const LATEST_KINDS = [
+  "only sessions with a run id",
+  "a newer subagent",
+  "only empty sessions",
+  "a newer empty session",
+  "at least 50 newer empty sessions",
+  "at least 150 newer empty sessions",
+  "a wrapper that is not empty",
+  "a session in a wrapper with only a start snapshot of its own",
+  "a session in a wrapper with only an end snapshot of its own",
+  "a session in a wrapper",
+  "a session that started with its wrapper",
+  "a wrapper that ended as its session started",
+  "a wrapper still running",
+  "a wrapper or a session with no directory",
+  "a wrapper in the session's directory",
+  "a wrapper in another directory",
+  "a wrapper that started after the session",
+  "a wrapper that ended before the session started",
+];
+
 /** Fails unless every kind in `kinds` was seen; reports the counts. */
 function covered(t: { diagnostic: (m: string) => void }, seen: Map<string, number>, kinds: readonly string[]): void {
   t.diagnostic([...seen].map(([k, n]) => `${k}: ${n}`).join(", "));
@@ -539,6 +738,12 @@ test("a reference that reads as several sessions throws AmbiguousRef: the refere
   const seen = new Map<string, number>();
   await forAll(CASE, (ids) => checkAmbiguous(REAL, ids, seen), { runs: STORE_RUNS, label: "ambiguous" });
   covered(t, seen, ["2 to 10 sessions"]);
+});
+
+test("`latest` and `last` open the newest top-level session that is not empty, or the wrapper it ran in, and sessions with a run id only when there are no others", async (t) => {
+  const seen = new Map<string, number>();
+  await forAll(LATEST, (c) => checkLatest(REAL, c, seen), { runs: RUNS, label: "latest" });
+  covered(t, seen, LATEST_KINDS);
 });
 
 test("each check fails on a mutant of the shortener, the reader, the call resolver or the session lookup", async (t) => {
@@ -601,6 +806,25 @@ test("each check fails on a mutant of the shortener, the reader, the call resolv
   const oldestFirst = editAmbiguous((e) => new AmbiguousRef(e.ref, [...e.candidates].reverse(), e.more));
   const wholeIds = editAmbiguous((e) => new AmbiguousRef(e.ref, e.candidates.map((c) => ({ ...c, shortId: c.id })), e.more));
   const noRef = editAmbiguous((e) => new AmbiguousRef("", e.candidates, e.more));
+  /** The real lookup on a store that changes each listSessions filter with `edit`. */
+  const editFilter = (edit: (f: SessionFilter) => SessionFilter): Subject => ({
+    ...REAL,
+    find: (index, ref) =>
+      findSessionRef(
+        new Proxy(index, {
+          get: (o, k) => {
+            if (k === "listSessions") return (f: SessionFilter = {}) => o.listSessions(edit(f));
+            const v: unknown = Reflect.get(o, k);
+            return typeof v === "function" ? v.bind(o) : v;
+          },
+        }),
+        ref,
+      ),
+  });
+  const runsCount = editFilter((f) => ({ ...f, runId: undefined }));
+  const subagentsCount = editFilter((f) => ({ ...f, parentSessionId: undefined }));
+  const noWrapper = editFilter((f) => (f.agent === "wrapper" ? { ...f, agent: "none" } : f));
+  const newestOfAll: Subject = { ...REAL, find: async (index, ref) => (WORDS.has(ref) ? (await index.listSessions({ parentSessionId: null, limit: 1 }))[0] : findSessionRef(index, ref)) };
   const mutants: [string, () => Promise<PropertyFailure>, RegExp][] = [
     ["names, a shortener that prints 8 characters", () => failure(CASE, (ids) => checkNames(eight, ids), "eight"), /printed for .*, names (nothing|\d+ ids|")/],
     ["names, a shortener one character short", () => failure(CASE, (ids) => checkNames(oneShort, ids), "one short"), /printed for .*, names (nothing|\d+ ids|")/],
@@ -616,6 +840,10 @@ test("each check fails on a mutant of the shortener, the reader, the call resolv
     ["ambiguous, a lookup that lists the sessions oldest first", () => failure(CASE, (ids) => checkAmbiguous(oldestFirst, ids), "oldest first"), /not newest first/],
     ["ambiguous, a lookup that lists each session by its whole id", () => failure(CASE, (ids) => checkAmbiguous(wholeIds, ids), "whole ids"), /not as it prints/],
     ["ambiguous, a lookup whose error drops the reference", () => failure(CASE, (ids) => checkAmbiguous(noRef, ids), "no ref"), /holds the reference/],
+    ["latest, a lookup that opens the newest session, empty or not", () => failure(LATEST, (c) => checkLatest(newestOfAll, c), "newest of all"), /opens .*, not /],
+    ["latest, a lookup that counts sessions with a run id like the others", () => failure(LATEST, (c) => checkLatest(runsCount, c), "runs count"), /opens .*, not /],
+    ["latest, a lookup that counts subagents", () => failure(LATEST, (c) => checkLatest(subagentsCount, c), "subagents count"), /opens .*, not /],
+    ["latest, a lookup that never opens the wrapper", () => failure(LATEST, (c) => checkLatest(noWrapper, c), "no wrapper"), /opens .*, not .*: the newest wrapper/],
   ];
   for (const [label, run, why] of mutants) {
     const f = await run();
