@@ -20,13 +20,14 @@
 // Ids are drawn from stems that share long prefixes: UUIDs, T3 Code-like thread ids with
 // percent-encoding, plain ids over 40 characters, SDK ids under `default/` and other projects, `x_`
 // ids, `latest` and `last`, and ids with a space, `&`, `$`, `#` or non-ASCII characters. Some are
-// subagents (nested too), some under other parents share or extend another subagent's own id, some
-// are another id cut short or grown, so one id is a prefix of another, and some come in pairs whose
-// UTF-8 is the same (a lone surrogate and U+FFFD), so they share every alias. Where a prefix names
-// an id and a longer one does not, bisecting alone can miss the shortest: `x_` ids, top-level or a
-// subagent's own id, made from another id's alias; subagents whose own id is another id without
-// `default/`; and subagents whose parent is not stored, under `default/` or not, whose own id starts
-// with the first characters of the parent's id after `default/`.
+// subagents (nested too, and some of an empty id), some under other parents share or extend another
+// subagent's own id, some are another id cut short or grown, so one id is a prefix of another, and
+// some come in pairs whose UTF-8 is the same (a lone surrogate and U+FFFD), so they share every
+// alias. Where a prefix names an id and a longer one does not, bisecting alone can miss the
+// shortest: `x_` ids, top-level or a subagent's own id, made from another id's alias; subagents
+// whose own id is another id without `default/`; and subagents whose parent is not stored, under
+// `default/` or not, whose own id starts with the first characters of the parent's id after
+// `default/`.
 //
 // The last test shows each check fails on a mutant of the shortener or of the call resolver.
 // CODING_SH_PROP_RUNS=n runs n cases per test (default 200, and 100 with a store);
@@ -202,7 +203,8 @@ const AGENT: Gen<string> = gen.frequency(
 const OF = gen.nat(20);
 
 const top: Gen<Step> = gen.map(gen.tuple(gen.pick(STEMS), TAIL), ([stem, tail]): Step => ({ kind: "top", stem, tail }));
-const sub: Gen<Step> = gen.map(gen.tuple(OF, AGENT), ([of, agent]): Step => ({ kind: "sub", of, agent }));
+/** An `of` of -1 makes a subagent of an empty id: `:sub:<agent>`. */
+const sub: Gen<Step> = gen.map(gen.tuple(gen.int(-1, 20), AGENT), ([of, agent]): Step => ({ kind: "sub", of, agent }));
 const cut: Gen<Step> = gen.map(gen.tuple(OF, gen.int(1, 60)), ([of, keep]): Step => ({ kind: "cut", of, keep }));
 const grow: Gen<Step> = gen.map(gen.tuple(OF, TAIL), ([of, tail]): Step => ({ kind: "grow", of, tail }));
 const pair: Gen<Step> = gen.map(OF, (of): Step => ({ kind: "pair", of }));
@@ -237,7 +239,7 @@ function idsOf(steps: readonly Step[]): string[] {
   };
   for (const st of steps) {
     if (st.kind === "top") add(st.stem + st.tail);
-    else if (st.kind === "sub") add(`${at(st.of)}${SUB}${st.agent}`);
+    else if (st.kind === "sub") add(`${st.of < 0 ? "" : at(st.of)}${SUB}${st.agent}`);
     else if (st.kind === "cut") add(at(st.of).slice(0, st.keep));
     else if (st.kind === "grow") add(at(st.of) + st.tail);
     else if (st.kind === "pair") {
@@ -350,6 +352,7 @@ function checkShortest(s: Subject, ids: readonly string[], seen?: Map<string, nu
     const want = expected(set, id);
     count(seen, kindOf(id, want));
     if (longerMisses(set, id, want.form)) count(seen, "a prefix that names the id where a longer one does not");
+    if (id.startsWith(SUB) && ownId(id).length >= 8) count(seen, "a subagent of an empty id");
     if (ref === want.ref) continue;
     const alias = want.ref !== want.form;
     if (alias && !isAlias(ref, id)) assert.fail(`${q(ref)}, printed for ${q(id)}, needs an alias (${aliasReason(want.form)}), and ${q(want.ref)} names the id alone`);
@@ -385,7 +388,7 @@ test("a printed alias is x_ and the first digits of the id's SHA-256 in base32, 
 test("a printed reference is the shortest the rules allow, and an alias only where the prefix is over 40 characters, needs quoting, or is latest or last", async (t) => {
   const seen = new Map<string, number>();
   await forAll(CASE, (ids) => checkShortest(REAL, ids, seen), { runs: RUNS, label: "shortest" });
-  covered(t, seen, ["the whole id", "an 8-character prefix", "a prefix over 8 characters", "a prefix of a subagent's own id", "a short subagent form", "an alias", "no free alias", "latest or last", "a prefix that names the id where a longer one does not"]);
+  covered(t, seen, ["the whole id", "an 8-character prefix", "a prefix over 8 characters", "a prefix of a subagent's own id", "a short subagent form", "an alias", "no free alias", "latest or last", "a prefix that names the id where a longer one does not", "a subagent of an empty id"]);
 });
 
 test("each check fails on a mutant of the shortener or the call resolver", async (t) => {
