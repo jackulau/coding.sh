@@ -229,6 +229,20 @@ describe("claude-code hook capture: the time on a prompt's transcript entry", ()
     assert.deepEqual(await missing(line("UserPromptSubmit", 20_000, { prompt: "/review src" })), { said: [], ts: [20_000] });
   });
 
+  it("a prompt sent again 6 s later keeps its hook's time until its own entry is written, then takes that entry's", async () => {
+    // Claude Code stamps each entry about 90 ms before the hook runs, and may write it after the hook.
+    resetPromptIndexes();
+    writeFile(transcript, [prompt("u1", 0, "yes"), reply("m1", 2000, { type: "text", text: "Done." })].map((e) => `${JSON.stringify(e)}\n`).join(""));
+    assert.deepEqual(await missing(line("UserPromptSubmit", 90, { prompt: "yes" })), { said: [], ts: [-1] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 6090, { prompt: "yes" })), { said: [], ts: [6090] }, "not the first yes's time");
+    appendFileSync(transcript, `${JSON.stringify(prompt("u2", 6000, "yes"))}\n`);
+    assert.deepEqual(await missing(line("UserPromptSubmit", 6090, { prompt: "yes" })), { said: [], ts: [5999] });
+    // A hook that ran up to 2 s after the entry's stamp still takes its time.
+    assert.deepEqual(await missing(line("UserPromptSubmit", 7900, { prompt: "yes" })), { said: [], ts: [5999] });
+    assert.deepEqual(await missing(line("UserPromptSubmit", 8000, { prompt: "yes" })), { said: [], ts: [8000] });
+    rmSync(transcript);
+  });
+
   it("says when the transcript is gone, or has grown past the prompt, so a reparse keeps the stored rows", async () => {
     const gone = join(t.home, "runs", "run_1", "home", ".claude", "projects", "-work-demo", `${SID}.jsonl`);
     assert.deepEqual(await missing(line("UserPromptSubmit", 150, { prompt: "Add a test" }, gone)), { said: [[gone, SID]], ts: [150] });

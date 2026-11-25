@@ -170,8 +170,13 @@ function isInterrupt(e: unknown): boolean {
   return isObj(e) && INTERRUPT_PROMPT.test(promptText(e) ?? "");
 }
 
-/** How far from its UserPromptSubmit line a prompt's transcript entry may be. */
-const PROMPT_ENTRY_SLACK_MS = 10_000;
+/**
+ * How far before its UserPromptSubmit line a prompt's transcript entry may be stamped (Claude Code 2.1.319
+ * stamped it 85 to 98 ms before the hook ran), and how far after. Narrow before: the same prompt sent
+ * again seconds later must not take the first one's time while its own entry is not yet written.
+ */
+const PROMPT_ENTRY_BEFORE_MS = 2_000;
+const PROMPT_ENTRY_AFTER_MS = 10_000;
 /** A transcript line that can hold a prompt: a user entry that is not a tool result. Checked before parsing. */
 const USER_LINE = /"type"\s*:\s*"user"/;
 const TOOL_RESULT_LINE = /"type"\s*:\s*"tool_result"/;
@@ -250,11 +255,11 @@ async function readPromptIndex(path: string): Promise<PromptIndex> {
 
 /**
  * The time on the transcript entry of the prompt a UserPromptSubmit line
- * carries: the entry with the same typed text, the latest at or before the
- * line, else the first after it, within PROMPT_ENTRY_SLACK_MS. Claude Code
- * stamps the entry before the hook runs, but may write it after. Undefined when
- * no entry matches. `ctx.missing` hears of a transcript that is gone, or that
- * has grown past the line.
+ * carries: the entry with the same typed text, the latest at or before the line
+ * within PROMPT_ENTRY_BEFORE_MS, else the first after it within
+ * PROMPT_ENTRY_AFTER_MS. Claude Code stamps the entry before the hook runs, but
+ * may write it after. Undefined when no entry matches. `ctx.missing` hears of a
+ * transcript that is gone, or that has grown past the line.
  */
 async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, sessionId: string, prompt: string, at: number): Promise<number | undefined> {
   if (!path) return undefined;
@@ -268,12 +273,12 @@ async function promptEntryTs(ctx: NormalizeContext, path: string | undefined, se
   let before: number | undefined;
   let after: number | undefined;
   for (const ts of index.times.get(foldSpace(prompt)) ?? []) {
-    if (ts <= at - PROMPT_ENTRY_SLACK_MS || ts > at + PROMPT_ENTRY_SLACK_MS) continue;
+    if (ts <= at - PROMPT_ENTRY_BEFORE_MS || ts > at + PROMPT_ENTRY_AFTER_MS) continue;
     if (ts <= at) before = Math.max(before ?? ts, ts);
     else after = Math.min(after ?? ts, ts);
   }
   // No entry, and the tail read does not reach back past the window: the entry may be in the part not read.
-  const reached = index.whole || index.oldest <= at - PROMPT_ENTRY_SLACK_MS;
+  const reached = index.whole || index.oldest <= at - PROMPT_ENTRY_BEFORE_MS;
   if (before === undefined && after === undefined && !reached) ctx.missing?.(path, sessionId);
   return before ?? after;
 }
