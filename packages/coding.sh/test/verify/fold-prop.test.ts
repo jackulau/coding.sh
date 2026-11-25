@@ -42,6 +42,10 @@
 //   it. With none, or once reopened, a session whose own events all came live (OTel, an SDK or the
 //   proxy) under an id that is none of their trace ids, or all from recorded history, ends at the end
 //   of its last event (stats.endInferred); any other has no end. A gateway's copy changes none of it.
+// - A session with a tool call still open did not finish: when it has no session.end, or its last one is
+//   a transcript's quiet marker (reason "idle") or was reopened, it has no end, inferred or not. A call is
+//   open from its first start until its end. A session.end that is no quiet marker closes every open
+//   call, and the session ends there unless activity reopens it.
 // - A session's model is the one most of its main-thread calls ran on (a call's response model, else
 //   its own, else the one it asked for), the earlier one on a tie; with no main-thread call, the one
 //   most calls ran on; with no call that names one, the last model an event named. stats.models counts
@@ -715,7 +719,7 @@ const END_SOURCES = {
 
 /** A generated event: what the fold reads to find where a session ended. */
 interface EndEvent {
-  kind: "session.end" | "user.message" | "llm.call" | "turn.end" | "notification";
+  kind: "session.end" | "user.message" | "llm.call" | "turn.end" | "notification" | "tool.start" | "tool.end";
   /** Milliseconds after T0: two events are often 5 s or 5.001 s apart. */
   at: number;
   /** How long the event took, for one stamped at its start. */
@@ -757,10 +761,10 @@ const activityOf = (own: EndEvent[]) => own.filter((r) => r.kind !== "session.en
 
 /**
  * Where a session ended, from the docs of Session.endedAt, stats.endInferred and the reopen slack,
- * given its own events in time order (no tool calls): at its last session.end, unless activity
- * stamped more than 5 s after it reopened it. With no session.end, or once reopened, a session whose
- * events all came live under an id that is none of their trace ids, or all from recorded history,
- * ends at the end of its last event; any other has no end.
+ * given its own events in time order (no tool call left open: see endOfCalls): at its last
+ * session.end, unless activity stamped more than 5 s after it reopened it. With no session.end, or
+ * once reopened, a session whose events all came live under an id that is none of their trace ids, or
+ * all from recorded history, ends at the end of its last event; any other has no end.
  */
 function endOf(own: EndEvent[]): { endedAt: number | undefined; endInferred: true | undefined; why: string } {
   const end = own.findLast((r) => r.kind === "session.end");
@@ -812,6 +816,135 @@ test("a session ends at its last session.end unless activity over 5 s later reop
       assert.deepEqual({ endedAt: row.endedAt, endInferred: row.stats.endInferred }, want, why);
     },
     { runs: 1000, label: "end" },
+  );
+  for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
+  t.diagnostic(JSON.stringify(seen));
+});
+
+/** A generated event: a tool call's start or end, a session.end, or a prompt. */
+interface CallEvent {
+  kind: "tool.start" | "tool.end" | "session.end" | "user.message";
+  /** Milliseconds after T0: a call often starts within 5 s of an end, or 5.001 s after it. */
+  at: number;
+  /** The call (payload.toolUseId) a tool event is for. */
+  call: "call-1" | "call-2";
+  source: string | undefined;
+  /** A session.end's payload.reason: a transcript's quiet marker says "idle". */
+  reason: "idle" | "other" | undefined;
+}
+
+const callEventGen = (sources: readonly (string | undefined)[]): Gen<CallEvent> =>
+  gen.record<CallEvent>({
+    kind: gen.pick(["tool.start", "tool.start", "tool.end", "session.end", "session.end", "user.message"] as const),
+    at: gen.pick([0, 1000, 3000, 5000, 6001]),
+    call: gen.pick(["call-1", "call-2"] as const),
+    source: gen.pick(sources),
+    reason: gen.pick(["idle", "idle", "other", undefined] as const),
+  });
+
+const callSessionGen: Gen<CallEvent[]> = gen.chain(gen.pick(["live", "history", "history", "hook", "mixed"] as const), (how) =>
+  gen.array(callEventGen(END_SOURCES[how]), { minLength: 1, maxLength: 6 }),
+);
+
+function callEvents(rs: CallEvent[]): AgentEvent[] {
+  return rs.map((r, i): AgentEvent => {
+    const payload: Record<string, unknown> = {};
+    if (r.kind === "tool.start") Object.assign(payload, { tool: "Read", toolUseId: r.call });
+    if (r.kind === "tool.end") Object.assign(payload, { tool: "Read", toolUseId: r.call, ok: true });
+    if (r.kind === "session.end" && r.reason !== undefined) payload.reason = r.reason;
+    if (r.kind === "user.message") payload.text = `prompt ${i}`;
+    const e: AgentEvent = { id: `open-${i}`, v: 0, sessionId: "open-session", ts: T0 + r.at, agent: "claude-code", kind: r.kind, payload };
+    if (r.source !== undefined) e.source = r.source;
+    return e;
+  });
+}
+
+const fromHistory = (r: CallEvent) => END_SOURCES.history.some((s) => s === r.source);
+/** A transcript's quiet marker: a session.end from recorded history with reason "idle". */
+const isQuiet = (r: CallEvent) => r.kind === "session.end" && r.reason === "idle" && fromHistory(r);
+const asEndEvent = (r: CallEvent): EndEvent => ({ kind: r.kind, at: r.at, durationMs: undefined, source: r.source, trace: "none", copy: false });
+
+/**
+ * The tool calls a session's events in time order leave open (core/waiting.ts), and how many open
+ * calls a session.end closed: a call is open from its first start until its end (a start after its
+ * end opens nothing), and a session.end that is no quiet marker closes every open call.
+ */
+function openCalls(sorted: CallEvent[]): { open: string[]; closed: number } {
+  const open = new Set<string>();
+  const ended = new Set<string>();
+  let closed = 0;
+  for (const r of sorted) {
+    if (r.kind === "tool.start" && !ended.has(r.call)) open.add(r.call);
+    if (r.kind === "tool.end") {
+      open.delete(r.call);
+      ended.add(r.call);
+    }
+    if (r.kind === "session.end" && !isQuiet(r)) {
+      closed += open.size;
+      open.clear();
+    }
+  }
+  return { open: [...open], closed };
+}
+
+/** A session's last session.end, and whether activity stamped more than 5 s after it reopened the session. */
+function lastEndOf(sorted: CallEvent[]): { end: CallEvent | undefined; reopened: boolean } {
+  const end = sorted.findLast((r) => r.kind === "session.end");
+  return { end, reopened: end !== undefined && sorted.some((r) => r.kind !== "session.end" && r.at > end.at + REOPEN_SLACK) };
+}
+
+/**
+ * Where a session with tool calls ended, from the doc of Session.endedAt, given its events in time
+ * order: with a call still open and no session.end, or its last one a quiet marker or reopened, it did
+ * not finish and has no end, inferred or not; otherwise it ends as endOf says.
+ */
+function endOfCalls(sorted: CallEvent[]): { endedAt: number | undefined; endInferred: true | undefined; why: string } {
+  const { end, reopened } = lastEndOf(sorted);
+  const open = openCalls(sorted).open.length > 0;
+  if (open && (end === undefined || reopened || isQuiet(end))) {
+    const why = end === undefined ? "a call left open, and no session.end" : reopened ? "a call left open past a reopened end" : "a call left open by a quiet marker";
+    return { endedAt: undefined, endInferred: undefined, why };
+  }
+  const { endedAt, endInferred } = endOf(sorted.map(asEndEvent));
+  return { endedAt, endInferred, why: open ? "a call opened after a real end" : "no call left open" };
+}
+
+test("a session with a tool call still open has no end, unless its last session.end is no quiet marker and was not reopened", async (t) => {
+  const seen: Record<string, number> = {
+    "no call left open": 0,
+    "a call left open, and no session.end": 0,
+    "a call left open past a reopened end": 0,
+    "a call left open by a quiet marker": 0,
+    "a call opened after a real end": 0,
+    "a hook's end with reason idle, then a call": 0,
+    "a transcript's end with another reason, then a call": 0,
+    "a call a real end closed, then a quiet marker": 0,
+    "a call started again after its end": 0,
+    "a call left open where the session would end at its last activity": 0,
+  };
+  await forAll(
+    callSessionGen,
+    (rs) => {
+      // The fold reads events in time order, keeping the order of events at the same time.
+      const sorted = [...rs].sort((a, b) => a.at - b.at);
+      const { why, ...want } = endOfCalls(sorted);
+      seen[why]!++;
+      const { end, reopened } = lastEndOf(sorted);
+      if (end && why === "a call opened after a real end" && end.source === undefined && end.reason === "idle") seen["a hook's end with reason idle, then a call"]!++;
+      if (end && why === "a call opened after a real end" && fromHistory(end) && end.reason !== "idle") seen["a transcript's end with another reason, then a call"]!++;
+      if (end && why === "no call left open" && isQuiet(end) && !reopened && openCalls(sorted).closed > 0) seen["a call a real end closed, then a quiet marker"]!++;
+      const restarted = sorted.some(
+        (r, i) =>
+          r.kind === "tool.start" &&
+          sorted.slice(0, i).some((p) => p.kind === "tool.end" && p.call === r.call) &&
+          !sorted.slice(i + 1).some((n) => (n.kind === "tool.end" && n.call === r.call) || (n.kind === "session.end" && !isQuiet(n))),
+      );
+      if (restarted) seen["a call started again after its end"]!++;
+      if (why.startsWith("a call left open") && endOf(sorted.map(asEndEvent)).endInferred) seen["a call left open where the session would end at its last activity"]!++;
+      const row = buildSession(callEvents(rs));
+      assert.deepEqual({ endedAt: row.endedAt, endInferred: row.stats.endInferred }, want, why);
+    },
+    { runs: 1000, label: "open calls" },
   );
   for (const [why, n] of Object.entries(seen)) assert.ok(n > 0, `no case: ${why} (${JSON.stringify(seen)})`);
   t.diagnostic(JSON.stringify(seen));
