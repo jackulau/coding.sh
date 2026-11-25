@@ -49,11 +49,18 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
+  "metadata-prop": { runs: 10000 },
   model: {},
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
   "pushback-prop": { runs: 10000 },
+  "redact-counted-prop": { runs: 10000 },
+  "redact-deep-prop": { runs: 10000 },
+  "redact-env-prop": { runs: 10000 },
+  "redact-pii-prop": { runs: 10000 },
   "redact-prop": { runs: 10000 },
+  "redact-prose-prop": { runs: 10000 },
+  "redact-tally-prop": { runs: 10000 },
   // About 3 minutes and 6.5 GB of heap. At bound 3 the first run alone has 3,443,232 states and needs 8 GB.
   "refold-model": { bound: 2 },
   "short-id-prop": { runs: 10000 },
