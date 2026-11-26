@@ -121,7 +121,7 @@ Beside other event keys they match on their own:
 | Key | Level | Matches | Example |
 |---|---|---|---|
 | `has` | session | Has `tests` (test results seen), `cost`, `repo` (a git repo), `error` (a failed tool or model call) or `title` | `has:tests` |
-| `is` | session | Is `root` (top level), `child` (a subagent), `flagged` (a flag with no colon), `run` (from an eval run) or `ended` | `is:root` |
+| `is` | session | Is `root` (top level), `child` (a subagent), `flagged` (a failure flag: no colon, and not `compaction`, `step-retried` or `resumed`), `run` (from an eval run) or `ended` | `is:root` |
 | `sort` | query | Order by `started` or any number key above; `-` for descending | `sort:-cost` |
 | `limit` | query | Maximum rows | `limit:50` |
 
@@ -229,7 +229,7 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `premature-completion` | Stopped while the last test run was failing, and the agent's last words did not say so. |
 | `repeated-tool-failure` | Had the same tool fail three times in a row with similar input. A search that found nothing is not a failure. |
 | `no-verification` | Changed files, but no test, type check, lint or build ran. |
-| `compaction` | Had its context compacted. |
+| `compaction` | Had its context compacted. A note, not a failure. |
 | `test-tamper` | Edited a test or test config to hide failures: a skip marker, a deleted test file, or an assertion change that alone turned a run green. In proofs: a theorem statement or spec change that turned a failed proof check green, made after the failure; an escape hatch such as `sorry` the agent added and left in; or a flag that skips a check that failed. |
 | `duplicate-fetch` | Repeated three or more read-only calls in one context with the same result and no edit in between. |
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
@@ -269,7 +269,7 @@ through MCP, waiting on a subagent or on the user, and long tool calls that succ
 ### Tags
 
 A flag with a colon is a tag, not a failure. `is:flagged` and the failure rate in `stats` leave
-tags out.
+tags out, and the notes `compaction`, `step-retried` and `resumed` too.
 
 | Tag | Added when the session |
 |---|---|

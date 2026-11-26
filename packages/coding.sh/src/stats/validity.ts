@@ -25,6 +25,7 @@
 // gets the within-task-and-arm AUROC and CI of each arm (`byArm`), and when two
 // arms that each pass the pair and task thresholds have CIs on opposite sides of
 // 0.5, the verdict is differs-by-arm.
+import { isFailureFlag } from "../core/failure-flags.ts";
 import type { Session } from "../schema/index.ts";
 import { mulberry32 } from "./prng.ts";
 import { quantileSorted } from "./summary.ts";
@@ -84,11 +85,6 @@ export const ARM_REF = "arm(loo)";
 const LENGTH_REFS: readonly string[] = ["turns", "tokens"];
 /** Default `minTasks`: at 8 tasks a coin-flip score gets adds-run-signal in about 5% of tables (45% at 1, 21% at 2). */
 export const MIN_SIGNAL_TASKS = 8;
-
-/** A flag with a colon is a tag (gateway:vercel, skill:pdf), not a failure symptom. */
-function isFailureFlag(f: string): boolean {
-  return !f.includes(":") && !f.startsWith("gateway");
-}
 
 /**
  * One row per counted run (cancelled, superseded and infra-failed runs are left

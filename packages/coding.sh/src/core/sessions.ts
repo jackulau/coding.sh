@@ -38,6 +38,7 @@ export const FLAGS = {
   prematureCompletion: "premature-completion",
   repeatedToolFailure: "repeated-tool-failure",
   noVerification: "no-verification",
+  /** A note, not a failure: the agent compacted its context. */
   compaction: "compaction",
   /**
    * A test, runner config or CI file was skipped, deleted, or changed so failing tests went green
@@ -45,9 +46,9 @@ export const FLAGS = {
    * green, or an escape hatch or a checker bypass flag stands (core/proof.ts).
    */
   testTamper: "test-tamper",
-  /** Durable workflow runs (Session.stats.durable): a step ran again after failing. */
+  /** A note, not a failure: in a durable workflow run (Session.stats.durable), a step ran again after failing. */
   stepRetried: DURABLE_FLAGS.stepRetried,
-  /** Durable workflow runs: the run continued after a crash, a deploy or a worker restart. */
+  /** A note, not a failure: a durable workflow run continued after a crash, a deploy or a worker restart. */
   resumed: DURABLE_FLAGS.resumed,
   /** A tag, not a failure: model calls went through Vercel AI Gateway. Other gateways get "gateway:<id>". */
   gateway: GATEWAY_FLAG,
@@ -85,8 +86,8 @@ export const FLAGS = {
   ...DERAIL_FLAGS,
 } as const;
 
-/** Flags that name a failure pattern. Namespaced flags ("gateway:vercel") are tags. */
-export const failureFlags = (flags: readonly string[]): string[] => flags.filter((f) => !f.includes(":"));
+/** Flags that name a failure pattern. Tags ("gateway:vercel") and context flags ("compaction") are not failures (core/failure-flags.ts). */
+export { failureFlags } from "./failure-flags.ts";
 
 /** Events written by enrichment (`coding.sh gateway enrich`): they never decide a session's shape. */
 const isEnrichment = (e: AgentEvent): boolean => e.source === "gateway";
