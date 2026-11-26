@@ -207,7 +207,7 @@ describe("the hook redacts before it writes", () => {
   });
 
   it("redactPayload redacts a value as its document does when a match in the text stops at an escape inside it", () => {
-    // In the text, the token after `Token` ends at the backslash of `é`; in the document the
+    // In the text, the token after `Token` ends at the backslash of `\u00e9`; in the document the
     // string holds é, and the whole value is one token.
     const tally = redactionTally();
     const body = `{"m":"a${BS}nAuthorization: Token abcd1234${BS}u00e9efgh5678"}`;

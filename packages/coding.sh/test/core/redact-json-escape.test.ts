@@ -231,7 +231,7 @@ describe("a redaction keeps JSON text valid", () => {
   });
 
   it("in plain text, a match that starts inside what reads as a JSON escape is replaced whole", () => {
-    // `\b` and `․` read as JSON escapes, `\d` does not.
+    // `\b` and `\u2024` read as JSON escapes, `\d` does not.
     assert.equal(email.string(`DOMAIN${BS}bob@example.com`), `DOMAIN${BS}ufffd[redacted:email]`);
     assert.equal(email.string(`CORP${BS}dev.ops@example.com`), `CORP${BS}[redacted:email]`);
     const year = createRedactor({ redact: ["none"], patterns: [String.raw`\d{4}`] });
