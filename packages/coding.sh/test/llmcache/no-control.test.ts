@@ -29,8 +29,15 @@ test("no stored task spec: the suggestion is one command, and the message names 
   await assert.rejects(replayWithControl({} as CommandContext, {} as FileEvalStore, plan, undefined, undefined), (e: unknown) => {
     assert.ok(e instanceof UsageError);
     assert.equal(e.reason, "no_control");
-    assert.equal(e.suggestion, "coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay exp_01OLD");
+    // exp run with arms needs a dataset and a grader: the recording's dataset, and a grader to fill in.
+    assert.equal(e.suggestion, "coding.sh exp run -d ds_1 -g <GRADER> --arm control=recorded.json --arm cand=cand.json --replay exp_01OLD");
     assert.match(e.message, /^exp_01OLD did not record a command or http task spec, so there is no control arm to replay\. .*--no-control/);
+    return true;
+  });
+  // With a spec file, the suggestion runs that file, which names the dataset and graders.
+  await assert.rejects(replayWithControl({} as CommandContext, {} as FileEvalStore, plan, "my spec.json", undefined), (e: unknown) => {
+    assert.ok(e instanceof UsageError);
+    assert.equal(e.suggestion, "coding.sh exp run 'my spec.json' --arm control=recorded.json --arm cand=cand.json --replay exp_01OLD");
     return true;
   });
 });

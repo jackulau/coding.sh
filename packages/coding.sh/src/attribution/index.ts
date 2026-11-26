@@ -61,6 +61,8 @@ export interface AttributionReport {
   /** The commit `rev` named. */
   rev: string;
   since: number;
+  /** Sessions in the repo or its worktrees that the match read, with or without lines to match. */
+  considered: number;
   /** Sessions in the repo that had lines to match (with what they added). */
   sources: number;
   /** Sessions credited with at least one line, most lines first. */
@@ -153,6 +155,7 @@ export async function attributeRepo(ctx: SourceContext, opts: AttributeOptions):
     root,
     rev,
     since,
+    considered: sessions.length,
     sources: sources.length,
     sessions: [...byId.values()].sort((a, b) => b.lines - a.lines || a.startedAt - b.startedAt),
     commits: matched,

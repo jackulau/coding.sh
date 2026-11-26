@@ -55,7 +55,7 @@ function queuesText(queues: readonly ReviewQueue[]): string {
 }
 
 function configsText(configs: readonly ScoreConfig[]): string {
-  return configs.length ? `Score configs: ${configs.map((c) => c.name).join(", ")}.` : "No score configs yet: add one with coding.sh score config <name> --type <type>.";
+  return configs.length ? `Score configs: ${configs.map((c) => c.name).join(", ")}.` : "No score configs yet.";
 }
 
 export interface CreateQueueOptions {

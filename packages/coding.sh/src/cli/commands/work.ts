@@ -1,14 +1,16 @@
 // coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
-import { parsePlace } from "../../mcp/data.ts";
+import { parsePlace, type Place } from "../../mcp/data.ts";
 import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
+import type { IndexStore } from "../../core/types.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
 import { BUCKET_LABELS, BUCKETS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
-import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
+import { agentsFlag, agentsWithoutSessions, autoIngest, emptyStateNext, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
+import { cliCommand, widerSince } from "../next-steps.ts";
 import { ago, CliError, localTime, plural, usd, type Output } from "../output.ts";
 import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
 import type { CommandContext } from "../types.ts";
@@ -73,7 +75,7 @@ async function list(c: CommandContext): Promise<number> {
       out.data({ ...workJson(shown, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    printQueue(c, shown, { limit, all, stages, window: w, truncated, backlog, stale });
+    await printQueue(c, ctx.index, shown, { limit, all, stages, window: w, place, truncated, backlog, stale });
     return 0;
   });
 }
@@ -97,7 +99,12 @@ function staleIndexField(stale: IndexAge | undefined): { indexUpdatedAt?: string
   return { indexUpdatedAt: at, asOf: at };
 }
 
-function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge }): void {
+/** The --since a "Widen the window" step gives: 30 days back from a shorter window (the default is 7d), else further back than the window. */
+function widerWindow(since: number, now = Date.now()): string {
+  return now - since < 30 * 86_400_000 ? "30d" : widerSince(since, now);
+}
+
+async function printQueue(c: CommandContext, index: IndexStore, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; place?: Place; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge }): Promise<void> {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
   out.print(`${out.style("Stages", "faint")}  ${stagesLine(q.stages)}`);
@@ -125,9 +132,28 @@ function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: bo
   }
   if (!shown.length) {
     out.print("");
-    out.print(q.hidden ? `Nothing needs you. ${plural(q.hidden, "item")} running, done, acknowledged or snoozed.` : `No agent sessions since ${o.window.sinceText}.`);
-    if (q.hidden && !o.all) out.next("See every item", "coding.sh work --all");
-    else if (!q.hidden) out.next("Widen the window", "coding.sh work --since 30d");
+    // A next step keeps the --repo and --agent given, so it looks at the same items, and the --since given unless it widens it.
+    const agents = agentsFlag(c);
+    const repo = str(c.flags.repo);
+    const since = str(c.flags.since);
+    const typedSince = since ? ["--since", since] : [];
+    const repoFlag = repo ? ["--repo", repo] : [];
+    const filters = [...repoFlag];
+    if (agents.length) filters.push("--agent", agents.join(","));
+    if (q.hidden) {
+      out.print(`Nothing needs you. ${plural(q.hidden, "item")} running, done, acknowledged or snoozed.`);
+      if (!o.all) out.next("See every item", cliCommand(c.env, ["work", "--all", ...typedSince, ...filters]));
+      return;
+    }
+    // An --agent with no session at all emptied it, not the window: drop it rather than look further back.
+    const noneAtAll = agents.length > 0 && (await agentsWithoutSessions(index, agents)).length === agents.length;
+    const where = `${agents.length ? ` from ${agents.join(" or ")}` : ""}${o.place ? ` in ${o.place.path ?? o.place.name ?? repo}` : ""}`;
+    out.print(noneAtAll ? `No sessions from ${agents.join(" or ")} in the store.` : where ? `No work items${where} since ${o.window.sinceText}.` : `No agent sessions since ${o.window.sinceText}.`);
+    const next = noneAtAll
+      ? { label: "See every agent's items", command: cliCommand(c.env, ["work", ...typedSince, ...repoFlag]) }
+      : { label: "Widen the window", command: cliCommand(c.env, ["work", "--since", widerWindow(o.window.since), ...filters]) };
+    // On a store with no session at all, the step is how the first one gets here instead.
+    await emptyStateNext(out, c.env, index, next);
     return;
   }
   const first = shown.find((i) => i.bucket);
