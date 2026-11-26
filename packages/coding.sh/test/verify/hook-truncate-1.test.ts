@@ -11,7 +11,7 @@
 // - it resolves and prints nothing (the hook exits 0 and is silent without --reply or --echo-continue);
 // - it writes one spool line, which ingest's reader reads back in call order with the payload as the
 //   hook got it (the JSON it parses to, else the text), redacted by the rules (the spec runs them on every
-//   payload, and reports one with a secret that spool/gate.ts lets through unredacted);
+//   payload, and reports one they would change that spool/gate.ts lets through as it is);
 // - the line holds the payload when it fits in 1023 bytes and the hook got no more than that; otherwise it
 //   names a side file under spool/<agent>/raw, and every side file is named by a line;
 // - nothing is written outside the spool, and spool/errors.log gets no entry.
