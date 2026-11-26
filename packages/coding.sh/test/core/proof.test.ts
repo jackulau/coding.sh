@@ -258,6 +258,22 @@ describe("proofCheck", () => {
     assert.equal(proofCheck("cd proofs && coqc /abs/A.v")?.path, "/abs/A.v");
   });
 
+  it("reads a check run through nice, a subshell or a shell's -c script, in the script's directory and with its operators", () => {
+    assert.deepEqual(proofCheck("nice -n 10 lake build"), { lang: "lean", exit: "both" });
+    assert.deepEqual(proofCheck("nice lake build"), { lang: "lean", exit: "both" });
+    assert.deepEqual(proofCheck("(cd proofs && lake build)"), { lang: "lean", exit: "both" });
+    assert.deepEqual(proofCheck("bash -lc 'lake build'"), { lang: "lean", exit: "both" });
+    assert.deepEqual(proofCheck("timeout 600 bash -lc 'lake build'"), { lang: "lean", exit: "both" });
+    assert.deepEqual(proofCheck('sh -c "cd theories && coqc Add.v"'), { lang: "rocq", path: "theories/Add.v", exit: "both" });
+    assert.equal(proofCheck("cd proofs && bash -c 'cd b && coqc A.v'")?.path, "proofs/b/A.v");
+    assert.equal(proofCheck("bash -c 'lake build && echo ok'")?.exit, "green");
+    assert.equal(proofCheck("bash -c 'lake build; echo done'")?.exit, undefined);
+    assert.equal(proofCheck("bash -c 'lake build' && echo ok")?.exit, "green");
+    assert.deepEqual(proofCheck("(cd theories && coqc Add.v) 2>&1 | tail -5"), { lang: "rocq", path: "theories/Add.v", filtered: true });
+    assert.equal(proofCheck("bash -c 'lake build &'")?.background, true);
+    for (const c of ["bash script.sh", "bash -c 'echo lake build'", 'git commit -m "fix (lake build)"']) assert.equal(proofCheck(c), undefined, c);
+  });
+
   it("finds bypass flags", () => {
     assert.equal(proofCheck("dafny verify --no-verify A.dfy")?.bypass, "--no-verify");
     assert.equal(proofCheck("dafny /noVerify A.dfy")?.bypass, "/noVerify");

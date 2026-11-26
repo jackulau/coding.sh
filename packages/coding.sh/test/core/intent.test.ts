@@ -520,6 +520,16 @@ describe("proof tampering", () => {
     assert.ok(flagged(events));
   });
 
+  it("reads a check run through bash -c, a subshell or nice as the check it runs", () => {
+    for (const run of ["bash -lc 'lake build'", "(cd proofs && lake build)", "nice lake build"]) {
+      const events = [...shellRun(run, false, RED), ...edit("Foo.lean", STMT_WEAKEN), ...shellRun(run, true, OK)];
+      assert.deepEqual(said(trace(events)), [["statement", "unknown", "high", true]], run);
+      assert.ok(flagged(events), run);
+      const plainRed = [...red(), ...edit("Foo.lean", STMT_WEAKEN), ...shellRun(run, true, OK)];
+      assert.deepEqual(said(trace(plainRed)), [["statement", "unknown", "high", true]], run);
+    }
+  });
+
   it("does not flag a fixed proof, or a statement change no check judged", () => {
     const body = edit("Foo.lean", udiff("Foo.lean", ` ${STMT}`, "-  simp", "+  omega"));
     assert.deepEqual(trace([...red(), ...body, ...green()]), []);

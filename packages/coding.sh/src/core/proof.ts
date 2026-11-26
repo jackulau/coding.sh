@@ -6,7 +6,7 @@
 import { posix } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
 import { exitCodeOf } from "./failing-command.ts";
-import { diffHunks, simpleCommands, type DiffLine, type ShellDiffOrigin, type SimpleCommand } from "./shell-diff.ts";
+import { diffHunks, shellScript, simpleCommands, type DiffLine, type ShellDiffOrigin, type SimpleCommand } from "./shell-diff.ts";
 
 /** A proof language, or a TLC model config (`.cfg`). */
 export type ProofLang = "lean" | "rocq" | "dafny" | "verus" | "isabelle" | "tla" | "tlc";
@@ -497,7 +497,7 @@ const PROOF_OUT = new RegExp(
   "m",
 );
 
-/** The command a wrapper runs: `timeout 600 lake build`, `opam exec -- coqc A.v`. */
+/** The command a wrapper runs: `timeout 600 lake build`, `opam exec -- coqc A.v`, `nice -n 10 lake build`. */
 function unwrap(c: SimpleCommand): [string, string[]] {
   let cmd = c.cmd;
   let args = c.args;
@@ -506,6 +506,10 @@ function unwrap(c: SimpleCommand): [string, string[]] {
       let k = 0;
       while (k < args.length && (args[k] as string).startsWith("-")) k += /^(?:-[sk]|--signal|--kill-after)$/.test(args[k] as string) ? 2 : 1;
       args = args.slice(k + 1);
+    } else if (cmd === "nice") {
+      let k = 0;
+      while (k < args.length && (args[k] as string).startsWith("-")) k += /^(?:-n|--adjustment)$/.test(args[k] as string) ? 2 : 1;
+      args = args.slice(k);
     } else if (cmd === "opam" && args[0] === "exec") {
       const k = args.indexOf("--");
       args = args.slice(k < 0 ? 1 : k + 1);
@@ -594,13 +598,50 @@ function bypassOf(args: string[]): string | undefined {
   return undefined;
 }
 
+/** A path that does not start under the directory a `cd` moved to. */
+const ROOTED = /^(?:\/|[A-Za-z]:\/|~)/;
+/**
+ * A `(` that opens a subshell, after an operator, and a run of `)` that closes one, before an
+ * operator, a redirection or the end. A run of `)` is tried once, from its first `)`.
+ */
+const SUBSHELL = /(^|&&|\|\||[;&|\n])([ \t]*)\(+|(?<!\))(?=(\)+))\3(?=[ \t]*(?:[;&|\n<>]|\d+[<>]|$))/g;
+
+/**
+ * The simple commands a command line runs. The commands in a subshell read as if they ran outside
+ * it, and the script of a `bash -c` takes the shell's place: its commands run in the shell's
+ * directory, and the last one takes the shell's operator. Three shells deep at most.
+ */
+function runCommands(command: string, depth = 0, dir?: string): SimpleCommand[] {
+  const out: SimpleCommand[] = [];
+  const text = command.replace(SUBSHELL, (_, op?: string, space?: string) => (op === undefined ? " " : `${op}${space ?? ""} `));
+  for (const c of simpleCommands(text, { quotes: true })) {
+    if (c.name === "") continue;
+    const under = dir === undefined || (c.dir !== undefined && ROOTED.test(c.dir)) ? c.dir : c.dir === undefined ? dir : posix.join(dir, c.dir);
+    const [cmd, args] = unwrap(c);
+    const script = depth < 3 ? shellScript({ cmd, args }) : undefined;
+    const inner = script === undefined ? [] : runCommands(script, depth + 1, under);
+    const last = inner[inner.length - 1];
+    if (!last) {
+      out.push(under === c.dir ? c : { ...c, dir: under as string });
+      continue;
+    }
+    // A command the script puts in the background stays there.
+    if (last.sep !== "&") {
+      if (c.sep === undefined) delete last.sep;
+      else last.sep = c.sep;
+    }
+    out.push(...inner);
+  }
+  return out;
+}
+
 /**
  * The proof check a shell command line runs: its last checker command, if it has one. Quoted words
  * stay whole: `git commit -m "WIP; lake build"` runs no check.
  */
 export function proofCheck(command: string, input?: unknown): ProofCheck | undefined {
   if (!CHECKER_HINT.test(command)) return undefined;
-  const cmds = simpleCommands(command, { quotes: true }).filter((c) => c.name !== "");
+  const cmds = runCommands(command);
   let at = -1;
   let lang: string | undefined;
   let args: string[] = [];
@@ -611,7 +652,7 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
   }
   if (lang === undefined) return undefined;
   const c = cmds[at] as SimpleCommand;
-  const files = args.filter((a) => PROOF_ARG.test(a)).map((a) => (c.dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(a) ? posix.join(c.dir, a) : a));
+  const files = args.filter((a) => PROOF_ARG.test(a)).map((a) => (c.dir && !ROOTED.test(a) ? posix.join(c.dir, a) : a));
   // make and dune pass their arguments to the build, not to a checker.
   const bypass = lang === "make" || lang === "dune" ? undefined : bypassOf(args);
   const target = targetOf(lang, args.find((a) => !a.startsWith("-")) ?? "", args);
@@ -642,8 +683,8 @@ const PROGRAMS: Record<string, readonly string[]> = {
   tlc: ["tlc", "tlc2", "java", "tla2tools.jar"],
   tla: ["tlapm", "apalache-mc"],
 };
-/** The commands that start a checker (`timeout 600 lake build`, `opam exec -- coqc A.v`). */
-const WRAPPERS = ["timeout", "opam"];
+/** The commands that start a checker (`timeout 600 lake build`, `opam exec -- coqc A.v`, `nice lake build`). */
+const WRAPPERS = ["timeout", "opam", "nice"];
 /**
  * A line in which a shell, make, env, cmd or PowerShell says it found no program by that name, or
  * java says it could not open the jar. The name is the first group that matched.

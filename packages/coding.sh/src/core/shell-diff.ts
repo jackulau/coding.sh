@@ -335,6 +335,16 @@ export function simpleCommands(command: string, o: { quotes?: boolean } = {}): S
   return out;
 }
 
+/** The shells whose `-c` option runs a script. */
+export const SHELLS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "dash"]);
+
+/** The script a shell command runs with `-c` (`bash -lc 'lake build'`); undefined for any other command. */
+export function shellScript(c: Pick<SimpleCommand, "cmd" | "args">): string | undefined {
+  if (!SHELLS.has(c.cmd)) return undefined;
+  const i = c.args.findIndex((a) => /^-\w*c$/.test(a));
+  return (i >= 0 && c.args[i + 1]) || undefined;
+}
+
 /** A command's operands: words that are not options, everything after `--`, skipping the value of each option in `skipValueOf`. */
 export function operandsOf(args: readonly string[], skipValueOf: readonly string[] = []): string[] {
   const ops: string[] = [];
