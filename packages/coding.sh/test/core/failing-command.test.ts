@@ -94,6 +94,10 @@ describe("launchedCommand", () => {
     assert.equal(launchedCommand('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -c "npm test"'), "npm test");
     assert.equal(launchedCommand("pwsh -NoLogo -Command Get-ChildItem"), "Get-ChildItem");
     for (const cmd of ["npm test -- -c x", "grep -c foo a.txt", "powershell.exe script.ps1 -Command x", "bash -c 'ls'"]) assert.equal(launchedCommand(cmd), cmd);
+    // The space after -Command can be a tab or a line break; -Command with only space after it launches nothing.
+    assert.equal(launchedCommand("pwsh -Command\tGet-ChildItem"), "Get-ChildItem");
+    assert.equal(launchedCommand("pwsh -NoProfile -Command\n  Get-ChildItem  "), "Get-ChildItem");
+    for (const cmd of ["pwsh -c", "pwsh -c    ", "powershell.exe -Command \t\n"]) assert.equal(launchedCommand(cmd), cmd);
     assert.deepEqual(shellParts("powershell.exe -Command .\\tool.exe run; git status").map((p) => p.prog), ["tool.exe", "git"]);
   });
 });
@@ -102,6 +106,11 @@ describe("failingPart", () => {
   it("files a cargo error under cargo, not the cat before it", () => {
     const out = "Exit code 101\n[package]\nname = \"demo\"\n   Compiling demo v0.1.0\nerror[E0425]: cannot find value `x` in this scope\n --> src/main.rs:2:5\nerror: could not compile `demo`";
     assert.equal(head("cat Cargo.toml && cargo build --release", out), "cargo build");
+  });
+
+  it("reads a cargo or Python error line after a CRLF or a lone CR", () => {
+    assert.equal(head("cargo build --release && npm test", "Exit code 101\r\n   Compiling demo v0.1.0\r\n --> src/main.rs:2:5\r\n"), "cargo build");
+    assert.equal(head("python3 a.py && npm test", "Exit code 1\nCollecting 50%\rCollecting 100%\r  File \"/work/demo/a.py\", line 3\n    x =\n"), "python3 a.py");
   });
 
   it("files a Python warning in a for loop under python", () => {
@@ -345,6 +354,8 @@ describe("lines where nothing ran, or where parts are hidden", () => {
     assert.equal(head("python3 - <<'EOF'\nprint(1)\nEOF", eof), undefined);
     const evalErr = "Exit code 127\n/usr/bin/bash: eval: line 1: syntax error near unexpected token `('";
     assert.equal(head("cd /work/demo; curl -s x; bash -c 'until curl -s x; do sleep 2; done'", evalErr), undefined);
+    // The message can follow other output, after a CRLF or a lone CR.
+    for (const br of ["\r\n", "\r"]) assert.equal(head("python3 x.py", `Exit code 2\nstarting${br}/usr/bin/bash: -c: line 3: syntax error near unexpected token \`('${br}`), undefined, JSON.stringify(br));
     // `bash: line 1: cd: x` still names cd.
     assert.equal(head("cd missing && bash run.sh", "Exit code 1\nbash: line 1: cd: missing: No such file or directory"), "cd missing");
     // A `bash x.sh` part whose own output failed is that part.

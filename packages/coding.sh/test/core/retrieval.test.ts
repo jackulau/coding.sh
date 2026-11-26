@@ -427,6 +427,9 @@ describe("Session.stats.retrieval", () => {
     // A search tool that reports "No files found" as a failure.
     assert.equal(empty(call("Glob", { pattern: "*.x" }, { ok: false, output: "No files found" })), 1);
     assert.equal(empty(bash("ls src", { output: "\n<shellId: 0 completed with exit code 0>" })), 1);
+    // The trailer comes off after a CRLF, before trailing space, or with no line break before it; a lookalike that does not end the text stays.
+    for (const output of ["\r\n<shellId: 0 completed with exit code 0>", "\n<shellId: 0 completed with exit code 0>\n  ", "<shellId: 0 completed with exit code 0>"]) assert.equal(empty(bash("ls src", { output })), 1, JSON.stringify(output));
+    for (const output of ["<shellId: 0 completed with exit code 0>>", "<shellId: 0\ncompleted with exit code 0>"]) assert.equal(empty(bash("ls src", { output })), 0, JSON.stringify(output));
     // grep's warnings on stderr are not output: a stray `\` in the pattern, egrep's notice that it is obsolescent.
     assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 1\ngrep: warning: stray \\ before -" })), 1);
     assert.equal(empty(bash("egrep -rn 'a|b' src", { ok: false, output: "Exit code 1\negrep: warning: egrep is obsolescent; using grep -E" })), 1);
