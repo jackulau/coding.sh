@@ -453,7 +453,7 @@ describe("proofChange", () => {
     // A.lean and B.lean take x out, then A.lean moves to C.lean, which comes after B.lean.
     const moved = [edit("A.lean", "-theorem x : p"), edit("B.lean", "-theorem x : p"), move("A.lean", "C.lean"), edit("D.lean", "+theorem x : p"), edit("E.lean", "+theorem x : p")];
     const events = [...changed, removed, ...moved];
-    assertCpuUnder("5,000 statements taken out after 1,000 proof files changed", () => changes(events));
+    assertCpuUnder("5,000 statements taken out after 1,000 proof files changed", () => changes(events), 100);
     const notes = changes(events);
     assert.equal(notes.length, 6006);
     assert.deepEqual(notes.slice(-6), ["A.lean x true", "B.lean x true", "B.lean x false", "D.lean x false", "C.lean x false", "E.lean x false"]);
