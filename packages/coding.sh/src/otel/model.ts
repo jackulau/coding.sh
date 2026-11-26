@@ -102,9 +102,12 @@ export function bytesToHex(b: Uint8Array): string {
   return s;
 }
 
-/** Hex id, or undefined for empty / all-zero ids (both mean "not set" in OTLP). */
-export function normId(hex: string | undefined): string | undefined {
-  if (!hex || /^0+$/.test(hex)) return undefined;
+/**
+ * A trace id (16 bytes) or span id (8 bytes) as lowercase hex. An id that is empty, all zero, or not hex
+ * of that many bytes is not set (undefined): OTLP calls such an id invalid.
+ */
+export function normId(hex: string | undefined, bytes: 8 | 16): string | undefined {
+  if (!hex || hex.length !== bytes * 2 || !/^[0-9a-fA-F]+$/.test(hex) || /^0+$/.test(hex)) return undefined;
   return hex.toLowerCase();
 }
 

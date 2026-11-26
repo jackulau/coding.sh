@@ -24,7 +24,7 @@ import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { createOtlpPipeline, rebuildSessions } from "./receiver.ts";
-import { type Attrs, type OtelSpan, type OtelValue, type ResourceSpans, SPAN_KIND, STATUS_CODE } from "./model.ts";
+import { type Attrs, normId, type OtelSpan, type OtelValue, type ResourceSpans, SPAN_KIND, STATUS_CODE } from "./model.ts";
 
 export type AttributeMode = "map" | "json";
 
@@ -212,11 +212,12 @@ export function rowToSpan(row: ClickHouseSpanRow, mode: AttributeMode = "map"): 
     name: typeof e.Name === "string" ? e.Name : "",
     attributes: attributesOf(e.Attributes, mode),
   }));
-  const links = nested(row, "Links", ["TraceId", "SpanId", "TraceState", "Attributes"]).map((l) => ({
-    ...(text(l.TraceId) ? { traceId: (l.TraceId as string).toLowerCase() } : {}),
-    ...(text(l.SpanId) ? { spanId: (l.SpanId as string).toLowerCase() } : {}),
-    attributes: attributesOf(l.Attributes, mode),
-  }));
+  // An id that is not hex of its length is not set, as in a span posted to the receiver (normId).
+  const links = nested(row, "Links", ["TraceId", "SpanId", "TraceState", "Attributes"]).map((l) => {
+    const traceId = normId(text(l.TraceId), 16);
+    const spanId = normId(text(l.SpanId), 8);
+    return { ...(traceId ? { traceId } : {}), ...(spanId ? { spanId } : {}), attributes: attributesOf(l.Attributes, mode) };
+  });
   const span: OtelSpan = {
     name: row.SpanName ?? "",
     kind: spanKindOf(row.SpanKind),
@@ -227,9 +228,12 @@ export function rowToSpan(row: ClickHouseSpanRow, mode: AttributeMode = "map"): 
     links,
     status: { code: statusCodeOf(row.StatusCode), ...(text(row.StatusMessage) ? { message: row.StatusMessage } : {}) },
   };
-  if (text(row.TraceId)) span.traceId = row.TraceId!.toLowerCase();
-  if (text(row.SpanId)) span.spanId = row.SpanId!.toLowerCase();
-  if (text(row.ParentSpanId)) span.parentSpanId = row.ParentSpanId!.toLowerCase();
+  const traceId = normId(text(row.TraceId), 16);
+  const spanId = normId(text(row.SpanId), 8);
+  const parentSpanId = normId(text(row.ParentSpanId), 8);
+  if (traceId) span.traceId = traceId;
+  if (spanId) span.spanId = spanId;
+  if (parentSpanId) span.parentSpanId = parentSpanId;
   if (text(row.TraceState)) span.traceState = row.TraceState;
   return span;
 }
