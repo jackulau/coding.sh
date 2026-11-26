@@ -20,6 +20,7 @@ import {
   type HasProof,
   type ProofLang,
   type ProofNote,
+  type ProofTarget,
 } from "../../src/core/proof.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import { assertCpuUnder } from "../helpers-timing.ts";
@@ -412,5 +413,34 @@ describe("proofEnd", () => {
     };
     assertCpuUnder("4,000 passing checks after 1,000 proof files are made", run);
     assert.deepEqual(run(), [[["Foo.lean", "t"]]]);
+  });
+});
+
+describe("proofChange", () => {
+  let n = 0;
+  const ev = (payload: Record<string, unknown>): AgentEvent => ({ id: `e${++n}`, v: 0, sessionId: "s", ts: 1000 + n, agent: "claude-code", kind: "file.change", payload });
+  const edit = (path: string, ...lines: string[]): [ProofTarget, AgentEvent] => [{ path, origin: "edit", prot: false }, ev({ path, op: "modify", tool: "Edit", toolUseId: `w${n + 1}`, diff: diff(path, ...lines) })];
+  const move = (path: string, to: string): [ProofTarget, AgentEvent] => [{ path, to, origin: "edit", prot: false }, ev({ path, op: "rename", movedTo: to, tool: "apply_patch", toolUseId: `w${n + 1}` })];
+  /** Each change the state notes, as its path, its key and whether it is tampering. */
+  const changes = (events: [ProofTarget, AgentEvent][]) => {
+    const h: HasProof = {};
+    const notes: string[] = [];
+    const note = (x: ProofNote) => {
+      if (x.kind === "change") notes.push(`${x.path} ${x.key} ${x.tampered}`);
+    };
+    for (const [t, e] of events) proofChange(h, e, t, note);
+    return notes;
+  };
+
+  it("follows 5,000 statements taken out of one file after 1,000 proof files changed in linear time, and matches a statement put back to the first file that took it out", () => {
+    const changed = Array.from({ length: 1000 }, (_, i) => edit(`P${i}.lean`, `-theorem c${i} : p`, `+theorem c${i} : q`));
+    const removed = edit("Big.lean", ...Array.from({ length: 5000 }, (_, j) => `-theorem t${j} : p`));
+    // A.lean and B.lean take x out, then A.lean moves to C.lean, which comes after B.lean.
+    const moved = [edit("A.lean", "-theorem x : p"), edit("B.lean", "-theorem x : p"), move("A.lean", "C.lean"), edit("D.lean", "+theorem x : p"), edit("E.lean", "+theorem x : p")];
+    const events = [...changed, removed, ...moved];
+    assertCpuUnder("5,000 statements taken out after 1,000 proof files changed", () => changes(events));
+    const notes = changes(events);
+    assert.equal(notes.length, 6006);
+    assert.deepEqual(notes.slice(-6), ["A.lean x true", "B.lean x true", "B.lean x false", "D.lean x false", "C.lean x false", "E.lean x false"]);
   });
 });

@@ -861,6 +861,7 @@ function fileOf(ps: ProofState, path: string): ProofFile {
     break;
   }
   files.set(path, (f = {}));
+  placeLast(ps, f, path);
   return f;
 }
 
@@ -873,6 +874,92 @@ const stateOf = (h: HasProof): ProofState => (h.proof ??= { log: [] });
 
 /** The file is still the one at its path: not moved over, deleted or dropped. */
 const held = (ps: ProofState, f: ProofFile) => f.path !== undefined && ps.files?.get(f.path) === f;
+
+/** A file queued by its place in `ProofState.files` when it was queued. */
+type Queued = [number, ProofFile];
+
+/**
+ * Kept beside a state, and made again from its files when the state is loaded: each held file's
+ * place in `files` and its path, and by "+" or "-" and a name, the files whose record of that
+ * statement a statement moved from another file can match. An entry whose file moved since it was
+ * queued goes back at the new place when it comes up; one whose file left `files` or no longer
+ * matches is dropped then.
+ */
+interface ProofIndex {
+  place: WeakMap<ProofFile, [number, string]>;
+  next: number;
+  loose: Map<string, Queued[]>;
+}
+const INDEXES = new WeakMap<ProofState, ProofIndex>();
+
+/** A record a statement moved from another file can match: "+" the agent added it, "-" the agent removed it. */
+const looseKind = (r: [string | null, string | null] | undefined) => (!r ? undefined : r[0] === null ? "+" : r[1] === null ? "-" : undefined);
+
+function push(heap: Queued[], q: Queued): void {
+  let i = heap.push(q) - 1;
+  while (i > 0) {
+    const up = (i - 1) >> 1;
+    const p = heap[up] as Queued;
+    if (p[0] <= q[0]) break;
+    heap[i] = p;
+    i = up;
+  }
+  heap[i] = q;
+}
+
+function pop(heap: Queued[]): void {
+  const last = heap.pop() as Queued;
+  let i = 0;
+  for (let c = 1; c < heap.length; c = 2 * i + 1) {
+    if (c + 1 < heap.length && (heap[c + 1] as Queued)[0] < (heap[c] as Queued)[0]) c++;
+    if ((heap[c] as Queued)[0] >= last[0]) break;
+    heap[i] = heap[c] as Queued;
+    i = c;
+  }
+  if (heap.length) heap[i] = last;
+}
+
+/** The index of the state, made from its files the first time it is asked for. */
+function indexOf(ps: ProofState): ProofIndex {
+  let ix = INDEXES.get(ps);
+  if (ix) return ix;
+  ix = { place: new WeakMap(), next: 0, loose: new Map() };
+  for (const [path, f] of ps.files ?? []) {
+    ix.place.set(f, [++ix.next, path]);
+    for (const [name, r] of f.stmts ?? []) {
+      const k = looseKind(r);
+      if (k) queue(ix, k + name, f);
+    }
+  }
+  INDEXES.set(ps, ix);
+  return ix;
+}
+
+/** The file just went last in `files`, at `path`. */
+function placeLast(ps: ProofState, f: ProofFile, path: string): void {
+  const ix = INDEXES.get(ps);
+  if (ix) ix.place.set(f, [++ix.next, path]);
+}
+
+function queue(ix: ProofIndex, key: string, f: ProofFile): void {
+  const p = ix.place.get(f);
+  if (!p) return;
+  let heap = ix.loose.get(key);
+  if (!heap) ix.loose.set(key, (heap = []));
+  push(heap, [p[0], f]);
+}
+
+/** The queued file that comes first in `files` and that `ok` takes. */
+function firstOf(ps: ProofState, ix: ProofIndex, heap: Queued[], ok: (f: ProofFile) => boolean): ProofFile | undefined {
+  for (let q = heap[0]; q; q = heap[0]) {
+    const p = ix.place.get(q[1]);
+    const live = p !== undefined && ps.files?.get(p[1]) === q[1] && ok(q[1]);
+    if (live && p[0] === q[0]) return q[1];
+    pop(heap);
+    if (live) push(heap, [p[0], q[1]]);
+  }
+  return undefined;
+}
 
 /** True the first time `seen` meets the key of the file. */
 function first(seen: Map<ProofFile, Set<string>>, f: ProofFile, key: string): boolean {
@@ -1100,6 +1187,7 @@ function moveFile(ps: ProofState, from: string, to: string, e: AgentEvent, note:
     ps.files?.delete(from);
     ps.files?.set(to, f);
     f.path = to;
+    placeLast(ps, f, to);
   }
   note?.({ kind: "move", from, to });
 }
@@ -1231,13 +1319,17 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
   return handled;
 }
 
-/** The record of a statement named `name` in another file, for a statement moved between files. */
-function elsewhere(ps: ProofState, path: string, name: string, test: (r: [string | null, string | null]) => boolean): [string, ProofFile, [string | null, string | null]] | undefined {
-  for (const [at, g] of ps.files ?? []) {
-    const r = at === path ? undefined : g.stmts?.get(name);
-    if (r && test(r)) return [at, g, r];
-  }
-  return undefined;
+/**
+ * The record of a statement named `name` in another file, for a statement moved between files: in
+ * the first file in `files` whose record of it is `kind`. The caller's file holds no record of it.
+ */
+function elsewhere(ps: ProofState, name: string, kind: "+" | "-"): [string, ProofFile, [string | null, string | null]] | undefined {
+  const ix = indexOf(ps);
+  const heap = ix.loose.get(kind + name);
+  const g = heap && firstOf(ps, ix, heap, (h) => looseKind(h.stmts?.get(name)) === kind);
+  if (heap && !heap.length) ix.loose.delete(kind + name);
+  const p = g && ix.place.get(g);
+  return g && p ? [p[1], g, g.stmts?.get(name) as [string | null, string | null]] : undefined;
 }
 
 /**
@@ -1250,9 +1342,13 @@ function elsewhere(ps: ProofState, path: string, name: string, test: (r: [string
 function readStatements(ps: ProofState, f: ProofFile, path: string, d: ProofDiff, mine: boolean, e: AgentEvent, id: string | undefined, note: Note): void {
   const key = (s: Stmt) => textKey(s.text);
   const set = (g: ProofFile, at: string, name: string, r: [string | null, string | null], shape: ProofShape) => {
+    const was = looseKind(g.stmts?.get(name));
     if (r[0] === null && r[1] === null) g.stmts?.delete(name);
     else (g.stmts ??= new Map()).set(name, r);
     if (g.stmts && !g.stmts.size) delete g.stmts;
+    const now = looseKind(g.stmts?.get(name));
+    const ix = INDEXES.get(ps);
+    if (ix && now && now !== was) queue(ix, now + name, g);
     touch(ps, g, at, name, shape, e, id, note);
   };
   if (!mine) {
@@ -1271,14 +1367,14 @@ function readStatements(ps: ProofState, f: ProofFile, path: string, d: ProofDiff
   }
   for (const b of d.removed) {
     const r = f.stmts?.get(b.name);
-    const there = r ? undefined : elsewhere(ps, path, b.name, ([was]) => was === null);
+    const there = r ? undefined : elsewhere(ps, b.name, "+");
     if (r) set(f, path, b.name, [r[0], null], "delete");
     else if (there) set(there[1], there[0], b.name, [key(b), there[2][1]], "unknown");
     else if (!f.added) set(f, path, b.name, [key(b), null], "delete");
   }
   for (const a of d.added) {
     const r = f.stmts?.get(a.name);
-    const there = r ? undefined : elsewhere(ps, path, a.name, ([was, now]) => was !== null && now === null);
+    const there = r ? undefined : elsewhere(ps, a.name, "-");
     if (r) set(f, path, a.name, [r[0], key(a)], "unknown");
     else if (there) {
       set(there[1], there[0], a.name, [null, null], "unknown");
