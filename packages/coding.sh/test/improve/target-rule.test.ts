@@ -11,7 +11,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
-import { rankIssues } from "../../src/improve/issues.ts";
+import { FLAG_TEXT, rankIssues, withRule } from "../../src/improve/issues.ts";
 import { findIssues, namedTestCommand, targetFile, testCommandOf } from "../../src/improve/report.ts";
 import { claimSession, sessionEvents } from "../helpers-decision.ts";
 
@@ -46,6 +46,29 @@ describe("improve: target file", () => {
     const root = tmp({ "AGENTS.md": "Keep answers short.\n" });
     assert.equal(targetFile(root, ["claude-code", "claude-code", "codex"]), "CLAUDE.md");
     assert.equal(targetFile(root, []), "AGENTS.md");
+  });
+});
+
+describe("improve: the test-tamper line", () => {
+  const { rule, was = [] } = FLAG_TEXT["test-tamper"]!;
+  const line = rule!(undefined);
+  const old = "Never skip, delete or weaken a test to make it pass.";
+
+  it("names proofs, escape hatches and --no-verify", () => {
+    assert.match(line, /theorem statement/);
+    assert.match(line, /escape hatch \(sorry, admit, an axiom\)/);
+    assert.match(line, /--no-verify/);
+  });
+
+  it("replaces the earlier wording in place, keeping its indent and line ending, so it is not there twice", () => {
+    const placed = withRule(`# Rules\n  ${old}\r\nKeep answers short.\n`, line, was);
+    assert.deepEqual(placed, { text: `# Rules\n  ${line}\r\nKeep answers short.\n`, present: false, replaced: old });
+    assert.deepEqual(withRule(placed.text, line, was), { text: placed.text, present: true });
+  });
+
+  it("adds the line after a blank line when no wording of it is there", () => {
+    assert.deepEqual(withRule("Keep answers short.", line, was), { text: `Keep answers short.\n\n${line}\n`, present: false });
+    assert.deepEqual(withRule("", line, was), { text: `${line}\n`, present: false });
   });
 });
 

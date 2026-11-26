@@ -99,7 +99,25 @@ interface FlagText {
   fix: string;
   /** The line to add; `testCmd` is the repo's test command, undefined when none is known. */
   rule?: (testCmd: string | undefined) => string;
+  /** Earlier wordings of the line: improve fix replaces one it finds instead of adding the line beside it. */
+  was?: readonly string[];
   behavior?: Behavior;
+}
+
+/**
+ * `text` with `rule` in it: unchanged when a line already says it, an earlier wording (`was`)
+ * replaced in place, or else the rule added at the end after a blank line.
+ */
+export function withRule(text: string, rule: string, was: readonly string[] = []): { text: string; present: boolean; replaced?: string } {
+  const lines = text.split("\n");
+  if (lines.some((l) => l.trim() === rule)) return { text, present: true };
+  const k = lines.findIndex((l) => was.includes(l.trim()));
+  if (k < 0) return { text: `${text}${text && !text.endsWith("\n") ? "\n" : ""}${text.trim() ? "\n" : ""}${rule}\n`, present: false };
+  const line = lines[k] as string;
+  const old = line.trim();
+  const at = line.indexOf(old);
+  lines[k] = line.slice(0, at) + rule + line.slice(at + old.length);
+  return { text: lines.join("\n"), present: false, replaced: old };
 }
 
 const RETRY_RULE = "When a command fails, read the error and change something before you run it again.";
@@ -124,7 +142,8 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   "test-tamper": {
     title: "Skips, deletes or weakens tests or proofs to get them passing",
     fix: "Forbid it in a protected line.",
-    rule: () => "Never skip, delete or weaken a test or a theorem statement to make it pass.",
+    rule: () => "Never skip, delete or weaken a test or a theorem statement to make it pass, and never add an escape hatch (sorry, admit, an axiom) or turn off a checker (--no-verify).",
+    was: ["Never skip, delete or weaken a test to make it pass."],
   },
   "duplicate-fetch": {
     title: "Reads the same file or page again with nothing changed",
