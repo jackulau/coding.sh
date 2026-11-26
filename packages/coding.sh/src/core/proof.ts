@@ -161,10 +161,22 @@ export function scanProof(text: string, sx: Syntax): { code: string; bare: strin
   return { code: code.join(""), bare: bare.join("") };
 }
 
+/**
+ * ssreflect's `//` tactic, which is not a Verilog `//` comment: a `//` followed by `;`, `]` or `=`
+ * and then a blank, a `.` or the line's end (`//;`, `//=.`, `//= admit.`), or by `.` and then a
+ * blank or the line's end (`//.`). A banner such as `//=====` and a comment such as `//...` stay
+ * comments.
+ */
+const SSR_SLASHES = /\/\/(?=[;\]=](?:[ \t\r.]|$)|\.(?:[ \t\r]|$))/gm;
+/** `text` with ssreflect's `//` blanked, so the rest of its line is read as Rocq. */
+const ssrBlanked = (text: string) => text.replace(SSR_SLASHES, "  ");
 /** Text read for Rocq sentences: `(* *)` comments, Verilog's `//` and `/*` comments, and strings blanked. */
-const rocqText = (text: string) => scanProof(scanProof(text, { line: "//", block: ["(*", "*)"], raw: true }).bare, { block: ["/*", "*/"], raw: true }).code;
-/** A Verilog line outside Rocq's `(* *)` comments and strings: code quoted in a Rocq comment is not one. */
-const verilogLine = (text: string) => VERILOG_LINE.test(text) && VERILOG_LINE.test(scanProof(text, SYNTAX.rocq).bare);
+const rocqText = (text: string) => scanProof(scanProof(ssrBlanked(text), { line: "//", block: ["(*", "*)"], raw: true }).bare, { block: ["/*", "*/"], raw: true }).code;
+/** A Verilog line outside Rocq's `(* *)` comments and strings: code quoted in a Rocq comment is not one, nor is ssreflect's `//`. */
+const verilogLine = (text: string) => {
+  const t = ssrBlanked(text);
+  return VERILOG_LINE.test(t) && VERILOG_LINE.test(scanProof(t, SYNTAX.rocq).bare);
+};
 
 /** A hatch word on its own: not part of a hyphenated word (`sorry-free`). */
 const word = (w: string) => new RegExp(`(?<![A-Za-z]-)\\b${w}\\b(?!-[A-Za-z])`, "g");

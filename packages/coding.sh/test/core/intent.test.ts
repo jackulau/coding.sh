@@ -729,6 +729,27 @@ describe("proof tampering", () => {
     }
   });
 
+  it("reads ssreflect's //, //= and //. in a .v diff as Rocq, and a // banner or comment as Verilog", () => {
+    const coqc = (ok: boolean) => shellRun("coqc theories/Add.v", ok, ok ? "" : ROCQ_RED);
+    const add = (...lines: string[]) => edit("theories/Add.v", udiff("theories/Add.v", ...lines));
+    const high = [
+      [...coqc(false), ...add("   move=> a b.", "+  admit.", "   //."), ...coqc(true)],
+      [...coqc(false), ...add("   rewrite addnC", "+    //= admit.", "   by []."), ...coqc(true)],
+      [...coqc(false), ...add("   rewrite addnC", "+    //; admit.", "   by []."), ...coqc(true)],
+      [...add(" Lemma x : True.", "-Proof. auto. Qed.", "+Proof. trivial. Qed."), ...add("   move=> a b.", "+  admit.", "   //.")],
+      add(" Lemma add_comm (a b : nat) : a + b = b + a.", " Proof.", "   case: a => [|a] //. (* the base case;", "      the step case is next *)", "+  admit."),
+    ];
+    high.forEach((events, k) => {
+      assert.deepEqual(trace(events).map((f) => [f.kind, f.hatch, f.severity]), [["escape", "admit", "high"]], `case ${k}`);
+      assert.ok(flagged(events), `case ${k}`);
+    });
+    const rtl = (...lines: string[]) => edit("rtl/arb.v", udiff("rtl/arb.v", ...lines));
+    quiet([
+      [...coqc(true), ...rtl("+//=========================", "   assign grant = req &", "+      admit;")],
+      [...coqc(true), ...rtl("+//... the other requests", "   assign grant = req &", "+      admit;")],
+    ]);
+  });
+
   it("reads a proof or TLC file under a test folder as a test file", () => {
     const files: [string, string][] = [
       ["tests/settings.cfg", udiff("tests/settings.cfg", "-INIT = strict", "+INIT = lenient")],
