@@ -299,9 +299,26 @@ export function shellWrites(command: string): ShellWrite[] {
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** git (and gh) commands that bring other commits' files into the working tree. */
-const VCS =
-  /(?:^|[\s;&|(])git(?:\s+(?:-C|-c)\s+\S+)*\s+(?:pull|merge|rebase|cherry-pick|revert|am|reset|switch|checkout|stash\s+(?:pop|apply)|worktree\s+add|submodule\s+update)\b|(?:^|[\s;&|(])gh\s+pr\s+(?:checkout|merge)\b/;
+/** gh commands that bring other commits' files into the working tree. */
+const VCS_GH = /(?:^|[\s;&|(])gh\s+pr\s+(?:checkout|merge)\b/;
+/** A git word and its `-C` and `-c` options. */
+const VCS_GIT = /(?:^|[\s;&|(])git(?:\s+(?:-C|-c)\s+\S+)*/g;
+/** git subcommands that bring other commits' files into the working tree, read right after a git word's options. */
+const VCS_SUB = /\s+(?:pull|merge|rebase|cherry-pick|revert|am|reset|switch|checkout|stash\s+(?:pop|apply)|worktree\s+add|submodule\s+update)\b/y;
+
+/**
+ * Whether a command runs git (or gh) to bring other commits' files into the working tree. Each git
+ * word's options are read once, so this takes time linear in the command.
+ */
+function importsCommits(command: string): boolean {
+  if (VCS_GH.test(command)) return true;
+  VCS_GIT.lastIndex = 0;
+  for (let m = VCS_GIT.exec(command); m; m = VCS_GIT.exec(command)) {
+    VCS_SUB.lastIndex = VCS_GIT.lastIndex;
+    if (VCS_SUB.test(command)) return true;
+  }
+  return false;
+}
 
 export type ShellDiffOrigin = "edit" | "named" | "vcs" | "unattributed";
 
@@ -320,7 +337,7 @@ export function commandOrigin(command: string, path: string, cwd?: string): Excl
     const p = normalizeTracePath(w.path, cwd);
     if (p === path || (/[*?]/.test(p) && globRe(p).test(path))) return "named";
   }
-  return VCS.test(stripHeredocs(command)) ? "vcs" : "unattributed";
+  return importsCommits(stripHeredocs(command)) ? "vcs" : "unattributed";
 }
 
 /** commandOrigin of a file.change, or "edit" when an edit tool (not a shell) made it. `start` is the call's tool.start. */

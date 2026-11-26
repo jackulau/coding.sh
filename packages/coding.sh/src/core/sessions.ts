@@ -1902,8 +1902,51 @@ const flagState = (): FlagState => ({
 
 /** Anthropic's tool-use markup opening a call on a line of its own: `<invoke name="Read">`, then a parameter or the close. */
 const TEXT_TOOL_CALL = /^[ \t]*<invoke name="[\w.:-]+">\s*(?:<parameter name="|<\/invoke>)/m;
-/** A fenced code block: markup inside one is quoted, not called. */
-const CODE_BLOCK = /^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1/gm;
+
+/** A line break as a regex's `m` flag reads one: `\n`, `\r`, U+2028 or U+2029. */
+const isLineBreak = (c: string | undefined): boolean => c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029";
+
+/**
+ * The text with its fenced code blocks taken out: markup inside one is quoted, not called. A block
+ * opens at a line that starts with ``` or ~~~ (after spaces or tabs), takes the rest of the text up
+ * to the next `\n`, and closes at the first line after that which starts with the same fence. Each
+ * line is read once, so this takes time linear in the text.
+ */
+function withoutCodeBlocks(text: string): string {
+  const n = text.length;
+  // Each line that starts with a fence: where the line starts, where its fence ends, and the fence.
+  const opens: [number, number, "```" | "~~~"][] = [];
+  const closes: Record<"```" | "~~~", [number, number][]> = { "```": [], "~~~": [] };
+  for (let i = 0; i <= n; ) {
+    let w = i;
+    while (w < n && (text[w] === " " || text[w] === "\t")) w++;
+    const fence = text.slice(w, w + 3);
+    if (fence === "```" || fence === "~~~") {
+      opens.push([i, w + 3, fence]);
+      closes[fence].push([i, w + 3]);
+    }
+    let j = i;
+    while (j < n && !isLineBreak(text[j])) j++;
+    if (j >= n) break;
+    i = j + 1;
+  }
+  const next = { "```": 0, "~~~": 0 };
+  let out = "";
+  let last = 0;
+  let nl = -1;
+  for (const [start, fenceEnd, fence] of opens) {
+    if (start < last) continue; // inside the block just taken out
+    if (nl < fenceEnd) nl = text.indexOf("\n", fenceEnd);
+    if (nl < 0) break;
+    const list = closes[fence];
+    let close = list[next[fence]];
+    while (close && close[0] <= nl) close = list[++next[fence]];
+    if (!close) continue;
+    out += text.slice(last, start);
+    last = close[1];
+  }
+  return out + text.slice(last);
+}
 
 /**
  * The model wrote a tool call out as text instead of calling the tool, so it
@@ -1913,7 +1956,7 @@ const CODE_BLOCK = /^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1/gm;
  * block or mid-line (prose about tool calls) does not count.
  */
 export function writesToolCallAsText(text: string): boolean {
-  return text.includes("<invoke name=") && TEXT_TOOL_CALL.test(text.replace(CODE_BLOCK, ""));
+  return text.includes("<invoke name=") && TEXT_TOOL_CALL.test(withoutCodeBlocks(text));
 }
 
 /** api-stall thresholds. Documented in docs/concepts.md; change both together. */
@@ -2211,12 +2254,12 @@ export const PRS_MAX = 20;
 export const PRS_ALL_MAX = 500;
 /** Output read per tool call for PR URLs and gh's merge and close lines. */
 const PR_SCAN_CHARS = 64 * 1024;
-/** A GitHub (or GitHub Enterprise) pull request's web URL. */
-const PR_URL = /https?:\/\/([\w.-]*github[\w.-]*)\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/gi;
+/** A GitHub (or GitHub Enterprise) pull request's web URL: a host with "github" in it. The host is read once, so the text is read in linear time. */
+const PR_URL = /https?:\/\/((?=[\w.-]*github)[\w.-]+)\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/gi;
 /** What gh prints after it merged or closed a PR: "Squashed and merged pull request owner/name#12 (title)". */
 const PR_DONE_LINE = /\b(merged|closed) pull request (?:([\w.-]+\/[\w.-]+))?#(\d+)/gi;
 /** A remote a push names: "To https://github.com/owner/name.git", "To git@github.com:owner/name.git". */ // slop-allow personal-data: an SSH remote's form, not an email
-const PUSH_REMOTE = /^To (?:https?:\/\/(?:[^@\s/]+@)?|ssh:\/\/[^@\s/]+@|[^@\s/]+@)([\w.-]*github[\w.-]*)[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?\s*$/m;
+const PUSH_REMOTE = /^To (?:https?:\/\/(?:[^@\s/]+@)?|ssh:\/\/[^@\s/]+@|[^@\s/]+@)((?=[\w.-]*github)[\w.-]+)[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?\s*$/m;
 /** gh pr verbs that name a PR without changing its state. */
 const PR_LINK_VERBS = new Set(["view", "checks", "ready", "edit", "comment", "review", "diff", "checkout"]);
 /** gh pr flags that take a value, so the value is not read as the PR. */
@@ -2286,7 +2329,8 @@ const isGit = (w: string): boolean => /(?:^|[/\\])git(?:\.exe)?$/.test(w);
 
 /** The `gh pr` verbs and `git push` of a shell command. */
 function prCallOfCommand(cmd: string): PrCall | undefined {
-  if (!/\bgh(?:\.exe)?\s+pr\b|\bgit\b[^\n;&|]*\bpush\b/.test(cmd)) return undefined;
+  // A git word reaches only to the next git word, so the command is read in linear time.
+  if (!/\bgh(?:\.exe)?\s+pr\b|\bgit\b(?:(?!\bgit\b)[^\n;&|])*\bpush\b/.test(cmd)) return undefined;
   const call: PrCall = { gh: [] };
   for (const seg of cmd.split(/&&|\|\||[;|\n]/)) {
     const w = shellWords(seg);

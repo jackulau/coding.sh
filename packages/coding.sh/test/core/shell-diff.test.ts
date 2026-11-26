@@ -111,6 +111,9 @@ describe("shellCommand and shellDiffOrigin read every shell tool", () => {
     assert.deepEqual(origin("sed -i 's/a/b/' tests/a.py", "tests/a.py"), all("named"));
     assert.deepEqual(origin("git -C /w reset --hard", "tests/a.py"), all("vcs"));
     assert.deepEqual(origin("npm test", "tests/a.py"), all("unattributed"));
+    // git's -C and -c options come before the subcommand; an option's value is not one.
+    for (const cmd of ["git -c x=y pull", "git status; git pull --rebase", "git -C repo -c a=b merge main", "git -C a -C b stash pop", "gh pr checkout 3"]) assert.deepEqual(origin(cmd, "tests/a.py"), all("vcs"), cmd);
+    for (const cmd of ["git status", "git log -5", "git -C pull status", "git -c pull"]) assert.deepEqual(origin(cmd, "tests/a.py"), all("unattributed"), cmd);
     // A Codex code-mode cell is an `exec` call whose input is JavaScript: not a shell.
     assert.equal(shellDiffOrigin(ev("file.change", { path: "tests/a.py", tool: "exec", toolUseId: "x" }), ev("tool.start", { tool: "exec", toolUseId: "x", input: "await tools.exec_command({cmd: 'ls'})" })), "edit");
   });
