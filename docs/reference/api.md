@@ -280,8 +280,12 @@ holds no turn, tool call or model call.
 
 Token counts come from usage attributes such as `gen_ai.usage.input_tokens`, as numbers or as
 numeric text. A count that is not a whole number from 0 to 2^53 - 1 is read as not sent: one
-below 0, a fraction, or one too large to read exactly, such as 9007199254740993. It is left out
-of the call's usage and adds nothing to a cost estimate.
+below 0, a fraction, or one too large to read exactly, such as 9007199254740993.
+
+Such a count is left out of the call's usage, and the next attribute for that count is read
+instead. The uncached input is worked out without it: a cache read that is not sent is not taken
+from the input total. A call is read once, as it arrives, so one that an older coding.sh stored
+keeps the counts it worked out.
 
 A model call's time to first token (`ttftMs`) comes from the first of these on its span:
 
@@ -714,6 +718,11 @@ a model switch's `extraUsd` and the context size the `no-progress` derail reads.
 When a call's input, cache read or cache write count is skipped, its size can be too low, so the
 derail does not measure the context's growth from that call, and that call does not lower the size
 the context reached.
+
+An adapter reads a token count that is not a whole number from 0 to 2^53 - 1 as missing before it
+works out another count, such as the uncached input. A sum skips it and keeps the rest. The proxy
+and OTLP do the same when a call arrives and never read a stored call again, so one an older
+coding.sh stored keeps the counts it worked out.
 
 **Agent and host.**
 
