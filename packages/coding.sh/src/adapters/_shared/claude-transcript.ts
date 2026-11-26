@@ -188,7 +188,14 @@ function isForkCall(e: unknown, toolUseId: string): e is Record<string, unknown>
   return isObj(e) && e.type === "assistant" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_use" && b.id === toolUseId);
 }
 
-const tag = (text: string, name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() || undefined;
+/** The text between the first `<name>` and the `</name>` after it, trimmed. Each is found with one search, so the text is read in linear time. */
+function tag(text: string, name: string): string | undefined {
+  const open = text.indexOf(`<${name}>`);
+  if (open < 0) return undefined;
+  const start = open + name.length + 2;
+  const close = text.indexOf(`</${name}>`, start);
+  return close < 0 ? undefined : text.slice(start, close).trim() || undefined;
+}
 
 interface PendingCommand {
   ts: number;

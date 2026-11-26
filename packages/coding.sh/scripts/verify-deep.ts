@@ -34,7 +34,7 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 27 minutes.
+ * 33 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
@@ -65,6 +65,13 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "adapter-transcript-json-1": { bound: 1 },
   // As adapter-transcript-json-1, over its own homes: 3,075 cuts and 869 closed cuts over 11 files.
   "adapter-transcript-json-2": { bound: 1 },
+  // At bound 2, the first two changes of each name (_values.ts): 8,964 changes in 506 records of 24 files.
+  // About 1 minute.
+  "adapter-values-1": { bound: 2 },
+  // As adapter-values-1, over its own homes: 8,152 changes in 144 records of 8 files. About 1.5 minutes.
+  "adapter-values-2": { bound: 2 },
+  // As adapter-values-1, over its own homes: 13,254 changes in 164 records of 25 files. About 35 seconds.
+  "adapter-values-3": { bound: 2 },
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
   // about 9.
   "capture-code": { runs: 200 },
@@ -76,7 +83,16 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   cut: { runs: 10000 },
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
+  // 1000 seeded cases for each of its two properties, then the fixed cases.
+  "hook-entry": { runs: 1000 },
   "hook-imports": {},
+  // At bound 2, every payload cut to its first k bytes for every k, and with each of its bytes deleted in
+  // turn: 49,071 calls. About 50 seconds.
+  "hook-truncate-1": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 49,871 calls. About 50 seconds.
+  "hook-truncate-2": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 51,525 calls. About 35 seconds.
+  "hook-truncate-3": { bound: 2 },
   // At bound 1, the fresh fragment at every cut on the day after the file's, and the other cases at five
   // cuts and at three seeded (cut, day) pairs per fixture: 4,929 fresh fragments and 40 cases.
   "ingest-torn-1": { bound: 1 },

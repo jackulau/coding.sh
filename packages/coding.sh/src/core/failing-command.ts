@@ -81,10 +81,13 @@ const SILENT_ON_1 = new Set(["grep", "egrep", "fgrep", "rg", "diff", "cmp"]);
 /** Self-naming tools that print nothing when they work. */
 const QUIET = new Set(["cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown", "ln"]);
 
-/** Error signatures and the programs that print them. */
+/**
+ * Error signatures and the programs that print them. Space at the start of a line stops at any line
+ * break (`\n`, `\r`, U+2028, U+2029), so the output is read in linear time.
+ */
 const SIGNATURES: readonly [RegExp, RegExp][] = [
-  [/^error(?:\[E\d{4}\])?: |^\s*--> \S+\.rs:\d+|could not compile `|^warning: unused /m, /^(?:cargo|rustc|cargo-\w+|rustup)$/],
-  [/Traceback \(most recent call last\)|^\s*File "[^"\n]+", line \d+|\.py:\d+: \w*(?:Warning|Error)\b|^ModuleNotFoundError: /m, /^(?:python[\d.]*|pytest|py\.test|uv|uvx|poetry|pip[\d.]*|pipenv|tox|nox|mypy|ruff|black|isort|flake8|pylint|django-admin|manage\.py)$/],
+  [/^error(?:\[E\d{4}\])?: |^[^\S\n\r\u2028\u2029]*--> \S+\.rs:\d+|could not compile `|^warning: unused /m, /^(?:cargo|rustc|cargo-\w+|rustup)$/],
+  [/Traceback \(most recent call last\)|^[^\S\n\r\u2028\u2029]*File "[^"\n]+", line \d+|\.py:\d+: \w*(?:Warning|Error)\b|^ModuleNotFoundError: /m, /^(?:python[\d.]*|pytest|py\.test|uv|uvx|poetry|pip[\d.]*|pipenv|tox|nox|mypy|ruff|black|isort|flake8|pylint|django-admin|manage\.py)$/],
   [/^npm (?:ERR!|error) /m, /^npm$/],
   [/ERR_PNPM_/, /^pnpm$/],
   [/^error Command failed with exit code|^error An unexpected error occurred/m, /^yarn$/],
@@ -293,7 +296,8 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
 
 /** A PowerShell launcher: `powershell.exe`, `pwsh`, by path or not, quoted or not. */
 const PS_LAUNCHER = /^(?:powershell|pwsh)(?:\.exe)?$/i;
-const PS_LAUNCH = /^\s*("[^"]+"|'[^']+'|\S+)\s+((?:\S+\s+)*?)-c(?:ommand)?\s+([\s\S]*\S)\s*$/i;
+/** The program, its flags, `-c` or `-Command`, and the command. The command starts at a non-space character, so a line is read in linear time. */
+const PS_LAUNCH = /^\s*("[^"]+"|'[^']+'|\S+)\s+((?:\S+\s+)*?)-c(?:ommand)?\s+(?=\S)([\s\S]*\S)\s*$/i;
 
 /**
  * The command a PowerShell launcher runs: `powershell.exe -NoProfile -Command <cmd>` → `<cmd>`.
@@ -582,8 +586,8 @@ function namedAt(prog: string, output: string, ps = false): number {
 
 /** POSIX shells: their own messages (`bash: -c: line 3: …`) speak for the line that ran, not for a part. */
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
-/** The shell could not parse the line, so no part of it ran. */
-const PARSE_ERROR = /^[^\S\n]*(?:[\w.~-]*\/)*(?:ba|z|da|k)?sh: (?:-c: |eval: )?line \d+: (?:unexpected EOF while looking for matching|syntax error)/m;
+/** The shell could not parse the line, so no part of it ran. Space before the message stops at any line break, so the output is read in linear time. */
+const PARSE_ERROR = /^[^\S\n\r\u2028\u2029]*(?:[\w.~-]*\/)*(?:ba|z|da|k)?sh: (?:-c: |eval: )?line \d+: (?:unexpected EOF while looking for matching|syntax error)/m;
 /** The command was refused before it ran: a removal check's denial. */
 const REMOVAL_DENIED = /removal safety check denied this command/i;
 /** Programs that remove files: what a removal check refuses. */

@@ -93,7 +93,9 @@ Status values: `open`, `fixing`, `fixed` (regression test added), `deferred` (re
 
 ## Capture pipeline
 
-Scope: the hook entry (`src/spool/{hook,host,kick,write,devin}.ts`, its POSIX sh fast path `src/spool/hook.sh`, and `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`), the readers that ingest (`src/cli/common.ts`, `src/cli/ingest-worker.ts`, `src/mcp/server.ts`) and the ingest command (`src/cli/commands/ingest.ts`). Refs name the file and the function, not a line. M1 to M7 describe the code as of 2026-11-23. The lock model (`test/verify/lock-model.test.ts`) checks the design of M3: it copies the steps of `core/lock.ts` and runs none of its code, which `test/core/lock.test.ts` runs in racing processes. The capture model (`test/verify/capture-model.test.ts`, with `capture-code.test.ts` against the real code) checks the cursors (M4) and the wake-up (M5). The repro output under "Reached invalid states" is from the 2026-11-06 tree.
+Scope: the hook entry (`src/spool/{hook,hook-run,host,kick,write,devin}.ts`, its POSIX sh fast path `src/spool/hook.sh`, and `src/cli/hookbin.ts`), spool reading (`src/core/spool-read.ts`), ingest (`src/core/{ingest,lock,context}.ts`), spool gc (`src/core/gc.ts`), the readers that ingest (`src/cli/common.ts`, `src/cli/ingest-worker.ts`, `src/mcp/server.ts`) and the ingest command (`src/cli/commands/ingest.ts`). Refs name the file and the function, not a line. M1 to M7 describe the code as of 2026-11-23.
+
+The lock model (`test/verify/lock-model.test.ts`) checks the design of M3: it copies the steps of `core/lock.ts` and runs none of its code, which `test/core/lock.test.ts` runs in racing processes. The capture model (`test/verify/capture-model.test.ts`, with `capture-code.test.ts` against the real code) checks the cursors (M4) and the wake-up (M5). The repro output under "Reached invalid states" is from the 2026-11-06 tree.
 
 ### M1. Hook process (one process per agent hook call)
 
@@ -103,19 +105,19 @@ Invariants: the hook exits 0. Stdout carries only the `--echo-continue`/`--reply
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
-| Start | fd 0 is a character device (a TTY, `/dev/null`) or closed | StdinRead (empty) | – | `hook.ts` `readStdin` |
-| Start | read until EOF, or 10 s of EAGAIN with no data | StdinRead | capped at 64 MB, then drained | `hook.ts` `readStdin` |
-| StdinRead | `CODING_SH_DISABLE=1` | Disabled: no line; the payload's session id is appended to `spool/disabled-sessions` | – | `hook.ts` `main`, `write.ts` `recordDisabledSession` |
-| Disabled | – | Replied, with no ingest kick | – | `hook.ts` `main` |
-| StdinRead | a `claude-code` call with `DEVIN_PROJECT_DIR` set, for an event a coding.sh hook for Devin writes too | Dropped: no line, no ingest kick | – | `hook.ts` `main`, `devin.ts` `devinHookAgent` |
-| StdinRead | ≤1023 bytes and not truncated | Parsed (JSON, or the plain string) | – | `hook.ts` `main` |
-| StdinRead | over 1023 bytes, or truncated | too big: not parsed (ingest parses the side file) | – | `hook.ts` `main` |
-| Parsed / too big | `gate.ts` finds text a redaction rule may replace | redacted with the user's rules first; a failed import of the rules throws | – | `hook.ts` `lineRedactor` |
-| Parsed / too big | the serialized line is >1023 bytes (1024 with its newline) | Spilled: the payload written `wx` to `<agent>/raw/<ts>-<pid>-<rand>.json`, named in `rawFile` | – | `write.ts` `appendSpool` |
-| Parsed / Spilled | O_APPEND write, on a fresh line when the file ends in a torn fragment | Appended | – | `write.ts` `append` |
-| Spilled | the append throws | the side file removed, the error thrown on | – | `write.ts` `appendSpool` |
-| any | throw | errors.log | – | `hook.ts` `main`, `write.ts` `logSpoolError` |
-| Appended | END_EVENT matches, after the reply | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | `hook.ts` `main`, `kick.ts` `kickIngest` |
+| Start | fd 0 is a character device (a TTY, `/dev/null`) or closed | StdinRead (empty) | none | `hook-run.ts` `readStdin` |
+| Start | read until EOF, or 10 s of EAGAIN with no data | StdinRead | capped at 64 MB, then drained | `hook-run.ts` `readStdin` |
+| StdinRead | `CODING_SH_DISABLE=1` | Disabled: no line; the payload's session id is appended to `spool/disabled-sessions` | none | `hook-run.ts` `runHook`, `write.ts` `recordDisabledSession` |
+| Disabled | none | Replied, with no ingest kick | none | `hook-run.ts` `runHook` |
+| StdinRead | a `claude-code` call with `DEVIN_PROJECT_DIR` set, for an event a coding.sh hook for Devin writes too | Dropped: no line, no ingest kick | none | `hook-run.ts` `runHook`, `devin.ts` `devinHookAgent` |
+| StdinRead | ≤1023 bytes and not truncated | Parsed (JSON, or the plain string) | none | `hook-run.ts` `runHook` |
+| StdinRead | over 1023 bytes, or truncated | too big: not parsed (ingest parses the side file) | none | `hook-run.ts` `runHook` |
+| Parsed / too big | `gate.ts` finds text a redaction rule may replace | redacted with the user's rules first; a failed import of the rules throws | none | `hook-run.ts` `lineRedactor` |
+| Parsed / too big | from too big always, however short redaction makes the payload; from Parsed when the serialized line is >1023 bytes (1024 with its newline) | Spilled: the payload written `wx` to `<agent>/raw/<ts>-<pid>-<rand>.json`, named in `rawFile` | none | `write.ts` `appendSpool` |
+| Parsed / Spilled | O_APPEND write, on a fresh line when the file ends in a torn fragment | Appended | none | `write.ts` `append` |
+| Spilled | the append throws | the side file removed, the error thrown on | none | `write.ts` `appendSpool` |
+| any | throw | errors.log | none | `hook-run.ts` `runHook`, `write.ts` `logSpoolError` |
+| Appended | END_EVENT matches, after the reply | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | `hook-run.ts` `runHook`, `kick.ts` `kickIngest` |
 
 ### M2. Spool file lifecycle (per `source = <agent>/<day>.jsonl`, `<day>.<n>.jsonl`, `<day>.p<pid>.jsonl`, or a legacy `<day>.<pid>.jsonl`)
 

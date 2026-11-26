@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { decodeLogsJson, decodeTraceJson, jsonAnyValue, jsonId } from "../../src/otel/json.ts";
-import { OtlpDecodeError } from "../../src/otel/model.ts";
+import { int64Value, OtlpDecodeError } from "../../src/otel/model.ts";
 import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStatus, ProtoReader, ProtoWriter } from "../../src/otel/proto.ts";
+import { forAll, gen } from "../_prop.ts";
 import { encodeLogs, encodeTraces, fixture } from "./_encode.ts";
 
 const TRACE_FIXTURES = ["genai-semconv.json", "openinference.json", "vercel-ai.json", "claude-code-traces.json"];
@@ -158,6 +159,65 @@ describe("OTLP/JSON quirks", () => {
     assert.deepEqual(jsonAnyValue({ arrayValue: { values: [{ intValue: "9007199254740993" }, { boolValue: false }, {}] } }), ["9007199254740993", false, null]);
     assert.deepEqual(jsonAnyValue({ kvlistValue: { values: [{ key: "a", value: { stringValue: "b" } }] } }), { a: "b" });
     assert.deepEqual(jsonAnyValue({ arrayValue: {} }), []);
+  });
+
+  it("reads an int64 as a number when it is a safe integer, else as its decimal text", () => {
+    const int = (v: unknown) => jsonAnyValue({ intValue: v });
+    assert.equal(int("9007199254740991"), 9007199254740991);
+    assert.equal(int("-9007199254740991"), -9007199254740991);
+    assert.equal(int("9007199254740992"), "9007199254740992");
+    assert.equal(int("-9223372036854775808"), "-9223372036854775808");
+    assert.equal(int(" -000042 "), -42);
+    assert.equal(int("-0"), 0);
+    assert.equal(int("000"), 0);
+    assert.equal(int("00009007199254740993"), "9007199254740993");
+    assert.equal(int("-0000012345678901234567"), "-12345678901234567");
+    // JSON can carry an integer past int64; it is kept as its text too.
+    assert.equal(int("00018446744073709551616"), "18446744073709551616");
+    for (const bad of ["", " ", "-", "+1", "1.5", "1e3", "0x10", "--1", "1 2", "- 1"]) assert.equal(int(bad), null, JSON.stringify(bad));
+    for (const bad of [null, true, {}, [], NaN, Infinity]) assert.equal(int(bad), null);
+    assert.equal(int(1.9), 1);
+    assert.equal(int(-1.9), -1);
+  });
+
+  it("reads int64 text as a BigInt of the whole text gives it, for any digits, sign, zeros and spaces", async () => {
+    const viaBigInt = (v: string): number | string | null => (/^-?\d+$/.test(v.trim()) ? int64Value(BigInt(v.trim())) : null);
+    const text = gen.map(
+      gen.tuple<[string, string, string, string, string, string]>(
+        gen.pick(["", " ", "  "]),
+        gen.pick(["", "-", "+", "--"]),
+        gen.pick(["", "0", "00", "0000"]),
+        gen.string({ alphabet: "0123456789", maxLength: 42, avgLength: 16 }),
+        gen.pick(["", "", "x", ".5", "e3", " 1", "-"]),
+        gen.pick(["", " "]),
+      ),
+      (parts) => parts.join(""),
+    );
+    await forAll(text, (v) => assert.deepEqual(jsonAnyValue({ intValue: v }), viaBigInt(v)), { runs: 3000, label: "int64 text" });
+    // The edges of the safe range, of 16 digits and of int64, with and without leading zeros.
+    for (const e of [0n, 1n, 2n ** 53n - 1n, 2n ** 53n, 2n ** 53n + 1n, 10n ** 16n - 1n, 10n ** 16n, 2n ** 63n - 1n, 2n ** 63n, 2n ** 64n]) {
+      for (const v of ["", "-"].flatMap((sign) => ["", "0", "000"].map((zeros) => `${sign}${zeros}${e}`))) assert.deepEqual(jsonAnyValue({ intValue: v }), viaBigInt(v), v);
+    }
+  });
+
+  it("reads an int64 from JSON text as from protobuf", async () => {
+    const fromProto = (x: bigint) => {
+      const span = new ProtoWriter().message(9, (k) => k.string(1, "n").message(2, (v) => v.uint(3, x))).finish();
+      const req = new ProtoWriter().message(1, (rs) => rs.message(2, (ss) => ss.bytes(2, span))).finish();
+      return decodeTraceRequest(req)[0]!.scopeSpans[0]!.spans[0]!.attributes.n;
+    };
+    // 64 random bits, shifted right by 0 to 64 so every size of value comes up, then given a sign.
+    const value = gen.map(gen.tuple<[number, number, number, boolean]>(gen.int(0, 0xffff_ffff), gen.int(0, 0xffff_ffff), gen.int(0, 64), gen.bool), ([hi, lo, shift, negative]) => {
+      const magnitude = ((BigInt(hi) << 32n) | BigInt(lo)) >> BigInt(shift);
+      return BigInt.asIntN(64, negative ? -magnitude : magnitude);
+    });
+    const cases = gen.tuple<[bigint, string, string, string]>(value, gen.pick(["", "0", "000"]), gen.pick(["", " "]), gen.pick(["", " "]));
+    await forAll(cases, ([x, zeros, before, after]) => {
+      const want = fromProto(x);
+      const abs = x < 0n ? -x : x;
+      assert.equal(jsonAnyValue({ intValue: `${before}${x < 0n ? "-" : ""}${zeros}${abs}${after}` }), want);
+      if (abs <= BigInt(Number.MAX_SAFE_INTEGER)) assert.equal(jsonAnyValue({ intValue: Number(x) }), want);
+    }, { runs: 2000, label: "int64 from JSON and protobuf" });
   });
 
   it("reads a stringValue that holds an object or array as no value, and a number or boolean as its text", () => {

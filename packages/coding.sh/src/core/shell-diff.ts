@@ -302,9 +302,9 @@ export function simpleCommands(command: string, o: { quotes?: boolean } = {}): S
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
   let cd: ((to: string) => string) | undefined;
-  // `(?<!\d)` starts a `2>&1` at its first digit only, so a long run of digits is read once; the
-  // second branch is the `>&1` right after an earlier match that ended in a digit.
-  const text = stripHeredocs(command).replace(/(?<!\d)\d*>&\d+|>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
+  // A redirection to a descriptor (`2>&1`, `>&2`) and a heredoc's marker become a space. The
+  // descriptor before `>&` is read from its first digit, `(?<!\d)`, so the time is linear.
+  const text = stripHeredocs(command).replace(/(?<!\d)\d+>&\d+|>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   // Odd entries are the operators between the segments.
   const parts = o.quotes ? splitQuoted(text) : text.split(/(&&|\|\||[;|&\n])/);
   for (let n = 0; n < parts.length; n += 2) {
@@ -414,9 +414,26 @@ export function shellWrites(command: string): ShellWrite[] {
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** git (and gh) commands that bring other commits' files into the working tree. */
-const VCS =
-  /(?:^|[\s;&|(])git(?:\s+(?:-C|-c)\s+\S+)*\s+(?:pull|merge|rebase|cherry-pick|revert|am|reset|switch|checkout|stash\s+(?:pop|apply)|worktree\s+add|submodule\s+update)\b|(?:^|[\s;&|(])gh\s+pr\s+(?:checkout|merge)\b/;
+/** gh commands that bring other commits' files into the working tree. */
+const VCS_GH = /(?:^|[\s;&|(])gh\s+pr\s+(?:checkout|merge)\b/;
+/** A git word and its `-C` and `-c` options. */
+const VCS_GIT = /(?:^|[\s;&|(])git(?:\s+(?:-C|-c)\s+\S+)*/g;
+/** git subcommands that bring other commits' files into the working tree, read right after a git word's options. */
+const VCS_SUB = /\s+(?:pull|merge|rebase|cherry-pick|revert|am|reset|switch|checkout|stash\s+(?:pop|apply)|worktree\s+add|submodule\s+update)\b/y;
+
+/**
+ * Whether a command runs git (or gh) to bring other commits' files into the working tree. Each git
+ * word's options are read once, so this takes time linear in the command.
+ */
+function importsCommits(command: string): boolean {
+  if (VCS_GH.test(command)) return true;
+  VCS_GIT.lastIndex = 0;
+  for (let m = VCS_GIT.exec(command); m; m = VCS_GIT.exec(command)) {
+    VCS_SUB.lastIndex = VCS_GIT.lastIndex;
+    if (VCS_SUB.test(command)) return true;
+  }
+  return false;
+}
 
 export type ShellDiffOrigin = "edit" | "named" | "vcs" | "unattributed";
 
@@ -435,7 +452,7 @@ export function commandOrigin(command: string, path: string, cwd?: string): Excl
     const p = normalizeTracePath(w.path, cwd);
     if (p === path || (/[*?]/.test(p) && globRe(p).test(path))) return "named";
   }
-  return VCS.test(stripHeredocs(command)) ? "vcs" : "unattributed";
+  return importsCommits(stripHeredocs(command)) ? "vcs" : "unattributed";
 }
 
 /** commandOrigin of a file.change, or "edit" when an edit tool (not a shell) made it. `start` is the call's tool.start. */

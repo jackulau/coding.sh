@@ -50,7 +50,8 @@ SessionEnd.
   extra JSON key, because Claude Code may reject unknown keys in hook entries.
 - The hook at `~/.coding.sh/bin/hook.mjs` is a pinned copy. It is updated only by
   `npm run dogfood:install-hook`, which runs the hook tests first. A fix agent that breaks
-  `src/spool/hook.ts` in a worktree cannot break capture of its own session.
+  `src/spool/hook.ts` or `src/spool/hook-run.ts` in a worktree cannot break capture of its own
+  session.
 - Reverse with `coding.sh uninstall --scope project`, or, before the CLI exists, with
   `node scripts/dogfood/hooks.mjs remove`. Both delete only the matching entries and leave the rest
   of `.claude/settings.json` (for example `workflows/`) unchanged.

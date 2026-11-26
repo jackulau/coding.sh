@@ -107,7 +107,7 @@ itself. Each call is a fresh process in a throwaway cwd (`Deno.makeTempDir({pref
 Linking to the RLM tree: nothing shared. No session id crosses the boundary. Two weak keys exist: the
 temp cwd prefix (`fast_rlm_cli_*`, `fast_rlm_acp_*`) and the time window (a child session's span falls
 inside one step's `timestamps.llm_call_start..llm_call_end`). Env is inherited, so launching fast-rlm
-with `CODING_SH_RUN_ID` (the hook records it, `src/spool/hook.ts`) or a `TRACEPARENT` (see
+with `CODING_SH_RUN_ID` (the hook records it, `src/spool/hook-run.ts`) or a `TRACEPARENT` (see
 `adapters/_shared/traceparent.ts`) tags every child with the run, but not with the step. Step-level
 linking needs the time window.
 

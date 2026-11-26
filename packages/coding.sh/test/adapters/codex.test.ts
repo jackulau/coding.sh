@@ -166,6 +166,22 @@ describe("codex backfill (rollouts)", () => {
     }
   });
 
+  it("a subagent thread whose session record has no id keeps the thread id from its file name", async () => {
+    const name = `rollout-2026-11-01T10-00-07-${SUB}.jsonl`;
+    const fixture = join(FIXTURES, "codex", "home", "sessions", "2026", "11", "01", name);
+    const text = readFileSync(fixture, "utf8");
+    const key = `"id": "${SUB}", `;
+    assert.equal(text.split(key).length, 2, "one record names the thread");
+    assert.ok(text.includes(`"session_id": "${SID}"`), "its session_id is the root thread's id");
+    const file = join(rolloutDir("csh-codex-noid-"), name);
+    writeFileSync(file, text.split(key).join(""));
+    const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+    const start = events.find((e) => e.kind === "session.start")!;
+    assert.deepEqual([start.sessionId, start.payload.parentSessionId], [SUB, SID]);
+    const whole = await convertRollout(testCtx().ctx, fixture, { mode: "full" });
+    assert.deepEqual(events.map((e) => [e.id, e.sessionId]), whole.map((e) => [e.id, e.sessionId]), "the same events as with the id");
+  });
+
   it("shares natural keys with live hook events (dedupe)", async () => {
     const backfilled = new Set((await collect(codex.backfill!(testCtx().ctx))).map((e) => e.id));
     const live = await normalizeAll();
