@@ -104,8 +104,8 @@ export async function* readJsonl(path: string): AsyncGenerator<JsonlRecord> {
   }
 }
 
-/** The first `maxBytes` of a file as text (the last line may be cut short); unreadable → undefined. */
-export async function readHeadText(path: string, maxBytes: number): Promise<string | undefined> {
+/** The first `maxBytes` of a file as text, and whether the file goes on past them (then its last line may be cut short); unreadable → undefined. */
+export async function readHead(path: string, maxBytes: number): Promise<{ text: string; more: boolean } | undefined> {
   let fh;
   try {
     fh = await open(path, "r");
@@ -113,14 +113,20 @@ export async function readHeadText(path: string, maxBytes: number): Promise<stri
     return undefined;
   }
   try {
-    const buf = Buffer.alloc(Math.min(maxBytes, (await fh.stat()).size));
+    const size = (await fh.stat()).size;
+    const buf = Buffer.alloc(Math.min(maxBytes, size));
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    return buf.subarray(0, bytesRead).toString("utf8");
+    return { text: buf.subarray(0, bytesRead).toString("utf8"), more: size > bytesRead };
   } catch {
     return undefined;
   } finally {
     await fh.close();
   }
+}
+
+/** The first `maxBytes` of a file as text (the last line may be cut short); unreadable → undefined. */
+export async function readHeadText(path: string, maxBytes: number): Promise<string | undefined> {
+  return (await readHead(path, maxBytes))?.text;
 }
 
 /** The file's first line, parsed, when it ends within `maxBytes`; else (or unreadable) undefined. */

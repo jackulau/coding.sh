@@ -33,6 +33,18 @@ describe("cursor normalize", () => {
     assert.equal(sub.payload.parentEventId, events.find((e) => e.kind === "subagent.start")!.id);
   });
 
+  it("a subagent whose transcript path names no file gets a child session id of its own", async () => {
+    const line = { v: 0, agent: "cursor", event: "subagentStop", ts: 1793527215000, pid: 7048, cwd: "/work/demo", raw: { conversation_id: CID, hook_event_name: "subagentStop", agent_transcript_path: "/" } } as const;
+    const events = await cursor.normalize(line, testCtx().ctx);
+    assertWellFormed(events);
+    const start = events.find((e) => e.kind === "subagent.start")!;
+    assert.match(String(start.payload.childSessionId), new RegExp(`^${CID}:sub:.`));
+    assert.deepEqual(
+      events.filter((e) => e.kind === "session.start" || e.kind === "session.end").map((e) => e.sessionId),
+      [start.payload.childSessionId, start.payload.childSessionId],
+    );
+  });
+
   it("the same event fired as a Claude-format hook is dropped by claude-code (dedupe)", async () => {
     const line = loadSpool("cursor/hooks.spool.jsonl")[4]!;
     const asClaude = { ...line, agent: "claude-code", event: "PostToolUse", raw: { ...(line.raw as object), session_id: CID, hook_event_name: "PostToolUse" } };

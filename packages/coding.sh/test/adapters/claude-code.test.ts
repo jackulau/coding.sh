@@ -1160,6 +1160,18 @@ describe("claude-code call timing", () => {
     assert.equal(calls[0]!.turnId, turn.turnId);
   });
 
+  it("a second prompt entry with the turn's promptId adds to that turn, which ends once", async () => {
+    const conv = new ClaudeTranscriptConverter(testCtx().ctx, { agent: "claude-code", mode: "full", sessionId: MAIN, source: `${MAIN}.jsonl` });
+    // A skill's text with no isMeta flag (a line cut short and closed): a user entry of the prompt the turn is for.
+    const entries = [prompt("u1", 0, "go"), block("m1", 1000, { type: "text", text: "on it" }), { ...prompt("u2", 1500, "Base directory for this skill: /work/demo"), promptId: "p-u1" }, block("m2", 2000, { type: "text", text: "done" })];
+    for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+    const events = await conv.finish(true);
+    assertWellFormed(events);
+    const ends = events.filter((e) => e.kind === "turn.end");
+    assert.deepEqual(ends.map((e) => e.durationMs), [2000], "one end, after the second call");
+    assert.equal(new Set(events.filter((e) => e.turnId).map((e) => e.turnId)).size, 1, "every call and message in the one turn");
+  });
+
   describe("stored through ingest: the hook's copy first, then the transcript's", () => {
     let t: TmpEnv;
     let transcript: string;
