@@ -83,7 +83,9 @@ session, linked to its parent.
 A failure pattern coding.sh found in a session, such as `no-verification` when files changed but no
 test ran, `api-stall` when rate limits or an overloaded API held the session up, or `llm-error`
 when a model call failed and the session never got past it. A flag with a colon, such as
-`skill:pdf`, is a tag, not a failure.
+`skill:pdf`, is a tag, not a failure. `compaction`, `step-retried` and `resumed` are notes about the
+session, not failures either. Failure counts and rates, such as `is:flagged` and FAIL% in `stats`,
+leave out tags and notes.
 
 Files changed counts each file once, whether an edit tool or a shell command such as
 `sed -i` wrote it.

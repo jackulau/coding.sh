@@ -8,7 +8,7 @@
 // Key names map to fixed SQL below. Every user value is a bound $n parameter,
 // so no input changes the statement's shape. A key this plugin does not know
 // (a newer coding.sh) throws QueryUnsupported instead of guessing.
-import { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported, searchTerms, type Cmp, type KeyDef, type Node, type Value } from "coding.sh/store";
+import { CONTEXT_FLAGS, HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported, searchTerms, type Cmp, type KeyDef, type Node, type Value } from "coding.sh/store";
 
 /** Binds a value and returns its placeholder ($n). */
 export type Bind = (v: unknown) => string;
@@ -122,10 +122,12 @@ export const HAS_SQL: Record<string, string> = {
   error: `(coalesce(${stat("toolErrors")}, 0) > 0 OR coalesce(${stat("llmErrors,count")}, 0) > 0)`,
   title: "(s.title IS NOT NULL AND s.title <> '')",
 };
+/** The context flags as an SQL list: like tags, they are not failures, so `is:flagged` skips them. */
+const CONTEXT_SQL = CONTEXT_FLAGS.map((f) => `'${f.replaceAll("'", "''")}'`).join(", ");
 export const IS_SQL: Record<string, string> = {
   root: "(s.parent_session_id IS NULL)",
   child: "(s.parent_session_id IS NOT NULL)",
-  flagged: "EXISTS (SELECT 1 FROM json_array_elements_text(s.flags::json) AS f(v) WHERE strpos(f.v, ':') = 0)",
+  flagged: `EXISTS (SELECT 1 FROM json_array_elements_text(s.flags::json) AS f(v) WHERE strpos(f.v, ':') = 0${CONTEXT_SQL ? ` AND f.v NOT IN (${CONTEXT_SQL})` : ""})`,
   run: "(s.run_id IS NOT NULL)",
   ended: "(s.ended_at IS NOT NULL)",
 };

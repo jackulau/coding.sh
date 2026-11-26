@@ -78,11 +78,12 @@ describe("metrics engine", () => {
     assert.deepEqual(out, JSON.parse(readFileSync(GOLDEN, "utf8")));
   });
 
-  test("totals: failures skip tags, tokens add the four counts, percentiles rank the sessions", async () => {
+  test("totals: failures skip tags and notes, tokens add the four counts, percentiles rank the sessions", async () => {
     const m = await computeMetrics(sqlite, SPEC);
     assert.equal(m.totals.sessions, 12);
-    // m01, m02, m05, m06, m10, m12 have a flag with no colon; m07's model:switch is a tag.
-    assert.equal(m.totals.failures, 6);
+    // m01, m05, m06, m10, m12 have a failure flag. m02 has only compaction, a note, and skill:pdf,
+    // a tag; m07's model:switch is a tag too.
+    assert.equal(m.totals.failures, 5);
     assert.equal(m.totals.pricedSessions, 8);
     assert.equal(m.totals.costUsd, 5.404444444);
     assert.equal(m.totals.toolCalls, metricFixtures().reduce((n, s) => n + s.stats.toolCalls, 0));

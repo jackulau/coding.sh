@@ -336,7 +336,8 @@ total             55        11%    ~$9.78    14.9M   327    0.9%       33s      
 ```
 
 Without `--by` it prints one row per day (`--per week` for weeks). A failure is a session with a
-flag that has no colon. More on cost: [Track cost](https://coding.sh/docs/cost).
+failure flag: a flag with no colon, other than `compaction`, `step-retried` and `resumed`. More on
+cost: [Track cost](https://coding.sh/docs/cost).
 
 ## Get JSON
 

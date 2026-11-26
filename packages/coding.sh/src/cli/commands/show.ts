@@ -602,7 +602,7 @@ export async function run(c: CommandContext): Promise<number> {
     ];
     const llmErrors = s.stats.llmErrors;
     if (llmErrors?.count) rows.push(["Model errors", `${plural(llmErrors.count, "failed model call")}${llmErrors.error ? `, first: ${oneLine(clean(llmErrors.error), 150)}` : ""}`]);
-    // Tags (a colon in the name) are not failures; what is left is why `sessions --where is:flagged` listed it.
+    // Tags (a colon in the name) and context flags (compaction) are not failures; what is left is why `sessions --where is:flagged` listed it.
     const flags = failureFlags(s.flags);
     if (flags.length) rows.push(["Flags", flags.join(", ")]);
     if (u) rows.push(["Tokens", `in ${tokens(u.inputTokens)}  out ${tokens(u.outputTokens)}  cache ${tokens(u.cacheReadTokens)}  ${usd(u.costUsd)}${costNote(u)}`]);

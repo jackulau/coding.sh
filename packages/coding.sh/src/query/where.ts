@@ -7,6 +7,7 @@
 // for every other store. Both read the same table, so a key behaves the same on
 // every surface. This file has no imports beyond types so the CLI registry can
 // load the key docs for help without loading a store.
+import { CONTEXT_FLAGS, isFailureFlag } from "../core/failure-flags.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { parseWhen } from "./time.ts";
 
@@ -392,6 +393,10 @@ export interface HasDef {
   get(s: Session): boolean;
 }
 
+/** SQL for "the flag in `v` is a failure" (core/failure-flags.ts): no colon, and not a context flag. */
+const sqlFailureFlag = (v: string): string =>
+  `instr(${v}, ':') = 0${CONTEXT_FLAGS.length ? ` AND ${v} NOT IN (${CONTEXT_FLAGS.map((f) => `'${f.replaceAll("'", "''")}'`).join(", ")})` : ""}`;
+
 export const HAS: Record<string, HasDef> = {
   tests: { doc: "test results seen", sql: "(json_type(s.stats, '$.testsPassed') IS NOT NULL OR json_type(s.stats, '$.testsFailed') IS NOT NULL)", get: (s) => s.stats?.testsPassed !== undefined || s.stats?.testsFailed !== undefined },
   cost: { doc: "a cost", sql: "(coalesce(json_type(s.stats, '$.usage.costUsd'), '') IN ('integer', 'real'))", get: (s) => num(s.stats?.usage?.costUsd) !== undefined },
@@ -403,7 +408,7 @@ export const HAS: Record<string, HasDef> = {
 export const IS: Record<string, HasDef> = {
   root: { doc: "a top-level session", sql: "(s.parent_session_id IS NULL)", get: (s) => s.parent?.sessionId === undefined },
   child: { doc: "a subagent session", sql: "(s.parent_session_id IS NOT NULL)", get: (s) => s.parent?.sessionId !== undefined },
-  flagged: { doc: "has a failure flag, one with no colon", sql: "EXISTS (SELECT 1 FROM json_each(s.flags) WHERE instr(value, ':') = 0)", get: (s) => (s.flags ?? []).some((f) => !f.includes(":")) },
+  flagged: { doc: "has a failure flag: not a tag with a colon, and not compaction, step-retried or resumed", sql: `EXISTS (SELECT 1 FROM json_each(s.flags) WHERE ${sqlFailureFlag("value")})`, get: (s) => (s.flags ?? []).some(isFailureFlag) },
   run: { doc: "from an eval run", sql: "(s.run_id IS NOT NULL)", get: (s) => s.runId !== undefined },
   ended: { doc: "has an end", sql: "(s.ended_at IS NOT NULL)", get: (s) => s.endedAt !== undefined },
 };
