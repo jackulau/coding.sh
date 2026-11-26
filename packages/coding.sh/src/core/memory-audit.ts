@@ -134,9 +134,9 @@ const MSYS_DRIVE = /^\/([A-Za-z])(?=\/|$)/;
  * slashes. A Git Bash drive path (`/c/…`) is keyed as the Windows path it names (`C:/…`).
  */
 export function homeKey(path: string, home?: string): string {
-  const p = slash(path).replace(/\/+$/, "").replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:`);
+  const p = slash(path).replace(/(?<!\/)\/+$/, "").replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:`);
   if (p === "~" || p.startsWith("~/")) return p;
-  const h = home ? slash(home).replace(/\/+$/, "") : undefined;
+  const h = home ? slash(home).replace(/(?<!\/)\/+$/, "") : undefined;
   if (h && (p === h || p.startsWith(`${h}/`))) return `~${p.slice(h.length)}`;
   const m = HOME_DIR.exec(p);
   return m ? `~${p.slice(m[0].length)}` : p;
@@ -161,7 +161,7 @@ export function importPaths(text: string): string[] {
   const t = text.replace(/```[^]*?```/g, "").replace(/`[^`\n]*`/g, "");
   const out: string[] = [];
   for (const m of t.matchAll(/(?:^|\s)@((?:~[\\/]|[\\/]|[A-Za-z]:[\\/]|\.{1,2}[\\/])?[\w.-][\w.~\\/-]*)/g)) {
-    const p = m[1]!.replace(/[.,:;]+$/, "");
+    const p = m[1]!.replace(/(?<![.,:;])[.,:;]+$/, "");
     if (p) out.push(p);
   }
   return out;
@@ -179,7 +179,7 @@ export const claudeProjectSlug = (cwd: string): string => cwd.replace(/[^a-zA-Z0
 /** A dir and its parents up to the root (or to `top`, inclusive). */
 function ancestors(dir: string, top?: string): string[] {
   const out: string[] = [];
-  let d = slash(dir).replace(/\/+$/, "") || "/";
+  let d = slash(dir).replace(/(?<!\/)\/+$/, "") || "/";
   for (;;) {
     out.push(d);
     if (top !== undefined && d === top) break;
@@ -426,7 +426,7 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
       } else {
         startLoad(onDisk.has(`${codexDir}/AGENTS.override.md`) ? `${codexDir}/AGENTS.override.md` : `${codexDir}/AGENTS.md`, s);
         for (const dir of [`${codexDir}/skills`, "~/.agents/skills"]) for (const k of skillsIn(dir)) startLoad(k, s);
-        const root = s.repoRoot ? slash(s.repoRoot).replace(/\/+$/, "") : undefined;
+        const root = s.repoRoot ? slash(s.repoRoot).replace(/(?<!\/)\/+$/, "") : undefined;
         const dirs = root && (cwd === root || cwd.startsWith(`${root}/`)) ? ancestors(cwd, root) : [cwd];
         for (const d of dirs.map(key)) {
           startLoad(onDisk.has(`${d}/AGENTS.override.md`) ? `${d}/AGENTS.override.md` : `${d}/AGENTS.md`, s);

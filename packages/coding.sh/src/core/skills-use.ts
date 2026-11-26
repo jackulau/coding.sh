@@ -62,7 +62,7 @@ const HOME_DIR = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]
 const PERSONAL_SKILLS = /^\.[^/]+\/(?:[^/]+\/)?skills$/;
 
 const posix = (p: string) => p.replace(/\\/g, "/");
-const trimSlash = (p: string) => p.replace(/\/+$/, "");
+const trimSlash = (p: string) => p.replace(/(?<!\/)\/+$/, "");
 const dotDir = (s: string | undefined) => !!s && s.startsWith(".") && s !== "." && s !== "..";
 
 /**

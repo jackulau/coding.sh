@@ -132,6 +132,16 @@ describe("matchSpawnedParent", () => {
     assert.equal((await matchSpawnedParent(index, session("in-cwd", "codex", 3_000, { cwd: "/srv/other/pkg" })))?.sessionId, "agy-1");
     assert.equal(await matchSpawnedParent(index, session("in-session-dir", "codex", 3_000)), undefined, "the session's folder is not where the call ran");
   });
+
+  it("a folder that ends in slashes or backslashes matches as it would without them", async () => {
+    const index = await store(60_000);
+    for (const [i, cwd] of ["/work/demo/", "/work/demo///", "/work/demo/pkg\\"].entries()) assert.equal((await matchSpawnedParent(index, session(`codex-${i}`, "codex", 3_000, { cwd })))?.sessionId, "claude-1", cwd);
+    assert.equal(await matchSpawnedParent(index, session("up", "codex", 3_000, { cwd: "/work//" })), undefined, "a parent directory of the call's");
+    const win = new MemoryIndexStore();
+    await win.upsertSession(session("claude-w", "claude-code", 1_000, { cwd: "C:\\work\\demo\\" }));
+    await win.putEvents([event("claude-w", "tool.start", 2_000, bash("codex exec 'fix it'", "tu1")), event("claude-w", "tool.end", 60_000, { tool: "Bash", toolUseId: "tu1" })]);
+    for (const [i, cwd] of ["C:\\work\\demo\\pkg", "C:\\work\\demo\\\\", "C:\\work\\demo"].entries()) assert.equal((await matchSpawnedParent(win, session(`codex-w${i}`, "codex", 3_000, { cwd })))?.sessionId, "claude-w", cwd);
+  });
 });
 
 // Ingest, with fake adapters for two agents: raw = { session, kind, ...payload } → one event.

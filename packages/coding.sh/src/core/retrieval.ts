@@ -777,6 +777,19 @@ function textOf(v: unknown): string {
   }
 }
 
+/**
+ * Copilot CLI ends a shell result with `<shellId: 3 completed with exit code 1>`: the text without
+ * it. The trailer starts after the last line break or `>` before the text's final `>`, so only that
+ * part is searched and the text is read in linear time.
+ */
+function withoutShellId(t: string): string {
+  if (!t.includes("<shellId: ")) return t;
+  const end = t.trimEnd().length - 1;
+  if (t[end] !== ">") return t;
+  const from = Math.max(0, t.lastIndexOf("\n", end - 1), t.lastIndexOf(">", end - 1));
+  return t.slice(0, from) + t.slice(from).replace(/\n?<shellId: [^>\n]*>\s*$/, "");
+}
+
 /** What a command printed: the harness's headers, labels and trailers dropped. */
 function bodyText(v: unknown): string {
   let t = textOf(v);
@@ -792,8 +805,7 @@ function bodyText(v: unknown): string {
     }
     t = keep.filter((l) => !NO_OUTPUT.test(l.trim())).join("\n");
   }
-  // Copilot CLI ends a shell result with `<shellId: 3 completed with exit code 1>`.
-  if (t.includes("<shellId: ")) t = t.replace(/\n?<shellId: [^>\n]*>\s*$/, "");
+  t = withoutShellId(t);
   // Header lines, and a blank first line, come off the top; the body is the text from the first other line.
   let start = 0;
   for (let first = true; ; first = false) {
@@ -941,7 +953,7 @@ const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|ca
  * Bash's `/c/x` as `C:/x`. The cwds are read once for all of a call's paths.
  */
 function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
-  const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
   const change = changeKeyer(eventCwd, cwd);
   return (path) => {
@@ -955,7 +967,7 @@ function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: st
 /** An edit's filesChanged key (changeKey: Git Bash's `/c/x` already `C:/x`) in keyer's form: `.` and `..` resolved. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
-  const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const c = cwd?.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   k = normalizeTracePath(k, c);
   if (c && ABSOLUTE.test(c) && k.startsWith("../")) k = normalizeTracePath(posix.join(c, k), c);
   return k;

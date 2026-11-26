@@ -3,7 +3,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSyn
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
-import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
+import { ClaudeTranscriptConverter, typedText } from "../../src/adapters/_shared/claude-transcript.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { FIRING_WINDOW_MS } from "../../src/adapters/_shared/normalize.ts";
 import { defaultConfig } from "../../src/core/config.ts";
@@ -1158,6 +1158,28 @@ describe("claude-code call timing", () => {
     assert.deepEqual(timing(calls[0]!), [T, 2000, 1000, 500]);
     const turn = events.find((e) => e.kind === "user.message" && e.payload.command === "/review")!;
     assert.equal(calls[0]!.turnId, turn.turnId);
+  });
+
+  it("a slash command's typed text is its name and arguments, each read up to the first closing tag after it", () => {
+    const typed = (content: string) => typedText({ type: "user", message: { role: "user", content } });
+    assert.equal(typed("<command-name>/review</command-name>\n<command-args>  src/  </command-args>"), "/review src/");
+    assert.equal(typed("<command-name>/clear</command-name>\n<command-args></command-args>"), "/clear");
+    assert.equal(typed("<command-name>/a</command-name><command-name>/b</command-name>"), "/a");
+    // An unclosed tag names nothing: no arguments, or no command at all.
+    assert.equal(typed("<command-name>/review</command-name>\n<command-args>src/"), "/review");
+    assert.equal(typed("<command-name>/review\n<command-args>src/</command-args>"), undefined);
+  });
+
+  it("a second prompt entry with the turn's promptId adds to that turn, which ends once", async () => {
+    const conv = new ClaudeTranscriptConverter(testCtx().ctx, { agent: "claude-code", mode: "full", sessionId: MAIN, source: `${MAIN}.jsonl` });
+    // A skill's text with no isMeta flag (a line cut short and closed): a user entry of the prompt the turn is for.
+    const entries = [prompt("u1", 0, "go"), block("m1", 1000, { type: "text", text: "on it" }), { ...prompt("u2", 1500, "Base directory for this skill: /work/demo"), promptId: "p-u1" }, block("m2", 2000, { type: "text", text: "done" })];
+    for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+    const events = await conv.finish(true);
+    assertWellFormed(events);
+    const ends = events.filter((e) => e.kind === "turn.end");
+    assert.deepEqual(ends.map((e) => e.durationMs), [2000], "one end, after the second call");
+    assert.equal(new Set(events.filter((e) => e.turnId).map((e) => e.turnId)).size, 1, "every call and message in the one turn");
   });
 
   describe("stored through ingest: the hook's copy first, then the transcript's", () => {

@@ -61,6 +61,19 @@ describe("Session.stats.prs", () => {
     assert.deepEqual(bare.stats.prs?.map((p) => ({ ...p, at: 0 })), [{ number: 6, state: "merged", at: 0 }]);
   });
 
+  test("a GitHub Enterprise host comes from a push remote or a PR URL; a push after another git command or after git's options is a push", () => {
+    const remote = "To https://github.acme.test/acme/api.git\n   1a2b3c4..5d6e7f8  main -> main";
+    for (const push of ["git status; git push", "git -C app push", "git -c push.default=current push"]) {
+      const s = session("e", bash("e", push, remote), bash("e", "gh pr merge 4", ""));
+      assert.deepEqual(s.stats.prs?.map((p) => [p.url, p.state]), [["https://github.acme.test/acme/api/pull/4", "merged"]], push);
+    }
+    const opened = session("o", bash("o", "gh pr create --fill", "https://github.acme.test/acme/api/pull/5\n"));
+    assert.deepEqual(opened.stats.prs?.map((p) => [p.url, p.state]), [["https://github.acme.test/acme/api/pull/5", "opened"]]);
+    // A host without "github" in it is not read as a PR's host.
+    const other = session("x", bash("x", "gh pr create --fill", "https://git.acme.test/acme/api/pull/6\n"));
+    assert.equal("prs" in other.stats, false);
+  });
+
   test("a host tool that links PRs and a push that prints a PR URL name them as linked", () => {
     const s = session("h",
       tool("h", "mcp__t3-code__link_pull_request", { repository: "acme/widgets", number: 21 }, "linked"),

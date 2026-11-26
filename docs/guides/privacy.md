@@ -60,8 +60,8 @@ tool calls with their input and output, file changes, errors, model names, token
 Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
 match becomes `[redacted:<kind>]`.
 
-- A value nested more than 64 levels deep is redacted with the same rules. A value too deep to
-  copy is stored as `[redacted:too-deep]`, also in the spool.
+- A value nested deeper than 64 levels is redacted with the same rules. Past the depth the stack
+  allows, the rest is stored as `[redacted:too-deep]`, also in the spool.
 - A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
   of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
 
@@ -156,8 +156,8 @@ stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies th
 (`hook.sh`, what agents run elsewhere) writes the payload without redacting it, to stay fast.
 Ingest stores a redacted copy either way, and redacts what is left on disk:
 
-- Both hooks give a payload its own file under `spool/<agent>/raw/`, unless its spool line fits in
-  about 1 KB. Once ingested, that file is rewritten with secrets redacted, in every capture mode.
+- Both hooks give a payload its own file under `spool/<agent>/raw/` when it or its spool line is
+  over about 1 KB. Ingest rewrites that file with secrets redacted, in every capture mode.
 - A short payload inside the day's spool file stays as written until its UTC day has passed and
   ingest has read the whole file. Then ingest redacts it in place, keeping the line's length so
   ingest cursors still hold.
