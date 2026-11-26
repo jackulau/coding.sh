@@ -379,6 +379,18 @@ function tokens(a: Attrs, ...keys: string[]): number | undefined {
   return undefined;
 }
 
+/**
+ * First cost in USD among keys: a finite number from 0 up, as a number or as numeric text. Any
+ * other value is skipped, as an absent key is.
+ */
+function usd(a: Attrs, ...keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = num(a, k);
+    if (v !== undefined && v >= 0) return v;
+  }
+  return undefined;
+}
+
 function bool(a: Attrs, ...keys: string[]): boolean | undefined {
   for (const k of keys) {
     const v = a[k];
@@ -736,7 +748,7 @@ function usageOf(a: Attrs): Usage | undefined {
   const m5 = tokens(a, "cache_creation_5m_tokens");
   const h1 = tokens(a, "cache_creation_1h_tokens");
   set("cacheWriteTokens", write ?? tokens(a, "cache_creation_tokens") ?? (m5 || h1 ? tokenCount((m5 ?? 0) + (h1 ?? 0)) : undefined));
-  set("costUsd", num(a, "gen_ai.usage.cost", "llm.cost.total", "coding_sh.cost_usd", "cost_usd"));
+  set("costUsd", usd(a, "gen_ai.usage.cost", "llm.cost.total", "coding_sh.cost_usd", "cost_usd"));
   return Object.keys(u).length ? u : undefined;
 }
 

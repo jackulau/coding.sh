@@ -712,6 +712,17 @@ describe("token counts that are not a whole number from 0 to 2^53 - 1", () => {
   });
 });
 
+// otel/map.ts usd(): a reported cost is a finite number from 0 up; any other value is read as not sent.
+describe("a reported cost below 0", () => {
+  const T = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+  it("reads as not sent, so the next cost key gives the cost", async () => {
+    const attrs = [sAttr("gen_ai.operation.name", "chat"), iAttr("gen_ai.usage.input_tokens", 10), { key: "gen_ai.usage.cost", value: { doubleValue: -1 } }, { key: "cost_usd", value: { doubleValue: 0.25 } }];
+    const req = otlpTraces("cost-test", [otlpSpan(T, "d000000000000003", "d000000000000000", "chat", attrs, 0, 1000)]);
+    const call = ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+    assert.deepEqual(call.usage, { inputTokens: 10, costUsd: 0.25 });
+  });
+});
+
 // core/pricing.ts callTier prices a call at batch/flex/priority/fast rates from payload.serviceTier and payload.speed.
 describe("service tier on model calls", () => {
   const T = "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";

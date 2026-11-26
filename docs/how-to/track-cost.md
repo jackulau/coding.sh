@@ -135,7 +135,7 @@ from the first of these that exists:
    ([LLM gateways](https://coding.sh/docs/ai-gateway)).
 2. **Provider-reported.** A cost the agent or app records: Claude Code runs that coding.sh starts
    in evals and experiments (`total_cost_usd`), OpenCode, Pi, or a span with `gen_ai.usage.cost`
-   or `cost_usd`.
+   or `cost_usd`. A span's cost below 0 is read as not sent.
 3. **Estimate.** Each kind of token times the model's list price, marked `~`.
 
 A token count that is not a whole number from 0 to 2^53 - 1 counts as none: one below 0, a
