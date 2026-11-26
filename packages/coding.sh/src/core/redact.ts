@@ -411,8 +411,10 @@ function builtInSecretRules(): RedactRule[] {
       // backslashes before b, f, n, r, t, a quote or another backslash (an escape one level down).
       // \/, \uXXXX and escaped backslashes before any other character stay in the value. The match
       // ends where the value does, so the next line, and an assignment on it, are matched too.
+      // Every match starts with A-Z, 0-9 or _, so the lookahead passes over other places without
+      // trying the lookbehinds there.
       pattern: new RegExp(
-        `(?:(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2` +
+        `(?=[A-Z0-9_])(?:(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2` +
           `|(?:${AFTER_ESCAPE})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|(?:\\\\\\\\)+(?![bfnrt"\\\\])){8,})\\5)`,
         "g",
       ),
@@ -452,8 +454,8 @@ function builtInSecretRules(): RedactRule[] {
     },
   ];
   // Set on the rule itself: fastApply and the needles are keyed by the rule object. The
-  // secret-assignment rule has its own alternative after an escape; its source starts with `(?:`,
-  // which LEADING_BREAK does not match, so orAfterEscape leaves it as it is.
+  // secret-assignment rule has its own alternative after an escape; its source starts with a
+  // lookahead, which LEADING_BREAK does not match, so orAfterEscape leaves it as it is.
   for (const rule of rules) rule.pattern = orAfterEscape(rule.pattern);
   return rules;
 }

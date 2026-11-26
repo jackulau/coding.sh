@@ -173,6 +173,29 @@ describe("redaction right after a JSON escape", () => {
     }
   });
 
+  it("the assignment rule's leading lookahead changes no match", () => {
+    // The lookahead lets the engine pass over places where no name starts. Without it the rule must
+    // find the same matches, so a change to the names that lets one start elsewhere fails here.
+    const rule = secretRules().find((r) => r.kind === "secret-assignment");
+    assert.ok(rule);
+    const AHEAD = "(?=[A-Z0-9_])";
+    assert.ok(rule.pattern.source.startsWith(AHEAD), rule.pattern.source.slice(0, 40));
+    const bare = new RegExp(rule.pattern.source.slice(AHEAD.length), rule.pattern.flags);
+    const escapes = ["n", "t", "b", "u00e9", "u004B", "/", '"', "", BS].map((e) => BS + e);
+    const parts = ["DB_PASSWORD=", "API_KEY=", "AWS_CREDENTIALS=", "x_token=", "Secret=", "A", "_", "9", "x", "n", "u", " ", "=", "$", "'", '"', "`", ";", "[redacted:email]", mixed(10), "12345678", ...escapes];
+    const matches = (re: RegExp, s: string): string[] => [...s.matchAll(re)].map((m) => JSON.stringify([m.index, ...m]));
+    const next = mulberry32(11);
+    let hits = 0;
+    for (let i = 0; i < 4000; i++) {
+      let s = "";
+      for (let n = 1 + Math.floor(next() * 16); n > 0; n--) s += parts[Math.floor(next() * parts.length)];
+      const want = matches(bare, s);
+      if (want.length) hits++;
+      assert.deepEqual(matches(rule.pattern, s), want, JSON.stringify(s));
+    }
+    assert.ok(hits > 400, `${hits} strings hold a match`);
+  });
+
   it("does not match inside a word that follows an escape", () => {
     const tok = j("sk", "-", "q7w8e9r0t1y2u3i4o5p6");
     // Each `sk-` here follows a letter that does not end an escape, as in `task-` and `risk-`.
