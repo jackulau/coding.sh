@@ -33,7 +33,7 @@ const VERILOG_LINE =
  */
 const ROCQ_SENTENCE =
   /^[-+ ]?[ \t]*(?:#\[[^\]\n]*\][ \t]*)?(?:(?:Local|Global|Polymorphic|Monomorphic|Program)[ \t]+)*(?:(?:(?:From[ \t]+[\w.]+[ \t]+)?Require|Import|Export|Open[ \t]+Scope)[ \t]+[\w.]|(?:Theorem|Lemma|Corollary|Proposition|Fact|Remark|Example|Definition|Fixpoint|CoFixpoint|Inductive|CoInductive|Record|Structure|Class|Instance|Axioms?|Parameters?|Hypothes[ie]s|Variables?|Conjectures?|Section|Module(?:[ \t]+Type)?)[ \t]+(?:[\w']+[ \t]*)?(?:[:({[.]|<:)|(?:Proof|Qed|Defined|Admitted|Abort)[ \t]*\.(?=\s|$)|Proof[ \t]+(?:using|with)\b|End[ \t]+[\w']+[ \t]*\.)/m;
-/** A Rust file is a Verus one when it uses Verus syntax. */
+/** A Rust file is a Verus one when its code uses Verus syntax: words in comments and strings do not count. */
 const VERUS = /\bverus!\s*\{|#\[verifier[:(]|\b(?:spec|proof)\s+fn\b|\buse\s+vstd::/;
 /** A `.cfg` file is a TLC model when it has TLC's directives. */
 const TLC_DIRECTIVE = /^[-+ ]?[ \t]*(?:SPECIFICATION|INIT|NEXT|INVARIANTS?|PROPERT(?:Y|IES)|CONSTANTS?|CONSTRAINTS?|ACTION_CONSTRAINTS?|SYMMETRY|VIEW|CHECK_DEADLOCK|ALIAS|POSTCONDITION)\b/m;
@@ -53,7 +53,7 @@ const extOf = (path: string) => /\.([A-Za-z]+)$/.exec(path)?.[1] ?? "";
 export function proofLang(path: string, text = "", known?: ProofLang): ProofLang | undefined {
   if (known) return known;
   const ext = extOf(path);
-  if (ext === "rs") return VERUS.test(text.replace(/\/\/.*$/gm, "")) ? "verus" : undefined;
+  if (ext === "rs") return VERUS.test(text) && VERUS.test(scanProof(text, SYNTAX.verus).bare) ? "verus" : undefined;
   if (ext === "cfg") return TLC_DIRECTIVE.test(text) ? "tlc" : undefined;
   if (ext === "v" && VERILOG.test(text)) return undefined;
   return BY_EXT.get(ext);
