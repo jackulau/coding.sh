@@ -273,6 +273,7 @@ describe("proofCheck", () => {
 describe("checkOutcome", () => {
   const lake = proofCheck("lake build")!;
   const piped = proofCheck("lake build | tee build.log")!;
+  const make = proofCheck("make")!;
   it("goes by the exit status when it covers the checker", () => {
     assert.equal(checkOutcome(lake, { ok: false, output: "" }), "red");
     assert.equal(checkOutcome(lake, { ok: true, output: "Build completed successfully." }), "green");
@@ -311,6 +312,27 @@ describe("checkOutcome", () => {
     assert.equal(checkOutcome(lake, { ok: false, exitCode: 126 }), undefined);
     assert.equal(checkOutcome(lake, { ok: false, output: "Exit code 127" }), undefined);
     assert.equal(checkOutcome(lake, { ok: false, exitCode: 1 }), "red");
+    for (const line of [
+      "zsh: command not found: lake",
+      "/bin/sh: 1: lake: not found",
+      "lake : The term 'lake' is not recognized as the name of a cmdlet, function, script file, or operable program.",
+      "'lake' is not recognized as an internal or external command,",
+    ])
+      assert.equal(checkOutcome(lake, { ok: false, output: line }), undefined, line);
+    assert.equal(checkOutcome(proofCheck("timeout 600 lake build")!, { ok: false, output: "bash: timeout: command not found" }), undefined);
+    assert.equal(checkOutcome(make, { ok: false, output: "COQC theories/Add.v\n/bin/sh: 1: coqc: not found\nmake[1]: *** [CoqMakefile:801: theories/Add.vo] Error 127\nmake: *** [Makefile:5: all] Error 2" }), undefined);
+    assert.equal(checkOutcome(make, { ok: false, output: "make: coqc: No such file or directory\nmake: *** [Makefile:2: all] Error 127" }), undefined);
+  });
+
+  it("reads the error lines first, and takes only a line about the checker itself to mean it never ran", () => {
+    assert.equal(checkOutcome(lake, { ok: false, output: "/home/user/.bashrc: line 5: pyenv: command not found\nerror: ./Foo.lean:3:2: unsolved goals" }), "red");
+    assert.equal(checkOutcome(lake, { ok: true, output: "zsh:1: command not found: rbenv\nBuild completed successfully." }), "green");
+    assert.equal(checkOutcome(lake, { ok: false, output: "error: ./Foo.lean:1:0: unknown module prefix 'Mathlib'\nerror: Mathlib.olean: not found" }), "red");
+    assert.equal(checkOutcome(lake, { ok: false, output: "error: ./Foo.lean:3:2: unsolved goals\nCommand timed out after 2m 0s" }), "red");
+    assert.equal(checkOutcome(make, { ok: true, output: "/bin/sh: 1: ocamlfind: not found\nCOQC theories/Add.v" }), "green");
+    assert.equal(checkOutcome(proofCheck("lake build; ./notify")!, { ok: false, exitCode: 127, output: "error: ./Foo.lean:3:2: unsolved goals" }), "red");
+    assert.equal(checkOutcome(lake, { ok: true, output: "info: ./Foo.lean:1:0: the call was rejected by the user\nBuild completed successfully." }), "green");
+    assert.equal(checkOutcome(lake, { ok: true, output: "info: ./Foo.lean:1:0: command timed out\nBuild completed successfully." }), "green");
   });
 
   it("reads a tool's output from a string or an object", () => {

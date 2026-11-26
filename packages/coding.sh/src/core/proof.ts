@@ -609,10 +609,48 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
   return check;
 }
 
-const STILL_RUNNING = /\brunning in (?:the )?background\b|\bcommand timed out\b/i;
-/** A command the shell could not find, or a call the user turned down: the checker never ran. */
-const NOT_RUN =
-  /\bcommand not found\b|: not found$|is not recognized as (?:the name of a cmdlet|an internal or external command)|CommandNotFoundException|doesn'?t want to proceed with this tool use|tool use was rejected|(?:rejected|denied) by (?:the )?user\b/im;
+/** What a harness writes, at the start of a line, when a call went to the background or ran out of time. */
+const STILL_RUNNING = /^[ \t]*(?:Error: )?(?:exec )?command (?:running in (?:the )?background|timed out)\b/im;
+/** What a harness writes in place of the output when the user turned a call down or stopped it. */
+const TURNED_DOWN =
+  /^\s*(?:Error: )?(?:The user doesn'?t want to proceed with this tool use|(?:The )?tool use was rejected|\[Request interrupted by user|[\w ]{0,40}?\b(?:rejected|denied) by (?:the )?user\b)/i;
+/** The programs that run each kind of check. A make or dune build runs any of them. */
+const PROGRAMS: Record<string, readonly string[]> = {
+  lean: ["lake", "lean"],
+  rocq: ["coqc", "coqchk", "rocq", "rocqchk"],
+  dafny: ["dafny"],
+  verus: ["verus", "cargo"],
+  isabelle: ["isabelle"],
+  tlc: ["tlc", "tlc2", "java"],
+  tla: ["tlapm", "apalache-mc"],
+};
+/** The commands that start a checker (`timeout 600 lake build`, `opam exec -- coqc A.v`). */
+const WRAPPERS = ["timeout", "opam"];
+/**
+ * A line in which a shell, make, env, cmd or PowerShell says it found no program by that name. The
+ * name is the first group that matched.
+ */
+const NO_PROGRAM =
+  /^(?:[^\s:]+: )?(?:line \d+: |\d+: )?(?:[^\s:']*\/)?'?([\w.+-]+)'?: (?:[Cc]ommand not found|not found|No such file or directory)(?: \[[^\]\n]*\])?$|^[^\s:]*sh(?::\d+)?: command not found: (?:[^\s:]*\/)?([\w.+-]+)$|^(?:[\w.+-]+ ?: )?The term '(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized\b|^'(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized as an internal or external command\b|^(?:fish: Unknown command:|\[ERROR\] Command not found|timeout: failed to run command) '?(?:[^'\s]*\/)?([\w.+-]+?)'?(?:: No such file or directory)?$/;
+const MAYBE_NO_PROGRAM = /not (?:found|recognized)|No such file|Unknown command/i;
+/** A line in which make reports a failed recipe. */
+const MAKE_STATUS = /^g?make(?:\[\d+\])?: \*\*\* /;
+
+/**
+ * The output without the lines that say one of the check's own programs was not found, and without
+ * make's report of the recipe that failed for it; undefined when no line says so.
+ */
+function withoutNotFound(lang: string, out: string): string | undefined {
+  if (!MAYBE_NO_PROGRAM.test(out)) return undefined;
+  const own = new Set([...WRAPPERS, ...(lang === "make" || lang === "dune" ? [lang, ...Object.values(PROGRAMS).flat()] : (PROGRAMS[lang] ?? []))]);
+  const lines = out.split("\n");
+  const kept = lines.filter((line) => {
+    const m = NO_PROGRAM.exec(line.trimEnd());
+    const name = m ? (m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? "").replace(/\.exe$/i, "") : "";
+    return !own.has(name);
+  });
+  return kept.length < lines.length ? kept.filter((line) => !MAKE_STATUS.test(line)).join("\n") : undefined;
+}
 /**
  * Errors in a checker's output. A hole the checker only warns about (Lean's `declaration uses
  * 'sorry'`) is not one: a hole left anywhere in the project would keep every check red.
@@ -628,17 +666,21 @@ export function outText(out: unknown): string {
 }
 
 /**
- * What a check's tool.end says: red, green, or nothing to go on (in the background, timed out,
- * clipped, or a checker that never ran: not found, exit status 126 or 127, or turned down).
+ * What a check's tool.end says: red, green, or nothing to go on. An exit status of 126 or 127 for
+ * the checker means it never ran. Then an error line makes the check red, whatever else the output
+ * says. Otherwise there is nothing to go on when the check ran in the background, was interrupted,
+ * timed out or was turned down, when a line says the checker was not found, or when the output is
+ * clipped.
  */
 export function checkOutcome(check: ProofCheck, end: Record<string, unknown>): "red" | "green" | undefined {
   if (check.background || end.interrupted === true) return undefined;
   const out = outText(end.output);
-  if (STILL_RUNNING.test(out)) return undefined;
   const code = exitCodeOf(end.exitCode, out);
-  if (NOT_RUN.test(out) || code === 126 || code === 127) return undefined;
+  if (check.exit && (code === 126 || code === 127)) return undefined;
+  const rest = withoutNotFound(check.lang, out);
+  if (ERROR.test(rest ?? out)) return "red";
+  if (rest !== undefined || TURNED_DOWN.test(out) || STILL_RUNNING.test(out)) return undefined;
   if (check.exit === "both" && end.ok === false) return "red";
-  if (ERROR.test(out)) return "red";
   if (check.exit) return end.ok === true ? "green" : undefined;
   if (out.endsWith("…") || (!!end.cut && typeof end.cut === "object")) return undefined;
   return out.trim() && !check.filtered ? "green" : undefined;

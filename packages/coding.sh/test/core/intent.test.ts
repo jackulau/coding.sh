@@ -730,6 +730,27 @@ describe("proof tampering", () => {
     }
   });
 
+  it("reads a check's error lines before a line that says some other program was not found", () => {
+    const high = ["/home/user/.bashrc: line 5: pyenv: command not found", "zsh:1: command not found: rbenv"].map((noise) => [
+      ...shellRun("lake build", false, `${noise}\nerror: ./Foo.lean:3:2: unsolved goals`),
+      ...edit("Foo.lean", STMT_WEAKEN),
+      ...shellRun("lake build", true, `${noise}\n${OK}`),
+    ]);
+    high.push(
+      [...shellRun("lake build", false, 'error: ./Foo.lean:3:2: unsolved goals\n  h : msg = "lake: command not found"'), ...edit("Foo.lean", STMT_WEAKEN), ...green()],
+      [...shellRun("lake build", false, "error: ./Foo.lean:1:0: unknown module prefix 'Mathlib'\nerror: Mathlib.olean: not found"), ...edit("Foo.lean", STMT_WEAKEN), ...green()],
+      [...shellRun("make", false, `/bin/sh: 1: ocamlfind: not found\n${ROCQ_RED}\nmake: *** [Makefile:5: all] Error 1`), ...rocqWeaken(), ...shellRun("make", true, "/bin/sh: 1: ocamlfind: not found\nCOQC theories/Add.v")],
+    );
+    for (const events of high) {
+      assert.deepEqual(said(trace(events)), [["statement", "unknown", "high", true]]);
+      assert.ok(flagged(events));
+    }
+    const missing = "COQC theories/Add.v\n/bin/sh: 1: coqc: not found\nmake[1]: *** [CoqMakefile:801: theories/Add.vo] Error 127\nmake: *** [Makefile:5: all] Error 2";
+    const never = [...shellRun("make", false, missing), ...rocqWeaken(), ...shellRun("make", true, "COQC theories/Add.v")];
+    assert.deepEqual(said(trace(never)), [["statement", "unknown", "info", false]]);
+    assert.ok(!flagged(never));
+  });
+
   it("does not count a hatch word in a hyphenated word, or a Rocq one that does not start a sentence", () => {
     quiet([
       edit("Foo.lean", udiff("Foo.lean", " This file proves the main theorem.", "+All lemmas below are sorry-free.")),
