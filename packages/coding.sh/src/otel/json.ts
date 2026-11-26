@@ -62,12 +62,19 @@ export function jsonId(v: unknown, bytes: 8 | 16): string | undefined {
   throw new OtlpDecodeError(`invalid ${bytes === 16 ? "trace" : "span"} id ${JSON.stringify(v.slice(0, 64))}`);
 }
 
-/** fixed64 nanos as decimal string; accepts strings and numbers. */
+/** fixed64 holds times below 2^64 ns (the year 2554), each one a time a Date holds. */
+const FIXED64_END = 1n << 64n;
+
+/** fixed64 nanos as decimal string; accepts strings and numbers. A value protobuf cannot carry is unset ("0"). */
 function nanos(v: unknown): string {
-  if (typeof v === "string" && /^\d+$/.test(v)) return BigInt(v).toString();
-  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return BigInt(Math.round(v)).toString();
-  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return BigInt(Math.round(Number(v))).toString();
-  return "0";
+  let n: bigint | undefined;
+  if (typeof v === "string" && /^\d+$/.test(v)) {
+    // Past 20 digits, a value is past 2^64.
+    const digits = v.replace(/^0+(?=\d)/, "");
+    if (digits.length <= 20) n = BigInt(digits);
+  } else if (typeof v === "number" && Number.isFinite(v) && v >= 0) n = BigInt(Math.round(v));
+  else if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) n = BigInt(Math.round(Number(v)));
+  return n !== undefined && n >= 0n && n < FIXED64_END ? n.toString() : "0";
 }
 
 function int64(v: unknown): number | string | null {
@@ -80,10 +87,10 @@ function int64(v: unknown): number | string | null {
 }
 
 function double(v: unknown): number | string | null {
-  if (typeof v === "number") return v;
+  // NaN/Infinity aren't JSON values; keep them as their protojson strings. JSON.parse reads 1e400 as Infinity.
+  if (typeof v === "number") return Number.isFinite(v) ? v : String(v);
   if (typeof v === "string") {
     const n = Number(v);
-    // NaN/Infinity aren't JSON values; keep them as their protojson strings.
     return Number.isFinite(n) ? n : v;
   }
   return null;
@@ -96,9 +103,9 @@ function uint(v: unknown): number {
 
 /** Enum field: integer, numeric string, or its proto name ("SPAN_KIND_CLIENT"). */
 function enumValue(v: unknown, names: readonly string[], prefix: string): number {
-  if (typeof v === "number") return Math.trunc(v);
+  if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : 0;
   if (typeof v === "string") {
-    if (/^\d+$/.test(v)) return Number(v);
+    if (/^\d+$/.test(v)) return Number.isFinite(Number(v)) ? Number(v) : 0;
     const i = names.indexOf(v.toUpperCase().replace(prefix, ""));
     if (i >= 0) return i;
   }
@@ -121,7 +128,8 @@ export function jsonAnyValue(v: unknown, depth = 0): OtelValue {
   if (depth > MAX_DEPTH) throw new OtlpDecodeError("AnyValue nested too deeply");
   if (!isObj(v)) return null;
   let x: unknown;
-  if ((x = get(v, "stringValue")) !== undefined) return typeof x === "string" ? x : String(x);
+  // An object or array is no string: it is read as no value, and a number or boolean as its text.
+  if ((x = get(v, "stringValue")) !== undefined) return typeof x === "string" ? x : typeof x === "object" && x !== null ? null : String(x);
   if ((x = get(v, "boolValue")) !== undefined) return x === true || x === "true";
   if ((x = get(v, "intValue")) !== undefined) return int64(x);
   if ((x = get(v, "doubleValue")) !== undefined) return double(x);

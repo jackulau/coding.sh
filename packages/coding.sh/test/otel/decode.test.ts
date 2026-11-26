@@ -160,6 +160,40 @@ describe("OTLP/JSON quirks", () => {
     assert.deepEqual(jsonAnyValue({ arrayValue: {} }), []);
   });
 
+  it("reads a stringValue that holds an object or array as no value, and a number or boolean as its text", () => {
+    // An object or array, one level deep or many, is read as no value.
+    assert.equal(jsonAnyValue({ stringValue: { toString: 1 } }), null);
+    assert.equal(jsonAnyValue({ stringValue: [{ toString: 1 }] }), null);
+    let deep: unknown = 1;
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    assert.equal(jsonAnyValue({ stringValue: deep }), null);
+    assert.equal(jsonAnyValue({ stringValue: 5 }), "5");
+    assert.equal(jsonAnyValue({ string_value: true }), "true");
+  });
+
+  it("reads a time outside fixed64 as unset, as protobuf cannot carry one", () => {
+    // 1e23 ns is past what fixed64 holds, and past what a Date holds.
+    const start = (t: unknown) => decodeTraceJson({ resourceSpans: [{ scopeSpans: [{ spans: [{ startTimeUnixNano: t }] }] }] })[0]!.scopeSpans[0]!.spans[0]!.startTimeUnixNano;
+    for (const t of ["99999999999999999999999", "18446744073709551616", "1e300", "-1e300", "-5", 1e300, "9".repeat(1_000_000)]) assert.equal(start(t), "0", String(t).slice(0, 30));
+    assert.equal(start("18446744073709551615"), "18446744073709551615");
+    assert.equal(start("0001767225600000000000"), "1767225600000000000");
+    assert.equal(start("1.5e18"), "1500000000000000000");
+    assert.equal(start(1767225600000000000), "1767225600000000000");
+  });
+
+  it("keeps a double past what a number holds as its protojson string, from JSON as from protobuf", () => {
+    // JSON.parse reads 1e400 as Infinity, and protobuf carries NaN. JSON has no such number, so each is kept as text.
+    const json = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"kind":1e400,"status":{"code":-1e400},"attributes":[{"key":"big","value":{"doubleValue":1e400}},{"key":"low","value":{"doubleValue":-1e400}}]}]}]}]}`;
+    const s = decodeTraceJson(JSON.parse(json))[0]!.scopeSpans[0]!.spans[0]!;
+    assert.deepEqual(s.attributes, { big: "Infinity", low: "-Infinity" });
+    assert.deepEqual([s.kind, s.status.code], [0, 0]);
+    for (const [d, text] of [[NaN, "NaN"], [Infinity, "Infinity"], [-Infinity, "-Infinity"]] as const) {
+      const span = new ProtoWriter().message(9, (k) => k.string(1, "d").message(2, (v) => v.double(4, d))).finish();
+      const req = new ProtoWriter().message(1, (rs) => rs.message(2, (ss) => ss.bytes(2, span))).finish();
+      assert.equal(decodeTraceRequest(req)[0]!.scopeSpans[0]!.spans[0]!.attributes.d, text);
+    }
+  });
+
   it("rejects non-object bodies and non-array resourceSpans", () => {
     assert.throws(() => decodeTraceJson([]), OtlpDecodeError);
     assert.throws(() => decodeTraceJson("x"), OtlpDecodeError);

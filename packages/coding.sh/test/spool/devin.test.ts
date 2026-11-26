@@ -100,6 +100,19 @@ describe("devinHookEvents", () => {
     );
     assert.deepEqual([...devinHookEvents({ HOME: join(root, "u5") }, project)].sort(), ["SessionEnd", "Stop"]);
   });
+
+  it("finds a bare hook path, and a quoted one after quoted text with escaped quotes", (t) => {
+    if (/\s/.test(hook)) return t.skip("a bare path cannot hold whitespace");
+    const project = join(root, "p3");
+    write(
+      join(project, ".devin", "hooks.v1.json"),
+      JSON.stringify({
+        Stop: [{ hooks: [{ type: "command", command: `node ${hook} devin Stop` }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: `echo "a \\"quoted\\" word \\\\" && ${ours("SessionEnd").command}` }] }],
+      }),
+    );
+    assert.deepEqual([...devinHookEvents({ HOME: join(root, "u6") }, project)].sort(), ["SessionEnd", "Stop"]);
+  });
 });
 
 describe("devinHookAgent", () => {

@@ -88,10 +88,10 @@ export class WorkflowStore {
 
   /** Stores return values as blobs (setting node.output / run.output), then the run document. */
   /**
-   * Stores a run. Node outputs and the run's output are what its agents returned, so they go
-   * through `redactor` (default: the built-in rules; callers pass the capture profile's) first.
-   * `dropOutputs` (capture.mode "metadata" on an imported run) stores neither. The script is the
-   * workflow's own code, which replay re-runs and diffs, so it is stored as it is.
+   * Stores a run. Node outputs and the run's output are what its agents returned, and the script
+   * is the run's code, so all three go through `redactor` (default: the built-in rules; callers
+   * pass the capture profile's) first. `dropOutputs` (capture.mode "metadata" on an imported run)
+   * stores none of them. Replay compares a stored script with the edited one after redacting both.
    */
   async putRun(run: WorkflowRun, nodes: WorkflowNode[], extra: { outputs?: Record<string, unknown>; runOutput?: unknown; script?: string; redactor?: Redactor; dropOutputs?: boolean } = {}): Promise<void> {
     await mkdir(join(this.root, "runs"), { recursive: true });
@@ -102,7 +102,7 @@ export class WorkflowStore {
       if (v !== undefined) node.output = await this.putValue(redactor.value(v));
     }
     if (keep && extra.runOutput !== undefined && extra.runOutput !== null) run.output = await this.putValue(redactor.value(extra.runOutput));
-    if (extra.script !== undefined) run.script = await this.blobs.put(extra.script, { contentType: "text/javascript" });
+    if (keep && extra.script !== undefined) run.script = await this.blobs.put(redactor.string(extra.script), { contentType: "text/javascript" });
     const file = `${enc(run.id)}.json`;
     await writeAtomic(join(this.root, "runs", file), JSON.stringify({ run, nodes }));
     const line: IndexLine = { id: run.id, file, run: summary(run), ts: Date.now() };
