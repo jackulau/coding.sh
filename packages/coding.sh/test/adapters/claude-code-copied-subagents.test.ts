@@ -143,4 +143,24 @@ describe("claude-code backfill: subagent transcripts copied into other sessions"
     writeFile(path, jsonl([{ type: "summary", summary: "no session id" }, user(B, "u1", 0, "task")]));
     assert.equal(await subagentOwner(path), B);
   });
+
+  it("skips a line cut short, as the converter does, when it ends inside the head read", async () => {
+    const path = join(env.root, "agent-cut.jsonl");
+    writeFile(path, "{\n" + jsonl([user(B, "u1", 0, "task")]));
+    assert.equal(await subagentOwner(path), B);
+    const line = JSON.stringify(user(A, "u0", 0, "task"));
+    writeFile(path, line.slice(0, line.indexOf(A) + A.length + 2)); // a writer stopped mid-line, after the sessionId
+    assert.equal(await subagentOwner(path), undefined);
+  });
+
+  it("stores a copied subagent once when the copy's first line is cut short", async () => {
+    const F = "ffffffff-0000-4000-8000-00000000000f";
+    writeFile(join(project(), `${A}.jsonl`), jsonl([user(A, "ua", 0, "hi", { promptId: "pa" }), asst(A, "aa", 1000, "msg_A_1", [{ type: "text", text: "hello" }])]));
+    writeFile(join(project(), `${F}.jsonl`), jsonl([user(F, "uf", 100_000, "and then", { promptId: "pf" })]));
+    const transcript = jsonl(agentLines(A, "x", 500, 2));
+    writeFile(join(project(), A, "subagents", "agent-x.jsonl"), transcript);
+    writeFile(join(project(), F, "subagents", "agent-x.jsonl"), "{\n" + transcript);
+    const { events } = await backfill();
+    assert.deepEqual(subSessions(events), [`${A}:sub:x`]);
+  });
 });

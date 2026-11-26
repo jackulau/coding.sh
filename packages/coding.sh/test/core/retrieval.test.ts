@@ -491,6 +491,14 @@ describe("Session.stats.retrieval", () => {
     assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
   });
 
+  it("a cwd that ends in slashes keys reads like the edits of the same files", () => {
+    for (const cwd of ["/work/demo/", "/work/demo///", "C:\\work\\demo\\\\"]) {
+      const at = { cwd };
+      const r = retrieval(read("a.ts", { at }), bash("cat src/b.ts", { at }), edit("a.ts", at), edit(`${cwd.startsWith("C:") ? "C:\\work\\demo\\src\\" : "/work/demo/src/"}b.ts`, at));
+      assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 }, cwd);
+    }
+  });
+
   it("a file a shell call reads and then writes the Git Bash way (`/c/x`) is a file changed after it was read", () => {
     const at = { cwd: "C:\\proj" };
     const s = buildSession([...bash("cat /c/proj/b.ts", { at }), ...bash("sed -i 's/x/y/' /c/proj/b.ts", { at })]);
