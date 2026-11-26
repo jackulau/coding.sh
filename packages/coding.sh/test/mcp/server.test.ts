@@ -109,12 +109,16 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add", "score_add_batch"].includes(t.name), `${t.name} readOnlyHint`);
+      // session_replay writes nothing, but its fork sends a step's model call to the provider again.
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add", "score_add_batch", "session_replay"].includes(t.name), `${t.name} readOnlyHint`);
       // eval_init's force replaces a suite; score_add (and score_add_batch) replace the score for the same target and name.
       assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add", "score_add_batch"].includes(t.name), `${t.name} destructiveHint`);
       // session_replay's fork calls the model API.
       assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
     }
+    const replay = tools.find((t) => t.name === "session_replay")!;
+    // Each fork is a new model call, with an answer of its own.
+    assert.equal(replay.annotations.idempotentHint, false);
     const ev = tools.find((t) => t.name === "eval_from_session")!;
     assert.equal(ev.annotations.idempotentHint, true);
     assert.deepEqual(ev.inputSchema.required, ["sessionId", "confirm"]);
