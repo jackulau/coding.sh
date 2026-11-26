@@ -35,6 +35,7 @@ import {
   walkFiles,
   windowsHookPathProblem,
 } from "../../src/adapters/_shared/index.ts";
+import { toMs } from "../../src/adapters/_shared/jsonl.ts";
 
 describe("test-output heuristics", () => {
   const cases: [string, string, string | undefined, [number, number, number?]][] = [
@@ -437,5 +438,14 @@ describe("probeVersion", () => {
   // as long as detect does, so init picks OpenCode's plugin from the version doctor shows.
   it("waits out a --version that takes over 5 s", { timeout: PROBE_TIMEOUT_MS + 10_000 }, async () => {
     assert.equal(await probeVersion(process.execPath, ["-e", "setTimeout(() => console.log('9.8.7'), 6000)"]), "9.8.7");
+  });
+});
+
+describe("toMs", () => {
+  it("reads a time out of the Date range as the fallback", () => {
+    assert.equal(toMs(1790000000, 5), 1790000000000);
+    assert.equal(toMs(8.64e15, 5), 8.64e15);
+    assert.equal(toMs(1e308, 5), 5);
+    assert.equal(toMs(-8.7e12, 5), 5);
   });
 });

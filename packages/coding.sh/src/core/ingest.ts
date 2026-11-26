@@ -81,6 +81,7 @@ import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { deserialize, serialize } from "node:v8";
 import { dirname, join } from "node:path";
 import { sha256Hex } from "./ids.ts";
+import { dateMs } from "./dates.ts";
 import { hash } from "node:crypto";
 import { paths } from "./paths.ts";
 import { createRedactor, noteBlobHits, redactBlobValue, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
@@ -258,6 +259,7 @@ export function validEvent(e: AgentEvent): string | undefined {
   if (typeof e.sessionId !== "string" || !e.sessionId) return `event ${e.id} has no sessionId`;
   if (typeof e.kind !== "string" || !isEventKind(e.kind)) return `event ${e.id} has unknown kind ${JSON.stringify(e.kind)}`;
   if (typeof e.ts !== "number" || !Number.isFinite(e.ts)) return `event ${e.id} has no numeric ts`;
+  if (dateMs(e.ts) === undefined) return `event ${e.id} has a ts out of the Date range`;
   if (typeof e.payload !== "object" || e.payload === null) return `event ${e.id} has no payload object`;
   return undefined;
 }

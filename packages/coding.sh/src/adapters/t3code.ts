@@ -1156,7 +1156,8 @@ export const t3code: Adapter = {
   //    adds to that turn, which ends once: one turn.end, with the turn's own duration.
   // 19 (0.1.8): a Codex session record with no id takes the thread id in the rollout's file name before its
   //    session_id, as in the codex adapter (15).
-  parseVersion: 19,
+  // 20 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, as in the claude-code and codex adapters.
+  parseVersion: 20,
 
   async detect() {
     const env = process.env;
