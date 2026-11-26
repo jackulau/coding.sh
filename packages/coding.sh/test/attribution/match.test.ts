@@ -79,6 +79,7 @@ describe("attribution on the fixture repo (3 sessions, 4 commits, 1 human commit
     // Sessions, most lines first.
     assert.deepEqual(report.sessions.map((s) => s.id).sort(), ["s1-claude", "s2-codex", "s3-claude"]);
     assert.equal(report.sources, 3);
+    assert.equal(report.considered, 3);
   });
 
   test("blame takes path:line and path:a-b", async () => {
