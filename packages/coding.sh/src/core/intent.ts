@@ -304,7 +304,8 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
       const skips = shellSkips(cmd);
       for (const w of shellWrites(cmd)) {
         const path = normalizeTracePath(w.path, cwd);
-        proofWrite(proof, e, w, path, w.renamedTo === undefined ? undefined : normalizeTracePath(w.renamedTo, cwd), id, log.note);
+        // A test file gets the generic reading, whatever its language; the fold has no caller pattern, so neither does this.
+        proofWrite(proof, e, w, path, w.renamedTo === undefined ? undefined : normalizeTracePath(w.renamedTo, cwd), id, isProtectedPath(path), log.note);
         const prot = isProtectedPath(path, protect);
         writes.push({ i, protected: prot, toolUseId: id, attributed: true });
         const own = created.has(path) || (/[*?]/.test(path) && [...created].some((c) => globRe(path).test(c)));
@@ -332,7 +333,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
       // a rebase that changes source between a red and a green run breaks flippedGreen.
       const origin = shellDiffOrigin(e, start, cwd);
       const moved = str(p.movedTo);
-      const proofFile = proofChange(proof, e, { path, to: moved ? normalizeTracePath(moved, cwd) : undefined, origin, prot }, log.note);
+      const proofFile = proofChange(proof, e, { path, to: moved ? normalizeTracePath(moved, cwd) : undefined, origin, prot, test: isProtectedPath(path) }, log.note);
       if (origin === "vcs") prot = false;
       writes.push({ i, protected: prot && origin !== "unattributed", toolUseId: id, attributed: origin === "edit" || origin === "named" });
       if (prot && !outsideRepo(path) && !proofFile) {
@@ -539,8 +540,8 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     const skips = shellSkips(cmd);
     for (const w of shellWrites(cmd)) {
       const path = normalizeTracePath(w.path, cwd);
-      proofWrite(s, e, w, path, w.renamedTo === undefined ? undefined : normalizeTracePath(w.renamedTo, cwd), id);
       const prot = isProtectedPath(path);
+      proofWrite(s, e, w, path, w.renamedTo === undefined ? undefined : normalizeTracePath(w.renamedTo, cwd), id, prot);
       write(prot, id, true);
       const own = s.created.has(path) || (/[*?]/.test(path) && [...s.created].some((c) => globRe(path).test(c)));
       if (w.op === "create") s.created.add(path);
@@ -563,7 +564,7 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     const start = cmd === undefined ? undefined : ({ ...e, kind: "tool.start", payload: { tool: "Bash", input: { command: cmd } } } as AgentEvent);
     const origin: ShellDiffOrigin = shellDiffOrigin(e, start, cwd);
     const moved = str(p.movedTo);
-    const proofFile = proofChange(s, e, { path, to: moved ? normalizeTracePath(moved, cwd) : undefined, origin, prot });
+    const proofFile = proofChange(s, e, { path, to: moved ? normalizeTracePath(moved, cwd) : undefined, origin, prot, test: prot });
     if (origin === "vcs") prot = false;
     write(prot && origin !== "unattributed", id, origin === "edit" || origin === "named");
     const own = s.created.has(path) || (op === "delete" && !!s.ownDeleted?.has(path) && s.ownDeleted.get(path) === id) || reworksOwnLines(s.ownLines, path, str(p.diff));

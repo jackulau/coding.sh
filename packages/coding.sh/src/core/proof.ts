@@ -5,6 +5,7 @@
 // test-tamper findings and the flag. Pure: rules over text, no I/O.
 import { posix } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
+import { exitCodeOf } from "./failing-command.ts";
 import { diffHunks, simpleCommands, type DiffLine, type ShellDiffOrigin, type SimpleCommand } from "./shell-diff.ts";
 
 /** A proof language, or a TLC model config (`.cfg`). */
@@ -13,23 +14,31 @@ export type ProofLang = "lean" | "rocq" | "dafny" | "verus" | "isabelle" | "tla"
 const BY_EXT = new Map<string, ProofLang>([["lean", "lean"], ["v", "rocq"], ["dfy", "dafny"], ["thy", "isabelle"], ["tla", "tla"]]);
 /** Build files that choose what a checker reads and with which options. */
 const PROOF_CONFIG = /(?:^|\/)(?:_CoqProject|_RocqProject|lakefile\.(?:lean|toml)|ROOTS?|dfyconfig\.toml)$/;
-/** Verilog shares `.v` with Rocq. The text may be a diff, so a line can start with its marker. */
-const VERILOG = /\bendmodule\b|^[-+ ]?\s*module\s+\w+\s*(?:#\s*)?\(|\balways\s*@|^[-+ ]?\s*(?:input|output|inout)\s+(?:wire|reg|logic|\[)/m;
-/** Rocq vernacular: a session whose `.v` diffs have it (or that runs coqc) is a Rocq one. */
-const ROCQ_WORDS = /\b(?:Proof|Qed|Admitted|Defined|Require|Theorem|Lemma|Definition|Fixpoint|Inductive)\b/;
+/**
+ * Verilog shares `.v` with Rocq: its keywords, declarations that end in `;`, and sized literals
+ * (`8'hFF`). The text may be a diff, so a line can start with its marker.
+ */
+const VERILOG =
+  /\b(?:endmodule|endcase|endgenerate|endfunction|endtask|always_ff|always_comb|always_latch|posedge|negedge)\b|^[-+ ]?[ \t]*(?:module|macromodule)[ \t]+\w+[ \t]*(?:#[ \t]*)?[(;]|\balways[ \t]*@|^[-+ ]?[ \t]*(?:input|output|inout)[ \t]+(?:wire|reg|logic|signed|\[)|^[-+ ]?[ \t]*(?:assign|wire|reg|logic|localparam|parameter|genvar)\b[^\n;]*;|\b\d+'[sS]?[bBhHdDoO]/m;
+/**
+ * A line that starts a Rocq sentence: `Require Import`, a `Lemma` or `Definition` with its name,
+ * `Proof.`, `Qed.`, `End Name.`. Read with comments blanked, so a word in a comment is not one.
+ */
+const ROCQ_SENTENCE =
+  /^[-+ ]?[ \t]*(?:#\[[^\]\n]*\][ \t]*)?(?:(?:Local|Global|Polymorphic|Monomorphic|Program)[ \t]+)*(?:(?:(?:From[ \t]+[\w.]+[ \t]+)?Require|Import|Export|Open[ \t]+Scope)[ \t]+[\w.]|(?:Theorem|Lemma|Corollary|Proposition|Fact|Remark|Example|Definition|Fixpoint|CoFixpoint|Inductive|CoInductive|Record|Structure|Class|Instance|Axioms?|Parameters?|Hypothes[ie]s|Variables?|Conjectures?|Section|Module(?:[ \t]+Type)?)[ \t]+(?:[\w']+[ \t]*)?(?:[:({[.]|<:)|(?:Proof|Qed|Defined|Admitted|Abort)[ \t]*\.(?=\s|$)|Proof[ \t]+(?:using|with)\b|End[ \t]+[\w']+[ \t]*\.)/m;
 /** A Rust file is a Verus one when it uses Verus syntax. */
 const VERUS = /\bverus!\s*\{|#\[verifier[:(]|\b(?:spec|proof)\s+fn\b|\buse\s+vstd::/;
 /** A `.cfg` file is a TLC model when it has TLC's directives. */
-const TLC_DIRECTIVE = /^[-+ ]?\s*(?:SPECIFICATION|INIT|NEXT|INVARIANTS?|PROPERT(?:Y|IES)|CONSTANTS?|CONSTRAINTS?|ACTION_CONSTRAINTS?|SYMMETRY|VIEW|CHECK_DEADLOCK|ALIAS|POSTCONDITION)\b/m;
+const TLC_DIRECTIVE = /^[-+ ]?[ \t]*(?:SPECIFICATION|INIT|NEXT|INVARIANTS?|PROPERT(?:Y|IES)|CONSTANTS?|CONSTRAINTS?|ACTION_CONSTRAINTS?|SYMMETRY|VIEW|CHECK_DEADLOCK|ALIAS|POSTCONDITION)\b/m;
 /** TLC lines that shrink what the model checker explores. */
-const TLC_NARROW = /^\s*(?:CONSTRAINTS?|ACTION_CONSTRAINTS?)\b|^\s*CHECK_DEADLOCK\s+FALSE\b/;
+const TLC_NARROW = /^[ \t]*(?:CONSTRAINTS?|ACTION_CONSTRAINTS?)\b|^[ \t]*CHECK_DEADLOCK[ \t]+FALSE\b/;
 /** Line keys: a TLC line that narrows the model starts with NARROW; UNREAD stands for a change that could not be read. */
 const NARROW = "\u0001";
 const UNREAD = "\u0000";
 /** Test, example and scratch folders: escape hatches there are expected. */
 const PROOF_TEST = /(?:^|\/)(?:tests?|examples?|scratch)\//i;
-/** Files and folders named as the spec or the statements to prove. */
-const SPEC_NAMED = /(?:^|\/)(?:specs?|specifications?|statements?)\/|(?:^|\/)[^/]*(?:Spec|Specification|Statements?)\.[A-Za-z]+$|(?:^|\/)(?:spec|specification|statements?)\.[A-Za-z]+$/;
+/** Files and folders named as the spec or the statements to prove. `spec/` and `specs/` are test folders (core/intent.ts). */
+const SPEC_NAMED = /(?:^|\/)(?:specifications?|statements?)\/|(?:^|\/)[^/]*(?:Spec|Specification|Statements?)\.[A-Za-z]+$|(?:^|\/)(?:spec|specification|statements?)\.[A-Za-z]+$/;
 
 const extOf = (path: string) => /\.([A-Za-z]+)$/.exec(path)?.[1] ?? "";
 
@@ -145,30 +154,44 @@ export function scanProof(text: string, sx: Syntax): { code: string; bare: strin
   return { code: code.join(""), bare: bare.join("") };
 }
 
-/** Escape hatches: the checker takes a goal on trust. Read with comments and strings blanked. */
+/** Text read for Rocq sentences: `(* *)` comments, `//` comments (Verilog's) and strings blanked. */
+const rocqText = (text: string) => scanProof(text, { line: "//", block: ["(*", "*)"], raw: true }).bare;
+
+/** A hatch word on its own: not part of a hyphenated word (`sorry-free`). */
+const word = (w: string) => new RegExp(`(?<![A-Za-z]-)\\b${w}\\b(?!-[A-Za-z])`, "g");
+/** A Rocq command: the first word of a line or of a sentence after `. `, after attributes and `Local` or `Global`. */
+const command = (w: string) => new RegExp(`(?:^|\\.(?=[ \\t]))[ \\t]*(?:(?:Local|Global|Polymorphic|Monomorphic|#\\[[^\\].]*\\])[ \\t]*)*\\b${w}\\b(?!-[A-Za-z])`, "g");
+
+/** Escape hatches: the checker takes a goal on trust. Read line by line, with comments and strings blanked. */
 const HATCHES: Record<ProofLang, [string, RegExp][]> = {
-  lean: [["sorry", /\bsorry\b/g], ["admit", /\badmit\b/g], ["axiom", /\baxiom\b/g], ["debug.skipKernelTC", /\bset_option\s+debug\.skipKernelTC\s+true\b/g]],
+  lean: [["sorry", word("sorry")], ["admit", word("admit")], ["axiom", word("axiom")], ["debug.skipKernelTC", /\bset_option[ \t]+debug\.skipKernelTC[ \t]+true\b/g]],
   rocq: [
-    ["Admitted", /\bAdmitted\b/g],
-    ["admit", /\badmit\b/g],
-    ["Axiom", /\b(?:Axioms?|Conjectures?)\b/g],
-    ["Admit Obligations", /\bAdmit\s+Obligations\b/g],
-    ["Unset Checking", /\bUnset\s+(?:Guard|Universe|Positivity)\s+Checking\b/g],
+    ["Admitted", command("Admitted")],
+    // The tactic: a sentence or a step of one ends after it.
+    ["admit", /(?<![A-Za-z]-)\badmit\b(?=[ \t]*(?:[.;|)\]}]|$))/g],
+    ["Axiom", command("(?:Axioms?|Conjectures?)")],
+    ["Admit Obligations", command("Admit[ \\t]+Obligations")],
+    ["Unset Checking", command("Unset[ \\t]+(?:Guard|Universe|Positivity)[ \\t]+Checking")],
     ["bypass_check", /\bbypass_check\b/g],
   ],
-  dafny: [["assume", /\bassume\b/g], ["{:axiom}", /\{:\s*axiom\b/g], ["{:verify false}", /\{:\s*verify\s+false\s*\}/g]],
-  verus: [["external_body", /#\[\s*verifier\s*(?:::\s*external_body|\(\s*external_body\s*\))\s*\]/g], ["assume", /\bassume\s*\(/g], ["admit", /\badmit\s*\(/g]],
-  isabelle: [["sorry", /\bsorry\b/g], ["axiomatization", /\baxiomatization\b/g]],
-  tla: [["OMITTED", /\bOMITTED\b/g], ["AXIOM", /\bAXIOMS?\b/g]],
+  dafny: [["assume", word("assume")], ["{:axiom}", /\{:\s*axiom\b/g], ["{:verify false}", /\{:\s*verify\s+false\s*\}/g]],
+  // A call, not a method call (`self.admit(x)`) or a function of that name.
+  verus: [
+    ["external_body", /#\[\s*verifier\s*(?:::\s*external_body|\(\s*external_body\s*\))\s*\]/g],
+    ["assume", /(?<!\.)\bassume(?<!\bfn[ \t]+assume)\s*\(/g],
+    ["admit", /(?<!\.)\badmit(?<!\bfn[ \t]+admit)\s*\(/g],
+  ],
+  isabelle: [["sorry", word("sorry")], ["axiomatization", word("axiomatization")]],
+  tla: [["OMITTED", word("OMITTED")], ["AXIOM", word("AXIOMS?")]],
   tlc: [],
 };
 /** Build file options that switch checking off. Read with strings kept: TOML and lakefile options are quoted. */
 const CONFIG_HATCHES: [string, RegExp][] = [
-  ["quick_and_dirty", /\bquick_and_dirty\b(?!\s*=\s*false\b)/g],
-  ["skip_proofs", /\bskip_proofs\b(?!\s*=\s*false\b)/g],
-  ["debug.skipKernelTC", /(?:\b|(?<=-D))debug\.skipKernelTC\b(?!["'\s]*[=,:]?\s*false\b)/g],
+  ["quick_and_dirty", /\bquick_and_dirty\b(?![ \t]*=[ \t]*false\b)/g],
+  ["skip_proofs", /\bskip_proofs\b(?![ \t]*=[ \t]*false\b)/g],
+  ["debug.skipKernelTC", /(?:\b|(?<=-D))debug\.skipKernelTC\b(?![ \t"']*(?:[=,:][ \t"']*)?false\b)/g],
   ["-type-in-type", /(?<![\w-])--?type-in-type\b/g],
-  ["no-verify", /(?<![\w-])(?:--?no-verify|\/noVerify)\b|^\s*no-verify\s*=(?!\s*false\b)/gm],
+  ["no-verify", /(?<![\w-])(?:--?no-verify|\/noVerify)\b|^[ \t]*no-verify[ \t]*=(?![ \t]*false\b)/gm],
 ];
 
 /** Where a statement starts: the keyword (Verus: the modifiers) in group 1, the name in group 2. Read on blanked text. */
@@ -199,9 +222,9 @@ const atLineStart = (s: string, i: number) => {
 function extent(lang: ProofLang, bare: string, from: number, cap: number): number {
   const re = ENDS[lang];
   if (re) {
-    re.lastIndex = from;
-    const m = re.exec(bare);
-    return m && m.index < cap ? m.index + (lang === "rocq" ? 1 : 0) : cap;
+    re.lastIndex = 0;
+    const m = re.exec(bare.slice(from, cap));
+    return m ? from + m.index + (lang === "rocq" ? 1 : 0) : cap;
   }
   let depth = 0;
   for (let i = from; i < cap; i++) {
@@ -291,33 +314,59 @@ function leftOver(xs: Stmt[], ys: Stmt[]): Stmt[] {
   });
 }
 
-/** Pair what changed by name. Only claims and specified functions count. */
+/** Pair what changed by name, each one before with the first one after of that name. Only claims and specified functions count. */
 export function compareStatements(before: Stmt[], after: Stmt[]): StmtDelta {
   const out: StmtDelta = { changed: [], removed: [], added: [] };
   const now = leftOver(after, before);
+  const byName = new Map<string, number[]>();
+  now.forEach((a, k) => {
+    const list = byName.get(a.name);
+    if (list) list.push(k);
+    else byName.set(a.name, [k]);
+  });
+  const next = new Map<string, number>();
+  const used: boolean[] = [];
   for (const b of leftOver(before, after)) {
-    const k = now.findIndex((a) => a.name === b.name);
-    if (k < 0) {
+    const n = next.get(b.name) ?? 0;
+    const k = byName.get(b.name)?.[n];
+    if (k === undefined) {
       if (b.spec) out.removed.push(b);
       continue;
     }
-    const a = now.splice(k, 1)[0] as Stmt;
+    next.set(b.name, n + 1);
+    used[k] = true;
+    const a = now[k] as Stmt;
     if (a.spec || b.spec) out.changed.push([b, a]);
   }
-  for (const a of now) if (a.spec) out.added.push(a);
+  now.forEach((a, k) => {
+    if (!used[k] && a.spec) out.added.push(a);
+  });
   return out;
+}
+
+/** The clauses of `xs` that `ys` lacks, each match used once. */
+function clauseDiff(xs: string[] = [], ys: string[] = []): string[] {
+  const n = new Map<string, number>();
+  for (const y of ys) n.set(y, (n.get(y) ?? 0) + 1);
+  return xs.filter((x) => {
+    const k = n.get(x) ?? 0;
+    if (k) n.set(x, k - 1);
+    return !k;
+  });
 }
 
 /** An edit that only adds `ensures` clauses proves more, not less. */
 export function strengthens(b: Stmt, a: Stmt): boolean {
   if (b.sig === undefined || b.sig !== a.sig) return false;
-  const extra = [...(a.clauses ?? [])];
-  for (const c of b.clauses ?? []) {
-    const k = extra.indexOf(c);
-    if (k < 0) return false;
-    extra.splice(k, 1);
-  }
-  return extra.every((c) => c.startsWith("ensures:"));
+  return !clauseDiff(b.clauses, a.clauses).length && clauseDiff(a.clauses, b.clauses).every((c) => c.startsWith("ensures:"));
+}
+
+/** An edit that only drops `ensures` clauses or adds `requires` clauses proves less. */
+export function weakens(b: Stmt, a: Stmt): boolean {
+  if (b.sig === undefined || b.sig !== a.sig) return false;
+  const lost = clauseDiff(b.clauses, a.clauses);
+  const extra = clauseDiff(a.clauses, b.clauses);
+  return lost.length + extra.length > 0 && lost.every((c) => c.startsWith("ensures:")) && extra.every((c) => c.startsWith("requires:"));
 }
 
 /** A short key for a statement's text: its length and FNV-1a hash, base 36. */
@@ -333,8 +382,28 @@ export interface ProofDiff extends StmtDelta {
   /** Lines taken out and put in, without whitespace; a line that only moved cancels. TLC lines that narrow the model start with NARROW. */
   taken: string[];
   fresh: string[];
-  /** A line put in has Rocq vernacular. */
+  /** The text after the change, as the hunks show it, has a line that starts a Rocq sentence. */
   rocq: boolean;
+}
+
+const MODULE_TYPE = /^[ \t]*(?:#\[[^\]\n]*\][ \t]*)?Module[ \t]+Type[ \t]+([\w']+)(.*)$/;
+const MODULE_END = /^[ \t]*End[ \t]+([\w']+)[ \t]*\./;
+
+/**
+ * The lines of a Rocq `Module Type` block, from its header to its `End`: an `Axiom` there
+ * declares what a module must provide. One whose header is not in the hunk is not seen.
+ */
+function moduleTypeLines(bare: string[]): boolean[] {
+  let name: string | undefined;
+  return bare.map((l) => {
+    if (name === undefined) {
+      const m = MODULE_TYPE.exec(l);
+      if (m && !(m[2] ?? "").includes(":=")) name = m[1];
+      return name !== undefined;
+    }
+    if (MODULE_END.exec(l)?.[1] === name) name = undefined;
+    return true;
+  });
 }
 
 /** Read one file's diff. A clipped diff's last hunk counts only when it only adds lines. */
@@ -352,11 +421,12 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
       const { code, bare } = scanProof(img.map((l) => l.s).join("\n"), sx);
       const cl = code.split("\n");
       const bl = bare.split("\n");
+      const inType = lang === "rocq" ? moduleTypeLines(bl) : undefined;
       img.forEach((l, k) => {
-        if (l.t === side) lines[side].push([cl[k] as string, bl[k] as string]);
+        if (l.t === side) lines[side].push([cl[k] as string, inType?.[k] ? "" : (bl[k] as string)]);
       });
       if (lang) (side === "-" ? before : after).push(...statements(lang, code, bare));
-      if (side === "+" && !rocq && ROCQ_WORDS.test(code)) rocq = true;
+      if (side === "+" && !rocq && ROCQ_SENTENCE.test(bare)) rocq = true;
     }
   const pool = new Map<string, number>();
   for (const [c] of lines["+"]) if (strip(c)) pool.set(strip(c), (pool.get(strip(c)) ?? 0) + 1);
@@ -384,6 +454,8 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
 export interface ProofCheck {
   /** The language, or `make` or `dune` for a build that runs the checker. */
   lang: string;
+  /** What a build or a Dafny command does: the make targets, `build` or `test` with dune's aliases, Dafny's subcommand. Another target is another check. */
+  target?: string;
   /** The proof files named on the command line, sorted: a check of other files is not the same check. */
   path?: string;
   /** A flag that skips checking (`--no-verify`, `-o quick_and_dirty`). */
@@ -397,9 +469,17 @@ export interface ProofCheck {
 
 const CHECKER_HINT = /\b(?:coqc|coqchk|rocq|rocqchk|lake|lean|dafny|verus|isabelle|tlc2?|tlapm|apalache-mc|make|dune)\b/;
 const PROOF_ARG = /\.(?:v|lean|dfy|thy|tla|cfg)$/;
-const FILTERS = new Set(["grep", "egrep", "fgrep", "rg", "head", "sed", "awk", "cut", "wc", "sort", "uniq", "jq"]);
-const BYPASS = /(?:^|\s)(--?no-verify|\/noVerify|--?type-in-type|-vos|-deadlock)(?=\s|$)|(?:^|\s)(-o\s*(?:quick_and_dirty|skip_proofs))(?!\s*=\s*false\b)|(debug\.skipKernelTC)(?!\s*=\s*false\b)/;
+const FILTERS = new Set(["grep", "egrep", "fgrep", "rg", "head", "tail", "sed", "awk", "cut", "wc", "sort", "uniq", "jq"]);
+/** Checker flags that skip the work, and the `-o` (Isabelle) and `-D` (Lean) options that do, unless set to false. */
+const BYPASS_ARG = /^(?:--?no-verify|\/noVerify|--?type-in-type|-vos|-deadlock)$/;
+const BYPASS_SET: Record<string, RegExp> = { o: /^(quick_and_dirty|skip_proofs)(?:=(?!false$).*)?$/, D: /^(debug\.skipKernelTC)(?:=(?!false$).*)?$/ };
 const NOT_A_RUN = /^(?:--?version|--?help|-h)$/;
+/** Output that only a proof checker prints: what makes a make or dune build a proof check. */
+const ROCQ_OUT = /^File "[^"\n]*\.v", line \d+|^[ \t]*(?:COQC|COQDEP|ROCQ compile)[ \t]+\S+\.v\b/m;
+const PROOF_OUT = new RegExp(
+  `${ROCQ_OUT.source}|\\.lean:\\d+:\\d+:|Failed to finish proof|Unfinished session|\\.thy"|\\.dfy\\(\\d+,\\d+\\): Error|Dafny program verifier finished|verification results::|Model checking completed|is violated|TLC2 Version|Finished computing initial states|obligations? (?:failed|proved)`,
+  "m",
+);
 
 /** The command a wrapper runs: `timeout 600 lake build`, `opam exec -- coqc A.v`. */
 function unwrap(c: SimpleCommand): [string, string[]] {
@@ -454,17 +534,55 @@ function checkerLang(cmd: string, args: string[]): string | undefined {
     case "apalache-mc":
       return sub === "check" ? "tla" : undefined;
     case "make":
-      return args.some((a) => /^(?:clean|cleanall|distclean|install|uninstall|doc|html|vos|vio|quick|-n|--dry-run|--just-print)$/.test(a)) ? undefined : "make";
+      return args.some((a) => /^(?:clean|cleanall|distclean|install|uninstall|help|doc|html|vos|vio|quick|-n|--dry-run|--just-print)$/.test(a)) ? undefined : "make";
     case "dune":
       return sub === "build" || sub === "test" ? "dune" : undefined;
   }
   return undefined;
 }
 
-/** The proof check a shell command line runs: its last checker command, if it has one. */
+/** The make targets and variables as written, without the options that only change how make runs (`-j4`, `-k`, `-s`). */
+function makeTarget(args: string[]): string {
+  const out: string[] = [];
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k] as string;
+    if (/^(?:-[jl]|--jobs|--load-average|--max-load)$/.test(a)) {
+      if (/^\d+(?:\.\d+)?$/.test(args[k + 1] ?? "")) k++;
+      continue;
+    }
+    if (/^(?:-[jl][\d.]*|--(?:jobs|load-average|max-load)=.*|-[ksBw]+|--(?:keep-going|silent|quiet|always-make|(?:no-)?print-directory))$/.test(a)) continue;
+    out.push(a);
+  }
+  return out.join(" ");
+}
+
+/** What a build or Dafny command does, for the check's key. */
+function targetOf(lang: string, sub: string, args: string[]): string | undefined {
+  if (lang === "make") return makeTarget(args) || undefined;
+  if (lang === "dune") return [sub, ...args.filter((a) => a.startsWith("@")).sort()].join(" ");
+  if (lang === "dafny" && /^(?:verify|build|run|test)$/.test(sub)) return sub;
+  return undefined;
+}
+
+/** A checker flag that skips checking, as `--no-verify`, `-o quick_and_dirty` or `debug.skipKernelTC`. */
+function bypassOf(args: string[]): string | undefined {
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k] as string;
+    if (BYPASS_ARG.test(a)) return a;
+    const o = /^-([oD])(.*)$/.exec(a);
+    const v = o ? BYPASS_SET[o[1] as string]?.exec(o[2] || (args[k + 1] ?? "")) : undefined;
+    if (v) return o?.[1] === "o" ? `-o ${v[1]}` : v[1];
+  }
+  return undefined;
+}
+
+/**
+ * The proof check a shell command line runs: its last checker command, if it has one. Quoted words
+ * stay whole: `git commit -m "WIP; lake build"` runs no check.
+ */
 export function proofCheck(command: string, input?: unknown): ProofCheck | undefined {
   if (!CHECKER_HINT.test(command)) return undefined;
-  const cmds = simpleCommands(command).filter((c) => c.name !== "");
+  const cmds = simpleCommands(command, { quotes: true }).filter((c) => c.name !== "");
   let at = -1;
   let lang: string | undefined;
   let args: string[] = [];
@@ -476,12 +594,15 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
   if (lang === undefined) return undefined;
   const c = cmds[at] as SimpleCommand;
   const files = args.filter((a) => PROOF_ARG.test(a)).map((a) => (c.dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(a) ? posix.join(c.dir, a) : a));
-  const bypass = BYPASS.exec(args.join(" "));
+  // make and dune pass their arguments to the build, not to a checker.
+  const bypass = lang === "make" || lang === "dune" ? undefined : bypassOf(args);
+  const target = targetOf(lang, args.find((a) => !a.startsWith("-")) ?? "", args);
   const exit = at === cmds.length - 1 ? "both" : cmds.slice(at, -1).every((x) => x.sep === "&&") ? "green" : undefined;
   const background = c.sep === "&" || (!!input && typeof input === "object" && (input as { run_in_background?: unknown }).run_in_background === true);
   const check: ProofCheck = { lang };
+  if (target) check.target = target;
   if (files.length) check.path = files.sort().join(" ");
-  if (bypass) check.bypass = (bypass[1] ?? bypass[2] ?? bypass[3] ?? "").replace(/\s+/g, " ");
+  if (bypass) check.bypass = bypass;
   if (exit) check.exit = exit;
   if (cmds.slice(at + 1).some((x) => FILTERS.has(x.cmd))) check.filtered = true;
   if (background) check.background = true;
@@ -489,6 +610,9 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
 }
 
 const STILL_RUNNING = /\brunning in (?:the )?background\b|\bcommand timed out\b/i;
+/** A command the shell could not find, or a call the user turned down: the checker never ran. */
+const NOT_RUN =
+  /\bcommand not found\b|: not found$|is not recognized as (?:the name of a cmdlet|an internal or external command)|CommandNotFoundException|doesn'?t want to proceed with this tool use|tool use was rejected|(?:rejected|denied) by (?:the )?user\b/im;
 /**
  * Errors in a checker's output. A hole the checker only warns about (Lean's `declaration uses
  * 'sorry'`) is not one: a hole left anywhere in the project would keep every check red.
@@ -503,11 +627,16 @@ export function outText(out: unknown): string {
   return [o.stdout, o.stderr, o.output].filter((x): x is string => typeof x === "string").join("\n");
 }
 
-/** What a check's tool.end says: red, green, or nothing to go on (in the background, timed out, clipped). */
+/**
+ * What a check's tool.end says: red, green, or nothing to go on (in the background, timed out,
+ * clipped, or a checker that never ran: not found, exit status 126 or 127, or turned down).
+ */
 export function checkOutcome(check: ProofCheck, end: Record<string, unknown>): "red" | "green" | undefined {
   if (check.background || end.interrupted === true) return undefined;
   const out = outText(end.output);
   if (STILL_RUNNING.test(out)) return undefined;
+  const code = exitCodeOf(end.exitCode, out);
+  if (NOT_RUN.test(out) || code === 126 || code === 127) return undefined;
   if (check.exit === "both" && end.ok === false) return "red";
   if (ERROR.test(out)) return "red";
   if (check.exit) return end.ok === true ? "green" : undefined;
@@ -530,16 +659,17 @@ export interface ProofFile {
   gone?: true;
   /** A language found from the text (`.rs`, `.cfg`), kept for diffs that do not show it. */
   lang?: "verus" | "tlc";
-  /** Changed keys since the last passing check. */
-  touched?: Set<string>;
+  /** Changed keys since the last passing check, each with the number of outcomes read before the change. */
+  touched?: Map<string, number>;
   /** Keys whose change turned a failing check green and that are still changed. */
   flipped?: Set<string>;
 }
 
 /** A check that failed and has not passed since. */
 export interface ProofRed {
-  /** Its tool.end. */
+  /** Its tool.end, and the number of that outcome: a pass flips only what changed after it. */
   at: string;
+  seq: number;
   /** It failed after the agent changed code that is not a proof since a pass. */
   own?: true;
   /** The agent changed code that is not a proof since it failed, so a pass may come from the code. */
@@ -552,6 +682,8 @@ export interface ProofRun {
   /** Its tool.end, and the failing one before it when it passed after a failure (`flip`). */
   at: string;
   before?: string;
+  /** The number of its outcome, when it had one. */
+  seq?: number;
   green?: true;
   flip?: true;
 }
@@ -570,9 +702,14 @@ export interface ProofState {
   green?: { edited?: true };
   /** A check that passed with a bypass flag after failing, until it passes without one. */
   bypass?: string;
-  /** A Rocq or Verus check ran: `.v` files are Rocq, `.rs` files are Verus. */
+  /** Check outcomes read so far. */
+  seq?: number;
+  /** A Rocq check ran, a check printed Rocq output, or a diff showed a Rocq sentence: `.v` files are Rocq. */
   rocq?: true;
-  verus?: true;
+  /** A TLC or TLA+ check ran: `.cfg` files with TLC directives are TLC models. */
+  tlc?: true;
+  /** The `.tla` files changed (the last 8): a `.cfg` beside one is its model. */
+  tla?: string[];
 }
 /** The holder of the state, made on first use: core/intent.ts's TamperState. */
 export interface HasProof {
@@ -597,11 +734,14 @@ const OUTSIDE = /^(?:\/|[A-Za-z]:\/|~|\.\.\/)/;
 /** Docs, logs, proof build products, tool folders and paths outside the repo: changing them is not changing code. */
 const NOT_CODE = /(?:^|\/)\.[^/]+\/|\.(?:md|markdown|txt|rst|org|adoc|log|out|lock|vo|vos|vok|glob|aux|olean|ilean|hash|trace)$|^(?:\/|[A-Za-z]:\/|~|\.\.\/)/i;
 
+/** An escape hatch the agent put in is still there. A count below zero is one the agent took out of the file as the session found it. */
+const opened = (f: ProofFile) => [...(f.sites?.values() ?? [])].some((n) => n > 0);
+
 function fileOf(ps: ProofState, path: string): ProofFile {
   const files = (ps.files ??= new Map());
   let f = files.get(path);
   if (f) return f;
-  if (files.size >= FILE_CAP) for (const [k, v] of files) if (!v.sites?.size && !v.flipped?.size) {
+  if (files.size >= FILE_CAP) for (const [k, v] of files) if (!opened(v) && !v.flipped?.size) {
     files.delete(k);
     break;
   }
@@ -633,7 +773,7 @@ function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: P
   const run = id === undefined ? undefined : ps.ran?.find((r) => r.id === id);
   let flip: { before: string; after: string } | undefined;
   if (!t) f.flipped?.delete(key);
-  else if (!run?.green) (f.touched ??= new Set()).add(key);
+  else if (!run?.green) (f.touched ??= new Map()).set(key, run?.seq !== undefined ? run.seq - 1 : (ps.seq ?? 0));
   else if (run.flip) {
     (f.flipped ??= new Set()).add(key);
     flip = { before: run.before as string, after: run.at };
@@ -645,7 +785,7 @@ function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: P
 }
 
 function closeSites(f: ProofFile, path: string, e: AgentEvent, note: Note): void {
-  for (const h of f.sites?.keys() ?? []) note?.({ kind: "hatch", e, path, hatch: h, open: false });
+  for (const [h, n] of f.sites ?? []) if (n > 0) note?.({ kind: "hatch", e, path, hatch: h, open: false });
   delete f.sites;
 }
 
@@ -655,19 +795,20 @@ export function proofStart(h: HasProof, id: string | undefined, cmd: string, inp
   if (!check) return;
   const ps = (h.proof ??= {});
   if (check.lang === "rocq") ps.rocq = true;
-  if (check.lang === "verus") ps.verus = true;
+  if (check.lang === "tlc" || check.lang === "tla") ps.tlc = true;
   (ps.runs ??= []).push([id as string, check]);
   if (ps.runs.length > RECENT) ps.runs.shift();
 }
 
-/** Checks are the same when they check the same language and name the same files. */
-const checkKey = (c: ProofCheck) => `${c.lang}\u0000${c.path ?? ""}`;
+/** Checks are the same when they check the same language, build target and files. */
+const checkKey = (c: ProofCheck) => `${c.lang}\u0000${c.target ?? ""}\u0000${c.path ?? ""}`;
 
 /**
  * A shell call ends: what its check says. A pass after a failure of the same check flips the
- * changes made since no check was failing that still stand, unless the agent changed code outside
- * the proofs since the failure, or the failure came after such a change. A pass with a bypass flag
- * after a failure stands until the check passes without one.
+ * changes made after its last failure that still stand, unless the agent changed code outside the
+ * proofs since the failure, or the failure came after such a change. A pass with a bypass flag
+ * after a failure stands until the check passes without one. A make or dune build counts as a
+ * check once its output shows a proof checker ran.
  */
 export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   const ps = h.proof;
@@ -678,11 +819,16 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   if (!ps.runs.length) delete ps.runs;
   const run: ProofRun = { id: id as string, at: e.id };
   if ((ps.ran ??= []).push(run) > RECENT) ps.ran.shift();
+  const text = outText(e.payload?.output);
+  if (ROCQ_OUT.test(text)) ps.rocq = true;
   const out = checkOutcome(check, e.payload ?? {});
   if (!out) return;
   const key = checkKey(check);
+  const was = ps.reds?.get(key);
+  if ((check.lang === "make" || check.lang === "dune") && !was && !PROOF_OUT.test(text)) return;
+  const seq = (ps.seq = (ps.seq ?? 0) + 1);
+  run.seq = seq;
   const reds = (ps.reds ??= new Map());
-  const was = reds.get(key);
   if (check.bypass) {
     if (out === "green" && was) {
       ps.bypass = key;
@@ -690,7 +836,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
     }
   } else if (out === "red") {
     reds.delete(key);
-    const red: ProofRed = { at: e.id };
+    const red: ProofRed = { at: e.id, seq };
     if (ps.green?.edited) red.own = true;
     reds.set(key, red);
     if (reds.size > RECENT) reds.delete(reds.keys().next().value as string);
@@ -701,8 +847,8 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
       run.flip = true;
       run.before = was.at;
       for (const [path, f] of ps.files ?? [])
-        for (const t of f.touched ?? [])
-          if (proofTampered(f, t)) {
+        for (const [t, at] of f.touched ?? [])
+          if (at >= was.seq && proofTampered(f, t)) {
             (f.flipped ??= new Set()).add(t);
             flips.push([path, t]);
           }
@@ -720,11 +866,17 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   if (!reds.size) delete ps.reds;
 }
 
-/** The language of `path` as the session knows it: from the text, an earlier diff, or a Verus check (every `.rs` file). */
+/**
+ * The language of `path` as the session knows it: from the text or an earlier diff. A `.v` file is
+ * Verilog as likely as Rocq until its text has a Rocq sentence or the session shows Rocq. A `.cfg`
+ * file is a TLC model once a TLC check ran or the `.tla` file of the same name changed.
+ */
 function langOf(ps: ProofState | undefined, path: string, text = ""): ProofLang | undefined {
-  const lang = proofLang(path, text, ps?.files?.get(path)?.lang) ?? (ps?.verus && path.endsWith(".rs") ? "verus" : undefined);
-  // A `.v` file is Verilog as likely as Rocq until its text or the session shows Rocq.
-  return lang === "rocq" && !ps?.rocq && !ps?.files?.has(path) && !ROCQ_WORDS.test(text) ? undefined : lang;
+  const f = ps?.files?.get(path);
+  const lang = proofLang(path, text, f?.lang);
+  if (lang === "rocq" && !f && !ps?.rocq && !ROCQ_SENTENCE.test(rocqText(text))) return undefined;
+  if (lang === "tlc" && f?.lang !== "tlc" && !ps?.tlc && !ps?.tla?.includes(path.replace(/\.cfg$/, ".tla"))) return undefined;
+  return lang;
 }
 
 /** A call that runs a check, or ran one of the last ones: what it writes (a log, a build product) is not an edit. */
@@ -733,11 +885,12 @@ const checkCall = (ps: ProofState, id: string | undefined): boolean =>
 
 /**
  * A file that is not a proof, a spec or a build file changed: a pass after it may come from the
- * change. `mine`: the agent made the change, so a failure after it is the agent's own.
+ * change. `mine`: the agent made the change, so a failure after it is the agent's own. `test`: a
+ * test file, which counts as code whatever its language.
  */
-export function proofSourceWrite(h: HasProof, path: string, id: string | undefined, mine: boolean): void {
+export function proofSourceWrite(h: HasProof, path: string, id: string | undefined, mine: boolean, test = false): void {
   const ps = h.proof;
-  if (!ps || NOT_CODE.test(path) || isProofConfig(path) || langOf(ps, path) || checkCall(ps, id)) return;
+  if (!ps || NOT_CODE.test(path) || (!test && (isProofConfig(path) || langOf(ps, path))) || checkCall(ps, id)) return;
   for (const r of ps.reds?.values() ?? []) r.broken = true;
   if (mine && ps.green) ps.green.edited = true;
 }
@@ -746,7 +899,7 @@ export function proofSourceWrite(h: HasProof, path: string, id: string | undefin
 export function proofHigh(ps: ProofState | undefined): boolean {
   if (!ps) return false;
   if (ps.bypass) return true;
-  for (const f of ps.files?.values() ?? []) if (f.flipped?.size || f.sites?.size) return true;
+  for (const f of ps.files?.values() ?? []) if (f.flipped?.size || opened(f)) return true;
   return false;
 }
 
@@ -782,10 +935,10 @@ const sameKind = (a: string, b: string) => (isProofConfig(a) && isProofConfig(b)
  * A shell command writes a file, as read from its command line before it runs. A proof file it
  * deletes, or moves out of the repo or to a file of another kind, is gone; one moved to a file of
  * its kind keeps what the session knew. A proof file it creates is the agent's own until a diff
- * shows it was there before. Other files are code.
+ * shows it was there before. Other files are code, test files (`test`) included.
  */
-export function proofWrite(h: HasProof, e: AgentEvent, w: { op: string }, path: string, to: string | undefined, id: string | undefined, note?: Note): void {
-  if (!isProofConfig(path) && !langOf(h.proof, path)) return proofSourceWrite(h, path, id, true);
+export function proofWrite(h: HasProof, e: AgentEvent, w: { op: string }, path: string, to: string | undefined, id: string | undefined, test = false, note?: Note): void {
+  if (test || (!isProofConfig(path) && !langOf(h.proof, path))) return proofSourceWrite(h, path, id, true, test);
   if (OUTSIDE.test(path)) return;
   const ps = (h.proof ??= {});
   if (w.op === "delete") {
@@ -808,14 +961,15 @@ export interface ProofTarget {
   to?: string | undefined;
   origin: ShellDiffOrigin;
   prot: boolean;
+  /** A test file (core/intent.ts): it gets the generic test reading, not the proof reading. */
+  test?: boolean;
 }
-
-const stmtShape = (r: [string | null, string | null]): ProofShape => (r[1] === null ? "delete" : "weaken");
 
 /**
  * A file changed. Proof, spec and build files are read here: escape hatches, statements and, for
  * pinned, spec-named and build files, lines. True when the generic test reading should skip the
- * file (every proof file but Verus `.rs` files, which can hold Rust tests too).
+ * file: every proof file but Verus `.rs` files, which can hold Rust tests too. A test file is not
+ * read here and returns false.
  */
 export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: Note): boolean {
   const p = e.payload ?? {};
@@ -823,14 +977,18 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
   const mine = t.origin === "edit" || t.origin === "named";
   const diff = typeof p.diff === "string" ? p.diff : "";
   let path = t.path;
-  const lang = isProofConfig(path) ? undefined : langOf(h.proof, path, diff);
-  if (!lang && !isProofConfig(path)) {
-    proofSourceWrite(h, path, id, mine);
+  const lang = t.test || isProofConfig(path) ? undefined : langOf(h.proof, path, diff);
+  if (t.test || (!lang && !isProofConfig(path))) {
+    proofSourceWrite(h, path, id, mine, t.test);
     return false;
   }
   const handled = lang !== "verus";
   if (OUTSIDE.test(path)) return handled;
   const ps = (h.proof ??= {});
+  if (lang === "tla" && !ps.tla?.includes(path)) {
+    (ps.tla ??= []).push(path);
+    if (ps.tla.length > RECENT) ps.tla.shift();
+  }
   if (!mine && !checkCall(ps, id)) for (const r of ps.reds?.values() ?? []) r.broken = true;
   let op = typeof p.op === "string" ? p.op : "modify";
   // A move the command line showed: its delete and its add are not changes.
@@ -850,24 +1008,27 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
     if (op !== "add") delete f.added;
     delete f.made;
   }
+  // A file written back after a delete is there again; what it holds reads as new.
   if (op === "add") {
-    if (!mine && f.gone) {
+    if (f.gone) {
       delete f.gone;
       touch(ps, f, path, "#gone", "delete", e, id, note);
-    } else if (mine && !f.gone && !f.stmts?.size && !f.lines?.size) f.added = true;
+    } else if (mine && !f.stmts?.size && !f.lines?.size) f.added = true;
   }
   const truncated = p.diffTruncated === true;
   const d = readProofDiff(path, lang, diff, truncated);
   if (d.rocq && lang === "rocq") ps.rocq = true;
   if (!PROOF_TEST.test(path))
     for (const [name, n] of d.hatches) {
+      // Hatches put in minus taken out, from the file as the session found it: taking one out
+      // and putting it back nets to zero. A change by anyone else only moves the count toward zero.
       const was = f.sites?.get(name) ?? 0;
-      // The agent's change puts hatches in or takes them out; anyone else's only takes them out.
-      const now = Math.max(0, was + (mine ? n : Math.min(0, n)));
+      let now = was + n;
+      if (!mine) now = was > 0 ? Math.max(0, Math.min(was, now)) : Math.min(0, Math.max(was, now));
       if (now === was) continue;
       if (now) (f.sites ??= new Map()).set(name, now);
       else f.sites?.delete(name);
-      if (!was || !now) note?.({ kind: "hatch", e, path, hatch: name, open: now > 0 });
+      if (was > 0 !== now > 0) note?.({ kind: "hatch", e, path, hatch: name, open: now > 0 });
     }
   if (f.sites && !f.sites.size) delete f.sites;
   if (op === "delete" && (!diff || truncated)) {
@@ -894,50 +1055,55 @@ function elsewhere(ps: ProofState, path: string, name: string, test: (r: [string
 /**
  * Follow the statements a change touched, each against its text when the session started. A
  * change by someone else only puts a statement back. A statement added in a file the agent made,
- * or one that only gains `ensures` clauses, is not a weakening.
+ * or one that only gains `ensures` clauses, is not a weakening. The shape is `weaken` only for a
+ * Dafny or Verus statement that lost `ensures` or gained `requires` clauses and nothing else; a
+ * statement taken out is `delete`; any other change is `unknown`, as a text change can go either way.
  */
 function readStatements(ps: ProofState, f: ProofFile, path: string, d: ProofDiff, mine: boolean, e: AgentEvent, id: string | undefined, note: Note): void {
   const key = (s: Stmt) => textKey(s.text);
-  const set = (g: ProofFile, at: string, name: string, r: [string | null, string | null]) => {
+  const set = (g: ProofFile, at: string, name: string, r: [string | null, string | null], shape: ProofShape) => {
     if (r[0] === null && r[1] === null) g.stmts?.delete(name);
     else (g.stmts ??= new Map()).set(name, r);
     if (g.stmts && !g.stmts.size) delete g.stmts;
-    touch(ps, g, at, name, stmtShape(r), e, id, note);
+    touch(ps, g, at, name, shape, e, id, note);
   };
   if (!mine) {
     for (const s of [...d.changed.map(([, a]) => a), ...d.added]) {
       const r = f.stmts?.get(s.name);
-      if (r && r[0] === key(s) && r[1] !== r[0]) set(f, path, s.name, [r[0], r[0]]);
+      if (r && r[0] === key(s) && r[1] !== r[0]) set(f, path, s.name, [r[0], r[0]], "unknown");
     }
     return;
   }
   for (const [b, a] of d.changed) {
     const r = f.stmts?.get(a.name);
-    if (r) set(f, path, a.name, [r[0], key(a)]);
-    else if (!f.added && !strengthens(b, a)) set(f, path, a.name, [key(b), key(a)]);
+    // Weaker than the start, so only when this change starts from the start's text.
+    const shape: ProofShape = (!r || r[0] === key(b)) && weakens(b, a) ? "weaken" : "unknown";
+    if (r) set(f, path, a.name, [r[0], key(a)], shape);
+    else if (!f.added && !strengthens(b, a)) set(f, path, a.name, [key(b), key(a)], shape);
   }
   for (const b of d.removed) {
     const r = f.stmts?.get(b.name);
     const there = r ? undefined : elsewhere(ps, path, b.name, ([was]) => was === null);
-    if (r) set(f, path, b.name, [r[0], null]);
-    else if (there) set(there[1], there[0], b.name, [key(b), there[2][1]]);
-    else if (!f.added) set(f, path, b.name, [key(b), null]);
+    if (r) set(f, path, b.name, [r[0], null], "delete");
+    else if (there) set(there[1], there[0], b.name, [key(b), there[2][1]], "unknown");
+    else if (!f.added) set(f, path, b.name, [key(b), null], "delete");
   }
   for (const a of d.added) {
     const r = f.stmts?.get(a.name);
     const there = r ? undefined : elsewhere(ps, path, a.name, ([was, now]) => was !== null && now === null);
-    if (r) set(f, path, a.name, [r[0], key(a)]);
+    if (r) set(f, path, a.name, [r[0], key(a)], "unknown");
     else if (there) {
-      set(there[1], there[0], a.name, [null, null]);
-      set(f, path, a.name, [there[2][0], key(a)]);
-    } else if ((f.stmts?.size ?? 0) < STMT_CAP) set(f, path, a.name, [null, key(a)]);
+      set(there[1], there[0], a.name, [null, null], "unknown");
+      set(f, path, a.name, [there[2][0], key(a)], "unknown");
+    } else if ((f.stmts?.size ?? 0) < STMT_CAP) set(f, path, a.name, [null, key(a)], "unknown");
   }
 }
 
 /**
  * Follow the lines of a pinned, spec-named or build file the agent did not make: each line's count
  * put in minus taken out. A change by someone else only moves a count back toward zero; one the
- * agent made that cannot be read leaves UNREAD.
+ * agent made that cannot be read leaves UNREAD. The shape is `weaken` only while a TLC line that
+ * narrows the model stays added; any other line change is `unknown`.
  */
 function readLines(ps: ProofState, f: ProofFile, path: string, lang: ProofLang | undefined, prot: boolean, d: ProofDiff, unread: boolean, mine: boolean, e: AgentEvent, id: string | undefined, note: Note): void {
   const tracked = !f.added && (lang === undefined || lang === "tlc" || prot || SPEC_NAMED.test(path));
@@ -963,7 +1129,10 @@ function readLines(ps: ProofState, f: ProofFile, path: string, lang: ProofLang |
     lines.set(UNREAD, 1);
   }
   if (!lines.size) delete f.lines;
-  if (moved && (mine || !proofTampered(f, "#lines"))) touch(ps, f, path, "#lines", f.lines?.has(UNREAD) ? "unknown" : "weaken", e, id, note);
+  if (!moved || (!mine && proofTampered(f, "#lines"))) return;
+  let shape: ProofShape = "unknown";
+  if (!f.lines?.has(UNREAD)) for (const [k, n] of f.lines ?? []) if (k.startsWith(NARROW) && n > 0) shape = "weaken";
+  touch(ps, f, path, "#lines", shape, e, id, note);
 }
 
 /** A proof finding, which core/intent.ts adds to a trace's test-tamper findings. */
@@ -1028,7 +1197,7 @@ export function proofLog(): { note: (n: ProofNote) => void; findings: (ps: Proof
     const out: ProofFinding[] = [];
     for (const [k, e] of open) {
       const [path, hatch] = k.split("\u0000") as [string, string];
-      if (ps?.files?.get(path)?.sites?.has(hatch)) out.push({ e, path, kind: "escape", shape: "escape", hatch, high: true, flippedGreen: false });
+      if ((ps?.files?.get(path)?.sites?.get(hatch) ?? 0) > 0) out.push({ e, path, kind: "escape", shape: "escape", hatch, high: true, flippedGreen: false });
     }
     if (ps?.bypass && bypass)
       out.push({ e: bypass.e, path: "", kind: "escape", shape: "escape", hatch: bypass.flag, high: true, flippedGreen: true, before: bypass.before, after: bypass.e.id });

@@ -238,7 +238,7 @@ Flags are found on every ingest. Some of them:
 - `no-verification`: files changed, but no test, type check, lint or build ran.
 - `repeated-tool-failure`: the same tool failed three times in a row with similar input.
 - `test-tamper`: the agent edited a test or a theorem statement in a way that hides failures, or
-  left a proof escape hatch such as `sorry`.
+  added a proof escape hatch such as `sorry` and left it in.
 - `looping`, `failure-streak`, `churn`, `stalled`: a long run went off track.
 
 Flags are heuristics: read the session before you keep its task. [Concepts](../concepts.md) lists

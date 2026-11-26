@@ -218,21 +218,99 @@ function cdChain(): (to: string) => string {
 }
 
 /**
+ * `text` split as `text.split(/(&&|\|\||[;|&\n])/)` splits it, but only at operators outside
+ * quotes: a `;` or `|` inside `'…'` or `"…"` stays in its segment. A backslash outside single
+ * quotes escapes the next character, so `\;` and a `\` line break split nothing. A quote that
+ * never closes runs to the end. One pass over the text.
+ */
+function splitQuoted(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") {
+      if (ch === "'") quote = "";
+      continue;
+    }
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === '"') quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    const op = ch === "&" || ch === "|" ? (text[i + 1] === ch ? ch + ch : ch) : ch === ";" || ch === "\n" ? ch : "";
+    if (!op) continue;
+    parts.push(text.slice(start, i), op);
+    i += op.length - 1;
+    start = i + 1;
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+/**
+ * The words of a segment as the shell reads them: quoted and unquoted parts next to each other
+ * make one word, and the quotes go (`A="x y"` is the one word `A=x y`). A backslash keeps the
+ * character after it, and a `\` line break joins the lines. One pass over the segment.
+ */
+function quotedWords(seg: string): string[] {
+  const out: string[] = [];
+  let w: string | undefined;
+  for (let i = 0; i < seg.length; i++) {
+    const ch = seg[i] as string;
+    if (ch === "'") {
+      const end = seg.indexOf("'", i + 1);
+      const stop = end < 0 ? seg.length : end;
+      w = (w ?? "") + seg.slice(i + 1, stop);
+      i = stop;
+    } else if (ch === '"') {
+      let j = i + 1;
+      let s = "";
+      for (; j < seg.length && seg[j] !== '"'; j++) {
+        if (seg[j] === "\\" && j + 1 < seg.length && '"\\$`'.includes(seg[j + 1] as string)) j++;
+        s += seg[j];
+      }
+      w = (w ?? "") + s;
+      i = j;
+    } else if (ch === "\\") {
+      if (i + 1 < seg.length && seg[i + 1] !== "\n") w = (w ?? "") + seg[i + 1];
+      i++;
+    } else if (/\s/.test(ch)) {
+      if (w !== undefined) out.push(w);
+      w = undefined;
+    } else w = (w ?? "") + ch;
+  }
+  if (w !== undefined) out.push(w);
+  return out;
+}
+
+/**
  * The simple commands of a shell command line: split on `&&`, `||`, `;`, `|`,
  * `&` and newlines, heredoc bodies skipped, each as its unquoted words.
- * Best effort: no subshells or quoting across segments.
+ * Best effort: no subshells. By default an operator inside quotes splits too;
+ * with `quotes` it does not, and a word's quoted and unquoted parts join as the
+ * shell joins them (`A="--x y"` is the one word `A=--x y`).
  */
-export function simpleCommands(command: string): SimpleCommand[] {
+export function simpleCommands(command: string, o: { quotes?: boolean } = {}): SimpleCommand[] {
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
   let cd: ((to: string) => string) | undefined;
-  const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
+  // `(?<!\d)` starts a `2>&1` at its first digit only, so a long run of digits is read once; the
+  // second branch is the `>&1` right after an earlier match that ended in a digit.
+  const text = stripHeredocs(command).replace(/(?<!\d)\d*>&\d+|>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   // Odd entries are the operators between the segments.
-  const parts = text.split(/(&&|\|\||[;|&\n])/);
+  const parts = o.quotes ? splitQuoted(text) : text.split(/(&&|\|\||[;|&\n])/);
   for (let n = 0; n < parts.length; n += 2) {
     const seg = parts[n] as string;
     const sep = parts[n + 1];
-    const words = wordsOf(seg).map(unquote);
+    const words = o.quotes ? quotedWords(seg) : wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.
     const rest: string[] = [];
     const redirects: SimpleCommand["redirects"] = [];

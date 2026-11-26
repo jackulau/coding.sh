@@ -433,10 +433,12 @@ describe("shared constants", () => {
 });
 
 describe("proof tampering", () => {
-  /** A shell call that runs `command` and ends with `ok` and `output`. */
-  function shellRun(command: string, ok: boolean, output = ""): AgentEvent[] {
+  /** A shell call that runs `command` and ends with `ok`, `output` and the fields in `end`, then the file changes it made: [path, op, diff]. */
+  function shellRun(command: string, ok: boolean, output = "", changes: [string, string, string][] = [], end: Record<string, unknown> = {}): AgentEvent[] {
     const id = `tu${t + 1}`;
-    return [ev("tool.start", { tool: "Bash", toolUseId: id, input: { command } }), ev("tool.end", { tool: "Bash", toolUseId: id, ok, output })];
+    const out = [ev("tool.start", { tool: "Bash", toolUseId: id, input: { command } }), ev("tool.end", { tool: "Bash", toolUseId: id, ok, output, ...end })];
+    for (const [path, op, diff] of changes) out.push(ev("file.change", { path, op, tool: "Bash", toolUseId: id, diff }));
+    return out;
   }
   /** A one-hunk diff of `path`; each line starts with " ", "-" or "+". */
   const udiff = (path: string, ...lines: string[]) => `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n${lines.join("\n")}\n`;
@@ -457,7 +459,7 @@ describe("proof tampering", () => {
     const g = green();
     const events = [...r, ...change, ...g];
     const fs = trace(events);
-    assert.deepEqual(said(fs), [["statement", "weaken", "high", true]]);
+    assert.deepEqual(said(fs), [["statement", "unknown", "high", true]]);
     const f = fs[0] as TestTamperFinding;
     assert.deepEqual([f.path, f.theorem, f.via, f.tool, f.eventId], ["Foo.lean", "add_comm", "file", "Edit", change[2]?.id]);
     assert.deepEqual([f.beforeTestEventId, f.afterTestEventId], [r[1]?.id, g[1]?.id]);
@@ -468,7 +470,7 @@ describe("proof tampering", () => {
     const body = edit("Foo.lean", udiff("Foo.lean", ` ${STMT}`, "-  simp", "+  omega"));
     assert.deepEqual(trace([...red(), ...body, ...green()]), []);
     const events = [...edit("Foo.lean", STMT_WEAKEN), ...green()];
-    assert.deepEqual(said(trace(events)), [["statement", "weaken", "info", false]]);
+    assert.deepEqual(said(trace(events)), [["statement", "unknown", "info", false]]);
     assert.ok(!flagged(events));
   });
 
@@ -489,7 +491,7 @@ describe("proof tampering", () => {
       ["src/Sum.dfy", "+  assume false;", "assume"],
       ["src/lib.rs", "+verus! { #[verifier::external_body] fn f() {} }", "external_body"],
       ["Thy/Base.thy", '+lemma x: "a = a" sorry', "sorry"],
-      ["spec/Raft.tla", "+THEOREM Safe == Spec => []Inv OMITTED", "OMITTED"],
+      ["Raft.tla", "+THEOREM Safe == Spec => []Inv OMITTED", "OMITTED"],
       ["ROOT", "+  options [quick_and_dirty]", "quick_and_dirty"],
       ["lakefile.lean", '+  moreLeanArgs := #["-Ddebug.skipKernelTC=true"]', "debug.skipKernelTC"],
     ];
@@ -499,14 +501,14 @@ describe("proof tampering", () => {
     }
   });
 
-  it("does not flag hatch words in comments, strings, prose, tests or files that are not proofs", () => {
+  it("does not flag hatch words in comments, strings, prose, example folders or files that are not proofs", () => {
     const files: [string, string[]][] = [
       ["src/app.ts", ["+// axiom: the cache is warm", '+const msg = "sorry";']],
       ["README.md", ["+Sorry: the axiom of choice is not used, and nothing is Admitted."]],
       ["Foo.lean", ["+-- sorry, fix later", '+#eval "sorry"', "+/- axiom note -/"]],
       ["src/lib.rs", ["+fn assume(ok: bool) {}", "+// #[verifier::external_body]"]],
       ["rtl/top.v", ["+module top(input clk);", "+  assume property (ok); // Admitted"]],
-      ["tests/Scratch.lean", ["+theorem t : True := by sorry"]],
+      ["examples/Scratch.lean", ["+theorem t : True := by sorry"]],
       ["setup.cfg", ["+[tool]", "+no-verify = true"]],
     ];
     for (const [path, lines] of files) {
@@ -532,35 +534,34 @@ describe("proof tampering", () => {
   it("does not flag a statement change when the agent changed other code around the failure", () => {
     const code = () => edit("src/calc.py", udiff("src/calc.py", "-x = 1", "+x = 2"));
     const since = [...red(), ...edit("Foo.lean", STMT_WEAKEN), ...code(), ...green()];
-    assert.deepEqual(said(trace(since)), [["statement", "weaken", "info", false]]);
+    assert.deepEqual(said(trace(since)), [["statement", "unknown", "info", false]]);
     assert.ok(!flagged(since));
     const before = [...green(), ...code(), ...red(), ...edit("Foo.lean", STMT_WEAKEN), ...green()];
-    assert.deepEqual(said(trace(before)), [["statement", "weaken", "info", false]]);
+    assert.deepEqual(said(trace(before)), [["statement", "unknown", "info", false]]);
     assert.ok(!flagged(before));
   });
 
   it("reads Dafny clauses: an added ensures proves more, a removed one less", () => {
     const r = () => shellRun("dafny verify A.dfy", false, "A.dfy(3,4): Error: a postcondition could not be proved");
     const g = () => shellRun("dafny verify A.dfy", true, "Dafny program verifier finished with 1 verified, 0 errors");
-    const more = edit("A.dfy", udiff("A.dfy", " lemma Sum(n: nat)", "   ensures P(n)", "+  ensures Q(n)", " {"));
-    assert.deepEqual(trace([...r(), ...more, ...g()]), []);
-    const less = edit("A.dfy", udiff("A.dfy", " lemma Sum(n: nat)", "   ensures P(n)", "-  ensures Q(n)", " {"));
-    const fs = trace([...r(), ...less, ...g()]);
+    const clause = (line: string) => edit("A.dfy", udiff("A.dfy", " lemma Sum(n: nat)", "   ensures P(n)", line, " {"));
+    assert.deepEqual(trace([...r(), ...clause("+  ensures Q(n)"), ...g()]), []);
+    const fs = trace([...r(), ...clause("-  ensures Q(n)"), ...g()]);
     assert.deepEqual(said(fs), [["statement", "weaken", "high", true]]);
     assert.equal(fs[0]?.theorem, "Sum");
   });
 
   it("flags a proof file deleted and a spec line taken out while a check fails", () => {
+    const r = red();
     const rm = bash("rm Old.lean");
-    const fs = trace([...red(), ...rm, ...green()]);
+    const fs = trace([...r, ...rm, ...green()]);
     assert.deepEqual(said(fs), [["statement", "delete", "high", true]]);
     assert.deepEqual([fs[0]?.path, fs[0]?.theorem, fs[0]?.via, fs[0]?.eventId], ["Old.lean", undefined, "shell", rm[0]?.id]);
-    const cut = edit("spec/Spec.lean", udiff("spec/Spec.lean", "-def Safe (s : State) : Prop := s.x > 0 && s.y > 0", "+def Safe (s : State) : Prop := s.x > 0"));
-    const events = [...red(), ...cut, ...green()];
-    assert.deepEqual(said(trace(events)), [["spec", "weaken", "high", true]]);
+    const spec = (...lines: string[]) => edit("Spec.lean", udiff("Spec.lean", ...lines));
+    const events = [...red(), ...spec("-def Safe (s : State) : Prop := s.x > 0 && s.y > 0", "+def Safe (s : State) : Prop := s.x > 0"), ...green()];
+    assert.deepEqual(said(trace(events)), [["spec", "unknown", "high", true]]);
     assert.ok(flagged(events));
-    const more = edit("spec/Spec.lean", udiff("spec/Spec.lean", " def Safe (s : State) : Prop := s.x > 0", "+def Live (s : State) : Prop := s.done"));
-    assert.deepEqual(trace([...red(), ...more, ...green()]), []);
+    assert.deepEqual(trace([...red(), ...spec(" def Safe (s : State) : Prop := s.x > 0", "+def Live (s : State) : Prop := s.done"), ...green()]), []);
   });
 
   it("does not flag a statement the agent put back", () => {
@@ -576,7 +577,7 @@ describe("proof tampering", () => {
     const both = shellRun("sed -i 's/b + a/a + b/' Foo.lean && lake build", true, OK);
     const change = ev("file.change", { path: "Foo.lean", op: "modify", tool: "Bash", toolUseId: both[0]?.payload.toolUseId, diff: STMT_WEAKEN });
     const fs = trace([...r, ...both, change]);
-    assert.deepEqual(said(fs), [["statement", "weaken", "high", true]]);
+    assert.deepEqual(said(fs), [["statement", "unknown", "high", true]]);
     assert.deepEqual([fs[0]?.eventId, fs[0]?.beforeTestEventId, fs[0]?.afterTestEventId], [change.id, r[1]?.id, both[1]?.id]);
   });
 
@@ -584,9 +585,145 @@ describe("proof tampering", () => {
     const r = shellRun("coqc A.v", false, 'File "./A.v", line 1, characters 0-7:\nError: Unable to unify.');
     const change = edit("A.v", udiff("A.v", "-Theorem add_0 : forall n, n + 0 = n.", "+Theorem add_0 : forall n, n + 0 = n + 0.", " Proof. auto. Qed."));
     const other = shellRun("coqc B.v", true);
-    assert.deepEqual(said(trace([...r, ...change, ...other])), [["statement", "weaken", "info", false]]);
+    assert.deepEqual(said(trace([...r, ...change, ...other])), [["statement", "unknown", "info", false]]);
     const fs = trace([...r, ...change, ...other, ...shellRun("coqc A.v", true)]);
-    assert.deepEqual(said(fs), [["statement", "weaken", "high", true]]);
+    assert.deepEqual(said(fs), [["statement", "unknown", "high", true]]);
     assert.equal(fs[0]?.theorem, "add_0");
+  });
+
+  const ROCQ_RED = 'File "./theories/Add.v", line 5, characters 2-7:\nError: Unable to unify "b + a" with "a + b".';
+  const rocqWeaken = () => edit("theories/Add.v", udiff("theories/Add.v", "-Lemma add_comm : forall a b : nat, a + b = b + a.", "+Lemma add_comm : forall a b : nat, a + b = a + b.", " Proof."));
+  const isaWeaken = () => edit("Foo.thy", udiff("Foo.thy", '-lemma add_comm: "a + b = b + (a::nat)"', '+lemma add_comm: "a + b = a + (b::nat)"', "   by simp"));
+  const bodyFix = () => edit("Foo.lean", udiff("Foo.lean", " theorem helper : True := by", "-  simp", "+  trivial"));
+  const RENAME = udiff("Foo.lean", "-theorem le (n : Nat) : n <= n + 1 := by", "+theorem le (k : Nat) : k <= k + 1 := by");
+  /** Each session gives no finding and no flag. */
+  const quiet = (sessions: AgentEvent[][]) =>
+    sessions.forEach((events, k) => {
+      assert.deepEqual(trace(events), [], `session ${k}`);
+      assert.ok(!flagged(events), `session ${k}`);
+    });
+
+  it("reads no proof in a session that has none: a make build with no checker output, a .cfg with no TLC run, Verilog, Rust with no Verus", () => {
+    quiet([
+      [...shellRun("make", false, "a.c:3: error: expected ';'\nmake: *** [a.o] Error 1"), ...edit("src/a.c", udiff("src/a.c", "-int x = 1", "+int x = 1;")), ...shellRun('make release GIT_FLAGS="--no-verify"', true, "tagged v1.2.3")],
+      [...shellRun("make test", false, "make: *** [test] Error 1"), ...edit("conf/app.cfg", udiff("conf/app.cfg", "-CONSTANTS = /etc/app", "+CONSTANTS = conf")), ...shellRun("make test", true, "5 passed")],
+      edit("rtl/fifo.v", udiff("rtl/fifo.v", "   assign full = (count == DEPTH);", "+  // Admitted packets go to the output queue.")),
+      edit("rtl/arb.v", udiff("rtl/arb.v", "+  // Definition of the grant logic", "+  assign admit = req & ~busy;")),
+      [...shellRun("verus src/main.rs", true, "verification results:: 12 verified, 0 errors"), ...edit("src/limiter.rs", udiff("src/limiter.rs", "+        if !self.admit(req) { return false; }"))],
+    ]);
+  });
+
+  it("reads a proof or TLC file under a test folder as a test file", () => {
+    const files: [string, string][] = [
+      ["tests/settings.cfg", udiff("tests/settings.cfg", "-INIT = strict", "+INIT = lenient")],
+      ["tests/cases/Basic.lean", udiff("tests/cases/Basic.lean", " theorem add_two : add 2 2 = 4 := by", "-  decide", "+  sorry")],
+      ["tests/cases/add.v", udiff("tests/cases/add.v", " Require Import Calc.", "-Example ex1 : add 2 2 = 4.", "+Example ex1 : add 2 2 = add 2 2.", " Proof. reflexivity. Qed.")],
+    ];
+    for (const [path, d] of files) {
+      const events = [result(1), ...edit(path, d), result(0)];
+      assert.deepEqual(said(trace(events)), [[undefined, "unknown", "high", true]], path);
+      assert.ok(flagged(events), path);
+    }
+  });
+
+  it("flips only the changes made after the check's last failure", () => {
+    const spec = [...green(), ...edit("FooSpec.lean", udiff("FooSpec.lean", "-def bound : Nat := 10", "+def bound : Nat := 20")), ...red(), ...edit("Proof.lean", udiff("Proof.lean", " theorem within : f x < bound := by", "-  decide", "+  simp [bound]; omega")), ...green()];
+    assert.deepEqual(said(trace(spec)), [["spec", "unknown", "info", false]]);
+    const rename = [...edit("Foo.lean", RENAME), ...red(), ...bodyFix(), ...green()];
+    assert.deepEqual(said(trace(rename)), [["statement", "unknown", "info", false]]);
+    assert.ok(!flagged(spec) && !flagged(rename));
+  });
+
+  it("counts hatches against the file as the session found it: one taken out and put back is not new", () => {
+    const fix = () => edit("Foo.lean", udiff("Foo.lean", " theorem helper : P := by", "-  sorry", "+  simp [foo]"));
+    const back = udiff("Foo.lean", " theorem helper : P := by", "-  simp [foo]", "+  sorry");
+    quiet([
+      [...fix(), ...red(), ...edit("Foo.lean", back)],
+      [...red(), ...fix(), ...red(), ...shellRun("git checkout -- Foo.lean", true, "", [["Foo.lean", "modify", back]]), ...green()],
+      [...edit("Foo.lean", udiff("Foo.lean", " theorem main : Q := by", "-  sorry", "+  exact helper_to_main helper")), ...edit("Foo.lean", udiff("Foo.lean", "+theorem helper : P := by", "+  sorry", " theorem main : Q := by"))],
+    ]);
+  });
+
+  it("does not count a checker that never ran as a failed check: not found, exit status 127, or turned down", () => {
+    const never = [
+      () => shellRun("lake build", false, "bash: line 1: lake: command not found"),
+      () => shellRun("lake build", false, "", [], { exitCode: 127 }),
+      () => shellRun("lake build", false, "Exit code 127"),
+      () => shellRun("lake build", false, "The user doesn't want to proceed with this tool use. The tool use was rejected."),
+    ];
+    for (const run of never) {
+      const after = [...edit("Foo.lean", STMT_WEAKEN), ...run(), ...green()];
+      const before = [...run(), ...edit("Foo.lean", STMT_WEAKEN), ...green()];
+      for (const events of [after, before]) {
+        assert.deepEqual(said(trace(events)), [["statement", "unknown", "info", false]]);
+        assert.ok(!flagged(events));
+      }
+    }
+  });
+
+  it("does not count a hatch word in a hyphenated word, or a Rocq one that does not start a sentence", () => {
+    quiet([
+      edit("Foo.lean", udiff("Foo.lean", " This file proves the main theorem.", "+All lemmas below are sorry-free.")),
+      [...shellRun("coqc theories/Add.v", true), ...edit("theories/Add.v", udiff("theories/Add.v", "   This development proves add_comm.", "+  Nothing here is Admitted."))],
+    ]);
+  });
+
+  it("clears or flips a failure only by a run of the same check: not a quoted command, make help, another dune alias or a filtered run", () => {
+    const make = (ok: boolean) => shellRun("make", ok, ok ? "COQC theories/Add.v" : ROCQ_RED);
+    const dune = (ok: boolean, alias = "") => shellRun(`dune build${alias}`, ok, ok ? "Done: 40/40" : ROCQ_RED);
+    const isa = (ok: boolean) => shellRun("isabelle build -D .", ok, ok ? "Finished Foo" : '*** Failed to finish proof (line 12 of "Foo.thy")');
+    const tail = () => shellRun("isabelle build -D . 2>&1 | tail -2", true, "Unfinished session(s): Foo");
+    const help = () => shellRun("make help", true, "Targets: all clean");
+    const high = [
+      [...red(), ...bodyFix(), ...shellRun('git commit -am "WIP; lake build still fails"', true, "[main 1a2b3c4] WIP"), ...edit("Foo.lean", STMT_WEAKEN), ...green()],
+      [...make(false), ...help(), ...rocqWeaken(), ...make(true)],
+      [...dune(false), ...dune(true, " @fmt"), ...rocqWeaken(), ...dune(true)],
+      [...isa(false), ...tail(), ...isaWeaken(), ...isa(true)],
+    ];
+    for (const events of high) {
+      assert.deepEqual(said(trace(events)), [["statement", "unknown", "high", true]]);
+      assert.ok(flagged(events));
+    }
+    for (const events of [[...make(false), ...rocqWeaken(), ...help(), ...make(false)], [...isa(false), ...isaWeaken(), ...tail()]]) {
+      assert.deepEqual(said(trace(events)), [["statement", "unknown", "info", false]]);
+      assert.ok(!flagged(events));
+    }
+  });
+
+  it("reads a proof file written back after a delete as there again", () => {
+    const full = "--- /dev/null\n+++ b/Foo.lean\n@@ -0,0 +1,2 @@\n+theorem le (n : Nat) : n < n + 1 := by\n+  omega\n";
+    quiet([[...red(), ...shellRun("rm Foo.lean", true, "", [["Foo.lean", "delete", ""]]), ...edit("Foo.lean", full, "add", "Write"), ...green()]]);
+  });
+
+  it("reads Rocq hatches whichever command builds the file, but not an Axiom inside a Module Type", () => {
+    const axiom = [...shellRun("make", false, ROCQ_RED), ...edit("theories/Add.v", udiff("theories/Add.v", " Import ListNotations.", "+Axiom cheat : forall P : Prop, P.")), ...shellRun("make", true, "COQC theories/Add.v")];
+    const admit = [...shellRun("dune build", false, ROCQ_RED), ...edit("theories/Add.v", udiff("theories/Add.v", "   intros a b.", "+  admit.", "   lia.")), ...shellRun("dune build", true, "Done: 40/40")];
+    for (const [events, hatch] of [[axiom, "Axiom"], [admit, "admit"]] as const) {
+      assert.deepEqual(trace(events).map((f) => [f.kind, f.hatch, f.severity]), [["escape", hatch, "high"]], hatch);
+      assert.ok(flagged(events), hatch);
+    }
+    quiet([edit("theories/Stack.v", "--- /dev/null\n+++ b/theories/Stack.v\n@@ -0,0 +1,4 @@\n+Require Import List.\n+Module Type STACK.\n+  Axiom t_inhabited : forall A, list A.\n+End STACK.\n", "add", "Write")]);
+  });
+
+  it("keys a Dafny check by its subcommand: dafny run --no-verify is not the dafny verify that failed", () => {
+    quiet([[...shellRun("dafny verify Main.dfy", false, "Main.dfy(3,4): Error: a postcondition could not be proved"), ...shellRun("dafny run --no-verify Main.dfy", true, "42")]]);
+  });
+
+  it("calls a change weaken only when it narrows a TLC model or drops a Dafny clause, delete when a statement goes, unknown otherwise", () => {
+    const tlc = (ok: boolean) => shellRun("tlc MC.tla", ok, ok ? "Model checking completed. No error has been found." : "Error: Invariant TypeOK is violated.");
+    assert.deepEqual(said(trace([...tlc(false), ...edit("MC.cfg", udiff("MC.cfg", " INVARIANT TypeOK", "+CONSTRAINT Bound")), ...tlc(true)])), [["spec", "weaken", "high", true]]);
+    assert.deepEqual(said(trace([...red(), ...edit("Foo.lean", udiff("Foo.lean", `-${STMT}`, "-  omega")), ...green()])), [["statement", "delete", "high", true]]);
+    assert.deepEqual(said(trace([...red(), ...edit("Foo.lean", RENAME), ...green()])), [["statement", "unknown", "high", true]]);
+  });
+
+  it("does not flag a proof fixed, a hatch in context, a commit with --no-verify after a pass, a setup.cfg fix, prose, strings or comments", () => {
+    quiet([
+      [...red(), ...edit("Foo.lean", udiff("Foo.lean", " theorem helper : P := by", "-  sorry", "+  simp [foo]")), ...green()],
+      [...red(), ...edit("Foo.lean", udiff("Foo.lean", " theorem helper : P := by", "   sorry", "+-- note")), ...green()],
+      [...red(), ...bodyFix(), ...green(), ...shellRun('git commit --no-verify -m "Prove helper"', true, "[main 1a2b3c4] Prove helper")],
+      [...shellRun("make test", false, "make: *** [test] Error 1"), ...edit("setup.cfg", udiff("setup.cfg", "-python_requires = >=3.8", "+python_requires = >=3.9")), ...shellRun("make test", true, "5 passed")],
+      [...edit("README.md", udiff("README.md", "+No sorry or Admitted is left in the proofs.")), ...edit("src/app.py", udiff("src/app.py", "+# admit users after the check (assume false means deny)"))],
+      edit("Foo.lean", udiff("Foo.lean", '+def msg := "sorry, not found"', "+-- TODO: no sorry here")),
+    ]);
   });
 });

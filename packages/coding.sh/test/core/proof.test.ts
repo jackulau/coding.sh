@@ -13,6 +13,7 @@ import {
   strengthens,
   syntaxOf,
   textKey,
+  weakens,
   type ProofLang,
 } from "../../src/core/proof.ts";
 
@@ -44,6 +45,11 @@ describe("proofLang", () => {
     assert.equal(proofLang("MC.cfg", diff("MC.cfg", "-INVARIANT TypeOK Safe", "+INVARIANT TypeOK")), "tlc");
     assert.equal(proofLang("rtl/top.v", diff("rtl/top.v", "+module top(input clk);", "+  assume property (ok);")), undefined);
     assert.equal(proofLang("theories/Add.v", diff("theories/Add.v", "+Lemma add_0 : forall n, n + 0 = n.")), "rocq");
+  });
+
+  it("reads a .v file with a Verilog assign or declaration as Verilog", () => {
+    assert.equal(proofLang("rtl/arb.v", "assign admit = req & ~busy;"), undefined);
+    assert.equal(proofLang("rtl/arb.v", diff("rtl/arb.v", "+  // Definition of the grant logic", "+  assign admit = req & ~busy;")), undefined);
   });
 
   it("knows the build files that choose what a checker reads", () => {
@@ -103,6 +109,19 @@ describe("escape hatches", () => {
     assert.deepEqual(hatches("Raft.tla", "tla", "+THEOREM Safety == Spec => []Inv OMITTED"), { OMITTED: 1 });
   });
 
+  it("does not count a hatch word in a hyphenated word, a Rocq hatch that does not start a sentence, or a Verus method of that name", () => {
+    assert.deepEqual(hatches("A.lean", "lean", "+All lemmas below are sorry-free."), {});
+    assert.deepEqual(hatches("A.v", "rocq", "+  Nothing here is Admitted."), {});
+    assert.deepEqual(hatches("A.v", "rocq", "+Local Axiom x : False."), { Axiom: 1 });
+    assert.deepEqual(hatches("A.v", "rocq", "+Proof. admit. Admitted."), { admit: 1, Admitted: 1 });
+    assert.deepEqual(hatches("src/lib.rs", "verus", "+if !self.admit(req) {", "+fn assume(x: bool) {}"), {});
+    assert.deepEqual(hatches("dfyconfig.toml", undefined, "+no-verify = false"), {});
+  });
+
+  it("does not count an Axiom inside a Rocq Module Type", () => {
+    assert.deepEqual(hatches("A.v", "rocq", "+Module Type STACK.", "+  Axiom t : Type.", "+End STACK.", "+Axiom cheat : False."), { Axiom: 1 });
+  });
+
   it("reads build files with their strings kept", () => {
     assert.deepEqual(hatches("ROOT", undefined, "+  options [quick_and_dirty]"), { quick_and_dirty: 1 });
     assert.deepEqual(hatches("ROOT", undefined, "+  options [quick_and_dirty = false]"), {});
@@ -159,14 +178,25 @@ describe("statements", () => {
     assert.deepEqual(fns, { changed: [], removed: [], added: [] });
   });
 
+  const one = (s: string) => stmts("dafny", `lemma L(n: nat)\n${s}{\n}`)[0]!;
   it("counts an added ensures as stronger, and a dropped or changed clause as not", () => {
-    const one = (s: string) => stmts("dafny", `lemma L(n: nat)\n${s}{\n}`)[0]!;
     const p = one("  ensures P(n)\n");
     assert.ok(strengthens(p, one("  ensures P(n)\n  ensures Q(n)\n")));
     assert.ok(!strengthens(one("  ensures P(n)\n  ensures Q(n)\n"), p));
     assert.ok(!strengthens(p, one("  requires n > 0\n  ensures P(n)\n")));
     assert.ok(!strengthens(p, stmts("dafny", "lemma L(n: int)\n  ensures P(n)\n  ensures Q(n)\n{\n}")[0]!));
     assert.ok(!strengthens(stmts("lean", "theorem L : P := x")[0]!, stmts("lean", "theorem L : Q := x")[0]!));
+  });
+
+  it("counts a dropped ensures or an added requires as weaker, and any other change as not", () => {
+    const p = one("  ensures P(n)\n");
+    assert.ok(weakens(one("  ensures P(n)\n  ensures Q(n)\n"), p));
+    assert.ok(weakens(p, one("  requires n > 0\n  ensures P(n)\n")));
+    assert.ok(!weakens(p, one("  ensures P(n)\n  ensures Q(n)\n")));
+    assert.ok(!weakens(p, one("  ensures R(n)\n")));
+    assert.ok(!weakens(p, p));
+    assert.ok(!weakens(p, stmts("dafny", "lemma L(n: int)\n{\n}")[0]!));
+    assert.ok(!weakens(stmts("lean", "theorem L : P := x")[0]!, stmts("lean", "theorem L : True := x")[0]!));
   });
 
   it("keys a statement's text by its length and hash", () => {
@@ -182,7 +212,7 @@ describe("proofCheck", () => {
     assert.deepEqual(proofCheck("timeout 600 lake build"), { lang: "lean", exit: "both" });
     assert.deepEqual(proofCheck("opam exec -- coqc A.v"), { lang: "rocq", path: "A.v", exit: "both" });
     assert.deepEqual(proofCheck("cargo verus verify"), { lang: "verus", exit: "both" });
-    assert.deepEqual(proofCheck("dafny verify src/A.dfy"), { lang: "dafny", path: "src/A.dfy", exit: "both" });
+    assert.deepEqual(proofCheck("dafny verify src/A.dfy"), { lang: "dafny", target: "verify", path: "src/A.dfy", exit: "both" });
     assert.deepEqual(proofCheck("isabelle build -d . Main"), { lang: "isabelle", exit: "both" });
     assert.deepEqual(proofCheck("java -cp tla2tools.jar tlc2.TLC MC.tla"), { lang: "tlc", path: "MC.tla", exit: "both" });
     assert.equal(proofCheck("make -j4")?.lang, "make");
@@ -191,6 +221,23 @@ describe("proofCheck", () => {
 
   it("is undefined for commands that check nothing", () => {
     for (const c of ["echo hi", "lake --version", "coqc --help", "make clean", "lean --run Main.lean -h", "cat A.v", "git commit -m lean", "dafny format A.dfy", "lake update"]) assert.equal(proofCheck(c), undefined, c);
+  });
+
+  it("keeps quoted words whole: a commit message that names a checker runs no check", () => {
+    assert.equal(proofCheck('git commit -am "WIP; lake build still fails"'), undefined);
+  });
+
+  it("keys make by its targets, dune by its aliases and Dafny by its subcommand; make help is no check and make has no bypass", () => {
+    assert.equal(proofCheck("make help"), undefined);
+    assert.deepEqual(proofCheck("make -j4 all"), { lang: "make", target: "all", exit: "both" });
+    assert.deepEqual(proofCheck("make -j 4"), { lang: "make", exit: "both" });
+    assert.equal(proofCheck('make release GIT_FLAGS="--no-verify"')?.bypass, undefined);
+    assert.deepEqual(proofCheck("dune build @fmt"), { lang: "dune", target: "build @fmt", exit: "both" });
+    assert.deepEqual(proofCheck("dafny run --no-verify A.dfy"), { lang: "dafny", target: "run", path: "A.dfy", bypass: "--no-verify", exit: "both" });
+  });
+
+  it("counts tail as a filter of the output", () => {
+    assert.deepEqual(proofCheck("lake build 2>&1 | tail -2"), { lang: "lean", filtered: true });
   });
 
   it("joins files to the directory a cd moved to", () => {
@@ -225,7 +272,7 @@ describe("proofCheck", () => {
 
 describe("checkOutcome", () => {
   const lake = proofCheck("lake build")!;
-  const piped = proofCheck("lake build | tail -20")!;
+  const piped = proofCheck("lake build | tee build.log")!;
   it("goes by the exit status when it covers the checker", () => {
     assert.equal(checkOutcome(lake, { ok: false, output: "" }), "red");
     assert.equal(checkOutcome(lake, { ok: true, output: "Build completed successfully." }), "green");
@@ -255,6 +302,15 @@ describe("checkOutcome", () => {
     assert.equal(checkOutcome(lake, { ok: false, interrupted: true }), undefined);
     assert.equal(checkOutcome(lake, { ok: false, output: "Command timed out after 2m 0s" }), undefined);
     assert.equal(checkOutcome(lake, { ok: true, output: "Command running in background with ID: b1" }), undefined);
+  });
+
+  it("has nothing to go on when the checker never ran: not found, exit status 126 or 127, or turned down", () => {
+    assert.equal(checkOutcome(lake, { ok: false, output: "bash: line 1: lake: command not found" }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, output: "The user doesn't want to proceed with this tool use. The tool use was rejected." }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, exitCode: 127 }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, exitCode: 126 }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, output: "Exit code 127" }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, exitCode: 1 }), "red");
   });
 
   it("reads a tool's output from a string or an object", () => {

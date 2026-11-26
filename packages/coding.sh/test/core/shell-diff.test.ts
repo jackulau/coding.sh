@@ -76,6 +76,20 @@ describe("simpleCommands", () => {
     assert.deepEqual(seps("a & b\nc || d"), ["&", "\n", "||", undefined]);
     assert.deepEqual(seps("lake build 2>&1 | tail -5"), ["|", undefined]);
   });
+
+  it("drops each `>&N` of a chain, the one right after a digit too", () => {
+    assert.deepEqual(argv("cmd 1>&2>&1 x"), [["cmd", "x"]]);
+    assert.deepEqual(argv("cmd 2>&1 x 12>&3"), [["cmd", "x"]]);
+  });
+
+  it("with quotes, an operator inside quotes splits nothing and a word keeps its quoted parts", () => {
+    const quoted = (cmd: string) => simpleCommands(cmd, { quotes: true }).map((c) => [c.name, ...c.args]);
+    assert.deepEqual(quoted('make release GIT_FLAGS="--no-verify"'), [["make", "release", "GIT_FLAGS=--no-verify"]]);
+    assert.deepEqual(quoted('git commit -am "WIP; lake build still fails"'), [["git", "commit", "-am", "WIP; lake build still fails"]]);
+    assert.deepEqual(quoted("echo 'a|b' && lake build\\;x | tail -2"), [["echo", "a|b"], ["lake", "build;x"], ["tail", "-2"]]);
+    assert.deepEqual(quoted('echo "a \\"b\\" c" \'d'), [["echo", 'a "b" c', "d"]]);
+    assert.deepEqual(argv('git commit -am "WIP; lake build"'), [["git", "commit", "-am", "WIP"], ["lake", "build"]], "without quotes, as before");
+  });
 });
 
 /** One command through each agent's shell tool, shaped as its adapter stores the call. */
