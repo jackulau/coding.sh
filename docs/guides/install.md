@@ -167,6 +167,11 @@ In PowerShell, type `codingsh uninstall` for `coding.sh uninstall`, and delete t
 agent's config files, it leaves that file as it is, removes coding.sh from the agent's other
 files, prints the error and exits 1.
 
+When `uninstall` deletes a file that `init` created, it also removes the folders `init` made to
+hold it, once they are empty. A folder that was there before `init`, or that holds anything else,
+stays. `init` records these folders in `~/.coding.sh/installs.json`. Folders made by an older
+version's `init` are not recorded and stay.
+
 ## From source
 
 ```sh

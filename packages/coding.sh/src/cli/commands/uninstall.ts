@@ -5,6 +5,7 @@
 // from `init --proxy` goes first; --proxy removes only that.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { removeMadeDirs } from "../../adapters/_shared/installs.ts";
 import { ADAPTERS } from "../../adapters/index.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange } from "../../core/types.ts";
@@ -174,6 +175,12 @@ export async function run(c: CommandContext): Promise<number> {
     if (r.changes.length || !r.errors.length) out.row(p.name, "removed", "ok");
     // The plan's rows already named its errors.
     for (const e of r.errors) if (!p.errors.includes(e)) out.row(p.name, `couldn't remove: ${e}`, "fail");
+  }
+  // The folders init made to hold the files removed go too, once nothing is left in them.
+  try {
+    removeMadeDirs(done.flatMap((d) => d.changes.filter((ch) => ch.action === "delete").map((ch) => ch.path)), c.env);
+  } catch {
+    // They stay, as after an install made before init recorded its folders.
   }
   const errors = failed || done.some((d) => d.errors.length);
   if (out.json) out.data({ outcome: errors || left.length ? "partial" : "removed", scope, agents: done.map((d) => ({ id: d.id, error: errorJson(d), changes: d.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })) })), ...leftJson() });

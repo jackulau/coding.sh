@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseHookCommand } from "../../adapters/_shared/hooks.ts";
+import { missingDirs, recordDirs } from "../../adapters/_shared/installs.ts";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { sourceSummary } from "../../conformance/sources.ts";
 import { defaultConfigToml } from "../../core/config.ts";
@@ -540,6 +541,8 @@ export async function run(c: CommandContext): Promise<number> {
   const applied: { pl: AgentPlan; hooks: Part; mcp?: Part; proxy?: Part }[] = [];
   for (const pl of plans) {
     const a = pl.adapter;
+    // The folders this agent's writes create, so uninstall can remove each once it is empty.
+    const made = agentChanges(pl).flatMap((ch) => missingDirs(ch.path));
     const hooks: Part = pl.hooks.error || !pl.hooks.changes.length ? pl.hooks : await plan(() => a.install({ hookCommand, scope, projectDir: c.cwd, dryRun: false }));
     // An agent whose hooks can't go in (a settings file it can't parse) gets none of its other writes either.
     const blocked = hooks.error !== undefined;
@@ -558,6 +561,11 @@ export async function run(c: CommandContext): Promise<number> {
             await applyProxyInstall(id, ch, proxyUrl, env);
             return [ch];
           });
+    try {
+      recordDirs(a.id, made, env);
+    } catch {
+      // No record: uninstall leaves these folders, as for an install made before the record.
+    }
     if (hooks !== pl.hooks && hooks.error) out.row(a.displayName, `couldn't install hooks: ${hooks.error}`, "fail");
     if (mcp && mcp !== pl.mcp && mcp.error) out.row(a.displayName, `couldn't register the MCP server: ${mcp.error}`, "fail");
     if (proxy && proxy !== pl.proxy && proxy.error) out.row(a.displayName, `couldn't route through the proxy: ${proxy.error}`, "fail");

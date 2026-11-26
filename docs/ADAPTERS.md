@@ -433,6 +433,8 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   in TOML) so `uninstall` removes only our entries. Where the format has no room for a marker,
   Cursor entries are recognized by their command, and a Copilot hook file coding.sh created is
   recorded (path and content hash) in `~/.coding.sh/installs.json`.
+- Each folder `init` makes to hold a file is recorded in `~/.coding.sh/installs.json` too. When
+  `uninstall` deletes that file, it removes the folder once it is empty.
 - Edits preserve comments and formatting where the format allows, and back up the original to
   `~/.coding.sh/backups/<agent>/<ts>-<file>`.
 - Cline needs stdout `{"cancel":false}` (`--echo` flag).

@@ -329,6 +329,10 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 {"partialSuccess":{"rejectedSpans":"1","errorMessage":"span \"broken\" has no valid traceId/spanId"}}
 ```
 
+A span is rejected when its trace id or span id is missing, all zero, or the wrong length: a trace
+id is 16 bytes and a span id 8, sent as hex or base64 in JSON. A parent span id or a log record's
+id like that is read as not set, and the span or record is kept.
+
 | Status | When | Body (JSON requests) |
 |---|---|---|
 | 200 | committed | `{}` or `{"partialSuccess":{…}}` |
