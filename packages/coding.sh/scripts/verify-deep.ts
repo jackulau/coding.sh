@@ -82,6 +82,32 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "lock-model": { bound: 2 },
   "metadata-prop": { runs: 10000 },
   model: {},
+  // At bound 1, the first attribute value at each position set to each AnyValue: 5,232 requests.
+  "otlp-any": { bound: 1 },
+  // At bound 1, the header, limit, nested, time and metrics cases and every deep case: 579 requests.
+  "otlp-http": { bound: 1 },
+  // At bound 1, the first node at each position set to each value or left out: 4,217 requests.
+  "otlp-json-1": { bound: 1 },
+  // As otlp-json-1, over its own fixtures: 4,569 requests.
+  "otlp-json-2": { bound: 1 },
+  // As otlp-json-1, over its own fixtures: 3,989 requests.
+  "otlp-json-3": { bound: 1 },
+  // As otlp-json-1, over its own fixtures: 4,806 requests.
+  "otlp-json-4": { bound: 1 },
+  // At bound 1, the first attribute list and the first JSON string at each position: 2,145 requests.
+  "otlp-keys": { bound: 1 },
+  // At bound 1, each byte of the shortest log encoding changed four ways: 5,639 requests.
+  "otlp-proto-bytes-logs": { bound: 1 },
+  // At bound 1, each byte of the shortest trace encoding changed four ways: 3,729 requests.
+  "otlp-proto-bytes-traces": { bound: 1 },
+  // At bound 1, every prefix of every encoding: 63,396 requests. Then 1000 seeded byte edits posted to
+  // the fixture's route and 1000 to /v1/metrics.
+  "otlp-proto-cut": { bound: 1, runs: 1000 },
+  // At bound 1, the first number at each position set to each value: 595 requests.
+  "otlp-store-1": { bound: 1 },
+  // At bound 1, the first number at each position set to each value: 469 requests. Then 1000 seeded node
+  // edits. About 50 seconds.
+  "otlp-store-2": { bound: 1, runs: 1000 },
   // Its properties check forAll itself, each with an environment of its own, so no knob reaches them.
   prop: {},
   "pushback-prop": { runs: 10000 },

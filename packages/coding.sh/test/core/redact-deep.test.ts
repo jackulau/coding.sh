@@ -14,6 +14,22 @@ function nest(leaf: unknown, depth: number, arrays = false): unknown {
   return v;
 }
 
+/** What `f` gives, and how many characters JSON.stringify gave while it ran. */
+function serialized<T>(f: () => T): { out: T; chars: number } {
+  const real = JSON.stringify;
+  let chars = 0;
+  JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+    const s = real(...args);
+    chars += s?.length ?? 0;
+    return s;
+  }) as typeof JSON.stringify;
+  try {
+    return { out: f(), chars };
+  } finally {
+    JSON.stringify = real;
+  }
+}
+
 describe("redaction past the walk depth", () => {
   for (const depth of [63, 64, 65, 70, 200]) {
     for (const arrays of [false, true]) {
@@ -43,6 +59,30 @@ describe("redaction past the walk depth", () => {
   it("a value too deep for the stack is replaced, not kept and not thrown", () => {
     const out = JSON.stringify(r.value(nest({ text: `use ${KEY}` }, 20_000)) ?? null);
     assert.ok(!out.includes(KEY));
+  });
+  // Past the walk depth a subtree is copied once from its JSON text, and the copy is followed to its
+  // end.
+  for (const arrays of [false, true]) {
+    it(`a value 1,500 ${arrays ? "arrays" : "objects"} deep is serialized a few times over`, () => {
+      const v = nest({ text: `use ${KEY}`, password: "hunter2hunter2" }, 1500, arrays);
+      const size = JSON.stringify(v).length;
+      const value = serialized(() => r.value(v));
+      const blob = serialized(() => redactBlobValue(r, v, redactionTally()));
+      for (const [what, out] of [["value", JSON.stringify(value.out)], ["blob", blob.out]] as const) {
+        assert.ok(!out.includes(KEY), `the key is gone from the ${what}`);
+        assert.ok(!out.includes("hunter2hunter2"), `the password field is gone from the ${what}`);
+      }
+      assert.ok(value.chars <= 4 * size, `the value walk serialized ${(value.chars / size).toFixed(1)} times its size`);
+      assert.ok(blob.chars <= 8 * size, `the blob serialized ${(blob.chars / size).toFixed(1)} times its size`);
+    });
+  }
+  it("a value 1,000 deep with nothing to redact keeps its shape", () => {
+    for (const arrays of [false, true]) {
+      const v = nest({ text: "nothing here" }, 1000, arrays);
+      // As JSON text: assert.deepEqual runs out of stack this deep.
+      assert.equal(JSON.stringify(r.value(v)), JSON.stringify(v));
+      assert.equal(redactBlobValue(r, v, redactionTally()), JSON.stringify(v));
+    }
   });
   for (const depth of [70, 200]) {
     it(`NAME=value on its own line ${depth} levels deep`, () => {
