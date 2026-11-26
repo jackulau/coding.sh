@@ -63,6 +63,14 @@ describe("itemExposure", () => {
     assert.equal(itemExposure(rule, [tool("Read", { file_path: "/repo/docs/a.md" })], { cwd: "/repo" }).state, "not");
   });
 
+  it("a cwd that ends in slashes gives the same repo-relative paths", () => {
+    for (const cwd of ["/repo/", "/repo///"]) {
+      assert.equal(itemExposure(rule, [tool("Read", { file_path: "/repo/src/clock.ts" })], { cwd }).state, "in-context", cwd);
+      assert.equal(itemExposure(rule, [tool("Read", { file_path: "/repo/docs/a.md" })], { cwd }).state, "not", cwd);
+    }
+    assert.equal(itemExposure(rule, [tool("Read", { file_path: "C:\\repo\\src\\clock.ts" })], { cwd: "C:\\repo\\\\" }).state, "in-context");
+  });
+
   it("a trace with no tool inputs or user messages leaves a path rule unknown, never 'not'", () => {
     assert.equal(itemExposure(rule, [ev("session.start", {}), ev("llm.call", {})]).state, "unknown");
   });
