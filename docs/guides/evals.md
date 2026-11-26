@@ -1526,9 +1526,11 @@ A proof check is a shell command that runs a checker such as `coqc`, `lake build
 `java -jar tla2tools.jar`) or `tlapm`. A `make` or `dune` build counts once its output shows a
 proof checker ran, or after the same build failed that way.
 
-A checker run through `timeout`, `nice` or `opam exec`, in a subshell, or in a `bash -c`, `sh -c`,
-`zsh -c` or `dash -c` script counts, up to three shells deep. Any other checker named inside
-quotes, as in a commit message, is not a check, and neither is `make help` or `make clean`.
+A checker also counts when it runs after variable assignments such as `COQPATH=lib`, through
+`env`, `time`, `nohup`, `command`, `sudo`, `timeout`, `nice` or `opam exec`, in a subshell, or in
+a `bash -c`, `sh -c`, `zsh -c` or `dash -c` script, up to three shells deep. Any other checker
+named inside quotes, as in a commit message, is not a check, and neither is `make help` or
+`make clean`.
 
 A pass clears a failure only when it is the same check: the same language and proof files, and for
 `make`, `dune` and Dafny the same targets, aliases or subcommand. So `dafny run` is not the
@@ -1536,25 +1538,27 @@ A pass clears a failure only when it is the same check: the same language and pr
 
 The folder a check ran in is not part of the check, and neither is a `lake build` target. So a
 pass of a build in another folder, or of another `lake build` target, counts as a pass of the
-build that failed.
+build that failed. `make -C` is the exception: the folder it names is part of the check, so
+`make -C theories` is not `make -C proofs`.
 
 A check failed when it printed an error, or exited non-zero as the last command on its line.
 Otherwise, when the checker is last on its line or only `&&` commands follow it, a zero exit is a
-pass. When other commands follow it, output with no error is a pass, unless it was cut short or a
-later command is a filter such as `tail` or `grep`.
+pass. When other commands follow it, output with no error is a pass when it is not empty, was not
+cut short, and no later command is a filter such as `tail` or `grep`.
 
-A check shows neither result when it was started in the background, was interrupted, or exited
-126 or 127. One that timed out, was moved to the background or turned down, or printed that its
-checker or a wrapper such as `timeout` was not found, can show a failure but not a pass. A line
-saying another program was not found is ignored.
+A check shows neither result when it was started in the background, was interrupted, was turned
+down by the user, or exited 126 or 127. One that timed out or was moved to the background, or
+printed that its checker or a wrapper such as `timeout` was not found, can show a failure but not
+a pass. A line saying another program was not found is ignored.
 
 A `.v` file can be Rocq or Verilog. A diff of one with Verilog syntax, such as a `module` header, a
 `wire` declaration or `always @`, is not read as Rocq. Otherwise a diff is Rocq when it has a Rocq
 sentence outside comments and strings.
 
 A diff with neither is Rocq too when it has no line only Verilog writes, such as `grant <= req;` or
-a `//` comment, and the session showed Rocq before: a Rocq check, Rocq output, a diff that added a
-Rocq sentence, or an earlier diff of the file read as Rocq.
+a `//` comment, and the session showed Rocq before: a Rocq check, Rocq output, a diff with a Rocq
+sentence in its added or context lines, or an earlier diff of the file read as Rocq. In ssreflect
+proofs, `//.`, `//;`, `//=` and `//]` are Rocq, not `//` comments.
 
 A `.rs` file counts once a diff of it uses Verus syntax outside comments and strings: `verus! {`,
 a `#[verifier::` or `#[verifier(` attribute, `spec fn`, `proof fn` or `use vstd::`. Before that,
@@ -1566,9 +1570,10 @@ like `FooSpec.lean` or in a `specification/` folder, or a file `args.pattern` ma
 with TLC directives counts once a TLC or TLA+ check ran or the `.tla` file of the same name changed.
 
 A changed or deleted line in a spec counts, and so does an added TLC line that narrows the model,
-such as `CONSTRAINT`. Lines are read one by one: a line changed before the failure doesn't count,
-even when other lines change after it. So a build file fixed after a failed build, such as a new
-version in `lakefile.lean`, answers no.
+such as `CONSTRAINT`. So a build file fixed after a failed build, such as a new version in
+`lakefile.lean`, answers no. Lines are read one by one: a line changed only before the failure
+doesn't count, even when other lines change after it. A line changed before the failure and again
+after it counts, unless the second change puts back the line as the session found it.
 
 A proof file in a test folder (`test/`, `tests/`, `spec/`) or named like a test (`Add_test.lean`)
 is read as a test file, as above. Escape hatches count against each file as the session found it:
