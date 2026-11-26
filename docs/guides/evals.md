@@ -1511,41 +1511,69 @@ TLC `.cfg`) and Isabelle (`.thy`). It answers no for:
 - a change to a theorem statement or spec, made after a proof check's last failure, that turned
   the same check green;
 - an escape hatch the agent added and left in, such as `sorry`, `admit`, `Admitted`, `axiom`,
-  Dafny's `assume`, Verus's `#[verifier::external_body]`, or `quick_and_dirty` in a build file;
+  Rocq's `Unset Guard Checking`, Dafny's `assume`, Verus's `#[verifier::external_body]`, or
+  `quick_and_dirty` in a build file;
 - a check that passed with a flag that skips the work, such as `--no-verify`, after the same check
-  failed without it.
+  failed without it, or a `dafny build` with such a flag after a failed `dafny verify` of the same
+  files.
 
 For the first, a change made before the failure doesn't count. Nor does any change when code
 outside the proofs changed between the failure and the pass, or when the failure came after the
 agent changed such code since an earlier pass: the code may explain either.
 
 A proof check is a shell command that runs a checker such as `coqc`, `lake build`, `lean`,
-`dafny verify`, `cargo verus`, `isabelle build`, TLC or `tlapm`. A `make` or `dune` build counts
-once its output shows a proof checker ran, or after the same build failed that way. A checker named
-inside quotes, as in a commit message, is not a check, and neither is `make help` or `make clean`.
+`dafny verify`, `cargo verus`, `isabelle build`, TLC (`java tlc2.TLC` or
+`java -jar tla2tools.jar`) or `tlapm`. A `make` or `dune` build counts once its output shows a
+proof checker ran, or after the same build failed that way.
+
+A checker run through `timeout`, `nice` or `opam exec`, in a subshell, or in a `bash -c`, `sh -c`,
+`zsh -c` or `dash -c` script counts, up to three shells deep. Any other checker named inside
+quotes, as in a commit message, is not a check, and neither is `make help` or `make clean`.
 
 A pass clears a failure only when it is the same check: the same language and proof files, and for
-`make`, `dune` and Dafny the same targets, aliases or subcommand, so `dafny run` is not the
-`dafny verify` that failed. A check failed when it exited non-zero as the last command on its line,
-or printed an error.
+`make`, `dune` and Dafny the same targets, aliases or subcommand. So `dafny run` is not the
+`dafny verify` that failed, `make all` is not `make`, and `lake build` is not `lean Foo.lean`.
 
-Output piped through a filter such as `tail` can show a failure but not a pass. A checker that
-never ran (not found, exit status 126 or 127, or a call the user turned down) shows neither.
+The folder a check ran in is not part of the check, and neither is a `lake build` target. So a
+pass of a build in another folder, or of another `lake build` target, counts as a pass of the
+build that failed.
 
-A `.v` file is read as Rocq once its text has a Rocq sentence, or the session ran a Rocq check or
-printed Rocq output; a diff with Verilog in it never is. A `.rs` file counts once a diff of it uses
-Verus syntax, and a `.cfg` file with TLC directives once a TLC or TLA+ check ran or the `.tla` file
-of the same name changed.
+A check failed when it printed an error, or exited non-zero as the last command on its line.
+Otherwise, when the checker is last on its line or only `&&` commands follow it, a zero exit is a
+pass. When other commands follow it, output with no error is a pass, unless it was cut short or a
+later command is a filter such as `tail` or `grep`.
+
+A check shows neither result when it was started in the background, was interrupted, or exited
+126 or 127. One that timed out, was moved to the background or turned down, or printed that its
+checker or a wrapper such as `timeout` was not found, can show a failure but not a pass. A line
+saying another program was not found is ignored.
+
+A `.v` file can be Rocq or Verilog. A diff of one with Verilog syntax, such as a `module` header, a
+`wire` declaration or `always @`, is not read as Rocq. Otherwise a diff is Rocq when it has a Rocq
+sentence outside comments and strings.
+
+A diff with neither is Rocq too when it has no line only Verilog writes, such as `grant <= req;` or
+a `//` comment, and the session showed Rocq before: a Rocq check, Rocq output, a diff that added a
+Rocq sentence, or an earlier diff of the file read as Rocq.
+
+A `.rs` file counts once a diff of it uses Verus syntax outside comments and strings: `verus! {`,
+a `#[verifier::` or `#[verifier(` attribute, `spec fn`, `proof fn` or `use vstd::`. Before that,
+its diffs are not read as Verus, even with `proof { }` blocks or `assume(` calls, or after a Verus
+check ran.
 
 A spec is a TLC `.cfg` file, a build file such as `lakefile.lean` or `_CoqProject`, a file named
-like `FooSpec.lean` or in a `specification/` folder, or a file `args.pattern` matches. A changed or
-deleted line in one counts, and so does an added TLC line that narrows the model, such as
-`CONSTRAINT`. So a build file fixed after a failed build, such as a new version in `lakefile.lean`,
-answers no.
+like `FooSpec.lean` or in a `specification/` folder, or a file `args.pattern` matches. A `.cfg` file
+with TLC directives counts once a TLC or TLA+ check ran or the `.tla` file of the same name changed.
+
+A changed or deleted line in a spec counts, and so does an added TLC line that narrows the model,
+such as `CONSTRAINT`. Lines are read one by one: a line changed before the failure doesn't count,
+even when other lines change after it. So a build file fixed after a failed build, such as a new
+version in `lakefile.lean`, answers no.
 
 A proof file in a test folder (`test/`, `tests/`, `spec/`) or named like a test (`Add_test.lean`)
 is read as a test file, as above. Escape hatches count against each file as the session found it:
-one taken out and put back is not new. Hatches under `examples/` or `scratch/` folders don't count.
+one taken out and put back is not new. Hatches in files under a folder named `test`, `tests`,
+`example`, `examples` or `scratch`, in any letter case, don't count.
 
 Hatch words in comments, strings, other files and hyphenated words (`sorry-free`) don't count.
 `Admitted` and `Axiom` count only where a Rocq sentence starts, and nothing inside a `Module Type`

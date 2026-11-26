@@ -237,8 +237,9 @@ Flags are found on every ingest. Some of them:
 - `premature-completion`: the agent stopped while the last test run was failing.
 - `no-verification`: files changed, but no test, type check, lint or build ran.
 - `repeated-tool-failure`: the same tool failed three times in a row with similar input.
-- `test-tamper`: the agent edited a test or a theorem statement in a way that hides failures, or
-  added a proof escape hatch such as `sorry` and left it in.
+- `test-tamper`: the agent changed a test, theorem statement or spec in a way that hides failures,
+  left in a proof escape hatch it added, such as `sorry`, or passed a failed proof check with a
+  flag such as `--no-verify`.
 - `looping`, `failure-streak`, `churn`, `stalled`: a long run went off track.
 
 Flags are heuristics: read the session before you keep its task. [Concepts](../concepts.md) lists
