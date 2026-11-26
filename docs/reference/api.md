@@ -269,6 +269,15 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+A log record joins a session in this order: the one a conversation id on the record names, the one
+its trace's spans went to, the one a conversation id on its resource names, then the one its trace
+id names. A record with none of these goes to `otel-logs-<agent>-<YYYY-MM-DD>`, one session per
+agent and UTC day.
+
+`<agent>` is a known agent such as `claude-code`, else a name taken from `gen_ai.main_agent.name` or
+`service.name`, else `otel`. `coding.sh sessions` lists such a session only with `--empty` when it
+holds no turn, tool call or model call.
+
 A model call's time to first token (`ttftMs`) comes from the first of these on its span:
 
 - `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.
@@ -502,7 +511,7 @@ share these errors:
 |---|---|---|
 | 400 | a bad parameter | `{"error":"limit must be between 1 and 500","status":400}` |
 | 401 | no valid read credential | `{"error":"missing or invalid token","status":401}` |
-| 403 | the server binds loopback and the `Host` header is not loopback (DNS-rebinding guard) | `{"error":"forbidden host","status":403}` |
+| 403 | the `Host` header is not a loopback name and not in `serve.allowed_hosts` (DNS-rebinding guard); a public bind with an empty list takes any `Host` | `{"error":"forbidden host: add it to serve.allowed_hosts (CODING_SH_ALLOWED_HOSTS)","status":403}`; `coding.sh ui`, which takes loopback names and the address it binds, sends `{"error":"forbidden host","status":403}` |
 | 404 | unknown route, a session outside the key's project, or a session id with a raw `/` (the error says to send `%2F`) | `{"error":"not found","status":404}` |
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
 
