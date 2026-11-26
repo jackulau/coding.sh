@@ -64,8 +64,8 @@ match becomes `[redacted:<kind>]`.
   allows, the rest is stored as `[redacted:too-deep]`, also in the spool.
 - A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
   of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
-- In JSON text held in a string, such as an OTLP log body or a prompt that quotes a tool result,
-  a value right after an escape such as `\n` is redacted too, and the escape stays well-formed.
+- In JSON text held in a string, such as an OTLP log body, a value right after an escape such
+  as `\n` is redacted too, and the escape stays well-formed.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
@@ -108,7 +108,6 @@ times, event kinds, durations, token counts, cost and short labels such as tool 
 | The TypeScript or Python SDK in your app | `capture: "metadata"`, or `CODING_SH_CAPTURE_MODE=metadata` | `full` |
 | `coding.sh serve` | `CODING_SH_CAPTURE_MODE=metadata`: drops content from everything it receives | `full` |
 
-A session sent in metadata mode has no title, so a team viewer lists it as *Untitled session*.
 The SDK setting drops message text and tool input and output before they leave your app.
 
 ## Sinks
@@ -163,8 +162,6 @@ Ingest stores a redacted copy either way, and redacts what is left on disk:
 - A short payload inside the day's spool file stays as written until its UTC day has passed and
   ingest has read the whole file. Then ingest redacts it in place, keeping the line's length so
   ingest cursors still hold.
-- Ingest does not open a spool file again when it read the file in one pass and found nothing to
-  redact.
 - With `CODING_SH_DISABLE=1` the hooks write no payload, only the session id, to
   `spool/disabled-sessions`, so ingest and `ingest --backfill` leave that session out.
 - `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`),
