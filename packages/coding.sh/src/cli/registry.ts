@@ -461,7 +461,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "uninstall",
     group: "Capture",
     summary: "Remove coding.sh hooks and MCP entries from every agent",
-    flags: [AGENT_LIST, SCOPE, { name: "proxy", type: "boolean", desc: "Only stop routing agents through the proxy (undo init --proxy)" }, YES, DRY_RUN],
+    flags: [AGENT_LIST, { ...SCOPE, desc: "Remove from user or project config" }, { name: "proxy", type: "boolean", desc: "Only stop routing agents through the proxy (undo init --proxy)" }, YES, DRY_RUN],
     examples: ["coding.sh uninstall --dry-run", "coding.sh uninstall --yes", "coding.sh uninstall --proxy"],
     notes: ["Captured data in ~/.coding.sh is kept.", "Also undoes init --proxy. The proxy itself keeps running until coding.sh proxy stop."],
     load: () => import("./commands/uninstall.ts"),

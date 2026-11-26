@@ -521,7 +521,7 @@ coding.sh uninstall [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
-| `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
+| `--scope <SCOPE>` | `user` | Remove from user or project config. One of: `user`, `project`. |
 | `--proxy` |  | Only stop routing agents through the proxy (undo init --proxy) |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
