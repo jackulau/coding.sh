@@ -47,7 +47,7 @@ import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } f
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { noteBlobHits, type RedactionTally, type Redactor, redactBlobValue, redactionTally } from "../core/redact.ts";
-import { geoValue, tierValue } from "../core/pricing.ts";
+import { geoValue, tierValue, tokenCount } from "../core/pricing.ts";
 import { WEIGHTS_CHECKPOINT_ATTRS, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_ATTRS, WEIGHTS_EDIT_KIND, weightsCheckpointOf, weightsEditOf } from "../core/weights.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
@@ -365,6 +365,20 @@ function num(a: Attrs, ...keys: string[]): number | undefined {
   return undefined;
 }
 
+/**
+ * First token count among keys (pricing.ts tokenCount): a whole number from 0 to 2^53 - 1, as a
+ * number or as numeric text. Any other value is skipped, as an absent key is: a count below 0,
+ * a fraction, or one too large to read exactly.
+ */
+function tokens(a: Attrs, ...keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = a[k];
+    const n = tokenCount(typeof v === "string" && v.trim() !== "" ? Number(v) : v);
+    if (n !== undefined) return n;
+  }
+  return undefined;
+}
+
 function bool(a: Attrs, ...keys: string[]): boolean | undefined {
   for (const k of keys) {
     const v = a[k];
@@ -676,6 +690,8 @@ function assistantText(msgs: Msg[]): string | undefined {
 //   Agent log attributes (Claude Code's input_tokens + cache_read_tokens,
 //   Anthropic semantics; Codex / Gemini CLI input_token_count) are kept as is,
 //   matching how the transcript adapters store the same agents.
+// Each count is read with tokens(): one that is not a whole number from 0 to 2^53 - 1 is
+// absent, so it is neither stored nor subtracted (a total of -500 is no input, not 0).
 const INPUT_TOTAL = ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt", "ai.usage.inputTokens", "ai.usage.promptTokens"];
 const CACHE_READ = ["gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_read_input_tokens", "llm.token_count.prompt_details.cache_read", "ai.usage.cachedInputTokens", "ai.usage.inputTokenDetails.cacheReadTokens"];
 const CACHE_WRITE = ["gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_creation_input_tokens", "llm.token_count.prompt_details.cache_write", "ai.usage.inputTokenDetails.cacheWriteTokens"];
@@ -692,7 +708,7 @@ const REASONING = [
 ];
 /** Reasoning tokens a model call reports (payload.reasoningTokens, as the gateway and the OTLP sink name it); 0 is none. */
 const reasoningTokens = (a: Attrs): number | undefined => {
-  const v = num(a, ...REASONING);
+  const v = tokens(a, ...REASONING);
   return v !== undefined && v > 0 ? v : undefined;
 };
 // Cache counts that mean "none" when 0: semconv usage counters record only positive
@@ -705,21 +721,21 @@ function usageOf(a: Attrs): Usage | undefined {
   const set = (k: UsageNumberKey, v: number | undefined) => {
     if (v !== undefined && (v > 0 || (v === 0 && !OMIT_ZERO.has(k)))) u[k] = v;
   };
-  const total = num(a, ...INPUT_TOTAL);
-  const read = num(a, ...CACHE_READ);
-  const write = num(a, ...CACHE_WRITE);
+  const total = tokens(a, ...INPUT_TOTAL);
+  const read = tokens(a, ...CACHE_READ);
+  const write = tokens(a, ...CACHE_WRITE);
   if (total !== undefined) {
     // AI SDK v6 also reports the uncached part itself.
-    set("inputTokens", num(a, "ai.usage.inputTokenDetails.noCacheTokens") ?? Math.max(0, total - (read ?? 0) - (write ?? 0)));
+    set("inputTokens", tokens(a, "ai.usage.inputTokenDetails.noCacheTokens") ?? Math.max(0, total - (read ?? 0) - (write ?? 0)));
   } else {
-    set("inputTokens", num(a, "input_tokens", "input_token_count"));
+    set("inputTokens", tokens(a, "input_tokens", "input_token_count"));
   }
-  set("outputTokens", num(a, "gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion", "ai.usage.outputTokens", "ai.usage.completionTokens", "output_tokens", "output_token_count"));
-  set("cacheReadTokens", read ?? num(a, "cache_read_tokens", "cached_content_token_count", "cached_token_count"));
+  set("outputTokens", tokens(a, "gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion", "ai.usage.outputTokens", "ai.usage.completionTokens", "output_tokens", "output_token_count"));
+  set("cacheReadTokens", read ?? tokens(a, "cache_read_tokens", "cached_content_token_count", "cached_token_count"));
   // Claude Code api_request: cache_creation_tokens, else its 5-minute + 1-hour split.
-  const m5 = num(a, "cache_creation_5m_tokens");
-  const h1 = num(a, "cache_creation_1h_tokens");
-  set("cacheWriteTokens", write ?? num(a, "cache_creation_tokens") ?? (m5 || h1 ? (m5 ?? 0) + (h1 ?? 0) : undefined));
+  const m5 = tokens(a, "cache_creation_5m_tokens");
+  const h1 = tokens(a, "cache_creation_1h_tokens");
+  set("cacheWriteTokens", write ?? tokens(a, "cache_creation_tokens") ?? (m5 || h1 ? tokenCount((m5 ?? 0) + (h1 ?? 0)) : undefined));
   set("costUsd", num(a, "gen_ai.usage.cost", "llm.cost.total", "coding_sh.cost_usd", "cost_usd"));
   return Object.keys(u).length ? u : undefined;
 }
@@ -777,7 +793,7 @@ function serviceTier(a: Attrs): string | undefined {
 function priceHints(a: Attrs): { cacheWrite1hTokens?: number; inferenceGeo?: string } {
   const meta = maybeJson(a["ai.response.providerMetadata"]);
   const fromMeta = isObj(meta) && isObj(meta.anthropic) ? anthropicPriceHints(meta.anthropic.usage) : {};
-  const h1 = num(a, "cache_creation_1h_tokens");
+  const h1 = tokens(a, "cache_creation_1h_tokens");
   const geo = geoValue(str(a, "inference_geo", "gen_ai.anthropic.inference_geo"));
   return { ...fromMeta, ...(h1 ? { cacheWrite1hTokens: h1 } : {}), ...(geo ? { inferenceGeo: geo } : {}) };
 }

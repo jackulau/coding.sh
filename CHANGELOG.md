@@ -545,6 +545,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** A hook payload of exactly 64 MB no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Sessions.** Ingest reads tool error lines, PowerShell launch lines, the Copilot CLI shell trailer, fenced code blocks, PR URLs, push remotes, git commands and slash command tags in linear time. Sessions, flags and pull requests come out the same as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
 - **OTel.** An OTLP/JSON integer sent as decimal text, as in an attribute or a log body, is read in linear time. Each value comes out as before: a number when it is a safe integer, else its decimal text. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
+- **Cost.** A token count that is not a whole number from 0 to 2^53 - 1, such as -500, 12.5 or 9007199254740993, bills nothing and adds nothing to session totals. Over OTLP, and for OpenAI responses through the proxy, it is left out of the call's usage. Stored estimates are priced again and stored sessions folded again once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 
 ## [0.1.7] - 2026-11-16
 

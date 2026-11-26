@@ -136,8 +136,9 @@ from the first of these that exists:
 2. **Provider-reported.** A cost the agent or app records: Claude Code runs that coding.sh starts
    in evals and experiments (`total_cost_usd`), OpenCode, Pi, or a span with `gen_ai.usage.cost`
    or `cost_usd`.
-3. **Estimate.** Each kind of token times the model's list price, marked `~`. A token count below 0
-   or not a finite number counts as none.
+3. **Estimate.** Each kind of token times the model's list price, marked `~`. A token count that
+   is not a whole number from 0 to 2^53 - 1 counts as none: one below 0, a fraction, or one too
+   large to read exactly.
 
 A model with no price keeps no cost, never $0. `usage` names it under the table, with the fix: a
 `[prices."<model>"]` table in config.toml ([Configuration](https://coding.sh/docs/config#prices)).

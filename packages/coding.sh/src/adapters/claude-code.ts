@@ -910,7 +910,9 @@ export const claudeCode: Adapter = {
   //    found to be a copy (its owner is read from the next entry), so it is stored once.
   // 24 (0.1.8): a user entry with the promptId of the turn it is in, other than a stop prompt (such as a skill's text
   //    with no isMeta flag), adds to that turn, which ends once: one turn.end, with the turn's own duration.
-  parseVersion: 24,
+  // 25 (0.1.8): a fork's inheritedTokens skips a token count that is not a whole number from 0 to 2^53 - 1 in the parent's Agent
+  //    call (a fraction, or a number too large to be exact), as an estimate does.
+  parseVersion: 25,
 
   detect() {
     const dir = claudeConfigDir();

@@ -583,27 +583,30 @@ describe("claude-code fork subagents", () => {
     assertGolden("claude-code/golden/fork.golden.json", summarize(events.filter((e) => e.sessionId === CHILD)));
   });
 
-  it("inheritedTokens skips a token count below 0 in the parent's Agent call, as an estimate does", async () => {
-    const dir = join(env.home, "fork-bad-count");
-    cpSync(CONFIG, dir, { recursive: true });
-    const sub = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
-    // The copy of the parent's Agent call in the fork's transcript reports a cache read of -10 instead of 20,000.
-    const edited = readFileSync(sub, "utf8")
-      .split("\n")
-      .map((l) => {
-        const e = l ? JSON.parse(l) : undefined;
-        if (e?.type !== "assistant" || !e.message.content.some((b: { id?: string }) => b.id === "toolu_mw9alcc13")) return l;
-        e.message.usage.cache_read_input_tokens = -10;
-        return JSON.stringify(e);
-      });
-    writeFile(sub, edited.join("\n"));
-    process.env.CLAUDE_CONFIG_DIR = dir;
-    try {
-      const child = buildSession((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
-      // 40 input, 400 cache-write and 30 output tokens. Before, the -10 was added in: 460.
-      assert.equal(child.stats.inheritedTokens, 40 + 400 + 30);
-    } finally {
-      process.env.CLAUDE_CONFIG_DIR = CONFIG;
+  it("inheritedTokens skips a token count that is not a whole number from 0 to 2^53 - 1 in the parent's Agent call, as an estimate does", async () => {
+    // The copy of the parent's Agent call in the fork's transcript reports a cache read of -10, 12.5 or
+    // 9007199254740993 (2^53 + 1, which reads as 2^53) instead of 20,000, written into the JSON as is.
+    for (const [i, bad] of ["-10", "12.5", "9007199254740993"].entries()) {
+      const dir = join(env.home, `fork-bad-count-${i}`);
+      cpSync(CONFIG, dir, { recursive: true });
+      const sub = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
+      const edited = readFileSync(sub, "utf8")
+        .split("\n")
+        .map((l) => {
+          const e = l ? JSON.parse(l) : undefined;
+          if (e?.type !== "assistant" || !e.message.content.some((b: { id?: string }) => b.id === "toolu_mw9alcc13")) return l;
+          e.message.usage.cache_read_input_tokens = "<count>";
+          return JSON.stringify(e).replace('"<count>"', () => bad);
+        });
+      writeFile(sub, edited.join("\n"));
+      process.env.CLAUDE_CONFIG_DIR = dir;
+      try {
+        const child = buildSession((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
+        // 40 input, 400 cache-write and 30 output tokens; the bad cache read adds nothing.
+        assert.equal(child.stats.inheritedTokens, 40 + 400 + 30, bad);
+      } finally {
+        process.env.CLAUDE_CONFIG_DIR = CONFIG;
+      }
     }
   });
 

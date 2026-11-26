@@ -190,7 +190,7 @@ describe("derail detection", () => {
       assert.deepEqual(flags(circle(120, 12)), [], "no edits anywhere: a question, not a task");
     });
 
-    it("reads a token count below 0 or not a finite number as absent in the context size", () => {
+    it("reads a token count that is not a whole number from 0 to 2^53 - 1 as absent in the context size", () => {
       // 90 reads that cycle through 12 files at a 100k context, then one more model call and a repeated read.
       const stretch = (last: Usage) => {
         const out = [...edit("a.ts", "1", "2")];
@@ -202,12 +202,14 @@ describe("derail detection", () => {
       const grew = detectDerails(stretch({ inputTokens: 160_000, cacheReadTokens: -100_000, outputTokens: 50 }));
       assert.deepEqual(grew.map((d) => d.flag), ["no-progress"]);
       assert.match(grew[0]!.detail, /context 100k → 160k tokens/);
-      // An infinite cache write is no growth.
-      reset();
-      assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, cacheWriteTokens: Number.POSITIVE_INFINITY, outputTokens: 50 })), []);
+      // An infinite cache write is no growth, nor is a fraction or one too large to read exactly.
+      for (const cacheWriteTokens of [Number.POSITIVE_INFINITY, 12.5, 2 ** 53]) {
+        reset();
+        assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, cacheWriteTokens, outputTokens: 50 })), [], `cache write ${cacheWriteTokens}`);
+      }
     });
 
-    it("does not start the context size at a call with a token count below 0 or not a finite number", () => {
+    it("does not start the context size at a call with a token count that is not a whole number from 0 to 2^53 - 1", () => {
       // The first model call in the stretch reports a bad cache read, so its size is only its 60k fresh
       // input tokens: as the start, the 100k calls after it would look like growth. Then 90 reads cycle
       // through 12 files at a 100k context: no growth.
@@ -216,7 +218,7 @@ describe("derail detection", () => {
         for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls + 10; i++) out.push(llm(100_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
         return out;
       };
-      for (const cacheReadTokens of [-10_000, Number.NaN]) {
+      for (const cacheReadTokens of [-10_000, Number.NaN, 12.5]) {
         reset();
         const events = stretch({ inputTokens: 60_000, cacheReadTokens, outputTokens: 50 });
         assert.deepEqual(flags(events), [], `cache read ${cacheReadTokens}`);
@@ -227,17 +229,23 @@ describe("derail detection", () => {
       assert.deepEqual(flags(stretch({ inputTokens: 500, cacheReadTokens: 99_500, outputTokens: 50 })), []);
     });
 
-    it("keeps the context size a stretch reached when a later call has a token count below 0 or not a finite number", () => {
+    it("keeps the context size a stretch reached when a later call has a token count that is not a whole number from 0 to 2^53 - 1", () => {
       // 79 reads cycle through 12 files while the context grows from 101k to 179k. Then a call reports a
       // bad cache read, so its size is only its 500 fresh input tokens, and an 80th read: the context grew.
-      reset();
-      const events = [...edit("a.ts", "1", "2")];
-      for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls - 1; i++) events.push(llm(101_000 + i * 1_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
-      events.push(ev("llm.call", { ok: true }, { usage: { inputTokens: 500, cacheReadTokens: -179_500, outputTokens: 50 } }), ...read("src/f0.ts", "body again"));
+      const stretch = (cacheReadTokens: number) => {
+        reset();
+        const out = [...edit("a.ts", "1", "2")];
+        for (let i = 0; i < DERAIL_THRESHOLDS.noProgressCalls - 1; i++) out.push(llm(101_000 + i * 1_000), ...read(`src/f${i % 12}.ts`, `body ${i}`));
+        out.push(ev("llm.call", { ok: true }, { usage: { inputTokens: 500, cacheReadTokens, outputTokens: 50 } }), ...read("src/f0.ts", "body again"));
+        return out;
+      };
+      const events = stretch(-179_500);
       const d = detectDerails(events);
       assert.deepEqual(d.map((x) => x.flag), ["no-progress"]);
       assert.match(d[0]!.detail, /context 102k → 179k tokens/);
       assert.deepEqual(flags(JSON.parse(JSON.stringify(events))), ["no-progress"], "stored");
+      // A fraction is as bad: the same flag, with the same detail.
+      assert.deepEqual(detectDerails(stretch(12.5)).map((x) => [x.flag, x.detail]), d.map((x) => [x.flag, x.detail]));
     });
 
     it("reads Antigravity's run_command line: a shell write is progress, a read is not", () => {

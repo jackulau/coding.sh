@@ -327,4 +327,13 @@ describe("recorded fallbacks, switches and back, and subagents", () => {
     const s = buildSession([...times(2, () => call(OPUS_55)), ev("notification", { kind: "model.fallback", trigger: "overloaded", to: "acme-large" }), call("acme-large")]);
     assert.deepEqual([s.stats.modelSwitch?.switchedCalls, s.stats.modelSwitch?.extraUsd, "extraUsd" in s.stats.modelSwitch!], [1, undefined, false]);
   });
+
+  it("a switched call's token count that is not a whole number from 0 to 2^53 - 1 adds nothing to extraUsd", () => {
+    reset();
+    // A cache read of 12.5 and a cache write of 2^53 beside 900 input and 40 output tokens.
+    const usage = { inputTokens: 900, outputTokens: 40, cacheReadTokens: 12.5, cacheWriteTokens: 2 ** 53 };
+    const s = buildSession([...times(2, () => call(OPUS_55)), ev("notification", { kind: "model.fallback", trigger: "overloaded", from: OPUS_55, to: OPUS_48 }), call(OPUS_48, {}, { usage })]);
+    // 900 input and 40 output tokens at $5/$25 per M instead of $4/$20, as in a call with only those.
+    assert.equal(s.stats.modelSwitch?.extraUsd, (900 * 1 + 40 * 5) / 1e6);
+  });
 });

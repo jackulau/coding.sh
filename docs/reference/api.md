@@ -269,6 +269,11 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+Token counts come from usage attributes such as `gen_ai.usage.input_tokens`, as numbers or as
+numeric text. A count that is not a whole number from 0 to 2^53 - 1 is read as not sent: one
+below 0, a fraction, or one too large to read exactly, such as 9007199254740993. It is left out
+of the call's usage and adds nothing to a cost estimate.
+
 A model call's time to first token (`ttftMs`) comes from the first of these on its span:
 
 - `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.
@@ -689,8 +694,9 @@ A gateway bill linked to two copies of one call, such as the proxy's copy and th
 record, counts once.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
-token count below 0 or not a finite number, as the estimate does. So do `stats.cacheBreaks`,
-`stats.inheritedTokens` and the context size the `no-progress` derail reads.
+token count that is not a whole number from 0 to 2^53 - 1, as the estimate does: one below 0, a
+fraction, or one too large to read exactly. So do `stats.cacheBreaks`, `stats.inheritedTokens`,
+a model switch's `extraUsd` and the context size the `no-progress` derail reads.
 
 When a call's input, cache read or cache write count is skipped, its size can be too low, so the
 derail does not measure the context's growth from that call, and that call does not lower the size
@@ -828,7 +834,7 @@ prints `-` under TOOLS and `show` says so on its Turns row.
 |---|---|
 | `stats.waste` (`duplicateFetches`, `duplicateFetchTokens`, `readOnlyCalls`) | Read-only calls that repeated an earlier call in the same context with the same result, and the tokens they sent again (output length / 4) |
 | `stats.compactionRefetches` (`calls`, `tokens`, `compactions`) | Read-only calls that fetched again a result a compaction took out of the context, with no write to it in between. Each dropped result counts once. `tokens` is their output length / 4, and `compactions` counts the compactions they followed |
-| `stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) | Model calls that found the prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it from cache, and more than 2,048 tokens were billed again. A token count below 0 or not a finite number is skipped |
+| `stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) | Model calls that found the prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it from cache, and more than 2,048 tokens were billed again. A token count that is not a whole number from 0 to 2^53 - 1 is skipped |
 | `stats.cacheBreaks.byCause` | `compaction`, `model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other` |
 | `stats.cacheBreaks.byIdle` | Idle breaks by where the wait was: `wait` (one tool call in the same scope ran past the cache lifetime, such as a Bash command polling a job), `subagent` (a subagent sat idle between turns) or `away` (the main session did). Absent when no break was idle |
 | `stats.cacheBreaks.extraUsd` | The cache-write (or input) price minus the cache-read price for those tokens. Left out when the model has no price; `unpriced` then counts the breaks |
@@ -885,7 +891,7 @@ Limits:
 | Field | Meaning |
 |---|---|
 | `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). A T3 Code thread whose first prompt a person sent is `interactive`, whatever its agent's start says (T3 Code's `host-link` notification carries `launch`), unless another agent's import reads its session (OpenCode, Cursor, Pi). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
-| `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. A token count below 0 or not a finite number in that call is skipped. Absent for other sessions, and when no tokens are counted |
+| `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. A token count in that call that is not a whole number from 0 to 2^53 - 1 is skipped. Absent for other sessions, and when no tokens are counted |
 
 - A fork subagent's session holds only its own model calls, so the parent's calls count once, in the parent. The fork's reads of the inherited context from the prompt cache count in its `usage`.
 

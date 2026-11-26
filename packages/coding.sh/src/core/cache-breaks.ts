@@ -9,9 +9,9 @@
 // + cache reads + cache writes. A call breaks the cache when the previous call
 // in its scope used the cache (has a cache field), had P > 4096, and this call
 // read less than half of that from cache, losing more than 2048 tokens:
-// lost = min(prev P, this P) − this call's cache reads. A token count below 0
-// or not a finite number is absent, as in stats.usage: it adds nothing to P or
-// the reads, and it is not a cache field.
+// lost = min(prev P, this P) − this call's cache reads. A token count that is
+// not a whole number from 0 to 2^53 - 1 is absent, as in stats.usage: it adds
+// nothing to P or the reads, and it is not a cache field.
 // Cause, first match: a context.compact in the scope between the two calls;
 // a different model; a gap past the cache lifetime (5 minutes, or 1 hour when
 // the previous call wrote to the 1-hour cache); else other.

@@ -181,6 +181,14 @@ describe("usage mapping", () => {
     assert.deepEqual(openaiUsage({ input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50 }), { inputTokens: 200, cacheReadTokens: 800, outputTokens: 50 });
     assert.deepEqual(openaiUsage({ prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 4 } }), { inputTokens: 6, cacheReadTokens: 4, outputTokens: 2 });
   });
+  it("OpenAI usage reads a count that is not a whole number from 0 to 2^53 - 1 as absent", () => {
+    // A bad cached count is not taken off the input.
+    assert.deepEqual(openaiUsage({ input_tokens: 1000, cached_input_tokens: -800, output_tokens: 12.5 }), { inputTokens: 1000 });
+    assert.deepEqual(openaiUsage({ prompt_tokens: 2 ** 53, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 4 } }), { cacheReadTokens: 4, outputTokens: 2 });
+    // A bad count gives way to the other name for it.
+    assert.deepEqual(openaiUsage({ input_tokens: -5, prompt_tokens: 10, output_tokens: 1e20, completion_tokens: 2 }), { inputTokens: 10, outputTokens: 2 });
+    assert.equal(openaiUsage({ input_tokens: Number.NaN, output_tokens: -1 }), undefined);
+  });
   it("Anthropic usage maps cache fields", () => {
     assert.deepEqual(anthropicUsage({ input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }), { inputTokens: 5, outputTokens: 7, cacheReadTokens: 100, cacheWriteTokens: 20 });
   });

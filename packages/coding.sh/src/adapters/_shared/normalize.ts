@@ -3,7 +3,7 @@
 // and small type guards for untyped agent JSON.
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage } from "../../schema/index.ts";
 import { SCHEMA_VERSION } from "../../schema/index.ts";
-import { geoValue } from "../../core/pricing.ts";
+import { geoValue, tokenCount } from "../../core/pricing.ts";
 import type { BackfillFile, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import { resolveRaw } from "../../spool/write.ts";
 // (tools.ts imports this module too: skillFieldsOf is only called at emit time.)
@@ -190,13 +190,14 @@ export function anthropicPriceHints(u: unknown): { cacheWrite1hTokens?: number; 
 /**
  * OpenAI-style usage (input_tokens INCLUDES cached tokens). Normalized so that
  * inputTokens is the uncached part, matching the Anthropic convention:
- * total input = inputTokens + cacheReadTokens (+ cacheWriteTokens).
+ * total input = inputTokens + cacheReadTokens (+ cacheWriteTokens). A count that is not a whole
+ * number from 0 to 2^53 - 1 (pricing.ts tokenCount) is absent, so it is not subtracted either.
  */
 export function openaiUsage(u: unknown): Usage | undefined {
   if (!isObj(u)) return undefined;
-  const input = num(u.input_tokens) ?? num(u.prompt_tokens);
-  const cached = num(u.cached_input_tokens) ?? num(obj(u.input_tokens_details).cached_tokens) ?? num(obj(u.prompt_tokens_details).cached_tokens);
-  const output = num(u.output_tokens) ?? num(u.completion_tokens);
+  const input = tokenCount(u.input_tokens) ?? tokenCount(u.prompt_tokens);
+  const cached = tokenCount(u.cached_input_tokens) ?? tokenCount(obj(u.input_tokens_details).cached_tokens) ?? tokenCount(obj(u.prompt_tokens_details).cached_tokens);
+  const output = tokenCount(u.output_tokens) ?? tokenCount(u.completion_tokens);
   const out: Usage = {};
   if (input !== undefined) out.inputTokens = Math.max(0, input - (cached ?? 0));
   if (cached !== undefined) out.cacheReadTokens = cached;
