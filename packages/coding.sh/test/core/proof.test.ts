@@ -123,8 +123,10 @@ describe("escape hatches", () => {
     assert.deepEqual(hatches("dfyconfig.toml", undefined, "+no-verify = false"), {});
   });
 
-  it("does not count an Axiom inside a Rocq Module Type", () => {
-    assert.deepEqual(hatches("A.v", "rocq", "+Module Type STACK.", "+  Axiom t : Type.", "+End STACK.", "+Axiom cheat : False."), { Axiom: 1 });
+  it("does not count an Axiom inside a Rocq Module Type, also with CRLF line endings", () => {
+    const lines = ["+Module Type STACK.", "+  Axiom t : Type.", "+End STACK.", "+Axiom cheat : False."];
+    assert.deepEqual(hatches("A.v", "rocq", ...lines), { Axiom: 1 });
+    assert.deepEqual(hatches("A.v", "rocq", ...lines.map((l) => l + String.fromCharCode(13))), { Axiom: 1 });
   });
 
   it("reads build files with their strings kept", () => {

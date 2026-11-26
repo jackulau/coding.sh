@@ -817,14 +817,16 @@ describe("proof tampering", () => {
     quiet([[...red(), ...shellRun("rm Foo.lean", true, "", [["Foo.lean", "delete", ""]]), ...edit("Foo.lean", full, "add", "Write"), ...green()]]);
   });
 
-  it("reads Rocq hatches whichever command builds the file, but not an Axiom inside a Module Type", () => {
+  it("reads Rocq hatches whichever command builds the file, but not an Axiom inside a Module Type, also with CRLF line endings", () => {
     const axiom = [...shellRun("make", false, ROCQ_RED), ...edit("theories/Add.v", udiff("theories/Add.v", " Import ListNotations.", "+Axiom cheat : forall P : Prop, P.")), ...shellRun("make", true, "COQC theories/Add.v")];
     const admit = [...shellRun("dune build", false, ROCQ_RED), ...edit("theories/Add.v", udiff("theories/Add.v", "   intros a b.", "+  admit.", "   lia.")), ...shellRun("dune build", true, "Done: 40/40")];
     for (const [events, hatch] of [[axiom, "Axiom"], [admit, "admit"]] as const) {
       assert.deepEqual(trace(events).map((f) => [f.kind, f.hatch, f.severity]), [["escape", hatch, "high"]], hatch);
       assert.ok(flagged(events), hatch);
     }
-    quiet([edit("theories/Stack.v", "--- /dev/null\n+++ b/theories/Stack.v\n@@ -0,0 +1,4 @@\n+Require Import List.\n+Module Type STACK.\n+  Axiom t_inhabited : forall A, list A.\n+End STACK.\n", "add", "Write")]);
+    const stack = (eol: string) =>
+      edit("theories/Stack.v", `--- /dev/null\n+++ b/theories/Stack.v\n@@ -0,0 +1,4 @@\n${["+Require Import List.", "+Module Type STACK.", "+  Axiom t_inhabited : forall A, list A.", "+End STACK."].map((l) => l + eol).join("\n")}\n`, "add", "Write");
+    quiet([stack(""), stack(String.fromCharCode(13))]);
   });
 
   it("keys a Dafny check by its subcommand: dafny run --no-verify is not the dafny verify that failed", () => {

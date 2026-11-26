@@ -396,7 +396,8 @@ export interface ProofDiff extends StmtDelta {
   rocq: boolean;
 }
 
-const MODULE_TYPE = /^[ \t]*(?:#\[[^\]\n]*\][ \t]*)?Module[ \t]+Type[ \t]+([\w']+)(.*)$/;
+/** A `Module Type` header; the rest of the line, a carriage return included, tells a declaration from a `:=` definition. */
+const MODULE_TYPE = /^[ \t]*(?:#\[[^\]\n]*\][ \t]*)?Module[ \t]+Type[ \t]+([\w']+)([^\n]*)$/;
 const MODULE_END = /^[ \t]*End[ \t]+([\w']+)[ \t]*\./;
 
 /**
