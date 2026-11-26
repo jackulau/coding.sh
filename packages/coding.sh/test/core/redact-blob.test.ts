@@ -188,6 +188,21 @@ describe("redactBlobValue copies only what redaction changes", () => {
       assert.ok(!out.includes(SECRET), label);
     }
   });
+
+  it("reads an array Proxy's length as map does, also a fraction, a number below 0 or NaN", () => {
+    const cases: Array<[length: number, plain: unknown]> = [
+      [1.5, [token]],
+      [-1, []],
+      [Number.NaN, []],
+    ];
+    for (const [length, plain] of cases) {
+      const v = new Proxy([token, "plain"], { get: (t, k, rcv) => (k === "length" ? length : Reflect.get(t, k, rcv)) });
+      const want = reference(plain);
+      const tally = redactionTally();
+      assert.equal(redactBlobValue(redactor, v, tally), want.text, String(length));
+      assert.equal(JSON.stringify(tally), want.tally, String(length));
+    }
+  });
 });
 
 describe("redactBlobValue on the recorded adapter fixtures", () => {
