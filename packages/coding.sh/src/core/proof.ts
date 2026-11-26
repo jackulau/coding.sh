@@ -1287,58 +1287,128 @@ export interface ProofFinding {
 
 type Entry = { e: AgentEvent; shape: ProofShape; flip?: { before: string; after: string } };
 
+/** A value by path and key; `at` holds the path, so a move renames many slots at once. */
+type Slot<T> = { key: string; v: T; at: PathKeys<T>; next?: Slot<T>; dead?: true };
+/** One path's slots by key, and the runs that hold them in order. */
+type PathKeys<T> = { path: string; keys: Map<string, Slot<T>>; runs: Run<T>[] };
+/** Slots linked in order, from `head` to `tail`. */
+type Run<T> = { head: Slot<T>; tail: Slot<T> };
+
+/**
+ * Values by path and key, in the order of a Map keyed by both where a move deletes each key of
+ * the path and sets it again under the new path: the moved keys go to the end, and one the new
+ * path already has keeps its place and takes the moved value. A move links the moved keys onto
+ * the end at once and walks the smaller of the two paths, so a long session of moves stays linear.
+ */
+function pathMap<T>() {
+  const paths = new Map<string, PathKeys<T>>();
+  const order = new Set<Run<T>>();
+  const slot = (path: string, key: string) => paths.get(path)?.keys.get(key);
+  const set = (path: string, key: string, v: T) => {
+    let p = paths.get(path);
+    if (!p) paths.set(path, (p = { path, keys: new Map(), runs: [] }));
+    const had = p.keys.get(key);
+    if (had) {
+      had.v = v;
+      return;
+    }
+    const s: Slot<T> = { key, v, at: p };
+    const run = { head: s, tail: s };
+    p.keys.set(key, s);
+    p.runs.push(run);
+    order.add(run);
+  };
+  const del = (path: string, key: string) => {
+    const s = slot(path, key);
+    if (!s) return;
+    s.dead = true;
+    s.at.keys.delete(key);
+  };
+  const move = (from: string, to: string) => {
+    const f = paths.get(from);
+    if (!f?.keys.size) return;
+    const run = f.runs[0] as Run<T>;
+    order.delete(run);
+    for (const r of f.runs.slice(1)) {
+      run.tail.next = r.head;
+      run.tail = r.tail;
+      order.delete(r);
+    }
+    order.add(run);
+    f.runs = [run];
+    if (from === to) return;
+    paths.delete(from);
+    const t = paths.get(to);
+    if (!t) {
+      f.path = to;
+      paths.set(to, f);
+      return;
+    }
+    const [big, small] = f.keys.size > t.keys.size ? [f, t] : [t, f];
+    for (const [k, s] of small.keys) {
+      const b = big.keys.get(k);
+      if (!b) {
+        s.at = big;
+        big.keys.set(k, s);
+        continue;
+      }
+      const [there, moved] = small === t ? [s, b] : [b, s];
+      there.v = moved.v;
+      moved.dead = true;
+      there.at = big;
+      big.keys.set(k, there);
+    }
+    t.runs.push(run);
+    big.runs = t.runs;
+    big.path = to;
+    paths.set(to, big);
+  };
+  function* entries(): Generator<[string, string, T]> {
+    for (const r of order)
+      for (let s: Slot<T> | undefined = r.head; s; s = s === r.tail ? undefined : s.next) if (!s.dead) yield [s.at.path, s.key, s.v];
+  }
+  return { get: (path: string, key: string) => slot(path, key)?.v, has: (path: string, key: string) => !!slot(path, key), set, del, move, entries };
+}
+
 /**
  * The notes of one trace, turned into findings once it is read: escape hatches still in place, a
  * bypass that stands, and the changes to statements, specs and build files, each high when it
  * turned a failing check green and still stands.
  */
 export function proofLog(): { note: (n: ProofNote) => void; findings: (ps: ProofState | undefined) => ProofFinding[] } {
-  const open = new Map<string, AgentEvent>();
-  const changes = new Map<string, Entry[]>();
+  /** Hatches put in, by path and name: the event that put each in. */
+  const open = pathMap<AgentEvent>();
+  const changes = pathMap<Entry[]>();
   let bypass: { e: AgentEvent; flag: string; before: string } | undefined;
-  const rekey = <T>(m: Map<string, T>, from: string, to: string) => {
-    for (const [k, v] of [...m])
-      if (k.startsWith(`${from}\u0000`)) {
-        m.delete(k);
-        m.set(to + k.slice(from.length), v);
-      }
-  };
   const note = (n: ProofNote) => {
     if (n.kind === "hatch") {
-      const k = `${n.path}\u0000${n.hatch}`;
-      if (!n.open) open.delete(k);
-      else if (!open.has(k)) open.set(k, n.e);
+      if (!n.open) open.del(n.path, n.hatch);
+      else if (!open.has(n.path, n.hatch)) open.set(n.path, n.hatch, n.e);
     } else if (n.kind === "move") {
-      rekey(open, n.from, n.to);
-      rekey(changes, n.from, n.to);
+      open.move(n.from, n.to);
+      changes.move(n.from, n.to);
     } else if (n.kind === "bypass") bypass = { e: n.e, flag: n.flag, before: n.before };
     else if (n.kind === "change") {
-      const k = `${n.path}\u0000${n.key}`;
-      const list = changes.get(k) ?? [];
+      const list = changes.get(n.path, n.key) ?? [];
       // Changes between two flips are one change: the last one says what it became.
       if (list.length && !list.at(-1)?.flip) list.pop();
       const entry: Entry = { e: n.e, shape: n.shape };
       if (n.flip) entry.flip = n.flip;
       list.push(entry);
-      changes.set(k, list);
+      changes.set(n.path, n.key, list);
     } else
       for (const [path, key] of n.flips) {
-        const last = changes.get(`${path}\u0000${key}`)?.at(-1);
+        const last = changes.get(path, key)?.at(-1);
         if (last && !last.flip) last.flip = { before: n.before, after: n.e.id };
       }
   };
   const findings = (ps: ProofState | undefined): ProofFinding[] => {
     const out: ProofFinding[] = [];
-    for (const [k, e] of open) {
-      const [path, hatch] = k.split("\u0000") as [string, string];
+    for (const [path, hatch, e] of open.entries())
       if ((ps?.files?.get(path)?.sites?.get(hatch) ?? 0) > 0) out.push({ e, path, kind: "escape", shape: "escape", hatch, high: true, flippedGreen: false });
-    }
     if (ps?.bypass && bypass)
       out.push({ e: bypass.e, path: "", kind: "escape", shape: "escape", hatch: bypass.flag, high: true, flippedGreen: true, before: bypass.before, after: bypass.e.id });
-    for (const [k, list] of changes) {
-      const cut = k.indexOf("\u0000");
-      const path = k.slice(0, cut);
-      const key = k.slice(cut + 1);
+    for (const [path, key, list] of changes.entries()) {
       const f = ps?.files?.get(path);
       const now = !!f && proofTampered(f, key);
       const lastFlip = list.findLastIndex((x) => !!x.flip);

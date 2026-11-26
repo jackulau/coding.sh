@@ -903,4 +903,27 @@ describe("proof tampering", () => {
     assert.deepEqual(new Set(said(fs).map((x) => x.join())), new Set(["statement,unknown,info,false"]));
     assert.deepEqual(new Set(fs.map((f) => `${f.eventId} ${f.intentSource} ${f.intent}`)), new Set([`${change[2]?.id} assistant-text step 19999`]));
   });
+
+  it("follows changed statements when their file moves onto another, keeping the place of names the other file had", () => {
+    const change = (path: string, ...names: string[]) => edit(path, udiff(path, ...names.flatMap((n) => [`-theorem ${n} : p`, `+theorem ${n} : q`])));
+    const theorems = (events: AgentEvent[]) => trace(events).map((f) => `${f.path} ${f.theorem} ${f.eventId}`);
+    // The file moved onto names fewer statements than the moved file, then more.
+    const one = change("Bar.lean", "z");
+    const three = change("Foo.lean", "w", "z", "v");
+    assert.deepEqual(theorems([...one, ...three, ...bash("mv Foo.lean Bar.lean")]), ["z", "w", "v"].map((n) => `Bar.lean ${n} ${three[2]?.id}`));
+    const many = change("Bar.lean", "x", "y", "z");
+    const two = change("Foo.lean", "w", "z");
+    assert.deepEqual(theorems([...many, ...two, ...bash("mv Foo.lean Bar.lean")]), ["z", "w"].map((n) => `Bar.lean ${n} ${two[2]?.id}`));
+  });
+
+  it("follows 1,000 changed statements through 1,001 moves of their file in linear time", () => {
+    const change = edit("Foo.lean", udiff("Foo.lean", ...Array.from({ length: 1000 }, (_, j) => [`-theorem t${j} : p`, `+theorem t${j} : q`]).flat()));
+    const moves = Array.from({ length: 1001 }, (_, m) => bash(m % 2 ? "mv Bar.lean Foo.lean" : "mv Foo.lean Bar.lean")).flat();
+    const events = [...change, ...moves];
+    assertCpuUnder("1,000 statements through 1,001 moves", () => detectTestTamperTrace(events));
+    const fs = trace(events);
+    assert.deepEqual(fs.map((f) => f.theorem), Array.from({ length: 1000 }, (_, j) => `t${j}`));
+    assert.deepEqual(new Set(said(fs).map((x) => x.join())), new Set(["statement,unknown,info,false"]));
+    assert.deepEqual(new Set(fs.map((f) => `${f.path} ${f.eventId}`)), new Set([`Bar.lean ${change[2]?.id}`]));
+  });
 });
