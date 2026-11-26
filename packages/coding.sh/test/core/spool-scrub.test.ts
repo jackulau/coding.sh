@@ -10,6 +10,7 @@ import { defaultConfig } from "../../src/core/config.ts";
 import { ingest, spoolScrubKey } from "../../src/core/ingest.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 import { reparse } from "../../src/core/reparse.ts";
+import { readSpoolFile } from "../../src/core/spool-read.ts";
 import { scrubRawFile } from "../../src/core/spool-scrub.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 
@@ -143,5 +144,45 @@ describe("a past day's spool file after ingest", () => {
     const opens = await writeOpens(t.spool, t.run);
     assert.equal(opens, 1);
     assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET));
+  });
+
+  it("is scrubbed when it ends in a blank line", async () => {
+    const t = setup();
+    writeFileSync(t.spool, line(t, 1, `AWS_SECRET_ACCESS_KEY=${SECRET}`) + "\n");
+    const index = new MemoryIndexStore();
+    await ingest({ config: defaultConfig(t.env), index, blobs: new MemoryBlobStore(), adapters: new Map([[claudeCode.id, claudeCode]]), env: t.env, lock: false });
+    assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET));
+    assert.equal(await index.getCursor(spoolScrubKey("claude-code/2026-11-06.1.jsonl")), statSync(t.spool).size);
+  });
+
+  /** [offset, pid] of each line a reader keeps in the day's spool file. */
+  async function kept(t: ReturnType<typeof setup>): Promise<number[][]> {
+    const out: number[][] = [];
+    for await (const r of readSpoolFile(join(t.env.CODING_SH_HOME, "spool"), t.spool)) out.push([r.offset, r.line.pid]);
+    return out;
+  }
+  // hook.sh appends without looking at the file's end: after a write cut short, its line lands on the fragment.
+  it("keeps a whole line glued onto a torn fragment, redacted where it starts, when only that line holds a secret", async () => {
+    const t = setup();
+    const head = line(t, 1, "hello") + line(t, 2, "world").slice(0, 80);
+    writeFileSync(t.spool, head + line(t, 3, `AWS_SECRET_ACCESS_KEY=${SECRET}`));
+    const size = statSync(t.spool).size;
+    await t.run();
+    const after = readFileSync(t.spool, "utf8");
+    assert.ok(!after.includes(SECRET));
+    assert.equal(statSync(t.spool).size, size);
+    assert.ok(after.startsWith(head), "the fragment is left as it was");
+    assert.deepEqual(await kept(t), [[0, 1], [Buffer.byteLength(head), 3]]);
+  });
+  it("blanks a torn fragment that holds a secret up to the whole line glued onto it, which still reads from where it starts", async () => {
+    const t = setup();
+    const first = line(t, 1, "hello");
+    const torn = line(t, 2, `AWS_SECRET_ACCESS_KEY=${SECRET} and more`);
+    const fragment = torn.slice(0, torn.indexOf(" and more") + 4);
+    const glued = line(t, 3, "world");
+    writeFileSync(t.spool, first + fragment + glued);
+    await t.run();
+    assert.equal(readFileSync(t.spool, "utf8"), `${first}${" ".repeat(fragment.length - 1)}\n${glued}`);
+    assert.deepEqual(await kept(t), [[0, 1], [Buffer.byteLength(first + fragment), 3]]);
   });
 });
