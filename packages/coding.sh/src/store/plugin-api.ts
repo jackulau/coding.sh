@@ -28,6 +28,8 @@ export type { BlobRefField } from "./common.ts";
 // `--where`: the parsed query and the key table a store compiles to its own SQL (querySessions, queryFacets).
 export type { Cmp, KeyDef, Node, Query, Value } from "../query/where.ts";
 export { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported } from "../query/where.ts";
+// `is:flagged`: the flags with no colon that are context, not failures.
+export { CONTEXT_FLAGS } from "../core/failure-flags.ts";
 export {
   BLOB_REF_FIELDS,
   DatasetConflict,

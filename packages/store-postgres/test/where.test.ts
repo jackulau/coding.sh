@@ -80,6 +80,10 @@ describe("postgres --where compiler", () => {
     assert.deepEqual(params, ["skill:%"]);
     assert.match(facetSource("tool", () => "$1", "S", "E").from, /^E e JOIN S s ON s\.id = e\.session_id$/);
   });
+
+  it("is:flagged leaves out tags and the notes compaction, step-retried and resumed", () => {
+    assert.equal(IS_SQL.flagged, "EXISTS (SELECT 1 FROM json_array_elements_text(s.flags::json) AS f(v) WHERE strpos(f.v, ':') = 0 AND f.v NOT IN ('compaction', 'step-retried', 'resumed'))");
+  });
 });
 
 describe("postgres --where matches the scan", { skip: SKIP }, () => {

@@ -1241,7 +1241,7 @@ coding.sh stats --scorecard --since 90d
 coding.sh stats --scorecard --by agent --where 'repo:coding.sh' --json
 ```
 
-- Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
+- Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag: a flag with no colon, other than compaction, step-retried and resumed. TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
 - With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
 - Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.
 - --json also prints waits: how often and how long the window's sessions waited on you, by kind, subagents included. GET /api/metrics does not have it. A store other than SQLite stops reading them at 100,000 sessions and sets waits.truncated.
@@ -1874,7 +1874,7 @@ coding.sh exp <action>
 | [`metrics`](#codingsh-exp-metrics) | A/B two metric commands (ms, bytes) in interleaved pairs |
 | [`plateau`](#codingsh-exp-plateau) | Should an iteration loop stop? A restart e-detector over its experiments, and the version to ship (exit 3 stop, 2 too few, 0 continue) |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
-| [`list`](#codingsh-exp-list) | List experiments |
+| [`list`](#codingsh-exp-list) | List experiments, then the runs that have stored none yet |
 | [`status`](#codingsh-exp-status) | Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them |
 
 - exp ab and refine call a model API with ANTHROPIC_API_KEY or OPENAI_API_KEY. With neither set they use a logged-in Claude Code (`claude -p`) or Codex (`codex exec`) instead and say so in one line; --provider claude-code or codex asks for one. Each call runs with no hooks, plugins, MCP servers or settings of yours, in an empty directory, with a throwaway CLAUDE_CONFIG_DIR or CODEX_HOME holding only a copy of the login. claude -p gets the session's own Claude Code tools and refuses every call, so none runs.
@@ -2270,7 +2270,7 @@ coding.sh exp show <EXPERIMENT>
 
 ### `coding.sh exp list`
 
-List experiments.
+List experiments, then the runs that have stored none yet.
 
 ```text
 coding.sh exp list [options]

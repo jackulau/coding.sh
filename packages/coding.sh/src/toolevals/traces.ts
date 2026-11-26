@@ -8,6 +8,7 @@
 // tools.json. Held-out trials are never exported.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isFailureFlag } from "../core/failure-flags.ts";
 import { createRedactor } from "../core/redact.ts";
 import type { BlobStore, IndexStore, Session } from "../core/types.ts";
 import { sessionMarkdown } from "../mcp/digest.ts";
@@ -328,7 +329,7 @@ export async function buildTraceWorkspace(o: TraceOpts): Promise<TraceWorkspace>
       const events = await o.index.listEvents(s.id);
       const calls = sessionCalls(events, o.server);
       if (!calls.length) continue;
-      const failed = s.flags.some((f) => !f.includes(":")) || calls.some((c) => !c.ok);
+      const failed = s.flags.some(isFailureFlag) || calls.some((c) => !c.ok);
       add(
         { id: `session-${s.id}`, source: "session", sessionId: s.id, agent: s.agent, outcome: failed ? "failed" : "ok", targetCalls: calls.length, targetErrors: calls.filter((c) => !c.ok).length, bytes: 0 },
         await sessionMarkdown(o.index, s as Session, 120, o.now),

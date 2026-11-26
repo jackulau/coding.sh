@@ -1,6 +1,7 @@
 // Prometheus text exposition for `coding.sh serve` (§1.7). Label values are
 // bounded: routes are a fixed set and projects come from the config.
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { failureFlags } from "../core/failure-flags.ts";
 import { SPAN_SOURCE } from "../otel/map.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 
@@ -61,7 +62,7 @@ export class ServeMetrics {
   readonly sinkEvents = new Counter("coding_sh_sink_events_total", "Events mirrored to [[sinks]], by sink and result (sent, dropped, failed).");
   readonly sessionCost = new Counter("coding_sh_session_cost_usd_total", "Cost in USD of sessions, by agent and model (subagent sessions included), counted as each turn or session ends.");
   readonly sessions = new Counter("coding_sh_sessions_total", "Top-level sessions serve saw end, by agent and outcome (failed: the session has a failure flag). A session of OTel traces that share a conversation id sends no end: it counts once, when serve stores its first trace.");
-  readonly sessionFlags = new Counter("coding_sh_session_flags_total", "Failure flags (flags with no colon) on the top-level sessions coding_sh_sessions_total counts, as each is counted.");
+  readonly sessionFlags = new Counter("coding_sh_session_flags_total", "Failure flags (no colon, not compaction, step-retried or resumed) on the top-level sessions coding_sh_sessions_total counts, as each is counted.");
   private readonly seenEnded = new Set<string>();
   /** Sessions with no session.end (OTel conversations) already counted in sessions; they leave when one ends. */
   private readonly countedOpen = new Set<string>();
@@ -160,7 +161,7 @@ export class ServeMetrics {
   private countSession(s: Session): void {
     if (s.parent) return;
     const agent = String(s.agent);
-    const failures = s.flags.filter((f) => !f.includes(":"));
+    const failures = failureFlags(s.flags);
     this.sessions.inc(bounded(this.sessions, { agent, outcome: failures.length ? "failed" : "ok" }));
     for (const flag of new Set(failures)) this.sessionFlags.inc(bounded(this.sessionFlags, { flag }));
   }
