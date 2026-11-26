@@ -34,7 +34,7 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 27 minutes.
+ * 30 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
@@ -76,7 +76,16 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   cut: { runs: 10000 },
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
+  // 1000 seeded cases for each of its two properties, then the fixed cases.
+  "hook-entry": { runs: 1000 },
   "hook-imports": {},
+  // At bound 2, every payload cut to its first k bytes for every k, and with each of its bytes deleted in
+  // turn: 49,071 calls. About 50 seconds.
+  "hook-truncate-1": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 49,871 calls. About 50 seconds.
+  "hook-truncate-2": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 51,525 calls. About 35 seconds.
+  "hook-truncate-3": { bound: 2 },
   // At bound 1, the fresh fragment at every cut on the day after the file's, and the other cases at five
   // cuts and at three seeded (cut, day) pairs per fixture: 4,929 fresh fragments and 40 cases.
   "ingest-torn-1": { bound: 1 },
