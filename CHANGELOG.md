@@ -534,8 +534,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** The scrub of a past day no longer blanks a whole spool line that the POSIX sh hook wrote right after a torn fragment when either holds a secret: the line is redacted in place like any other, and only a fragment that holds a secret is blanked, so a re-parse still reads the line. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Sessions.** Session and phase titles that skip pasted blocks or read a slash command's name and args take time linear in the prompt. The titles are the same as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#sessions))
 - **Sessions.** `test-tamper` reads string literals and node:test options on a test's diff line in linear time. An escaped quote no longer closes a literal, as in JS and Python. A quote that closes nothing is passed over, so a skip marker after it counts unless a later literal holds it. Stored sessions are folded again once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#flags-and-derails))
-- **Capture.** A hook payload longer than 1023 bytes keeps its content when redaction makes it 1023 bytes or shorter: the payload goes to a side file, so the event keeps its prompt or tool call. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
-- **Capture.** A hook payload of exactly 64 MB is kept whole and no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
+- **Capture.** A hook payload of exactly 64 MB no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 
 ## [0.1.7] - 2026-11-16
 
