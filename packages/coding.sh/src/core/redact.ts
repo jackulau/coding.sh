@@ -1006,10 +1006,10 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
  * A replace callback for `s` that keeps the text well-formed where a match starts or ends inside a
  * JSON escape: in `a\nbob@example.com` the address starts at the `n` of `\n`, and in
  * `token=x1y2z3w4\"` a value runs to the backslash of `\"`. Replacing the match alone leaves text
- * that no longer parses as JSON. cutWhole finishes an escape the match starts inside as U+FFFD,
- * the replacement character, and keeps the backslashes of one it ends inside, so each escape stays
- * well-formed and the marker stands for the whole match. Only the part of the match that the
- * replacement changes is cut.
+ * that no longer parses as JSON. cutWhole finishes an escape the match starts inside with the end
+ * of CUT_ESCAPE, which reads as U+FFFD when the match starts at the escape's letter, and keeps the
+ * backslashes of one it ends inside, so each escape stays well-formed and the marker stands for the
+ * whole match. Only the part of the match that the replacement changes is cut.
  */
 function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
   return (m, ...rest) => {
