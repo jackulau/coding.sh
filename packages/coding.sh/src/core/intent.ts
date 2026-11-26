@@ -312,6 +312,11 @@ interface Candidate {
 export function detectTestTamperTrace(events: readonly AgentEvent[], opts: TamperTraceOpts = {}): TestTamperFinding[] {
   const sorted = events.map((e, i) => ({ e, i })).sort((a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || a.i - b.i);
   const ev = sorted.map((x) => x.e);
+  /** Each event's first index in `ev`. */
+  const pos = new Map<AgentEvent, number>();
+  ev.forEach((e, i) => {
+    if (!pos.has(e)) pos.set(e, i);
+  });
   const protect = { pattern: opts.pattern, paths: opts.paths?.map((p) => normalizeTracePath(p, opts.cwd)) };
   const starts = new Map<string, AgentEvent>();
   const created = new Set<string>();
@@ -408,7 +413,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
       const afterTool = str(ev[after]?.payload?.toolUseId);
       flippedGreen = writes.filter((w) => w.i > before && w.i < after && !(afterTool && w.toolUseId === afterTool)).every((w) => w.protected);
     }
-    const { intent, intentSource } = intentOf(ev, c);
+    const { intent, intentSource } = intentOf(ev, pos, c);
     // A file the agent created this session is its own work: changing it never counts as high.
     // Deleting a pre-existing test counts while tests are failing (making the failure go away), not as cleanup on green.
     const red = before !== undefined && failed(before) > 0;
@@ -436,12 +441,16 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
     return [c.i, f];
   });
   // Proof findings: a bypass is told at its check's tool.end and reported at its tool.start.
+  // Findings at one event (the statements one diff changed) share its intent.
+  const intents = new Map<AgentEvent, Pick<TestTamperFinding, "intent" | "intentSource">>();
   for (const x of proofFound) {
     const id = str(x.e.payload?.toolUseId);
     const call = x.e.kind === "tool.start" ? x.e : id ? starts.get(id) : undefined;
     const at = x.e.kind === "tool.end" && call ? call : x.e;
-    const i = ev.indexOf(at);
-    const { intent, intentSource } = intentOf(ev, { i, e: at, toolUseId: id, start: call });
+    const i = pos.get(at) ?? -1;
+    let said = intents.get(at);
+    if (!said) intents.set(at, (said = intentOf(ev, pos, { i, e: at, toolUseId: id, start: call })));
+    const { intent, intentSource } = said;
     const tool = str(x.e.payload?.tool) ?? str(call?.payload?.tool);
     const f: TestTamperFinding = {
       eventId: at.id,
@@ -472,7 +481,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
  * else the last assistant text in the same subagent after the previous tool
  * result and no later than the call.
  */
-function intentOf(ev: readonly AgentEvent[], c: Pick<Candidate, "i" | "e" | "toolUseId" | "start">): Pick<TestTamperFinding, "intent" | "intentSource"> {
+function intentOf(ev: readonly AgentEvent[], pos: ReadonlyMap<AgentEvent, number>, c: Pick<Candidate, "i" | "e" | "toolUseId" | "start">): Pick<TestTamperFinding, "intent" | "intentSource"> {
   const input = c.start?.payload?.input;
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
@@ -482,7 +491,7 @@ function intentOf(ev: readonly AgentEvent[], c: Pick<Candidate, "i" | "e" | "too
     }
   }
   const call = c.start ?? c.e;
-  const at = ev.indexOf(call);
+  const at = pos.get(call) ?? -1;
   const sub = call.subagentId;
   const ts = call.ts;
   let from = -1;

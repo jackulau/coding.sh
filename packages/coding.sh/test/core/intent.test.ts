@@ -20,6 +20,7 @@ import { TEST_PATH as PREDICATE_TEST_PATH } from "../../src/judge/predicates.ts"
 import { SKIP_MARKERS as RUNNER_SKIP } from "../../src/runner/tamper.ts";
 import { SKIP_MARKERS } from "../../src/core/intent.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
+import { assertCpuUnder } from "../helpers-timing.ts";
 
 let t = 0;
 const ev = (kind: EventKind, payload: Record<string, unknown> = {}, o: Partial<AgentEvent> = {}): AgentEvent => ({
@@ -890,5 +891,16 @@ describe("proof tampering", () => {
       [...edit("README.md", udiff("README.md", "+No sorry or Admitted is left in the proofs.")), ...edit("src/app.py", udiff("src/app.py", "+# admit users after the check (assume false means deny)"))],
       edit("Foo.lean", udiff("Foo.lean", '+def msg := "sorry, not found"', "+-- TODO: no sorry here")),
     ]);
+  });
+
+  it("reports 1,000 statements one diff changed after 20,000 messages in linear time", () => {
+    const words = Array.from({ length: 20_000 }, (_, i) => say(`step ${i}`));
+    const change = edit("Foo.lean", udiff("Foo.lean", ...Array.from({ length: 1000 }, (_, j) => [`-theorem t${j} : p`, `+theorem t${j} : q`]).flat()));
+    const events = [...words, ...change];
+    assertCpuUnder("1,000 statements after 20,000 messages", () => detectTestTamperTrace(events));
+    const fs = trace(events);
+    assert.deepEqual(fs.map((f) => f.theorem), Array.from({ length: 1000 }, (_, j) => `t${j}`));
+    assert.deepEqual(new Set(said(fs).map((x) => x.join())), new Set(["statement,unknown,info,false"]));
+    assert.deepEqual(new Set(fs.map((f) => `${f.eventId} ${f.intentSource} ${f.intent}`)), new Set([`${change[2]?.id} assistant-text step 19999`]));
   });
 });
