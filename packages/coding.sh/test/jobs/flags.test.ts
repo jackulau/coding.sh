@@ -28,7 +28,7 @@ function endingAs(end: { timedOut: boolean }, act?: (spec: RunSpec) => Record<st
   return {
     ...base,
     async run(spec: RunSpec): Promise<AgentRunOutput> {
-      return { ...(await base.run(spec)), exitCode: end.timedOut ? null : 1, timedOut: end.timedOut, stderrTail: "HTTP 503 service unavailable" };
+      return { ...(await base.run!(spec)), exitCode: end.timedOut ? null : 1, timedOut: end.timedOut, stderrTail: "HTTP 503 service unavailable" };
     },
   };
 }
