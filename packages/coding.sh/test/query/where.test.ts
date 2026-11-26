@@ -222,6 +222,14 @@ describe("SQL and the scan fallback agree", () => {
     }
   });
 
+  test("is:flagged leaves out tags and the notes compaction, step-retried and resumed", async () => {
+    // s3's only flag is resumed and s4 has only tags; s2 has compaction beside unapproved-action.
+    for (const st of [sqlite, memory]) {
+      assert.deepEqual(await ids(st, "is:flagged"), ["s5", "s2", "s1"]);
+      assert.deepEqual(await ids(st, "-is:flagged"), ["s4", "s3"]);
+    }
+  });
+
   test("spot checks", async () => {
     assert.deepEqual(await ids(sqlite, "tool:Bash ok:false"), ["s4", "s1"]);
     assert.deepEqual(await ids(sqlite, "-tool:Bash"), ["s5", "s2"]);

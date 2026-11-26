@@ -6,7 +6,8 @@ import { printedRefs } from "../../core/session-ref.ts";
 import { formatCandidates, rankSessions, rejectSummary, startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SESSION_LIMIT, DEFAULT_SINCE_MS, recentSessions } from "../../eval/init.ts";
 import { parseAge, positiveInt } from "../args.ts";
-import { autoIngest, str, withContext } from "../common.ts";
+import { autoIngest, emptyStateNext, str, withContext } from "../common.ts";
+import { cliCommand, widerSince } from "../next-steps.ts";
 import type { CommandContext } from "../types.ts";
 
 export async function evalCandidates(c: CommandContext): Promise<number> {
@@ -28,8 +29,14 @@ export async function evalCandidates(c: CommandContext): Promise<number> {
       return 0;
     }
     if (!ranked.length) {
-      out.note(`No sessions in the last ${Math.round(since / 86_400_000)} days${repo ? "" : " in this repo"}`);
-      out.next("Look further back, or in every repo", `coding.sh eval candidates --since 90d${repo ? "" : " --repo all"}`);
+      // The window and place as given, and a step that starts further back in the same place (from this repo, in every repo).
+      const flagged = flags.flagged === true;
+      const span = str(flags.since)?.trim() || `${DEFAULT_SINCE_MS / 86_400_000} days`;
+      const place = repo === "all" ? "" : repo ? ` in ${repo}` : " in this repo";
+      out.note(`No ${flagged ? "flagged " : ""}sessions in the last ${span}${place}`);
+      const wider = ["eval", "candidates", "--since", widerSince(now - since, now), "--repo", repo || "all"];
+      if (flagged) wider.push("--flagged");
+      await emptyStateNext(out, c.env, ctx.index, { label: repo ? "Look further back" : "Look further back, or in every repo", command: cliCommand(c.env, wider) });
       return 0;
     }
     // Each session by a reference that opens it when pasted (core/session-ref.ts): a row's own session whole when the

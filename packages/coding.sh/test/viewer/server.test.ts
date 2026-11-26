@@ -577,7 +577,7 @@ describe("viewer server: facets, time range and model", () => {
   let v: Viewer;
   before(async () => {
     await index.upsertSession(session("a", { startedAt: t0, model: "opus", flags: ["no-verification"] }));
-    await index.upsertSession(session("b", { startedAt: t0 + 2 * H, model: "sonnet" }));
+    await index.upsertSession(session("b", { startedAt: t0 + 2 * H, model: "sonnet", flags: ["compaction", "gateway:vercel"] }));
     await index.upsertSession(session("c", { startedAt: t0 + 5 * H, model: "opus", agent: "codex", repo: { root: "/work/web", head: "abc1234" } }));
     await index.upsertSession(session("c:sub", { startedAt: t0 + 5 * H, model: "haiku", parent: { sessionId: "c", subagentId: "x" } }));
     await index.putEvents(["a", "b", "c"].map((id) => event(id, 1, { payload: { text: "fix the queue" } })));
@@ -605,7 +605,7 @@ describe("viewer server: facets, time range and model", () => {
     const total = s.histogram.buckets.reduce((n: number, b: any) => n + b.n, 0);
     assert.equal(total, 3, "all three top-level sessions are charted");
     assert.ok(s.histogram.buckets.length <= 60);
-    assert.equal(s.histogram.buckets.reduce((n: number, b: any) => n + b.flagged, 0), 1);
+    assert.equal(s.histogram.buckets.reduce((n: number, b: any) => n + b.flagged, 0), 1, "a note (compaction) and a tag are not failures");
     for (const b of s.histogram.buckets) assert.equal((b.t - s.histogram.from) % s.histogram.step, 0);
     const codex = (await req(v, "/api/stats?scope=top&agent=codex")).json();
     assert.equal(codex.histogram.buckets.reduce((n: number, b: any) => n + b.n, 0), 1);

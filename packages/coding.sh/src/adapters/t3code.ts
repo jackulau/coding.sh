@@ -1154,7 +1154,9 @@ export const t3code: Adapter = {
   // 17 (0.1.8): a user-role message an agent made (a provider's, MCP or server prompt, a notification, a delegated result, another thread's message) is a user.message with from: "agent" in a session built from the store, and a notification (HOST_AGENT_PROMPT) names it before its prompt in a Codex or Claude transcript. A thread a person started has an interactive launch (host-link launch), except one another adapter imports (OpenCode, Cursor, Pi).
   // 18 (0.1.8): in a Claude transcript, a user entry with the promptId of the turn it is in, other than a stop prompt,
   //    adds to that turn, which ends once: one turn.end, with the turn's own duration.
-  parseVersion: 18,
+  // 19 (0.1.8): a Codex session record with no id takes the thread id in the rollout's file name before its
+  //    session_id, as in the codex adapter (15).
+  parseVersion: 19,
 
   async detect() {
     const env = process.env;

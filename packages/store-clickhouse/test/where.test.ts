@@ -90,6 +90,10 @@ describe("clickhouse --where compiler", () => {
     assert.deepEqual(params.values, { p0: "skill:%" });
     assert.equal(facetRows("tool", () => "", "S", "E", ""), "SELECT tool AS fv, session_id AS sid FROM E FINAL WHERE session_id IN (SELECT id FROM S FINAL )");
   });
+
+  it("is:flagged leaves out tags and the notes compaction, step-retried and resumed", () => {
+    assert.equal(IS_SQL.flagged, "arrayExists(f -> position(f, ':') = 0 AND NOT has(['compaction', 'step-retried', 'resumed'], f), flags)");
+  });
 });
 
 describe("clickhouse --where matches the scan", { skip: SKIP }, () => {

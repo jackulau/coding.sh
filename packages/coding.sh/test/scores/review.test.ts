@@ -120,6 +120,18 @@ describe("createQueue, nextItem, completeItem, skipItem", () => {
     await assert.rejects(createQueue(index, { name: "none", where: "agent:nobody", config: "correct" }), (e: unknown) => e instanceof ReviewError && e.reason === "no_match");
   });
 
+  test("with no score configs, the message says so and the CLI gives the fix once, as its next step", async () => {
+    const index = new MemoryIndexStore();
+    for (const s of SESSIONS) await index.upsertSession(s);
+    const e = await createQueue(index, { name: "q", where: "agent:codex", config: "correct" }).then(() => undefined, (x: unknown) => x);
+    assert.ok(e instanceof ReviewError && e.reason === "unknown_config");
+    assert.equal(e.message, 'No score config named "correct". No score configs yet.');
+    const err = reviewCliError(e, "agent:codex", "correct");
+    assert.ok(err instanceof CliError);
+    assert.deepEqual(err.next, ["Add a config, e.g.:", "coding.sh score config correct --type boolean"]);
+    assert.equal([err.message, ...err.next].join(" ").split("coding.sh score config").length - 1, 1);
+  });
+
   test("next skips items assigned to someone else and sessions the caller cannot see", async () => {
     const index = await seeded(new MemoryIndexStore());
     await createQueue(index, { name: "bobs", where: "agent:codex", config: "correct", assign: "bob" });

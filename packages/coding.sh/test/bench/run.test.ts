@@ -8,9 +8,13 @@ import { parseDefinition } from "../../src/bench/define.ts";
 import { casesSha256, estimateCost, exclusionOf, regradeRun, runBench } from "../../src/bench/run.ts";
 import { getBlob, historyRuns, listRuns, seenKeys } from "../../src/bench/store.ts";
 import { buildReport, renderReportHtml } from "../../src/bench/report.ts";
+import { generateCases } from "../../src/bench/sources.ts";
 import type { BenchRun } from "../../src/bench/types.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import type { Adapter } from "../../src/core/types.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { sessionEvents } from "../helpers-decision.ts";
 import { cleanup, day, project } from "./helpers.ts";
 
 after(cleanup);
@@ -254,6 +258,28 @@ kind = "exact"
     assert.equal(r.cases[0]!.createdAt, iso(1));
     assert.equal(r.cases[0]!.metadata!.org, "example-org");
     assert.ok(!JSON.stringify(r.cases).includes("someone"));
+  });
+
+  test("sessions: compaction and tags are not failures, so flagged and failed take only the session with a failure flag", async () => {
+    const p = project();
+    const now = day("2026-11-04");
+    const index = new MemoryIndexStore();
+    const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+    for (const [i, flags] of flagSets.entries()) {
+      const evs = sessionEvents(`note${i}`, { cwd: "/work/demo", startedAt: now - 3_600_000 + i * 60_000 }, [
+        ["session.start", {}],
+        ["user.message", { text: `Fix bug ${i}.` }],
+        ["assistant.message", { text: "Fixed." }],
+      ]);
+      await index.putEvents(evs);
+      await index.upsertSession({ ...buildSession(evs), flags });
+    }
+    for (const select of ["flagged", "failed"]) {
+      const toml = `name = "notes"\ncases = 5\n[source]\nkind = "sessions"\nselect = "${select}"\n[[contenders]]\nname = "a"\ncommand = "node good.cjs"\n[[contenders]]\nname = "b"\ncommand = "node bad.cjs"\n`;
+      const def = parseDefinition(toml, p.write("bench/notes.toml", toml));
+      const cases = await generateCases({ def, seed: "fixed", date: "2026-11-04", runId: "r1", now, env: p.env, index });
+      assert.deepEqual(cases.map((c) => [c.sourceSessionId, c.metadata!.flags]), [["note1", ["no-verification"]]], select);
+    }
   });
 });
 

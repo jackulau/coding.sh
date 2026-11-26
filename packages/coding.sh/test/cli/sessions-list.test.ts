@@ -1,6 +1,7 @@
 // `coding.sh sessions`: what counts as empty, the hidden-count footer, how
 // many sessions matched against how many are shown, the host app a row names,
-// the alias sessions, tree and show print for a session whose id is `latest`, and
+// the alias sessions, tree and show print for a session whose id is `latest`, the
+// flagged line and tree's Fix first line, which leave notes and tags out, and
 // what sessions, tree, search and status print for an id too long to print whole.
 import assert from "node:assert/strict";
 import { after, before, describe, mock, test } from "node:test";
@@ -268,6 +269,52 @@ describe("tree: the Fix first line names a flagged subagent by the reference its
     assert.equal(lines[fix + 1], "  subagent Explore a89abcde: looping");
     assert.doesNotMatch(r.stdout, /t3code-thread/, "no line prints an id over 200 characters");
     assert.equal(await opens(sb, "a89abcde"), SUB);
+  });
+});
+
+// A note (compaction, step-retried, resumed) or a tag is not a failure (core/failure-flags.ts).
+describe("sessions and tree: a session whose only flags are notes or tags is not flagged", () => {
+  let sb: Sandbox;
+  const now = Date.now();
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      mkSession("notes-run", now - 3000, { agent: "gemini-cli", flags: ["compaction"] }),
+      mkSession("notes-sub", now - 2900, { agent: "gemini-cli", parent: { sessionId: "notes-run", type: "Explore" }, flags: ["resumed", "step-retried", "gateway:vercel"] }),
+      mkSession("failed-run", now - 2000, { flags: ["compaction", "no-verification"] }),
+      mkSession("failed-sub", now - 1900, { parent: { sessionId: "failed-run", type: "Explore" }, flags: ["compaction", "looping"] }),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("sessions: the flagged line counts failure flags only", async () => {
+    const notes = await runCmd(sessions, sb, { flags: { agent: ["gemini-cli"] } });
+    assert.equal(notes.code, 0, String(notes.error));
+    assert.match(notes.stdout, /notes-run/);
+    assert.doesNotMatch(notes.stdout + notes.stderr, /flagged/);
+    const all = await runCmd(sessions, sb);
+    assert.match(all.stderr, /1 of these 2 sessions is flagged \(no-verification 1\)/);
+  });
+
+  test("tree: no Fix first line when the only flags are notes and tags", async () => {
+    const r = await runCmd(tree, sb, { positionals: ["notes-run"] });
+    assert.equal(r.code, 0, String(r.error));
+    assert.match(r.stdout, /notes-sub/);
+    assert.doesNotMatch(r.stdout, /Fix first|flags across/);
+    const j = await runCmd(tree, sb, { json: true, positionals: ["notes-run"] });
+    assert.equal(j.json.worst, null);
+    assert.deepEqual(j.json.totals.flags, []);
+  });
+
+  test("tree: a failure flag next to a note is the one to fix first", async () => {
+    const r = await runCmd(tree, sb, { positionals: ["failed-run"] });
+    const lines = r.stdout.split("\n");
+    const fix = lines.indexOf("Fix first");
+    assert.ok(fix >= 0, r.stdout);
+    assert.equal(lines[fix + 1], "  subagent Explore failed-sub: looping");
+    const j = await runCmd(tree, sb, { json: true, positionals: ["failed-run"] });
+    assert.deepEqual(j.json.worst.flags, ["looping"]);
+    assert.deepEqual(j.json.totals.flags, ["looping", "no-verification"]);
   });
 });
 

@@ -183,6 +183,31 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
 }
 
 /**
+ * In JSON text inside a string (an OTLP log body, a prompt that quotes a tool result), a newline is
+ * written `\n` and other characters `\uXXXX`, so a token right after one follows a letter or a
+ * digit, which a rule's leading break rejects. orAfterEscape lets the break pass right after such
+ * an escape too: `\b`, `\f`, `\n`, `\r`, `\t`, or `\u` and four hex digits. Both lookbehinds have a
+ * fixed length, so a rule stays linear. A rule with the `i` flag also passes after `\N` or `\U0041`.
+ */
+const AFTER_ESCAPE = String.raw`(?<=\\[bfnrt])|(?<=\\u[0-9A-Fa-f]{4})`;
+/**
+ * AFTER_ESCAPE at one level. AFTER_ESCAPE_1 passes after an escape at the text's own level, an odd
+ * run of backslashes before the letter or the `u`. AFTER_ESCAPE_2 passes after an escape one level
+ * down, as in JSON text held in JSON text: a run of 4k + 2 backslashes. Each lookbehind reads back
+ * over the whole run, but only at the one place right after the escape's letter or hex digits, so
+ * a rule reads each run a bounded number of times and stays linear.
+ */
+const AFTER_ESCAPE_1 = String.raw`(?<=(?<!\\)(?:\\\\)*\\[bfnrt])|(?<=(?<!\\)(?:\\\\)*\\u[0-9A-Fa-f]{4})`;
+const AFTER_ESCAPE_2 = String.raw`(?<=(?<!\\)(?:\\\\\\\\)*\\\\[bfnrt])|(?<=(?<!\\)(?:\\\\\\\\)*\\\\u[0-9A-Fa-f]{4})`;
+/** A `(?<!…)` lookbehind or `\b` at the start of a regex source, maybe inside its first group. */
+const LEADING_BREAK = /^(\(?)(\(\?<!(?:\[(?:\\.|[^\\\]])+\]|\\.|[^()[\\])+\)|\\b)/;
+function orAfterEscape(re: RegExp): RegExp {
+  const m = LEADING_BREAK.exec(re.source);
+  if (!m) return re;
+  return new RegExp(`${m[1]}(?:${m[2]}|${AFTER_ESCAPE})${re.source.slice(m[0].length)}`, re.flags);
+}
+
+/**
  * Linear-time appliers for rules whose regex backtracks quadratically on some
  * inputs. createRedactor uses these instead of rule.pattern; each produces
  * exactly what `s.replace(rule.pattern, …)` would (test/core/redact.test.ts
@@ -298,7 +323,7 @@ function builtInSecretRules(): RedactRule[] {
     pattern: /(\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b[^\n[\]:=]{0,24}?(?::|=|\bis\b)\s*)(?![$[])(?=[^\s"'`]*\d)(?=[^\s"'`]*[A-Za-z])[^\s"'`,;)]{8,}/gi,
     replace: keepPrefix("prose-secret"),
   };
-  return [
+  const rules: RedactRule[] = [
     withFastApply(privateKey, (s, onMatch) => redactPrivateKeys(s, privateKey.pattern, onMatch)),
     { kind: "anthropic-key", pattern: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
     // OpenAI-style: sk-, sk-proj-, sk-svcacct-… Require a digit so kebab-case words don't match.
@@ -390,8 +415,34 @@ function builtInSecretRules(): RedactRule[] {
     // around "=" (that's code, not env), value isn't a $reference or a number.
     {
       kind: "secret-assignment",
-      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
-      replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
+      // Right after an escape (JSON text held in a string) the value is read at that escape's
+      // level. After an escape at the text's own level (AFTER_ESCAPE_1), the value ends at the next
+      // \b, \f, \n, \r, \t or escaped quote, and two backslashes are one backslash of the value.
+      // After an escape one level down (AFTER_ESCAPE_2), as in JSON text held in JSON text, four
+      // backslashes are one backslash of the value, and those escapes at either of the two levels
+      // end it. After an escape at another level (AFTER_ESCAPE), escaped backslashes before b, f,
+      // n, r, t, a quote or another backslash end the value, and before any other character they
+      // stay in it. \/ and \uXXXX stay in the value at every level. The match ends where the value
+      // does, so the next line, and an assignment on it, are matched too. Every match starts with
+      // A-Z, 0-9 or _, so the lookahead passes over other places without trying the lookbehinds
+      // there.
+      pattern: new RegExp(
+        `(?=[A-Z0-9_])(?:(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2` +
+          `|(?:${AFTER_ESCAPE_1})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\){8,})\\5` +
+          `|(?:${AFTER_ESCAPE_2})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\\\\\\\\\){8,})\\8` +
+          `|(?:${AFTER_ESCAPE})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|(?:\\\\\\\\)+(?![bfnrt"\\\\])){8,})\\11)`,
+        "g",
+      ),
+      // Each alternative has three groups: the name, the quote and the value.
+      replace: (m, ...g) => {
+        for (let i = 0; i < 12; i += 3) {
+          const name = g[i];
+          if (name === undefined) continue;
+          const q = g[i + 1] ?? "";
+          return `${name}${q}${marker("secret-assignment")}${q}`;
+        }
+        return m;
+      },
     },
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
     // word: the name it suffixes ("client_api_key", "x-api-key") is left as is, so
@@ -403,11 +454,17 @@ function builtInSecretRules(): RedactRule[] {
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
     },
     withFastApply(proseSecret, redactProseSecrets),
-    // A .netrc entry: machine <host> login <user> password <value>, on one line or several.
+    // A .netrc entry: machine <host> login <user> password <value>, on one line or several. The
+    // value also ends at a quote that ends a JSON string: one followed by a space, ",", ":", "}",
+    // "]" or the end of the text. In plain text, where more than those characters follow such a
+    // quote before a space, the quote is part of the value.
     {
       kind: "netrc",
-      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)([^\s\\]+)/g,
-      replace: (m, pre, v) => (isLiteralSecret(v) ? `${pre}${marker("netrc")}` : m),
+      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)((?:[^\s"\\]|"(?![\s,:}\]]|$))+)(?:("[,:}\]][^\s"\\]*)(?=\s|$))?/g,
+      replace: (m, pre, v, rest) => {
+        const more = rest !== undefined && /[^,:}\]]/.test(rest.slice(1));
+        return isLiteralSecret(more ? v + rest : v) ? `${pre}${marker("netrc")}${rest !== undefined && !more ? rest : ""}` : m;
+      },
     },
     // The value after a secret name and ":" or "=", quoted or not, with spaces or not: .env
     // (DB_PASSWORD = …), YAML (client_secret: …), TOML (api_key = "…"), INI, connection strings
@@ -419,6 +476,11 @@ function builtInSecretRules(): RedactRule[] {
       replace: (m, pre, q, v) => (isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m),
     },
   ];
+  // Set on the rule itself: fastApply and the needles are keyed by the rule object. The
+  // secret-assignment rule has its own alternative after an escape; its source starts with a
+  // lookahead, which LEADING_BREAK does not match, so orAfterEscape leaves it as it is.
+  for (const rule of rules) rule.pattern = orAfterEscape(rule.pattern);
+  return rules;
 }
 
 // The private-key regex lazily scans to the next END line from every BEGIN line,
@@ -476,7 +538,7 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
 // the same alternatives in the same order (secret word, lazy 0–24 char gap, then
 // ":" / "=" / "is", greedy whitespace, value) and answers the lookaheads from a
 // table built in one right-to-left pass.
-const PROSE_WORD = /\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b/gi;
+const PROSE_WORD = orAfterEscape(/\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b/gi);
 const NON_ASCII_SPACE = /\s/;
 const isWordCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
 const isSpaceAt = (s: string, i: number): boolean => {
@@ -565,7 +627,7 @@ function redactProseSecrets(s: string): string {
       pos = p + 1;
       continue;
     }
-    out += s.slice(copied, value) + marker("prose-secret");
+    out += s.slice(copied, value) + cutWhole(s, value, end, marker("prose-secret"));
     copied = pos = end;
   }
   return copied === 0 ? s : out + s.slice(copied);
@@ -753,6 +815,10 @@ export function piiRules(kinds: readonly string[] = PII_KINDS): RedactRule[] {
     // North American: (555) 123-4567, 555-123-4567, 555.123.4567 (one separator throughout).
     rules.push({ kind: "phone", pattern: /(?<![\w.+-])(?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?![\w-]|\.\d)/g });
   }
+  // A number right after a JSON escape (`\n`, or `\u` and four hex digits) is found too. The
+  // email rule needs no change: its address can start at the escape's letter, and applyRule keeps
+  // the escape whole.
+  for (const rule of rules) if (rule.kind !== "email") rule.pattern = orAfterEscape(rule.pattern);
   return rules;
 }
 
@@ -1026,14 +1092,114 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
   r.pattern.lastIndex = 0;
   if (!r.pattern.test(s)) return s;
   r.pattern.lastIndex = 0;
-  if (r.replace) return s.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string);
-  if (onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
-    return s.replace(r.pattern, (m) => {
+  let replace = r.replace as ((m: string, ...rest: unknown[]) => string) | undefined;
+  if (!replace && onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
+    replace = (m) => {
       onMatch(r.kind, m);
       return marker(r.kind);
-    });
+    };
   }
-  return s.replace(r.pattern, marker(r.kind));
+  // A match can start or end inside a JSON escape: keepEscapes keeps that escape whole.
+  if (s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind))));
+  return replace ? s.replace(r.pattern, replace) : s.replace(r.pattern, marker(r.kind));
+}
+
+/**
+ * A replace callback for `s` that keeps whole each JSON escape a match starts or ends inside: in
+ * `a\nbob@example.com` the address starts at the `n` of `\n`, and in `token=x1y2z3w4\"` a value
+ * runs to the backslash of `\"`. Replacing the match alone leaves text that no longer parses as
+ * JSON, at its own level or, for JSON text held in a string, at a level below. Only the part of
+ * the match that the replacement changes is cut (cutWhole).
+ */
+function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
+  return (m, ...rest) => {
+    const out = fn(m, ...rest);
+    if (out === m) return out;
+    // The match's offset comes after the groups, then the input, then the named groups if any.
+    const at = rest[rest.length - (typeof rest[rest.length - 1] === "string" ? 2 : 3)] as number;
+    // The text `out` keeps of the match at either end stops at the marker, so a value that ends
+    // as the marker does (`…x1y2\t]`, `…secret]`) is cut whole.
+    const most = Math.min(m.length, out.length);
+    const mk = out.lastIndexOf("[redacted:");
+    const headMost = mk < 0 ? most : Math.min(most, mk);
+    const tailMost = mk < 0 ? most : Math.min(most, out.length - 1 - out.indexOf("]", mk));
+    let a = 0;
+    while (a < headMost && m.charCodeAt(a) === out.charCodeAt(a)) a++;
+    let b = 0;
+    while (b < tailMost && b < most - a && m.charCodeAt(m.length - 1 - b) === out.charCodeAt(out.length - 1 - b)) b++;
+    return out.slice(0, a) + cutWhole(s, at + a, at + m.length - b, out.slice(a, out.length - b)) + out.slice(out.length - b);
+  };
+}
+
+/** True when s[i, i + 4) are four hex digits. */
+function hex4(s: string, i: number): boolean {
+  for (let k = i; k < i + 4; k++) {
+    const c = s.charCodeAt(k);
+    if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102))) return false;
+  }
+  return true;
+}
+
+/**
+ * The end of the JSON escape whose run of backslashes ends at `r`: after the character at `r` when
+ * that is `"`, `/`, b, f, n, r or t, after a `u` at `r` and its four hex digits, else `r`.
+ */
+function runEscapeEnd(s: string, r: number): number {
+  const c = s.charCodeAt(r);
+  if (c === 34 || c === 47 || c === 98 || c === 102 || c === 110 || c === 114 || c === 116) return r + 1;
+  return c === 117 && hex4(s, r + 1) ? r + 5 : r;
+}
+
+/**
+ * `text` in place of s[from, to), keeping whole each JSON escape that crosses either end. An escape
+ * here is a run of backslashes, with the character after it when that is `"`, `/`, b, f, n, r or
+ * t, or with a `u` and four hex digits. A run of any length counts: in JSON text held in a string,
+ * `\\n` is the escape `\n` one level down and `\\\"` is `\"`, so a cut into an escape breaks the
+ * level it belongs to. The part of an escape inside the cut stays: before `text` where the cut
+ * starts inside it, and after `text` where the cut ends inside it. When escapes take all of the
+ * cut, s[from, to) stays as it is. Keeping the whole run is what holds at every level, so a value's
+ * own backslash before an escaped quote shows after the marker: one level down, that backslash and
+ * the quote are one escaped quote. Each walk stays inside the cut, so cutting takes time linear in
+ * the text.
+ */
+function cutWhole(s: string, from: number, to: number, text: string): string {
+  // The cut starts inside an escape (in its run, at its character or in its hex digits): the rest
+  // of the escape stays before `text`. When the escape reaches `to`, head >= to and nothing is cut.
+  let head = from;
+  if (s.charCodeAt(from - 1) === 92) {
+    let r = from;
+    while (r < to && s.charCodeAt(r) === 92) r++;
+    head = runEscapeEnd(s, r);
+  } else {
+    for (let d = 1; d <= 4; d++) {
+      if (s.charCodeAt(from - d) === 117 && s.charCodeAt(from - d - 1) === 92 && hex4(s, from - d + 1)) {
+        head = from - d + 5;
+        break;
+      }
+    }
+  }
+  // The cut ends inside an escape (in its run, or after its `u` and before the end of its hex
+  // digits): the escape's part in the cut, from the start of its run, stays after `text`.
+  let tail = to;
+  if (head < to) {
+    let p = -1;
+    if (s.charCodeAt(to - 1) === 92) {
+      if (s.charCodeAt(to) === 92 || runEscapeEnd(s, to) > to) p = to - 1;
+    } else {
+      for (let d = 1; d <= 4; d++) {
+        if (s.charCodeAt(to - d) === 117 && s.charCodeAt(to - d - 1) === 92 && hex4(s, to - d + 1)) {
+          p = to - d - 1;
+          break;
+        }
+      }
+    }
+    if (p >= head) {
+      tail = p;
+      while (tail > head && s.charCodeAt(tail - 1) === 92) tail--;
+    }
+  }
+  if (head === from && tail === to) return text;
+  return head >= tail ? s.slice(from, to) : s.slice(from, head) + text + s.slice(tail, to);
 }
 
 /**
@@ -1146,24 +1312,76 @@ const JSON_STRING_DEPTH = 3;
  * Redacts a value for a blob: every string on its own (Redactor.value), and a
  * string that holds a JSON document as that document, so a blob hides what the
  * events hide. Such a string is rewritten, as compact JSON, only when that found
- * something. Redacting the serialized text alone misses a `NAME=value` after a
- * newline: in JSON text the name follows the `n` of `\n`, with no word break.
+ * something. Redacting the serialized text alone misses a value that only its key
+ * shows to be secret (`{"password":"hunter"}`): in the text the key is part of a
+ * string, so the walk's check of each key does not see it.
+ *
+ * `memo` is shared by calls on values that hold many of the same strings: each
+ * redactor redacts each string once, and what that replaced is counted again on
+ * each use.
  */
-export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
-  if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
-  return r.value(documentsRedacted(r, v, tally, level), tally);
+export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0, memo?: BlobMemo): unknown {
+  return forBlob(r, v, tally, level, memo, false);
+}
+
+/**
+ * redactForBlob, where `parsed` says that `v` is a document documentsRedacted parsed from a string.
+ * Such a result is only serialized, so the walk through `memo` returns an object or array that
+ * comes out the same as it is. A caller's own value can hold a getter, a Proxy or toJSON that
+ * gives the walk one value and the serializing another, so for it the walk makes new ones.
+ */
+function forBlob(r: Redactor, v: unknown, tally: RedactionTally, level: number, memo: BlobMemo | undefined, parsed: boolean): unknown {
+  // Redactor.value, with the strings through `memo`; only for a redactor createRedactor made, whose value is that walk.
+  const value =
+    memo && passes.has(r)
+      ? (x: unknown) => {
+          const f = memoString(r, memo, tally);
+          return walk(x, f, 0, tally, f, parsed);
+        }
+      : (x: unknown) => r.value(x, tally);
+  if (level >= JSON_STRING_DEPTH) return value(v);
+  return value(documentsRedacted(r, v, tally, level, undefined, memo));
+}
+
+/** What each redactor made of each string it was given, for redactForBlob calls that share it. */
+export type BlobMemo = Map<Redactor, Map<string, { out: string; kinds?: Record<string, number>; preexisting?: boolean }>>;
+
+/**
+ * Redactor.string with `tally`, through `memo`: a string the redactor was given before gives the
+ * same text and adds the same counts.
+ */
+function memoString(r: Redactor, memo: BlobMemo, tally: RedactionTally): (s: string) => string {
+  let mine = memo.get(r);
+  if (!mine) memo.set(r, (mine = new Map()));
+  const strings = mine;
+  return (s) => {
+    let seen = strings.get(s);
+    if (!seen) {
+      const t = redactionTally();
+      seen = { out: r.string(s, t) };
+      if (Object.keys(t.kinds).length) seen.kinds = t.kinds;
+      if (t.preexisting) seen.preexisting = true;
+      strings.set(s, seen);
+    }
+    if (seen.kinds) for (const [k, n] of Object.entries(seen.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
+    if (seen.preexisting) tally.preexisting = true;
+    return seen.out;
+  };
 }
 
 /** `v` with each string that holds a JSON document redacted as that document: redactForBlob's first step. */
-function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met): unknown {
+function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met, memo?: BlobMemo): unknown {
   return mapStrings(v, (s) => {
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
     let clean: string;
     try {
-      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
-      if (clean === JSON.stringify(doc)) return s;
+      const out = forBlob(r, doc, found, level + 1, memo, true);
+      clean = JSON.stringify(out);
+      // With a memo, for a redactor createRedactor made, the walk gives the document itself back
+      // when nothing in it changed.
+      if (out === doc || clean === JSON.stringify(doc)) return s;
     } catch {
       return tooDeepMarker(tally); // a document too deep to serialize
     }
@@ -1274,7 +1492,8 @@ export function redactArgv<T>(args: readonly T[]): T[] {
 /**
  * `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text.
  * `keep`: an object or array that comes out the same is returned as is when it is JSON data (isJsonData), for a caller
- * that only serializes the result. Without it every object and array is a new one.
+ * that only serializes the result. Without it each object and array within 64 levels is a new one; a Uint8Array, and a
+ * deeper subtree that tooDeep keeps as it was, are returned as is.
  * `copy`: `v` is part of a copy tooDeep made, which holds no cycle.
  */
 function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false, copy = false): unknown {

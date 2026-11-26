@@ -141,6 +141,19 @@ describe("toolevals traces: sessions", () => {
     assert.ok(!ws.traces.some((t) => t.id === "session-sess-leak"));
     assert.ok(ws.notes.some((n) => n.includes("sess-leak") && n.includes("unredacted")));
   });
+
+  it("compaction is a note: with every call ok, only a session with a failure flag is a failed trace", async () => {
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+    for (const [i, flags] of flagSets.entries()) {
+      const events = claudeSession(`note-${i}`, NOW - (i + 1) * DAY, [[SEARCH, true, { q: `notes ${i}` }, "3 results"]]);
+      await index.putEvents(events);
+      await index.upsertSession({ ...buildSession(events), flags });
+    }
+    const ws = await buildTraceWorkspace({ index, blobs, server: "acme", sessions: "since:30d", now: NOW });
+    assert.deepEqual(ws.traces.map((t) => [t.id, t.outcome]), [["session-note-1", "failed"], ["session-note-0", "ok"], ["session-note-2", "ok"]]);
+  });
 });
 
 describe("toolevals traces: trials", () => {

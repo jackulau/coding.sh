@@ -217,6 +217,31 @@ describe("writeCorpusDir", () => {
     assert.equal(other.episodes, 0);
   });
 
+  it("compaction is a note: only a failure flag marks an episode's row, its transcript header and the failure count", async () => {
+    const index = new MemoryIndexStore();
+    await index.putTask(task("tn"));
+    const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+    for (const [i, flags] of flagSets.entries()) {
+      const at = T0 + i * 1000;
+      const captured = sessionEvents(`note${i}`, { cwd: "/work/demo", startedAt: at }, steps(i, true));
+      const ran = sessionEvents(`note-run${i}`, { cwd: "/work/demo", startedAt: at, runId: "run" }, steps(i, true));
+      for (const evs of [captured, ran]) {
+        await index.putEvents(evs);
+        await index.upsertSession({ ...buildSession(evs), flags });
+      }
+      await index.putRun({ id: `run_n${i}`, experimentId: "exp_n", taskId: "tn", bundleId: "b".repeat(64), attempt: i + 1, sessionId: `note-run${i}`, pass: true, verifierExit: 0, agent: { exitCode: 0, timedOut: false, durationMs: 5000, stdoutTail: "", stderrTail: "" }, startedAt: at, endedAt: at + 5000 });
+    }
+    const dir = fresh();
+    const r = await writeCorpusDir({ index, source: { kind: "sessions", since: 0, repo: "/work/demo" }, dir, prompt: [] });
+    assert.deepEqual(rows<EpisodeRow>(join(dir, "episodes.jsonl")).map((e) => [e.sessionId, e.flags]), [["note0", []], ["note1", ["no-verification"]], ["note2", []]]);
+    assert.equal(r.failures, 1);
+    const header = (ep: string) => readFileSync(join(dir, "episodes", ep, "transcript.md"), "utf8").split("\n")[0];
+    assert.deepEqual(["ep0001", "ep0002", "ep0003"].map(header), ["# Session note0 (claude-code)", "# Session note1 (claude-code): no-verification", "# Session note2 (claude-code)"]);
+    const runs = fresh();
+    await writeCorpusDir({ index, source: { kind: "experiment", experimentId: "exp_n" }, dir: runs, prompt: [] });
+    assert.deepEqual(rows<EpisodeRow>(join(runs, "episodes.jsonl")).map((e) => [e.sessionId, e.flags]), [["note-run0", []], ["note-run1", ["no-verification"]], ["note-run2", []]]);
+  });
+
   it("held-out tags", () => {
     assert.equal(isHeldOut(["split:dev"]), true);
     assert.equal(isHeldOut(["Refine:Heldout"]), true);

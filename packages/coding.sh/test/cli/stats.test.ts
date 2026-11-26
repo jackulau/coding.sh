@@ -80,6 +80,37 @@ describe("stats", () => {
   });
 });
 
+// FAIL% counts failure flags only: a note (compaction, step-retried, resumed) or a tag is not one.
+describe("stats: notes and tags are not failures", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, {
+      sessions: [
+        s("gc", 1, { agent: "gemini-cli", flags: ["compaction"] }),
+        s("dur", 1, { flags: ["resumed", "step-retried"] }),
+        s("tag", 2, { flags: ["gateway:vercel"] }),
+        s("bad", 2, { flags: ["compaction", "no-verification"] }),
+      ],
+    });
+  });
+  after(() => env.restore());
+  const total = (args: string[]) => ok(["stats", "--since", "7d", ...args]).stdout.trim().split("\n").at(-1)!;
+  const totals = (args: string[]) => JSON.parse(ok(["stats", "--since", "7d", ...args, "--json"]).stdout).totals;
+
+  test("a session whose only flag is compaction is not a failure", () => {
+    assert.match(total(["--where", "agent:gemini-cli"]), /^total\s+1\s+0%/);
+    assert.equal(totals(["--where", "agent:gemini-cli"]).failures, 0);
+  });
+
+  test("a failure flag next to a note still counts", () => {
+    assert.match(total([]), /^total\s+4\s+25%/);
+    const t = totals([]);
+    assert.equal(t.failures, 1);
+    assert.equal(t.failureRate, 0.25);
+  });
+});
+
 // Days are the user's: a date names local midnight, so the day before `--until <date>` is whole.
 describe("stats: a date is local midnight", () => {
   const TZ = "America/Chicago";
