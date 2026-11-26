@@ -391,9 +391,13 @@ export function textKey(s: string): string {
 export interface ProofDiff extends StmtDelta {
   /** Escape hatches put in (positive) or taken out (negative), by name. */
   hatches: Map<string, number>;
-  /** Lines taken out and put in, without whitespace; a line that only moved cancels. TLC lines that narrow the model start with NARROW. */
-  taken: string[];
-  fresh: string[];
+  /**
+   * Lines taken out and put in, without whitespace, each with its run: the `-` and `+` lines
+   * between two context lines share one. A line that only moved cancels. TLC lines that narrow the
+   * model start with NARROW.
+   */
+  taken: [string, number][];
+  fresh: [string, number][];
   /** The text after the change, as the hunks show it, has a line that starts a Rocq sentence. Read for Rocq and build files only. */
   rocq: boolean;
 }
@@ -426,9 +430,12 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
   if (truncated && hunks.length && !(hunks.at(-1) as DiffLine[]).every((l) => l.t === "+")) hunks = hunks.slice(0, -1);
   const before: Stmt[] = [];
   const after: Stmt[] = [];
-  const lines: Record<"-" | "+", [string, string][]> = { "-": [], "+": [] };
+  // Each line with its code, its bare text and its run: the context lines above it, plus one for each hunk above.
+  const lines: Record<"-" | "+", [string, string, number][]> = { "-": [], "+": [] };
   let rocq = false;
-  for (const h of hunks)
+  let runs = 0;
+  for (const h of hunks) {
+    let run = runs;
     for (const side of ["-", "+"] as const) {
       const img = h.filter((l) => l.t === " " || l.t === side);
       const text = img.map((l) => l.s).join("\n");
@@ -436,15 +443,19 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
       const cl = code.split("\n");
       const bl = bare.split("\n");
       const inType = lang === "rocq" ? moduleTypeLines(bl) : undefined;
+      run = runs;
       img.forEach((l, k) => {
-        if (l.t === side) lines[side].push([cl[k] as string, inType?.[k] ? "" : (bl[k] as string)]);
+        if (l.t === side) lines[side].push([cl[k] as string, inType?.[k] ? "" : (bl[k] as string), run]);
+        else run++;
       });
       if (lang) (side === "-" ? before : after).push(...statements(lang, code, bare));
       if (side === "+" && !rocq && (!lang || lang === "rocq") && ROCQ_SENTENCE.test(rocqText(text))) rocq = true;
     }
+    runs = run + 1;
+  }
   const pool = new Map<string, number>();
   for (const [c] of lines["+"]) if (strip(c)) pool.set(strip(c), (pool.get(strip(c)) ?? 0) + 1);
-  const take = (l: [string, string]) => {
+  const take = (l: [string, string, number]) => {
     const k = strip(l[0]);
     const n = pool.get(k) ?? 0;
     if (n) pool.set(k, n - 1);
@@ -460,7 +471,7 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
         const n = (lang ? b : c).match(re)?.length ?? 0;
         if (n) hatches.set(name, (hatches.get(name) ?? 0) + sign * n);
       }
-  const key = ([c]: [string, string]) => (lang === "tlc" && TLC_NARROW.test(c) ? NARROW : "") + strip(c);
+  const key = ([c, , run]: [string, string, number]): [string, number] => [(lang === "tlc" && TLC_NARROW.test(c) ? NARROW : "") + strip(c), run];
   return { hatches, ...compareStatements(before, after), taken: taken.map(key), fresh: fresh.map(key), rocq };
 }
 
@@ -753,8 +764,13 @@ export interface ProofFile {
   stmts?: Map<string, [string | null, string | null]>;
   /** Pinned, spec-named and build files: each line's count put in minus taken out; UNREAD when a change could not be read. */
   lines?: Map<string, number>;
-  /** For each of those lines, the number of outcomes read before the agent last moved its count away from zero. */
+  /**
+   * For each of those lines, the number of outcomes read before the agent last moved its count away
+   * from zero, or took out a line it had put in in the same run of a diff.
+   */
   lineAt?: Map<string, number>;
+  /** For each of those lines, the run of a diff that last moved its count away from zero: the change's event id and the run's number. */
+  lineRun?: Map<string, string>;
   /** The agent made the file; `made`: the shell call that wrote it, until a diff says it was there before. */
   added?: true;
   made?: string;
@@ -1040,7 +1056,8 @@ function changedSince(ps: ProofState, from: number): [string, ProofFile, string]
 /**
  * Whether a key of the file is changed from what the session started with. With `since`, a line
  * counts only when the agent changed it after that many outcomes: a line changed before a failure
- * does not count at a pass, whatever else in the file changed after it.
+ * does not count at a pass because other lines changed after it. Taking out a line the agent put
+ * in its place changes it again (readLines).
  */
 export function proofTampered(f: ProofFile, key: string, since?: number): boolean {
   if (key === "#gone") return !!f.gone;
@@ -1425,29 +1442,36 @@ function readStatements(ps: ProofState, f: ProofFile, path: string, d: ProofDiff
 
 /**
  * Follow the lines of a pinned, spec-named or build file the agent did not make: each line's count
- * put in minus taken out, and when the agent last moved it away from zero. A change by someone else
- * only moves a count back toward zero; one the agent made that cannot be read leaves UNREAD. The
- * shape is `weaken` only while a TLC line that narrows the model stays added; any other line change
- * is `unknown`.
+ * put in minus taken out, and when the agent last moved it away from zero. When the agent takes out
+ * a line it put in, the lines taken out in the run that put it in, while still out, are changed
+ * again now: a line changed before a failure and again after it counts as changed after it. A
+ * change by someone else only moves a count back toward zero; one the agent made that cannot be
+ * read leaves UNREAD. The shape is `weaken` only while a TLC line that narrows the model stays
+ * added; any other line change is `unknown`.
  */
 function readLines(ps: ProofState, f: ProofFile, path: string, lang: ProofLang | undefined, prot: boolean, d: ProofDiff, unread: boolean, mine: boolean, e: AgentEvent, id: string | undefined, note: Note): void {
   const tracked = !f.added && (lang === undefined || lang === "tlc" || prot || SPEC_NAMED.test(path));
   if (!tracked || (!mine && !f.lines?.size)) return;
   const lines = (f.lines ??= new Map());
   const stamps = (f.lineAt ??= new Map());
+  const runs = (f.lineRun ??= new Map());
   const at = stampOf(ps, runOf(ps, id));
+  // The runs of the agent's own lines it takes out.
+  const back = new Set<string>();
   let moved = false;
-  const bump = (k: string, by: number) => {
+  const bump = (k: string, by: number, run: number) => {
     const was = lines.get(k) ?? 0;
     const now = was + by;
     if (Math.abs(now) > Math.abs(was)) {
       if (!mine) return;
       stamps.set(k, at);
-    }
+      runs.set(k, `${e.id} ${run}`);
+    } else if (mine && was > 0 && runs.has(k)) back.add(runs.get(k) as string);
     if (now) lines.set(k, now);
     else {
       lines.delete(k);
       stamps.delete(k);
+      runs.delete(k);
     }
     moved = true;
   };
@@ -1458,17 +1482,20 @@ function readLines(ps: ProofState, f: ProofFile, path: string, lang: ProofLang |
       moved = true;
     }
   } else {
-    for (const k of d.taken) bump(k, -1);
-    for (const k of d.fresh) bump(k, 1);
+    for (const [k, run] of d.taken) bump(k, -1, run);
+    for (const [k, run] of d.fresh) bump(k, 1, run);
+    if (back.size) for (const [k, n] of lines) if (n < 0 && back.has(runs.get(k) as string)) stamps.set(k, at);
   }
   if (lines.size > LINE_CAP) {
     lines.clear();
     stamps.clear();
+    runs.clear();
     lines.set(UNREAD, 1);
     stamps.set(UNREAD, at);
   }
   if (!lines.size) delete f.lines;
   if (!stamps.size) delete f.lineAt;
+  if (!runs.size) delete f.lineRun;
   if (!moved || (!mine && proofTampered(f, "#lines"))) return;
   let shape: ProofShape = "unknown";
   if (!f.lines?.has(UNREAD)) for (const [k, n] of f.lines ?? []) if (k.startsWith(NARROW) && n > 0) shape = "weaken";
