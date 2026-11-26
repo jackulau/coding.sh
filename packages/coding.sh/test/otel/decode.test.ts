@@ -84,6 +84,22 @@ describe("protobuf wire primitives", () => {
     assert.equal(s.parentSpanId, undefined);
   });
 
+  it("treats ids of the wrong length as unset, on spans, links and log records", () => {
+    const id = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
+    const link = new ProtoWriter().bytes(1, id("ab".repeat(8))).bytes(2, id("01".repeat(8))).finish();
+    const span = new ProtoWriter().bytes(1, id("abcdef")).bytes(2, id("01".repeat(16))).bytes(4, id("02".repeat(4))).bytes(13, link).finish();
+    const req = new ProtoWriter().message(1, (rs) => rs.message(2, (ss) => ss.bytes(2, span))).finish();
+    const s = decodeTraceRequest(req)[0]!.scopeSpans[0]!.spans[0]!;
+    assert.deepEqual([s.traceId, s.spanId, s.parentSpanId], [undefined, undefined, undefined]);
+    assert.deepEqual(s.links, [{ spanId: "01".repeat(8), attributes: {} }]);
+
+    const log = new ProtoWriter().bytes(9, id("ab".repeat(15))).bytes(10, id("cd".repeat(8))).finish();
+    const logs = new ProtoWriter().message(1, (rl) => rl.message(2, (sl) => sl.bytes(2, log))).finish();
+    const l = decodeLogsRequest(logs)[0]!.scopeLogs[0]!.logRecords[0]!;
+    assert.equal(l.traceId, undefined);
+    assert.equal(l.spanId, "cd".repeat(8));
+  });
+
   it("encodes responses: empty success, partial_success, google.rpc.Status", () => {
     assert.equal(encodeExportResponse().length, 0);
     const r = new ProtoReader(encodeExportResponse(2, "bad span"));
@@ -259,6 +275,31 @@ describe("OTLP/JSON quirks", () => {
     assert.throws(() => decodeTraceJson("x"), OtlpDecodeError);
     assert.throws(() => decodeTraceJson({ resourceSpans: {} }), OtlpDecodeError);
     assert.deepEqual(decodeTraceJson({}), []);
-    assert.throws(() => jsonId("not an id!", 8), OtlpDecodeError);
+  });
+
+  it("reads an id that is not hex or base64 of its length as unset, as an all-zero one", () => {
+    const bad: [unknown, 8 | 16][] = [
+      ["not an id!", 8],
+      ["xyz", 8],
+      ["abc", 8],
+      ["0123456789abcdeg", 8],
+      ["0123456789abcdef", 16],
+      ["0123456789abcdef0123456789abcdef", 8],
+      ["0".repeat(16), 8],
+      ["", 8],
+      [12345, 8],
+    ];
+    for (const [v, bytes] of bad) assert.equal(jsonId(v, bytes), undefined, JSON.stringify(v));
+    assert.equal(jsonId("0123456789ABCDEF", 8), "0123456789abcdef");
+    assert.equal(jsonId("ASNFZ4mrze8=", 8), "0123456789abcdef");
+    assert.equal(jsonId("ASNFZ4mrze8", 8), "0123456789abcdef");
+
+    const links = [{ traceId: "12", spanId: "0123456789abcdef" }];
+    const s = decodeTraceJson({ resourceSpans: [{ scopeSpans: [{ spans: [{ name: "s", traceId: "xyz", spanId: "abc", parentSpanId: "not hex!", links }] }] }] })[0]!.scopeSpans[0]!.spans[0]!;
+    assert.deepEqual([s.traceId, s.spanId, s.parentSpanId], [undefined, undefined, undefined]);
+    assert.deepEqual(s.links, [{ spanId: "0123456789abcdef", attributes: {} }]);
+    const l = decodeLogsJson({ resourceLogs: [{ scopeLogs: [{ logRecords: [{ traceId: "xyz", spanId: "0123456789abcdef" }] }] }] })[0]!.scopeLogs[0]!.logRecords[0]!;
+    assert.equal(l.traceId, undefined);
+    assert.equal(l.spanId, "0123456789abcdef");
   });
 });

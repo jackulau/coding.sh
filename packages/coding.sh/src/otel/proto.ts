@@ -270,7 +270,8 @@ function scope(r: ProtoReader): OtelScope {
   return s;
 }
 
-const id = (r: ProtoReader): string | undefined => normId(bytesToHex(r.bytes()));
+/** A trace id (16 bytes) or span id (8 bytes); one of another length is not set, as an all-zero one is. */
+const id = (r: ProtoReader, bytes: 8 | 16): string | undefined => normId(bytesToHex(r.bytes()), bytes);
 
 function setIf<T extends object, K extends keyof T>(o: T, k: K, v: T[K] | undefined): void {
   if (v !== undefined && v !== "") o[k] = v;
@@ -292,8 +293,8 @@ function spanEvent(r: ProtoReader): OtelSpanEvent {
 function spanLink(r: ProtoReader): OtelLink {
   const l: OtelLink = { attributes: {} };
   r.fields((f, wt) => {
-    if (f === 1 && wt === WT_LEN) setIf(l, "traceId", id(r));
-    else if (f === 2 && wt === WT_LEN) setIf(l, "spanId", id(r));
+    if (f === 1 && wt === WT_LEN) setIf(l, "traceId", id(r, 16));
+    else if (f === 2 && wt === WT_LEN) setIf(l, "spanId", id(r, 8));
     else return attr(r, l.attributes, 4, f, wt);
     return true;
   });
@@ -315,16 +316,16 @@ function span(r: ProtoReader): OtelSpan {
     if (wt === WT_LEN) {
       switch (f) {
         case 1:
-          setIf(s, "traceId", id(r));
+          setIf(s, "traceId", id(r, 16));
           return true;
         case 2:
-          setIf(s, "spanId", id(r));
+          setIf(s, "spanId", id(r, 8));
           return true;
         case 3:
           setIf(s, "traceState", r.string());
           return true;
         case 4:
-          setIf(s, "parentSpanId", id(r));
+          setIf(s, "parentSpanId", id(r, 8));
           return true;
         case 5:
           s.name = r.string();
@@ -416,10 +417,10 @@ function logRecord(r: ProtoReader): OtelLogRecord {
         case 6:
           return attr(r, l.attributes, 6, f, wt);
         case 9:
-          setIf(l, "traceId", id(r));
+          setIf(l, "traceId", id(r, 16));
           return true;
         case 10:
-          setIf(l, "spanId", id(r));
+          setIf(l, "spanId", id(r, 8));
           return true;
         case 12:
           setIf(l, "eventName", r.string());
