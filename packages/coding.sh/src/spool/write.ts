@@ -232,7 +232,9 @@ export interface AppendOptions {
  * When the serialized line exceeds MAX_INLINE_LINE_BYTES, `raw` is written to
  * `<agent>/raw/<ts>-<pid>-<rand>.json`, removed from the line, and the absolute
  * side-file path is set as `rawFile`. Side-file contents: `rawText` verbatim
- * when provided and nothing in it was redacted, else JSON.stringify(raw). Readers recover `raw` with
+ * when provided and redaction changed nothing; the redacted text when redaction
+ * changed a payload that came only as `rawText` (JSON text, or plain text for a
+ * payload that is not JSON); else JSON.stringify(raw). Readers recover `raw` with
  * resolveRaw(): JSON.parse the file, falling back to the plain string — the
  * same rule the hook applies to stdin. A line with no `raw` and a `rawText` (the
  * hook leaves a payload too long to inline unparsed) always takes a side file, even

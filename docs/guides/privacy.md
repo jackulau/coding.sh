@@ -156,8 +156,9 @@ stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies th
 (`hook.sh`, what agents run elsewhere) writes the payload without redacting it, to stay fast.
 Ingest stores a redacted copy either way, and redacts what is left on disk:
 
-- Both hooks give a payload its own file under `spool/<agent>/raw/`, unless its spool line fits in
-  about 1 KB. Once ingested, that file is rewritten with secrets redacted, in every capture mode.
+- Both hooks give a payload its own file under `spool/<agent>/raw/` when the payload as received
+  or its spool line is over about 1 KB. Once ingested, that file is rewritten with secrets
+  redacted, in every capture mode.
 - A short payload inside the day's spool file stays as written until its UTC day has passed and
   ingest has read the whole file. Then ingest redacts it in place, keeping the line's length so
   ingest cursors still hold.

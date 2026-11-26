@@ -113,9 +113,9 @@ Invariants: the hook exits 0. Stdout carries only the `--echo-continue`/`--reply
 | StdinRead | ≤1023 bytes and not truncated | Parsed (JSON, or the plain string) | none | `hook-run.ts` `runHook` |
 | StdinRead | over 1023 bytes, or truncated | too big: not parsed (ingest parses the side file) | none | `hook-run.ts` `runHook` |
 | Parsed / too big | `gate.ts` finds text a redaction rule may replace | redacted with the user's rules first; a failed import of the rules throws | none | `hook-run.ts` `lineRedactor` |
-| Parsed / too big | the serialized line is >1023 bytes (1024 with its newline) | Spilled: the payload written `wx` to `<agent>/raw/<ts>-<pid>-<rand>.json`, named in `rawFile` | – | `write.ts` `appendSpool` |
-| Parsed / Spilled | O_APPEND write, on a fresh line when the file ends in a torn fragment | Appended | – | `write.ts` `append` |
-| Spilled | the append throws | the side file removed, the error thrown on | – | `write.ts` `appendSpool` |
+| Parsed / too big | from too big always, however short redaction makes the payload; from Parsed when the serialized line is >1023 bytes (1024 with its newline) | Spilled: the payload written `wx` to `<agent>/raw/<ts>-<pid>-<rand>.json`, named in `rawFile` | none | `write.ts` `appendSpool` |
+| Parsed / Spilled | O_APPEND write, on a fresh line when the file ends in a torn fragment | Appended | none | `write.ts` `append` |
+| Spilled | the append throws | the side file removed, the error thrown on | none | `write.ts` `appendSpool` |
 | any | throw | errors.log | none | `hook-run.ts` `runHook`, `write.ts` `logSpoolError` |
 | Appended | END_EVENT matches, after the reply | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | `hook-run.ts` `runHook`, `kick.ts` `kickIngest` |
 
