@@ -163,6 +163,32 @@ describe("ingest", () => {
     assert.equal((await t.index.listEvents("s")).length, 2);
   });
 
+  it("moves the cursors to the end of a file that ends in a blank line", async () => {
+    const t = setup();
+    const sink = new RecordingSink("s", "full");
+    t.config.sinks = [{ kind: "x", name: "s", endpoint: "", mode: "full" }];
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] };
+    const source = "fake/2026-11-06.1.jsonl";
+    const cursors = async () => [await t.index.getCursor(source), await t.index.getCursor(sinkCursorKey("s", source))];
+    // The smallest such file.
+    t.write("\n");
+    assert.deepEqual((await ingest(opts)).errors, []);
+    assert.deepEqual(await cursors(), [1, 1]);
+    t.write(t.line({ session: "s", kind: "user.message", text: "one" }), "\r\n", " \n");
+    const r = await ingest(opts);
+    assert.deepEqual({ lines: r.lines, errors: r.errors, sent: sink.events.length }, { lines: 1, errors: [], sent: 1 });
+    assert.deepEqual(await cursors(), [statSync(t.file).size, statSync(t.file).size]);
+    // A whole line torn before its "\n" is skipped once it is an hour old; the "\n" written after it is a blank line.
+    const torn = t.line({ session: "s", kind: "user.message", text: "two" }).slice(0, -1);
+    t.write(torn);
+    const old = new Date(Date.now() - 2 * 3600_000);
+    utimesSync(t.file, old, old);
+    assert.deepEqual((await ingest(opts)).errors.map((e) => e.message), [`incomplete last line (${Buffer.byteLength(torn)} bytes, unchanged for over an hour): a torn write, skipped`]);
+    t.write("\n");
+    assert.deepEqual((await ingest(opts)).errors, []);
+    assert.deepEqual(await cursors(), [statSync(t.file).size, statSync(t.file).size]);
+  });
+
   it("records errors without wedging: unknown agent, adapter throw, invalid event, bad JSON", async () => {
     const t = setup();
     t.write(
