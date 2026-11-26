@@ -264,7 +264,17 @@ The command links each llm call to a gateway generation in one of three ways:
 
 For each linked call, coding.sh reads the generation record. It tries the index cache first, then drained traces, then `GET /v1/generation?id=…` ([REST API](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api)). The cache keeps only cost, provider, model, latency and token counts.
 
-Each linked call gets a companion `vercel.ai_gateway.generation` span. The span stores the cost difference against what the call already reported. Session totals then equal what the gateway billed: the gateway debit, plus the provider's charge for BYOK. A billed call nested in another call counts at the bill too, unless the outer call reported a cost of its own. A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, is billed once. Re-runs are no-ops.
+Each linked call gets a companion `vercel.ai_gateway.generation` span. The span stores the cost difference against what the call already reported. Session totals then add the bills, each generation once (the gateway debit, plus the provider's charge for BYOK), to the costs no bill covers. A copy that does not count (below) is left out with the calls nested in it and all their bills. Re-runs are no-ops.
+
+A generation linked to two copies of one call, such as the proxy's copy and the agent's own record, counts once. When only one copy is linked, or has a linked call nested in it, that copy counts, in any order. When both are, the one checked first counts, and the other's bills are left out with it. Calls are checked in time order, but a call nested in another is checked after that call.
+
+Nested model calls, such as a framework's span around the provider's call, count once. A billed call counts at its bill, plus the bills of the calls nested in it, unless one is for the same generation. When it has no usage of its own, it counts their tokens.
+
+A wrapper's bill can be for its last step's generation, when the gateway's id is on both. The bill then covers that step and replaces the cost of any call between the two, and the other steps keep their own costs. Of a call between them and a copy of it that no bill covers, the call between counts, at the wrapper's bill, in any order.
+
+A call between is checked for copies only when the nearest model call above it that carries usage or a gateway bill has no usage of its own, as when it is nested directly in a wrapper that has none. A copy of one that is not checked counts too.
+
+A billed call nested in a call that was not billed, at any depth, counts at its bill, in place of the outer call's cost, estimated or reported.
 
 A record not ingested yet shows as `pending`. Run the command again a minute later.
 
