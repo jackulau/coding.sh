@@ -2,9 +2,9 @@
 // model's output messages. In that text a newline is written as the two characters `\n`, and
 // other characters as a `\u` escape (a backslash, `u` and four hex digits), so a token right after
 // one follows a letter or a digit. Most rules start with a break that rejects a letter or a digit
-// before the token, so such a token was not redacted. These tests put each rule's example after
-// every escape, redact the event as ingest and the OTLP receiver do (redactEventCounted), and
-// check that the text still parses as JSON afterwards.
+// before the token, and orAfterEscape also lets them start right after an escape. These tests put
+// each rule's example after every escape, redact the event as ingest and the OTLP receiver do
+// (redactEventCounted), and check that the text still parses as JSON afterwards.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
