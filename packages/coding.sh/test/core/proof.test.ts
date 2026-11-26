@@ -104,7 +104,8 @@ describe("escape hatches", () => {
     assert.deepEqual(hatches("A.lean", "lean", "+axiom choice' : True"), { axiom: 1 });
     assert.deepEqual(hatches("A.lean", "lean", "+set_option debug.skipKernelTC true"), { "debug.skipKernelTC": 1 });
     assert.deepEqual(hatches("A.v", "rocq", "+Admitted.", "+(* Admitted. *)", "+Axiom ax : False."), { Admitted: 1, Axiom: 1 });
-    assert.deepEqual(hatches("A.v", "rocq", "+Unset Guard Checking."), { "Unset Checking": 1 });
+    assert.deepEqual(hatches("A.v", "rocq", "+Unset Guard Checking."), { "Unset Guard Checking": 1 });
+    assert.deepEqual(hatches("A.v", "rocq", "+Local Unset Universe Checking.", "+Unset Positivity Checking."), { "Unset Universe Checking": 1, "Unset Positivity Checking": 1 });
     assert.deepEqual(hatches("A.v", "rocq", "+#[bypass_check(guard)]", "+Fixpoint f (n : nat) : nat := f n."), { bypass_check: 1 });
     assert.deepEqual(hatches("A.dfy", "dafny", "+  assume false;", "+  // assume false;"), { assume: 1 });
     assert.deepEqual(hatches("A.dfy", "dafny", "+method {:verify false} M() {"), { "{:verify false}": 1 });

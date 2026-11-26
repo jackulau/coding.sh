@@ -180,7 +180,9 @@ const HATCHES: Record<ProofLang, [string, RegExp][]> = {
     ["admit", /(?<![A-Za-z]-)\badmit\b(?=[ \t]*(?:[.;|)\]}]|$))/g],
     ["Axiom", command("(?:Axioms?|Conjectures?)")],
     ["Admit Obligations", command("Admit[ \\t]+Obligations")],
-    ["Unset Checking", command("Unset[ \\t]+(?:Guard|Universe|Positivity)[ \\t]+Checking")],
+    ["Unset Guard Checking", command("Unset[ \\t]+Guard[ \\t]+Checking")],
+    ["Unset Universe Checking", command("Unset[ \\t]+Universe[ \\t]+Checking")],
+    ["Unset Positivity Checking", command("Unset[ \\t]+Positivity[ \\t]+Checking")],
     // The attribute: `#[bypass_check(guard)]`.
     ["bypass_check", /#\[[^\]\n]*\bbypass_check\b/g],
   ],
