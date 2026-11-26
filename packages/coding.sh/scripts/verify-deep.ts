@@ -34,7 +34,7 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 30 minutes.
+ * 27 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
@@ -52,10 +52,10 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // records. About 35 seconds.
   "adapter-transcript-3": { bound: 2 },
   // As adapter-transcript-1, over its own homes: 418 cuts, 1,722 closed cuts and 200 seeded cases over 122
-  // records. About 80 seconds.
+  // records. About 30 seconds.
   "adapter-transcript-4": { bound: 2 },
   // As adapter-transcript-1, over its own homes: 467 cuts, 1,198 closed cuts and 240 seeded cases over 134
-  // records. About 80 seconds.
+  // records.
   "adapter-transcript-5": { bound: 2 },
   // As adapter-transcript-1, over its own homes: 729 cuts, 1,500 closed cuts and 680 seeded cases over 212
   // records.
