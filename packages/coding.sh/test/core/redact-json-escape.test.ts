@@ -261,6 +261,8 @@ describe("a redaction keeps JSON text valid", () => {
     // escape is left as it is.
     assert.equal(email.string(`DOMAIN${BS}bob@example.com`), `DOMAIN${BS}b[redacted:email]`);
     assert.equal(email.string(`CORP${BS}dev.ops@example.com`), `CORP${BS}[redacted:email]`);
+    // A backslash and a u with no four hex digits after them is no escape either.
+    assert.equal(email.string(`CORP${BS}user.name@example.com`), `CORP${BS}[redacted:email]`);
     const year = createRedactor({ redact: ["none"], patterns: [String.raw`\d{4}`] });
     assert.equal(year.string(`C:${BS}u2024${BS}report`), `C:${BS}u2024${BS}report`);
   });
@@ -299,6 +301,41 @@ describe("a redaction keeps JSON text valid", () => {
         }
       }
     }
+  });
+
+  it("two levels deep, a value that holds an escape the first level wrote is hidden whole", () => {
+    // The first level was written by a writer that escapes non-ASCII characters and slashes, so the
+    // second level writes the value's escape with two backslashes.
+    const NL = String.fromCharCode(10);
+    const head = j("Kq9m", "Z2xR");
+    const rest = j("w0rd", "99xy");
+    for (const x of [j(BS, "u00e9"), j(BS, "/")]) {
+      const l1 = JSON.stringify({ stdout: j("echo hi", NL, "DB_PASSWORD=", head, "~", rest, NL, "ls") }).replace("~", () => x);
+      const input = JSON.stringify({ body: l1 });
+      for (const out of [red.string(input), red.value({ body: input }).body, redactEventCounted(red, event(input)).payload.text as string]) {
+        const text = (JSON.parse((JSON.parse(out) as { body: string }).body) as { stdout: string }).stdout;
+        assert.equal(text, j("echo hi", NL, "DB_PASSWORD=[redacted:secret-assignment]", NL, "ls"), `${x} in ${input}`);
+      }
+    }
+  });
+
+  it("after an escape three and four levels deep, an assignment is hidden", () => {
+    // The value holds no digit, so only the assignment rule finds it.
+    const NL = String.fromCharCode(10);
+    const value = j("Kqm", "ZxRw", "ordxy");
+    for (const n of [3, 4]) {
+      let input = j("echo hi", NL, "DB_PASSWORD=", value, NL, "ls");
+      for (let d = 0; d < n; d++) input = JSON.stringify({ t: input });
+      for (const out of [red.string(input), red.value({ body: input }).body, redactEventCounted(red, event(input)).payload.text as string]) {
+        assert.equal(levels(out), n, out);
+        assert.ok(out.includes("[redacted:secret-assignment]") && !out.includes(value), out);
+      }
+    }
+  });
+
+  it("a match that ends inside the hex digits of an escape keeps the whole escape after the marker", () => {
+    const pat = createRedactor({ redact: ["none"], patterns: [j("Zq8[A-Za-z0-9]+", BS, BS, "u00")] });
+    assert.equal(pat.string(`{"a":"xZq8mK2pW7${BS}u00e9 tail"}`), `{"a":"x[redacted:pattern]${BS}u00e9 tail"}`);
   });
 });
 
