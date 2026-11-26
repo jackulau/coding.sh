@@ -1445,7 +1445,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Show a stored experiment: pass rate, graders and failures",
         args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included), or latest", required: true }],
       },
-      { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
+      { name: "list", summary: "List experiments, then the runs that have stored none yet", flags: [LIMIT(20)] },
       {
         name: "status",
         summary: "Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them",

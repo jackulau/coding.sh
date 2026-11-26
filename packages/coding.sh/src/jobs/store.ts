@@ -233,8 +233,11 @@ export class JobStore {
   async get(id: string, now = Date.now()): Promise<JobView | undefined> {
     if (!ID.test(id)) return undefined;
     const r = await this.readHeader(id);
-    if (!r) return undefined;
-    const lines = await this.readLines(id);
+    return r && this.view(r, now);
+  }
+
+  private async view(r: { header: JobHeader; heartbeatAt: number }, now: number): Promise<JobView> {
+    const lines = await this.readLines(r.header.id);
     const status = liveStatus(r.header, r.heartbeatAt, now);
     return { header: r.header, status, lines, progress: progressOf(r.header, lines, status, now) };
   }
@@ -243,21 +246,31 @@ export class JobStore {
   async find(ref: string): Promise<JobView | undefined> {
     const direct = await this.get(ref);
     if (direct) return direct;
-    return (await this.list()).find((j) => j.header.refs.includes(ref));
+    return (await this.list({ ref }))[0];
   }
 
-  /** Every job, newest first (ids sort by time within a prefix, so order by createdAt). */
-  async list(filter: { kind?: JobKind } = {}): Promise<JobView[]> {
+  /**
+   * Every job, newest first (ids sort by time within a prefix, so order by createdAt). The filters
+   * read only headers, so a job they skip costs no read of its trial log: `ref` keeps the jobs that
+   * produced that record, `unfinished` drops completed jobs.
+   */
+  async list(filter: { kind?: JobKind; ref?: string; unfinished?: boolean } = {}): Promise<JobView[]> {
     let files: string[];
     try {
       files = (await readdir(this.dir)).filter((f) => f.endsWith(".json"));
     } catch {
       return [];
     }
+    const now = Date.now();
     const out: JobView[] = [];
     for (const f of files) {
-      const v = await this.get(f.slice(0, -".json".length));
-      if (v && (!filter.kind || v.header.kind === filter.kind)) out.push(v);
+      const id = f.slice(0, -".json".length);
+      const r = ID.test(id) ? await this.readHeader(id) : undefined;
+      if (!r || (filter.kind && r.header.kind !== filter.kind)) continue;
+      if (filter.ref !== undefined && !r.header.refs.includes(filter.ref)) continue;
+      // liveStatus changes only "running", so a completed header is a completed job.
+      if (filter.unfinished && r.header.status === "completed") continue;
+      out.push(await this.view(r, now));
     }
     return out.sort((a, b) => b.header.createdAt - a.header.createdAt || (a.header.id < b.header.id ? 1 : -1));
   }

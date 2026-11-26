@@ -51,6 +51,33 @@ describe("JobStore", () => {
     assert.equal(await store.get("../etc"), undefined);
   });
 
+  it("lists the jobs that produced a record, or only the unfinished ones, newest first", async () => {
+    const store = new JobStore(join(root, "three"));
+    const a = await store.create({ id: "pair_a", kind: "exp ab", name: "a", config: jobConfig({}), total: 2, concurrency: 1, now: 1000 });
+    await a.addRefs("exp_l");
+    await a.finish("completed");
+    const b = await store.create({ id: "pair_b", kind: "exp ab", name: "b", config: jobConfig({}), total: 2, concurrency: 1, now: 2000 });
+    await b.addRefs("exp_l", "exp_r");
+    await b.finish("interrupted");
+    const c = await store.create({ id: "exp_c", kind: "exp run", name: "c", config: jobConfig({}), total: 2, concurrency: 1, now: 3000 });
+    await c.finish("incomplete");
+    // Its owner died before it could say so: the header still says running, and the job reads as interrupted.
+    const dead: JobHeader = { v: 1, id: "exp_dead", kind: "exp run", name: "d", config: jobConfig({}), total: 1, concurrency: 1, createdAt: 4000, updatedAt: 4000, status: "running", sessions: [{ pid: 2 ** 30, host: hostname(), startedAt: 4000 }], refs: [], state: {} };
+    writeFileSync(store.headerPath("exp_dead"), JSON.stringify(dead) + "\n");
+    const ids = (vs: { header: JobHeader }[]) => vs.map((v) => v.header.id);
+    assert.deepEqual(ids(await store.list({ ref: "exp_l" })), ["pair_b", "pair_a"]);
+    assert.deepEqual(ids(await store.list({ ref: "exp_r" })), ["pair_b"]);
+    assert.deepEqual(ids(await store.list({ ref: "exp_none" })), []);
+    const open = await store.list({ unfinished: true });
+    assert.deepEqual(ids(open), ["exp_dead", "exp_c", "pair_b"]);
+    assert.deepEqual(
+      open.map((v) => v.status),
+      ["interrupted", "incomplete", "interrupted"],
+    );
+    assert.deepEqual(ids(await store.list({ unfinished: true, kind: "exp ab" })), ["pair_b"]);
+    assert.equal((await store.find("exp_l"))?.header.id, "pair_b", "the newest job that produced it");
+  });
+
   it("parseLines keeps the last line per key", () => {
     const m = parseLines('{"key":"a","at":1,"ms":1,"outcome":"fail"}\n\n{"key":"a","at":2,"ms":1,"outcome":"pass"}\nnot json\n');
     assert.equal(m.get("a")?.outcome, "pass");
