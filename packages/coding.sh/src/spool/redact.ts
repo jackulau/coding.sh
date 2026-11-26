@@ -173,9 +173,9 @@ export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): u
     let doc: string | undefined;
     if (documents(s) >= docs) {
       // A match the text pass started right after an escape can stop at an escape inside its value
-      // (\u00e9, \", \/): the rest of the value then follows a marker, where the document pass does
-      // not look again. The text's result is kept only when it shows no more than the original
-      // redacted as documents.
+      // (an escaped quote, for one): the rest of the value then follows a marker, where the
+      // document pass does not look again. The text's result is kept only when it shows no more
+      // than the original redacted as documents.
       const viaText = redactionTally();
       const clean = redactForBlob(r, s, viaText, 0, memo) as string;
       viaDoc = redactionTally();
