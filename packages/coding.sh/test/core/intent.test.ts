@@ -688,6 +688,21 @@ describe("proof tampering", () => {
     assert.ok(!flagged(spec) && !flagged(rename));
   });
 
+  it("counts only the spec lines changed after the failure when the same file changes again after it", () => {
+    const spec = (...lines: string[]) => edit("FooSpec.lean", udiff("FooSpec.lean", ...lines));
+    const lean = [...spec(" def bound : Nat := 10", "-axiom_free_marker : True := trivial"), ...red(), ...spec(" def bound : Nat := 10", "+def other : Nat := 3"), ...green()];
+    const tlc = (ok: boolean) =>
+      shellRun("java -cp tla2tools.jar tlc2.TLC MC", ok, ok ? "Model checking completed. No error has been found." : ["TLC2 Version 2.18", "Running breadth-first search Model-Checking", "Error: Invariant TypeOK is violated.", "The behavior up to this point is:"].join("\n"));
+    const cfg = (...lines: string[]) => edit("MC.cfg", udiff("MC.cfg", ...lines));
+    const model = [...tlc(true), ...cfg(" SPECIFICATION Spec", "-CONSTANT N = 3", "+CONSTANT N = 2", " INVARIANT TypeOK"), ...tlc(false), ...cfg(" INVARIANT TypeOK", "+INVARIANT Safety"), ...tlc(true)];
+    for (const events of [lean, model]) {
+      assert.deepEqual(said(trace(events)), [["spec", "unknown", "info", false]]);
+      assert.ok(!flagged(events));
+    }
+    const later = [...spec(" def bound : Nat := 10", "+def other : Nat := 3"), ...red(), ...spec(" def bound : Nat := 10", "-axiom_free_marker : True := trivial"), ...green()];
+    assert.deepEqual(said(trace(later)), [["spec", "unknown", "high", true]]);
+  });
+
   it("counts hatches against the file as the session found it: one taken out and put back is not new", () => {
     const fix = () => edit("Foo.lean", udiff("Foo.lean", " theorem helper : P := by", "-  sorry", "+  simp [foo]"));
     const back = udiff("Foo.lean", " theorem helper : P := by", "-  simp [foo]", "+  sorry");

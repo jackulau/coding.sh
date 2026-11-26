@@ -652,6 +652,8 @@ export interface ProofFile {
   stmts?: Map<string, [string | null, string | null]>;
   /** Pinned, spec-named and build files: each line's count put in minus taken out; UNREAD when a change could not be read. */
   lines?: Map<string, number>;
+  /** For each of those lines, the number of outcomes read before the agent last moved its count away from zero. */
+  lineAt?: Map<string, number>;
   /** The agent made the file; `made`: the shell call that wrote it, until a diff says it was there before. */
   added?: true;
   made?: string;
@@ -753,16 +755,25 @@ const prune = (ps: ProofState, path: string, f: ProofFile) => {
   if (!f.sites?.size && !f.stmts?.size && !f.lines?.size && !f.added && !f.gone && !f.lang && !f.touched?.size && !f.flipped?.size) ps.files?.delete(path);
 };
 
-/** Whether a key of the file is changed from what the session started with. */
-export function proofTampered(f: ProofFile, key: string): boolean {
+/**
+ * Whether a key of the file is changed from what the session started with. With `since`, a line
+ * counts only when the agent changed it after that many outcomes: a line changed before a failure
+ * does not count at a pass, whatever else in the file changed after it.
+ */
+export function proofTampered(f: ProofFile, key: string, since?: number): boolean {
   if (key === "#gone") return !!f.gone;
   if (key === "#lines") {
-    for (const [k, n] of f.lines ?? []) if (k === UNREAD || (k.startsWith(NARROW) ? n > 0 : n < 0)) return true;
+    for (const [k, n] of f.lines ?? [])
+      if ((k === UNREAD || (k.startsWith(NARROW) ? n > 0 : n < 0)) && (since === undefined || (f.lineAt?.get(k) ?? since) >= since)) return true;
     return false;
   }
   const r = f.stmts?.get(key);
   return !!r && r[0] !== null && r[0] !== r[1];
 }
+
+const runOf = (ps: ProofState, id: string | undefined) => (id === undefined ? undefined : ps.ran?.find((r) => r.id === id));
+/** The number of outcomes read before a change. A change by a call that ran a check comes before its outcome. */
+const stampOf = (ps: ProofState, run: ProofRun | undefined) => (run?.seq !== undefined ? run.seq - 1 : (ps.seq ?? 0));
 
 /**
  * A key changed: keep it for the next pass. A change made by a call that also ran a check comes
@@ -770,11 +781,11 @@ export function proofTampered(f: ProofFile, key: string): boolean {
  */
 function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: ProofShape, e: AgentEvent, id: string | undefined, note: Note): void {
   const t = proofTampered(f, key);
-  const run = id === undefined ? undefined : ps.ran?.find((r) => r.id === id);
+  const run = runOf(ps, id);
   let flip: { before: string; after: string } | undefined;
   if (!t) f.flipped?.delete(key);
-  else if (!run?.green) (f.touched ??= new Map()).set(key, run?.seq !== undefined ? run.seq - 1 : (ps.seq ?? 0));
-  else if (run.flip) {
+  else if (!run?.green) (f.touched ??= new Map()).set(key, stampOf(ps, run));
+  else if (run.flip && proofTampered(f, key, stampOf(ps, run))) {
     (f.flipped ??= new Set()).add(key);
     flip = { before: run.before as string, after: run.at };
   }
@@ -848,7 +859,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
       run.before = was.at;
       for (const [path, f] of ps.files ?? [])
         for (const [t, at] of f.touched ?? [])
-          if (at >= was.seq && proofTampered(f, t)) {
+          if (at >= was.seq && proofTampered(f, t, was.seq)) {
             (f.flipped ??= new Set()).add(t);
             flips.push([path, t]);
           }
@@ -1101,34 +1112,50 @@ function readStatements(ps: ProofState, f: ProofFile, path: string, d: ProofDiff
 
 /**
  * Follow the lines of a pinned, spec-named or build file the agent did not make: each line's count
- * put in minus taken out. A change by someone else only moves a count back toward zero; one the
- * agent made that cannot be read leaves UNREAD. The shape is `weaken` only while a TLC line that
- * narrows the model stays added; any other line change is `unknown`.
+ * put in minus taken out, and when the agent last moved it away from zero. A change by someone else
+ * only moves a count back toward zero; one the agent made that cannot be read leaves UNREAD. The
+ * shape is `weaken` only while a TLC line that narrows the model stays added; any other line change
+ * is `unknown`.
  */
 function readLines(ps: ProofState, f: ProofFile, path: string, lang: ProofLang | undefined, prot: boolean, d: ProofDiff, unread: boolean, mine: boolean, e: AgentEvent, id: string | undefined, note: Note): void {
   const tracked = !f.added && (lang === undefined || lang === "tlc" || prot || SPEC_NAMED.test(path));
   if (!tracked || (!mine && !f.lines?.size)) return;
   const lines = (f.lines ??= new Map());
+  const stamps = (f.lineAt ??= new Map());
+  const at = stampOf(ps, runOf(ps, id));
   let moved = false;
   const bump = (k: string, by: number) => {
     const was = lines.get(k) ?? 0;
     const now = was + by;
-    if (!mine && Math.abs(now) > Math.abs(was)) return;
+    if (Math.abs(now) > Math.abs(was)) {
+      if (!mine) return;
+      stamps.set(k, at);
+    }
     if (now) lines.set(k, now);
-    else lines.delete(k);
+    else {
+      lines.delete(k);
+      stamps.delete(k);
+    }
     moved = true;
   };
   if (unread) {
-    if (mine && !lines.has(UNREAD)) lines.set(UNREAD, 1), (moved = true);
+    if (mine && !lines.has(UNREAD)) {
+      lines.set(UNREAD, 1);
+      stamps.set(UNREAD, at);
+      moved = true;
+    }
   } else {
     for (const k of d.taken) bump(k, -1);
     for (const k of d.fresh) bump(k, 1);
   }
   if (lines.size > LINE_CAP) {
     lines.clear();
+    stamps.clear();
     lines.set(UNREAD, 1);
+    stamps.set(UNREAD, at);
   }
   if (!lines.size) delete f.lines;
+  if (!stamps.size) delete f.lineAt;
   if (!moved || (!mine && proofTampered(f, "#lines"))) return;
   let shape: ProofShape = "unknown";
   if (!f.lines?.has(UNREAD)) for (const [k, n] of f.lines ?? []) if (k.startsWith(NARROW) && n > 0) shape = "weaken";
