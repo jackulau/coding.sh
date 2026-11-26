@@ -342,10 +342,16 @@ function same(problems: Problems, copy: Copy, what: string, a: Outcome, b: Outco
   if (!isDeepStrictEqual(a, b)) problems.add(`${copy.label}: ${what}`, `${where}: ${describe(a, b)}`);
 }
 
-/** Every session `without` has, `got` must have too. */
-function kept(problems: Problems, copy: Copy, what: string, got: Outcome, without: Outcome, where: string): void {
+/**
+ * Every session `without` has, `got` must have too: under its own id or, when the cut fell inside that id,
+ * under the part of it that `text`, the closed cut, holds as a whole string. A reader takes a session's id
+ * as the file writes it, so a closed cut that shortens the id names the session by what is left.
+ */
+function kept(problems: Problems, copy: Copy, what: string, got: Outcome, without: Outcome, where: string, text: string): void {
+  const had = new Set(without.events.map((e) => e.sessionId));
   const have = new Set(got.events.map((e) => e.sessionId));
-  const lost = [...new Set(without.events.map((e) => e.sessionId))].filter((s) => !have.has(s));
+  const shortened = (s: string) => [...have].some((h) => h !== "" && !had.has(h) && h.length < s.length && s.startsWith(h) && text.includes(JSON.stringify(h)));
+  const lost = [...had].filter((s) => !have.has(s) && !shortened(s));
   if (lost.length) problems.add(`${copy.label}: ${what}`, `${where}: lost ${short(lost)}`);
 }
 
@@ -393,7 +399,8 @@ export interface Stats {
  * - F with L cut to k bytes (its line end kept) gives the outcome F gives with L blank;
  * - F cut at s + k gives the outcome F cut at s gives;
  * - F cut at s + n gives the outcome F cut just after L's line end gives;
- * - F with L cut to k bytes and closed (_cut.ts closeJson) gives an outcome with every session F has with L blank.
+ * - F with L cut to k bytes and closed (_cut.ts closeJson) gives an outcome with every session F has with L blank,
+ *   as kept counts them.
  * k runs over 1, n/2 and n-1, and at a `bound` b of 2 or more, b - 1 more offsets spread evenly over the
  * line. The closed cuts are also at k = 1 and at each top-level member's end, and each distinct closed line
  * is checked once. At bound 0 the records checked are F's first and last, every SAMPLE-th, and the
@@ -468,7 +475,7 @@ async function fileLines(
       seen.add(text);
       const where = `${at} cut to ${k} bytes and closed: ${preview(Buffer.from(text))}`;
       const closed = await copy.with(rel, Buffer.concat([before, Buffer.from(text), after]), where);
-      kept(problems, copy, "a line with its last members missing loses a session the file has with the line blank", closed, blank, where);
+      kept(problems, copy, "a line with its last members missing loses a session the file has with the line blank", closed, blank, where, text);
       stats.closed++;
     }
   }
@@ -562,8 +569,8 @@ function jsonCuts(n: number, bound: number, pinned: number[]): number[] {
 /**
  * For every JSON file F (n bytes through its last value) in each home, and every k in 1..n-1:
  * - F cut to k bytes gives the outcome F gives left empty;
- * - F cut to k bytes and closed gives an outcome with every session F has left empty (each distinct
- *   closed text once).
+ * - F cut to k bytes and closed gives an outcome with every session F has left empty, as kept counts them
+ *   (each distinct closed text once).
  * At a `bound` of 0, k runs over 1, n/2, n-1, every SAMPLE-th k and the FIXED_JSON cuts instead.
  */
 export async function checkJsonFiles(homes: readonly Home[], bound: number): Promise<Stats> {
@@ -590,7 +597,7 @@ export async function checkJsonFiles(homes: readonly Home[], bound: number): Pro
         seen.add(text);
         const where = `${rel} cut to ${k} bytes and closed: ${preview(Buffer.from(text))}`;
         const closed = await copy.with(rel, Buffer.from(text), where);
-        kept(problems, copy, "a JSON file with its last members missing loses a session the file has left empty", closed, empty, where);
+        kept(problems, copy, "a JSON file with its last members missing loses a session the file has left empty", closed, empty, where, text);
         stats.closed++;
       }
     }

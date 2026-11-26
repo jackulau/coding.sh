@@ -14,7 +14,8 @@
 //   blank: a line cut short changes no other line's events;
 // - F ending k bytes into L, as a file whose writer stopped mid-line, gives the outcome of F ending before L;
 // - F ending at L's closing brace gives the outcome of F ending after L's line end;
-// - F with L cut and closed into JSON (_cut.ts closeJson) has every session F has with L blank.
+// - F with L cut and closed into JSON (_cut.ts closeJson) has every session F has with L blank, under its
+//   own id or, when the cut fell inside that id, under the part of it the closed line holds.
 // And in seeded cases, lines cut short and closed cuts put in among F's lines or in place of some, and a
 // cut record at the end with no line end: F so changed gives the outcome it gives with a blank line in
 // place of each line cut short and nothing at the end.

@@ -12,7 +12,8 @@
 // - the backfill does not throw, and yields events that ingest keeps (core/ingest.ts validEvent), each with
 //   a 64-hex id, no two with the same one;
 // - F cut to its first k bytes gives the outcome (events, copies reported, error) F gives left empty;
-// - F cut and closed into JSON (_cut.ts closeJson) has every session F has left empty.
+// - F cut and closed into JSON (_cut.ts closeJson) has every session F has left empty, under its own id
+//   or, when the cut fell inside that id, under the part of it the closed text holds.
 //
 // Bounds, by CODING_SH_MODEL_BOUND (0 when unset): at 1 or more, every k in 1..n-1, exhaustively; at 0,
 // k = 1, n/2, n-1, every 13th k and the cuts FIXED_JSON in _transcript.ts names. Each distinct closed
