@@ -15,7 +15,7 @@ import { hasRecordings } from "../../llmcache/store.ts";
 import { paths } from "../../core/paths.ts";
 import type { Config } from "../../core/types.ts";
 import { captureRedactor } from "../../runner/verifier-output.ts";
-import { UsageError } from "../args.ts";
+import { shellQuote, UsageError } from "../args.ts";
 import { num, str } from "../common.ts";
 import { resumeField, resumeNote } from "../jobs.ts";
 import { CliError } from "../output.ts";
@@ -151,9 +151,11 @@ export async function replayWithControl(c: CommandContext, store: FileEvalStore,
   const source = plan.source!;
   const control = recordedTask(source);
   if (!control) {
+    // exp run needs a dataset and a grader with the arms: the spec file given, else the recording's dataset.
+    const ds = /^[\w.-]+$/.test(source.dataset.id) ? source.dataset.id : "<DATASET>";
     throw new UsageError(`${source.id} did not record a command or http task spec, so there is no control arm to replay. Give the recorded config as an arm of its own, or pass --no-control to replay your task alone`, {
       reason: "no_control",
-      suggestion: `coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay ${source.id}`,
+      suggestion: `coding.sh exp run ${specFile ? shellQuote(specFile) : `-d ${ds} -g <GRADER>`} --arm control=recorded.json --arm cand=cand.json --replay ${source.id}`,
     });
   }
   const loaded = await loadSpec(c, store, specFile);

@@ -3,7 +3,7 @@
 // maps each absolute path to the agent and the sha256 of the text we wrote, so
 // uninstall can tell "our file, untouched" from a file the user owns or edited.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
 import { resolveWriteTarget } from "./files.ts";
@@ -28,9 +28,21 @@ export interface InstallRecord {
   mcp?: { command: string; args: string[] };
 }
 
+/** A folder coding.sh created to hold a file it wrote: the agent whose write made it. */
+export interface DirRecord {
+  agent: string;
+  /** ms since epoch of the write. */
+  ts: number;
+}
+
 interface InstallsFile {
   v: 1;
   files: Record<string, InstallRecord>;
+  /**
+   * Folders init made, keyed like `files`. Uninstall removes each once it is empty
+   * (removeMadeDirs). Absent for installs made before 0.1.8: their folders stay.
+   */
+  dirs?: Record<string, DirRecord>;
 }
 
 export function sha256(text: string): string {
@@ -40,7 +52,10 @@ export function sha256(text: string): string {
 function load(env: NodeJS.ProcessEnv): InstallsFile {
   try {
     const v = JSON.parse(readFileSync(paths(env).installs, "utf8")) as Partial<InstallsFile>;
-    if (v && typeof v === "object" && v.files && typeof v.files === "object" && !Array.isArray(v.files)) return { v: 1, files: v.files };
+    if (v && typeof v === "object" && v.files && typeof v.files === "object" && !Array.isArray(v.files)) {
+      const dirs = v.dirs && typeof v.dirs === "object" && !Array.isArray(v.dirs) ? { dirs: v.dirs } : {};
+      return { v: 1, files: v.files, ...dirs };
+    }
   } catch {
     // missing or unreadable: no records
   }
@@ -95,6 +110,80 @@ export function forgetInstall(path: string, env: NodeJS.ProcessEnv = process.env
   if (!(key in f.files)) return;
   delete f.files[key];
   save(f, env);
+}
+
+// ---------------------------------------------------------------- folders
+
+/** A path as a key to compare, case-blind on Windows. */
+const sameKey = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+
+/** The folders a write to `path` would create, deepest first: its folder and each missing one above it. */
+export function missingDirs(path: string): string[] {
+  const out: string[] = [];
+  for (let d = dirname(resolve(path)); !existsSync(d); d = dirname(d)) {
+    out.push(d);
+    if (dirname(d) === d) break;
+  }
+  return out;
+}
+
+/**
+ * Record the folders of `dirs` that exist now as made by coding.sh for `agent`: call it
+ * with missingDirs from before the write. A folder recorded before keeps its record.
+ */
+export function recordDirs(agent: string, dirs: readonly string[], env: NodeJS.ProcessEnv = process.env, now = Date.now()): void {
+  if (!dirs.length) return;
+  const f = load(env);
+  const known = new Set(Object.keys(f.dirs ?? {}).map(sameKey));
+  const add: string[] = [];
+  for (const d of dirs.map((x) => resolve(x))) {
+    if (known.has(sameKey(d)) || !existsSync(d)) continue;
+    known.add(sameKey(d));
+    add.push(d);
+  }
+  if (!add.length) return;
+  f.dirs = { ...f.dirs, ...Object.fromEntries(add.map((d) => [d, { agent, ts: now }])) };
+  save(f, env);
+}
+
+/**
+ * After uninstall deleted the files `deleted`: each recorded folder that held one of them
+ * is removed once it is empty, deepest first, and its record dropped. A folder that holds
+ * anything stays, and keeps its record. A folder that is gone loses its record. Returns the
+ * folders removed.
+ */
+export function removeMadeDirs(deleted: readonly string[], env: NodeJS.ProcessEnv = process.env): string[] {
+  const f = load(env);
+  const dirs = f.dirs;
+  if (!dirs || !deleted.length) return [];
+  const byKey = new Map(Object.keys(dirs).map((d) => [sameKey(d), d]));
+  const held = new Set<string>();
+  for (const p of deleted) {
+    for (let d = dirname(resolve(p)); ; d = dirname(d)) {
+      const rec = byKey.get(sameKey(d));
+      if (rec !== undefined) held.add(rec);
+      if (dirname(d) === d) break;
+    }
+  }
+  const removed: string[] = [];
+  let changed = false;
+  // A folder's path is longer than its parent's: the longest go first.
+  for (const d of [...held].sort((a, b) => b.length - a.length)) {
+    try {
+      // A link (or junction) that took the folder's place is not the folder coding.sh made.
+      if (!lstatSync(d).isDirectory() || readdirSync(d).length) continue;
+      rmdirSync(d);
+      removed.push(d);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") continue;
+    }
+    delete dirs[d];
+    changed = true;
+  }
+  if (!changed) return removed;
+  if (!Object.keys(dirs).length) delete f.dirs;
+  save(f, env);
+  return removed;
 }
 
 // ---------------------------------------------------------------- exact restore

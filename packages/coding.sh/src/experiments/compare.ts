@@ -112,7 +112,7 @@ function duration(ms: number): string {
 }
 
 /** Interleaved, overlapping, or one after the other (with how far apart). */
-type Timed = Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair" | "metadata">;
+type Timed = Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair" | "metadata"> & Partial<Pick<ExperimentResult, "dataset">>;
 const matrixOf = (r: Timed) => (r.metadata?.matrix as { id?: unknown } | undefined)?.id;
 
 const reusedOf = (r: Timed) => {
@@ -135,7 +135,9 @@ export function runTiming(a: Timed, b: Timed): Timing {
     return out;
   }
   if (interleaved || start < end) return out;
-  const fix = "run both in one interleaved job: coding.sh exp run --arm a=<TASK> --arm b=<TASK>";
+  // exp run needs a dataset and a grader with the arms: the dataset both ran on, when a shell takes its id as typed.
+  const ds = a.dataset && a.dataset.id === b.dataset?.id && /^[\w.-]+$/.test(a.dataset.id) ? a.dataset.id : "<DATASET>";
+  const fix = `run both in one interleaved job: coding.sh exp run -d ${ds} -g <GRADER> --arm a=<TASK> --arm b=<TASK>`;
   out.warning =
     out.gapMs > TIMING_GAP_MS
       ? `A and B ran ${duration(out.gapMs)} apart: provider drift, rate limits and time of day may differ between them and show up as a difference; ${fix}`
