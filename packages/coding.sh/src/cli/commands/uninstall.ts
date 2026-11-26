@@ -137,7 +137,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (out.json) out.data({ outcome: "planned", scope, agents: plans.map((p) => ({ id: p.id, error: errorJson(p), changes: p.changes.map(changeJson) })), ...leftJson() });
     else {
       for (const p of pending) printChanges(out, p.changes, p.id);
-      if (!total && !left.length && !failed) out.ok(what);
+      if (total) out.note("Dry run: nothing written.");
+      else if (!left.length && !failed) out.ok(what);
       warnLeft();
     }
     return failed ? 1 : 0;
