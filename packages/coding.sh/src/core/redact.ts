@@ -1240,35 +1240,51 @@ const JSON_STRING_DEPTH = 3;
  * string, so the walk's check of each key does not see it.
  *
  * `memo` is shared by calls on values that hold many of the same strings: each
- * string is redacted once, and what that replaced is counted again on each use.
+ * redactor redacts each string once, and what that replaced is counted again on
+ * each use.
  */
 export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0, memo?: BlobMemo): unknown {
+  return forBlob(r, v, tally, level, memo, false);
+}
+
+/**
+ * redactForBlob, where `parsed` says that `v` is a document documentsRedacted parsed from a string.
+ * Such a result is only serialized, so the walk through `memo` returns an object or array that
+ * comes out the same as it is. A caller's own value can hold a getter, a Proxy or toJSON that
+ * gives the walk one value and the serializing another, so for it the walk makes new ones.
+ */
+function forBlob(r: Redactor, v: unknown, tally: RedactionTally, level: number, memo: BlobMemo | undefined, parsed: boolean): unknown {
   // Redactor.value, with the strings through `memo`; only for a redactor createRedactor made, whose value is that walk.
-  // Below the top level the result is only serialized (documentsRedacted), so the walk keeps what comes out the same.
   const value =
     memo && passes.has(r)
       ? (x: unknown) => {
           const f = memoString(r, memo, tally);
-          return walk(x, f, 0, tally, f, level > 0);
+          return walk(x, f, 0, tally, f, parsed);
         }
       : (x: unknown) => r.value(x, tally);
   if (level >= JSON_STRING_DEPTH) return value(v);
   return value(documentsRedacted(r, v, tally, level, undefined, memo));
 }
 
-/** What a redactor made of each string it was given, for redactForBlob calls that share it. */
-export type BlobMemo = Map<string, { out: string; kinds?: Record<string, number>; preexisting?: boolean }>;
+/** What each redactor made of each string it was given, for redactForBlob calls that share it. */
+export type BlobMemo = Map<Redactor, Map<string, { out: string; kinds?: Record<string, number>; preexisting?: boolean }>>;
 
-/** Redactor.string with `tally`, through `memo`: a string seen before gives the same text and adds the same counts. */
+/**
+ * Redactor.string with `tally`, through `memo`: a string the redactor was given before gives the
+ * same text and adds the same counts.
+ */
 function memoString(r: Redactor, memo: BlobMemo, tally: RedactionTally): (s: string) => string {
+  let mine = memo.get(r);
+  if (!mine) memo.set(r, (mine = new Map()));
+  const strings = mine;
   return (s) => {
-    let seen = memo.get(s);
+    let seen = strings.get(s);
     if (!seen) {
       const t = redactionTally();
       seen = { out: r.string(s, t) };
       if (Object.keys(t.kinds).length) seen.kinds = t.kinds;
       if (t.preexisting) seen.preexisting = true;
-      memo.set(s, seen);
+      strings.set(s, seen);
     }
     if (seen.kinds) for (const [k, n] of Object.entries(seen.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
     if (seen.preexisting) tally.preexisting = true;
@@ -1284,9 +1300,10 @@ function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level
     const found = redactionTally();
     let clean: string;
     try {
-      const out = redactForBlob(r, doc, found, level + 1, memo);
+      const out = forBlob(r, doc, found, level + 1, memo, true);
       clean = JSON.stringify(out);
-      // With a memo the walk gives the document itself back when nothing in it changed.
+      // With a memo, for a redactor createRedactor made, the walk gives the document itself back
+      // when nothing in it changed.
       if (out === doc || clean === JSON.stringify(doc)) return s;
     } catch {
       return tooDeepMarker(tally); // a document too deep to serialize

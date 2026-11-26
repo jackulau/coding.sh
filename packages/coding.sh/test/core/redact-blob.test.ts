@@ -92,6 +92,32 @@ describe("raw blobs are redacted before they are serialized", () => {
   });
 });
 
+describe("redactForBlob on a value its caller gives it", () => {
+  // Built from parts so no secret-looking literal sits in the source.
+  const part = ["Kq9m", "Z2xR", "7vWp"].join("");
+
+  it("serializes what its walk read from a getter, at each level it is called at", () => {
+    for (const level of [0, 1, 2, 3]) {
+      let reads = 0;
+      // "nothing here" on the first read, an assignment on any later one.
+      const o = { get note() { return ++reads > 1 ? `DB_PASSWORD=${part}` : "nothing here"; } };
+      const out = redactForBlob(createRedactor({ env: {} }), o, redactionTally(), level, new Map());
+      const label = `level ${level}: ${JSON.stringify(out)}`;
+      assert.notEqual(out, o, label);
+      assert.ok(!JSON.stringify(out).includes(part), label);
+    }
+  });
+
+  it("gives each redactor that shares a memo the text that redactor makes", () => {
+    const s = `token ${["Zq8", "mK2pW7", "xR4vT9"].join("")} here`;
+    const memo = new Map();
+    assert.equal(redactForBlob(createRedactor({ env: {} }), s, redactionTally(), 0, memo), s);
+    const tally = redactionTally();
+    assert.equal(redactForBlob(createRedactor({ env: {}, patterns: ["Zq8[A-Za-z0-9]+"] }), s, tally, 0, memo), "token [redacted:pattern] here");
+    assert.deepEqual(tally.kinds, { pattern: 1 });
+  });
+});
+
 describe("redactBlobValue runs only the rules the value's JSON text holds a needle of", () => {
   it("no needle holds a character that JSON text escapes, so the text holds every needle its strings hold", () => {
     for (const [kind, n] of Object.entries(SECRET_NEEDLES)) {
