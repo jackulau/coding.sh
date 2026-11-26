@@ -21,6 +21,13 @@ const PROOF_CONFIG = /(?:^|\/)(?:_CoqProject|_RocqProject|lakefile\.(?:lean|toml
 const VERILOG =
   /\b(?:endmodule|endcase|endgenerate|endfunction|endtask|always_ff|always_comb|always_latch|posedge|negedge)\b|^[-+ ]?[ \t]*(?:module|macromodule)[ \t]+\w+[ \t]*(?:#[ \t]*)?[(;]|\balways[ \t]*@|^[-+ ]?[ \t]*(?:input|output|inout)[ \t]+(?:wire|reg|logic|signed|\[)|^[-+ ]?[ \t]*(?:assign|wire|reg|logic|localparam|parameter|genvar)\b[^\n;]*;|\b\d+'[sS]?[bBhHdDoO]/m;
 /**
+ * Verilog lines that Rocq does not write: a `//` or `/*` comment, a port connection
+ * (`.grant (grant),`), a `begin`, and an assignment that ends in `;` (`grant <= admit;`,
+ * `if (req) grant = 1;`). A `.v` diff with one and no Rocq sentence is not read as Rocq.
+ */
+const VERILOG_LINE =
+  /^[-+ ]?[ \t]*(?:\/[/*]|\.\w+[ \t]*\()|\*\/[ \t\r]*$|^[-+ ]?[ \t]*(?:end[ \t]+)?(?:else[ \t]+)?(?:if[ \t]*\([^()\n]*\)[ \t]*)?(?:begin\b|\w+(?:\[[^\]\n]*\])?[ \t]*(?:<=|=(?![=>]))[^;\n]*;[ \t\r]*$)/m;
+/**
  * A line that starts a Rocq sentence: `Require Import`, a `Lemma` or `Definition` with its name,
  * `Proof.`, `Qed.`, `End Name.`. Read with comments blanked, so a word in a comment is not one.
  */
@@ -154,8 +161,10 @@ export function scanProof(text: string, sx: Syntax): { code: string; bare: strin
   return { code: code.join(""), bare: bare.join("") };
 }
 
-/** Text read for Rocq sentences: `(* *)` comments, `//` comments (Verilog's) and strings blanked. */
-const rocqText = (text: string) => scanProof(text, { line: "//", block: ["(*", "*)"], raw: true }).bare;
+/** Text read for Rocq sentences: `(* *)` comments, Verilog's `//` and `/*` comments, and strings blanked. */
+const rocqText = (text: string) => scanProof(scanProof(text, { line: "//", block: ["(*", "*)"], raw: true }).bare, { block: ["/*", "*/"], raw: true }).code;
+/** A Verilog line outside Rocq's `(* *)` comments and strings: code quoted in a Rocq comment is not one. */
+const verilogLine = (text: string) => VERILOG_LINE.test(text) && VERILOG_LINE.test(scanProof(text, SYNTAX.rocq).bare);
 
 /** A hatch word on its own: not part of a hyphenated word (`sorry-free`). */
 const word = (w: string) => new RegExp(`(?<![A-Za-z]-)\\b${w}\\b(?!-[A-Za-z])`, "g");
@@ -172,7 +181,8 @@ const HATCHES: Record<ProofLang, [string, RegExp][]> = {
     ["Axiom", command("(?:Axioms?|Conjectures?)")],
     ["Admit Obligations", command("Admit[ \\t]+Obligations")],
     ["Unset Checking", command("Unset[ \\t]+(?:Guard|Universe|Positivity)[ \\t]+Checking")],
-    ["bypass_check", /\bbypass_check\b/g],
+    // The attribute: `#[bypass_check(guard)]`.
+    ["bypass_check", /#\[[^\]\n]*\bbypass_check\b/g],
   ],
   dafny: [["assume", word("assume")], ["{:axiom}", /\{:\s*axiom\b/g], ["{:verify false}", /\{:\s*verify\s+false\s*\}/g]],
   // A call, not a method call (`self.admit(x)`) or a function of that name.
@@ -382,7 +392,7 @@ export interface ProofDiff extends StmtDelta {
   /** Lines taken out and put in, without whitespace; a line that only moved cancels. TLC lines that narrow the model start with NARROW. */
   taken: string[];
   fresh: string[];
-  /** The text after the change, as the hunks show it, has a line that starts a Rocq sentence. */
+  /** The text after the change, as the hunks show it, has a line that starts a Rocq sentence. Read for Rocq and build files only. */
   rocq: boolean;
 }
 
@@ -418,7 +428,8 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
   for (const h of hunks)
     for (const side of ["-", "+"] as const) {
       const img = h.filter((l) => l.t === " " || l.t === side);
-      const { code, bare } = scanProof(img.map((l) => l.s).join("\n"), sx);
+      const text = img.map((l) => l.s).join("\n");
+      const { code, bare } = scanProof(text, sx);
       const cl = code.split("\n");
       const bl = bare.split("\n");
       const inType = lang === "rocq" ? moduleTypeLines(bl) : undefined;
@@ -426,7 +437,7 @@ export function readProofDiff(path: string, lang: ProofLang | undefined, diff: s
         if (l.t === side) lines[side].push([cl[k] as string, inType?.[k] ? "" : (bl[k] as string)]);
       });
       if (lang) (side === "-" ? before : after).push(...statements(lang, code, bare));
-      if (side === "+" && !rocq && ROCQ_SENTENCE.test(bare)) rocq = true;
+      if (side === "+" && !rocq && (!lang || lang === "rocq") && ROCQ_SENTENCE.test(rocqText(text))) rocq = true;
     }
   const pool = new Map<string, number>();
   for (const [c] of lines["+"]) if (strip(c)) pool.set(strip(c), (pool.get(strip(c)) ?? 0) + 1);
@@ -921,13 +932,14 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
 
 /**
  * The language of `path` as the session knows it: from the text or an earlier diff. A `.v` file is
- * Verilog as likely as Rocq until its text has a Rocq sentence or the session shows Rocq. A `.cfg`
- * file is a TLC model once a TLC check ran or the `.tla` file of the same name changed.
+ * Verilog as likely as Rocq. Its diff is Rocq when the text has a Rocq sentence, or when it has no
+ * Verilog line and the file or the session showed Rocq before. A `.cfg` file is a TLC model once a
+ * TLC check ran or the `.tla` file of the same name changed.
  */
 function langOf(ps: ProofState | undefined, path: string, text = ""): ProofLang | undefined {
   const f = ps?.files?.get(path);
   const lang = proofLang(path, text, f?.lang);
-  if (lang === "rocq" && !f && !ps?.rocq && !ROCQ_SENTENCE.test(rocqText(text))) return undefined;
+  if (lang === "rocq" && ((!f && !ps?.rocq) || verilogLine(text)) && !ROCQ_SENTENCE.test(rocqText(text))) return undefined;
   if (lang === "tlc" && f?.lang !== "tlc" && !ps?.tlc && !ps?.tla?.includes(path.replace(/\.cfg$/, ".tla"))) return undefined;
   return lang;
 }

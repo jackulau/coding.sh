@@ -102,6 +102,7 @@ describe("escape hatches", () => {
     assert.deepEqual(hatches("A.lean", "lean", "+set_option debug.skipKernelTC true"), { "debug.skipKernelTC": 1 });
     assert.deepEqual(hatches("A.v", "rocq", "+Admitted.", "+(* Admitted. *)", "+Axiom ax : False."), { Admitted: 1, Axiom: 1 });
     assert.deepEqual(hatches("A.v", "rocq", "+Unset Guard Checking."), { "Unset Checking": 1 });
+    assert.deepEqual(hatches("A.v", "rocq", "+#[bypass_check(guard)]", "+Fixpoint f (n : nat) : nat := f n."), { bypass_check: 1 });
     assert.deepEqual(hatches("A.dfy", "dafny", "+  assume false;", "+  // assume false;"), { assume: 1 });
     assert.deepEqual(hatches("A.dfy", "dafny", "+method {:verify false} M() {"), { "{:verify false}": 1 });
     assert.deepEqual(hatches("src/lib.rs", "verus", "+#[verifier::external_body]", "+    assume(x > 0);", "+// admit()"), { external_body: 1, assume: 1 });
@@ -114,6 +115,7 @@ describe("escape hatches", () => {
     assert.deepEqual(hatches("A.v", "rocq", "+  Nothing here is Admitted."), {});
     assert.deepEqual(hatches("A.v", "rocq", "+Local Axiom x : False."), { Axiom: 1 });
     assert.deepEqual(hatches("A.v", "rocq", "+Proof. admit. Admitted."), { admit: 1, Admitted: 1 });
+    assert.deepEqual(hatches("A.v", "rocq", "+      bypass_check ? raw : corrected;"), {});
     assert.deepEqual(hatches("src/lib.rs", "verus", "+if !self.admit(req) {", "+fn assume(x: bool) {}"), {});
     assert.deepEqual(hatches("dfyconfig.toml", undefined, "+no-verify = false"), {});
   });
@@ -142,6 +144,9 @@ describe("escape hatches", () => {
   it("tells a Rocq file from its added lines", () => {
     assert.equal(readProofDiff("A.v", undefined, diff("A.v", "+Lemma x : True.", "+Proof. auto. Qed.")).rocq, true);
     assert.equal(readProofDiff("A.v", undefined, diff("A.v", "+assign y = a & b;")).rocq, false);
+    assert.equal(readProofDiff("A.v", "rocq", diff("A.v", " Proof.", "+Admitted.")).rocq, true);
+    assert.equal(readProofDiff("rtl/arb.v", undefined, diff("rtl/arb.v", "+/*", "+  Import the request vector from the NoC.", "+*/")).rocq, false);
+    assert.equal(readProofDiff("rtl/arb.v", "rocq", diff("rtl/arb.v", "+/*", "+Section 2. Arbitration", "+*/")).rocq, false);
   });
 });
 
