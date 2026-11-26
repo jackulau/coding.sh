@@ -200,12 +200,16 @@ describe("a redaction keeps JSON text valid", () => {
     ["a netrc password at the end of a string", red, `{"t":"machine api.test login demo password x1y2z3w4"}`, `{"t":"machine api.test login demo password [redacted:netrc]"}`],
     ["a netrc password before an escape", red, `{"t":"machine api.test login demo password x1y2z3w4${BS}nnext"}`, `{"t":"machine api.test login demo password [redacted:netrc]${BS}nnext"}`],
     ["a netrc entry after an escaped newline", red, `{"t":"x${BS}nmachine api.test login demo password x1y2z3w4"}`, `{"t":"x${BS}nmachine api.test login demo password [redacted:netrc]"}`],
-    // As in plain text, the value runs on to a space or a quote, past the escapes in it.
-    ["an assignment after an escaped newline", red, `{"out":"x${BS}nDB_PASSWORD=x1y2z3w4v5${BS}nPORT=8080"}`, `{"out":"x${BS}nDB_PASSWORD=[redacted:secret-assignment]"}`],
+    // Right after an escape, the value ends at the next `\n` (or `\t`, ...), so the next line stays.
+    ["an assignment after an escaped newline", red, `{"out":"x${BS}nDB_PASSWORD=x1y2z3w4v5${BS}nPORT=8080"}`, `{"out":"x${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nPORT=8080"}`],
+    ["an assignment with no value before the next line", red, `{"m":"x${BS}nDB_PASSWORD=${BS}nAWS_CREDENTIALS=x1y2z3w4v5"}`, `{"m":"x${BS}nDB_PASSWORD=${BS}nAWS_CREDENTIALS=[redacted:secret-assignment]"}`],
+    ["a netrc password before the next key", red, `{"t":"machine api.test login demo password x1y2z3w4","u":"v"}`, `{"t":"machine api.test login demo password [redacted:netrc]","u":"v"}`],
     ["a marker before an escape is left as it is", red, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nexport X=1"}`, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nexport X=1"}`],
     ["a value after a marker and an escape is still found", red, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nAPI_KEY=x1y2z3w4v5"}`, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nAPI_KEY=[redacted:secret-assignment]"}`],
-    ["an address that starts at the letter of `\\n`", email, `{"t":"a${BS}nbob@example.com"}`, `{"t":"a${BS}n[redacted:email]"}`],
-    ["an address that starts at the `u` of an escape", email, `{"t":"a${BS}u00e9bob@example.com"}`, `{"t":"a${BS}u00e9[redacted:email]"}`],
+    // A match that starts inside an escape: the escape is finished as U+FFFD, so the text still
+    // parses and the escape keeps none of the match's characters.
+    ["an address that starts at the letter of `\\n`", email, `{"t":"a${BS}nbob@example.com"}`, `{"t":"a${BS}ufffd[redacted:email]"}`],
+    ["an address that starts at the `u` of an escape", email, `{"t":"a${BS}u00e9bob@example.com"}`, `{"t":"a${BS}ufffd[redacted:email]"}`],
   ];
   for (const [name, r, input, want] of cases) {
     it(name, () => {
@@ -222,5 +226,22 @@ describe("a redaction keeps JSON text valid", () => {
     assert.equal(red.string(`DB_PASSWORD=ab${BS}${BS}ncd1234efgh`), "DB_PASSWORD=[redacted:secret-assignment]");
     assert.equal(red.string(`GOOGLE_CREDENTIALS=D:${BS}uploads${BS}demo${BS}key.json`), "GOOGLE_CREDENTIALS=[redacted:secret-assignment]");
     assert.equal(red.string(`machine api.test login demo password ab"cd1234`), "machine api.test login demo password [redacted:netrc]");
+    assert.equal(red.string(`machine api.test login demo password ab",cd1234`), "machine api.test login demo password [redacted:netrc]");
+    assert.equal(red.string(`machine api.test login demo password ab"}cd1234`), "machine api.test login demo password [redacted:netrc]");
+  });
+
+  it("in plain text, a match that starts inside what reads as a JSON escape is replaced whole", () => {
+    // `\b` and `․` read as JSON escapes, `\d` does not.
+    assert.equal(email.string(`DOMAIN${BS}bob@example.com`), `DOMAIN${BS}ufffd[redacted:email]`);
+    assert.equal(email.string(`CORP${BS}dev.ops@example.com`), `CORP${BS}[redacted:email]`);
+    const year = createRedactor({ redact: ["none"], patterns: [String.raw`\d{4}`] });
+    assert.equal(year.string(`C:${BS}u2024${BS}report`), `C:${BS}ufffd[redacted:pattern]${BS}report`);
+  });
+
+  it("an assignment in JSON text held in JSON text keeps both levels", () => {
+    const input = JSON.stringify({ o: JSON.stringify({ m: 'a\nDB_PASSWORD=x1y2z3w4v5"' }) });
+    const out = red.string(input);
+    const inner = JSON.parse((JSON.parse(out) as { o: string }).o) as { m: string };
+    assert.deepEqual(inner, { m: 'a\nDB_PASSWORD=[redacted:secret-assignment]"' });
   });
 });

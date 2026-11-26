@@ -192,12 +192,10 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
 const AFTER_ESCAPE = String.raw`(?<=\\[bfnrt])|(?<=\\u[0-9A-Fa-f]{4})`;
 /** A `(?<!…)` lookbehind or `\b` at the start of a regex source, maybe inside its first group. */
 const LEADING_BREAK = /^(\(?)(\(\?<!(?:\[(?:\\.|[^\\\]])+\]|\\.|[^()[\\])+\)|\\b)/;
-/** `guard`, a lookahead, applies only where the break passes after an escape. */
-function orAfterEscape(re: RegExp, guard = ""): RegExp {
+function orAfterEscape(re: RegExp): RegExp {
   const m = LEADING_BREAK.exec(re.source);
   if (!m) return re;
-  const after = guard ? `(?:${AFTER_ESCAPE})${guard}` : AFTER_ESCAPE;
-  return new RegExp(`${m[1]}(?:${m[2]}|${after})${re.source.slice(m[0].length)}`, re.flags);
+  return new RegExp(`${m[1]}(?:${m[2]}|${AFTER_ESCAPE})${re.source.slice(m[0].length)}`, re.flags);
 }
 
 /**
@@ -408,8 +406,18 @@ function builtInSecretRules(): RedactRule[] {
     // around "=" (that's code, not env), value isn't a $reference or a number.
     {
       kind: "secret-assignment",
-      pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
-      replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
+      // Right after an escape (JSON text held in a string) the value ends at an escape that
+      // AFTER_ESCAPE starts a match after (\n, \t, ...), at an escaped quote, and at escaped
+      // backslashes before b, f, n, r, t, a quote or another backslash (an escape one level down).
+      // \/, \uXXXX and escaped backslashes before any other character stay in the value. The match
+      // ends where the value does, so the next line, and an assignment on it, are matched too.
+      pattern: new RegExp(
+        `(?:(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2` +
+          `|(?:${AFTER_ESCAPE})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|(?:\\\\\\\\)+(?![bfnrt"\\\\])){8,})\\5)`,
+        "g",
+      ),
+      replace: (_m, name, q, _v, afterName, afterQ) =>
+        name === undefined ? `${afterName}${afterQ}${marker("secret-assignment")}${afterQ}` : `${name}${q}${marker("secret-assignment")}${q}`,
     },
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
     // word: the name it suffixes ("client_api_key", "x-api-key") is left as is, so
@@ -423,11 +431,15 @@ function builtInSecretRules(): RedactRule[] {
     withFastApply(proseSecret, redactProseSecrets),
     // A .netrc entry: machine <host> login <user> password <value>, on one line or several. The
     // value also ends at a quote that ends a JSON string: one followed by a space, ",", ":", "}",
-    // "]" or the end of the text.
+    // "]" or the end of the text. In plain text, where more than those characters follow such a
+    // quote before a space, the quote is part of the value.
     {
       kind: "netrc",
-      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)((?:[^\s"\\]|"(?![\s,:}\]]|$))+)/g,
-      replace: (m, pre, v) => (isLiteralSecret(v) ? `${pre}${marker("netrc")}` : m),
+      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)((?:[^\s"\\]|"(?![\s,:}\]]|$))+)(?:("[,:}\]][^\s"\\]*)(?=\s|$))?/g,
+      replace: (m, pre, v, rest) => {
+        const more = rest !== undefined && /[^,:}\]]/.test(rest.slice(1));
+        return isLiteralSecret(more ? v + rest : v) ? `${pre}${marker("netrc")}${rest !== undefined && !more ? rest : ""}` : m;
+      },
     },
     // The value after a secret name and ":" or "=", quoted or not, with spaces or not: .env
     // (DB_PASSWORD = …), YAML (client_secret: …), TOML (api_key = "…"), INI, connection strings
@@ -439,11 +451,10 @@ function builtInSecretRules(): RedactRule[] {
       replace: (m, pre, q, v) => (isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m),
     },
   ];
-  // Set on the rule itself: fastApply and the needles are keyed by the rule object. A name right
-  // after an escape whose value is a marker and then a backslash is JSON text in which the value
-  // already ended (a blob's text: DB_PASSWORD=[redacted:…]\nexport): it is skipped.
-  const ASSIGNED_MARKER = `(?!${ENV_SECRET_NAME}=["']?\\[redacted:[a-z0-9-]+\\]\\\\)`;
-  for (const rule of rules) rule.pattern = orAfterEscape(rule.pattern, rule.kind === "secret-assignment" ? ASSIGNED_MARKER : "");
+  // Set on the rule itself: fastApply and the needles are keyed by the rule object. The
+  // secret-assignment rule has its own alternative after an escape; its source starts with `(?:`,
+  // which LEADING_BREAK does not match, so orAfterEscape leaves it as it is.
+  for (const rule of rules) rule.pattern = orAfterEscape(rule.pattern);
   return rules;
 }
 
@@ -986,16 +997,19 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
       return marker(r.kind);
     };
   }
-  // A match can start or end inside a JSON escape: keepEscapes keeps the escape whole.
+  // A match can start or end inside a JSON escape: keepEscapes keeps the text well-formed.
   if (s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind))));
   return replace ? s.replace(r.pattern, replace) : s.replace(r.pattern, marker(r.kind));
 }
 
 /**
- * A replace callback for `s` that keeps each JSON escape a match starts or ends inside: in
- * `a\nbob@example.com` the address starts at the `n` of `\n`, and in `token=x1y2z3w4\"` a value
- * runs to the backslash of `\"`. Replacing either part alone leaves text that no longer parses as
- * JSON. Only the part of the match that the replacement changes is cut (cutWhole).
+ * A replace callback for `s` that keeps the text well-formed where a match starts or ends inside a
+ * JSON escape: in `a\nbob@example.com` the address starts at the `n` of `\n`, and in
+ * `token=x1y2z3w4\"` a value runs to the backslash of `\"`. Replacing the match alone leaves text
+ * that no longer parses as JSON. cutWhole finishes an escape the match starts inside as U+FFFD,
+ * the replacement character, and keeps the backslashes of one it ends inside, so each escape stays
+ * well-formed and the marker stands for the whole match. Only the part of the match that the
+ * replacement changes is cut.
  */
 function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
   return (m, ...rest) => {
@@ -1027,23 +1041,38 @@ function escapeEnd(s: string, p: number): number {
   return c === 34 || c === 92 || c === 47 || c === 98 || c === 102 || c === 110 || c === 114 || c === 116 ? p + 2 : -1;
 }
 
+/**
+ * An escape's text after its backslash (U+FFFD, the replacement character): any suffix of it
+ * finishes an escape a cut starts inside, so the escape keeps none of the match's characters.
+ * Hex letters only, so a rule that matches digits does not match it again on a second pass.
+ */
+const CUT_ESCAPE = "ufffd";
+
 /** `text` in place of s[from, to), keeping the part inside it of a JSON escape that crosses either end. */
 function cutWhole(s: string, from: number, to: number, text: string): string {
-  let head = from;
+  // An escape that starts before `from` and ends after it: finished with CUT_ESCAPE, not with the match.
+  let lead = "";
   for (let p = from - 1; p >= 0 && p >= from - 5; p--) {
     if (s.charCodeAt(p) !== 92) continue;
-    const e = escapeEnd(s, p);
-    if (e > from) head = Math.min(e, to);
+    if (escapeEnd(s, p) > from) lead = CUT_ESCAPE.slice(from - p - 1);
     break;
   }
+  // An escape that starts before `to` and ends after it: its backslash and the run of backslashes
+  // before it stay (a quote escaped at a deeper level), and a \u keeps its letter with zeros for
+  // the digits the match took.
   let tail = to;
-  for (let p = to - 1; p >= head && p >= to - 5; p--) {
+  let keep = "";
+  for (let p = to - 1; p >= from && p >= to - 5; p--) {
     if (s.charCodeAt(p) !== 92) continue;
-    if (escapeEnd(s, p) > to) tail = p;
+    if (escapeEnd(s, p) > to) {
+      tail = p;
+      while (tail > from && s.charCodeAt(tail - 1) === 92) tail--;
+      keep = s.slice(tail, p + 1) + (to > p + 1 ? "u" + "0".repeat(to - p - 2) : "");
+    }
     break;
   }
-  if (head === from && tail === to) return text;
-  return head >= tail ? s.slice(from, to) : s.slice(from, head) + text + s.slice(tail, to);
+  if (!lead && tail === to) return text;
+  return lead + text + keep;
 }
 
 /**

@@ -206,6 +206,16 @@ describe("the hook redacts before it writes", () => {
     assert.deepEqual(tally.kinds, { "anthropic-key": 1 });
   });
 
+  it("redactPayload redacts a value as its document does when a match in the text stops at an escape inside it", () => {
+    // In the text, the token after `Token` ends at the backslash of `é`; in the document the
+    // string holds é, and the whole value is one token.
+    const tally = redactionTally();
+    const body = `{"m":"a${BS}nAuthorization: Token abcd1234${BS}u00e9efgh5678"}`;
+    const out = redactPayload(createRedactor(), { body }, tally) as { body: string };
+    assert.equal(out.body, `{"m":"a${BS}nAuthorization: Token [redacted:auth-header]"}`);
+    assert.deepEqual(tally.kinds, { "auth-header": 1 });
+  });
+
   it("withSpoolRedactions adds the line's counts to the event's", () => {
     const e: AgentEvent = { id: "e", v: 0, sessionId: "s", ts: 1, agent: "fake", kind: "user.message", payload: { text: "x", redactions: { password: 1 } } };
     assert.deepEqual(withSpoolRedactions(e, { "github-token": 2, password: 1 }).payload.redactions, { "github-token": 2, password: 2 });

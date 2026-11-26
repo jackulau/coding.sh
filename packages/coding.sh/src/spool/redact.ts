@@ -129,6 +129,19 @@ function documents(s: string, level = 0): number {
 
 const MARKER_ONLY = /^\[redacted:[a-z0-9-]+\]$/;
 
+/** The characters a redacted string still shows: its length without markers, or for a document the same over its strings, as deep as documents() follows them. */
+function shownLength(s: string, level = 0): number {
+  const doc = level < 3 ? jsonDocument(s) : undefined;
+  if (doc === undefined) return s.replace(/\[redacted:[a-z0-9-]+\]/g, "").length;
+  let n = 0;
+  const visit = (v: unknown, depth: number): void => {
+    if (typeof v === "string") n += shownLength(v, level + 1);
+    else if (v !== null && typeof v === "object" && depth <= 64) for (const x of Object.values(v)) visit(x, depth + 1);
+  };
+  visit(doc, 0);
+  return n;
+}
+
 /**
  * Redacts a hook payload (parsed JSON, or the text when it did not parse). Every
  * string goes through the rules as ingest redacts an event's payload
@@ -137,17 +150,35 @@ const MARKER_ONLY = /^\[redacted:[a-z0-9-]+\]$/;
  * shows to be secret. A document with nothing more to redact keeps its text, so an
  * event built from the result matches the one ingest builds from the original.
  *
- * A rule run on the text keeps each JSON escape whole, but a match can still run
- * past the end of one of a document's strings (a private key with no END line runs
- * to the end of the text), and a document in the text then no longer parses, at
- * any depth. For such a string the original is redacted as documents instead
- * (redactForBlob), and the counts the rules made on its text are taken back, so
- * each value is counted once.
+ * A rule run on the text keeps the text well-formed where a match starts or ends
+ * inside a JSON escape, but a match can still run past the end of one of a
+ * document's strings (a private key with no END line runs to the end of the text),
+ * and a document in the text then no longer parses, at any depth. A match can also
+ * stop at an escape inside a value (below). The text's result is kept only when as
+ * many documents parse in it as in the original and it shows no more than the
+ * original redacted as documents. Otherwise the original is redacted as documents
+ * instead (redactForBlob), and the counts the rules made on its text are taken
+ * back, so each value is counted once.
  */
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
   return mapJsonStrings(r.value(v, tally), v, (s, before) => {
-    if (before === undefined || before === s || MARKER_ONLY.test(s) || documents(s) >= documents(before)) return redactForBlob(r, s, tally) as string;
+    if (before === undefined || before === s || MARKER_ONLY.test(s)) return redactForBlob(r, s, tally) as string;
+    const docs = documents(before);
+    if (docs === 0) return redactForBlob(r, s, tally) as string;
+    if (documents(s) >= docs) {
+      // A match the text pass started right after an escape can stop at an escape inside its value
+      // (\u00e9, \", \/): the rest of the value then follows a marker, where the document pass does
+      // not look again. The text's result is kept only when it shows no more than the original
+      // redacted as documents.
+      const viaText = redactionTally();
+      const clean = redactForBlob(r, s, viaText) as string;
+      if (shownLength(clean) <= shownLength(redactForBlob(r, before, redactionTally()) as string)) {
+        for (const [k, n] of Object.entries(viaText.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
+        if (viaText.preexisting) tally.preexisting = true;
+        return clean;
+      }
+    }
     const onText = redactionTally();
     r.string(before, onText);
     for (const [k, n] of Object.entries(onText.kinds)) {
