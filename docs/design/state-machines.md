@@ -128,7 +128,7 @@ Writers: a hook appends to the file of the UTC day it took its timestamp in: tod
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
 | Absent | first append (0600, dir 0700) | Growing | – | `write.ts` `appendSpool` |
-| Growing | ingest reads complete lines | PartiallyRead / LocallyRead | a partial last line is left for the next run | `spool-read.ts` `readSpoolFile` |
+| Growing | ingest reads complete lines | PartiallyRead / LocallyRead | a partial last line is left for the next run; readPos moves past blank lines too, so one that ends the file is read | `spool-read.ts` `readSpoolFile` (`onBlank`) |
 | PartiallyRead | checkpoint | local cursor = readPos (a line boundary), committed with the events and session rows | readPos > local | `ingest.ts` `checkpoint` |
 | LocallyRead | a sink acks a batch | that sink's cursor moves; FullyRead once every cursor is at the size | lines never split across batches | `ingest.ts` `sendToSink` |
 | LocallyRead | a past UTC day, read to its end, not yet scrubbed at this size | inline payloads redacted in place: same size, offsets and mtime | – | `ingest.ts` `scrubPastDays`, `spool-scrub.ts` |

@@ -174,12 +174,42 @@ const PROJECT_HEADER = /^[ \t]*Project:/;
  * only mentions them keeps them.
  */
 export const TITLE_SKIP: readonly RegExp[] = [HARNESS_FRAME, PROJECT_HEADER];
-const PASTED = /<pasted_content\b[^>]*>([\s\S]*?)(?:<\/pasted_content>|$)/g;
+const PASTE_OPEN = "<pasted_content";
+const PASTE_CLOSE = "</pasted_content>";
+
+/**
+ * `text` with each pasted block cut to a newline, the blocks' bodies pushed to `pastes`. A block is
+ * `<pasted_content …>` (the whole tag name) up to its close tag, or to the end when it has none.
+ * Scanned with indexOf, so it is read in linear time.
+ */
+function cutPastes(text: string, pastes: string[]): string {
+  let out = "";
+  let from = 0;
+  let at = text.indexOf(PASTE_OPEN);
+  while (at >= 0) {
+    const after = at + PASTE_OPEN.length;
+    // The tag name must end here: `<pasted_contents>` is not a paste.
+    if (/\w/.test(text.charAt(after))) {
+      at = text.indexOf(PASTE_OPEN, at + 1);
+      continue;
+    }
+    const gt = text.indexOf(">", after);
+    // No `>` after this tag means none after a later one, so the rest of the text is outside.
+    if (gt < 0) break;
+    const close = text.indexOf(PASTE_CLOSE, gt + 1);
+    const end = close < 0 ? text.length : close;
+    pastes.push(text.slice(gt + 1, end));
+    out += `${text.slice(from, at)}\n`;
+    from = close < 0 ? text.length : close + PASTE_CLOSE.length;
+    at = text.indexOf(PASTE_OPEN, from);
+  }
+  return out + text.slice(from);
+}
 
 /** The task of a prompt: outside any pasted block, without skipped lines; else the paste's first line; else undefined. */
 function taskText(text: string): string | undefined {
   const pastes: string[] = [];
-  const outside = text.replace(PASTED, (_, body: string) => { pastes.push(body); return "\n"; });
+  const outside = cutPastes(text, pastes);
   const lines = outside.split("\n");
   const framed = lines.some((l) => HARNESS_FRAME.test(l));
   const kept = lines.filter((l) => !HARNESS_FRAME.test(l) && !(framed && PROJECT_HEADER.test(l))).join("\n");
@@ -261,9 +291,9 @@ export const isRealPrompt = (e: AgentEvent): boolean => e.kind === "user.message
 /** "/model opus" from a slash-command echo, else undefined. */
 function commandTitle(text: string): string | undefined {
   if (!COMMAND_PROMPT.test(text)) return undefined;
-  const name = /<command-name>\s*([^<]*?)\s*<\/command-name>/.exec(text)?.[1];
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
   if (!name) return undefined;
-  const args = /<command-args>\s*([^<]*?)\s*<\/command-args>/.exec(text)?.[1];
+  const args = /<command-args>([^<]*)<\/command-args>/.exec(text)?.[1]?.trim();
   return makeTitle(args ? `${name} ${args}` : name);
 }
 
