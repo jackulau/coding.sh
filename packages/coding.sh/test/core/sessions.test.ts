@@ -397,6 +397,11 @@ describe("failure detectors", () => {
     assert.deepEqual(say('The subagent wrote `<invoke name="Read">` as text.'), [], "mid-line, in prose");
     assert.deepEqual(say('<invoke name="Read"> is the markup it used'), [], "no parameter or close after it");
     assert.ok(writesToolCallAsText('  <invoke name="Bash">\n  <parameter name="command">ls</parameter>'));
+    // A fence opens where a `\n` ends its line and closes at a later line, after any line break, that starts with the same fence.
+    const call = '<invoke name="Bash">\n<parameter name="command">ls</parameter>';
+    for (const text of ["```\r\n" + call + "\r\n```", "```\n" + call + "\r```", "```\n" + call + "\u2028```", "  ```sh\n" + call + "\n\t```", "~~~\n```\n" + call + "\n~~~"]) assert.equal(writesToolCallAsText(text), false, JSON.stringify(text));
+    // An unclosed fence, or a block closed before the call, hides nothing.
+    for (const text of ["```\n" + call, "```\n```\n" + call, "~~~\n" + call + "\n```"]) assert.equal(writesToolCallAsText(text), true, JSON.stringify(text));
   });
 
   it("test-tamper: a test edit that alone turns a failing run green", () => {
