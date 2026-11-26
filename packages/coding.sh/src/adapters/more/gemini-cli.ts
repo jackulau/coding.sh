@@ -412,9 +412,10 @@ export const geminiCliAdapter: Adapter = {
   // 6 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 7 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 8 (0.1.8): a hook whose transcript_path names a file that cannot be read gives its events (jsonlTail).
-  // 9 (0.1.8): a message's output or thought count that is not a whole number from 0 to 2^53 - 1 reads as missing
+  // 9 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing.
+  // 10 (0.1.8): a message's output or thought count that is not a whole number from 0 to 2^53 - 1 reads as missing
   //    before the two are summed into its output.
-  parseVersion: 9,
+  parseVersion: 10,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["gemini"]);
     const dir = geminiDir();

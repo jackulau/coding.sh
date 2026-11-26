@@ -29,6 +29,7 @@
 // stamped at its first block. The full transcript's copy, with the same id, has them.
 import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
 import { billableUsage, promptTokens, tierValue } from "../../core/pricing.ts";
+import { dateMs } from "../../core/dates.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
@@ -825,8 +826,8 @@ function apiError(e: Record<string, unknown>): Record<string, unknown> {
     errorType,
     errorClass: errorClass(status, errorType, network),
     rateLimitType: str(rl.rateLimitType),
-    // Seconds since the epoch on the wire.
-    resetsAt: resets !== undefined ? (resets < 1e12 ? resets * 1000 : resets) : undefined,
+    // Seconds since the epoch on the wire; a time out of the Date range is left out.
+    resetsAt: resets !== undefined ? dateMs(resets < 1e12 ? resets * 1000 : resets) : undefined,
     retryAfterMs: num(e.retryInMs),
     retryAttempt: num(e.retryAttempt),
     maxRetries: num(e.maxRetries),

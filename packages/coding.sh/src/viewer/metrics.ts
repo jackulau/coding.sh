@@ -6,6 +6,7 @@
 // Both store paths reduce each session to a MetricRow first (SQLite reads only
 // those numbers with json_extract; other stores map listSessions rows), and the
 // sums happen here, so the two paths agree to the last digit.
+import { isFailureFlag } from "../core/failure-flags.ts";
 import type { IndexStore, MetricRow, SessionFilter } from "../core/types.ts";
 import { sessionMatcher } from "../query/run.ts";
 import { repoGroup, type Query } from "../query/where.ts";
@@ -65,7 +66,7 @@ export interface MetricsSpec {
 /** Sums over a set of sessions. Rates and percentiles are absent when there is nothing to divide or rank. */
 export interface MetricTotals {
   sessions: number;
-  /** Sessions with a failure flag (one with no colon; `flag:x:y` tags are not failures). */
+  /** Sessions with a failure flag (core/failure-flags.ts: tags such as `skill:pdf` and context flags such as `compaction` are not failures). */
   failures: number;
   failureRate?: number;
   /** Reported or estimated cost of the priced sessions. */
@@ -252,7 +253,7 @@ export function rollUpSubagents(rows: readonly MetricRow[]): MetricRow[] {
 
 // ---------------------------------------------------------------- sums
 
-const isFailure = (r: MetricRow): boolean => r.flags.some((f) => !f.includes(":"));
+const isFailure = (r: MetricRow): boolean => r.flags.some(isFailureFlag);
 const tokensOf = (r: MetricRow): number => (r.inputTokens ?? 0) + (r.outputTokens ?? 0) + (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0);
 /** Sums in a fixed order and rounded, so two paths that list sessions differently agree exactly. */
 const round = (x: number, places = 9): number => {

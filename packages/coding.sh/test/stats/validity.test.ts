@@ -308,6 +308,27 @@ describe("signalRows", () => {
     assert.equal(get(v, "no-verification").reference, undefined);
   });
 
+  it("compaction is a note, not a failure flag: it gets no column, and no-verification still does", () => {
+    const results = [
+      { id: "r1", taskId: "t", bundleId: "A", pass: true },
+      { id: "r2", taskId: "t", bundleId: "A", pass: false },
+      { id: "r3", taskId: "t", bundleId: "A", pass: true },
+    ];
+    const sessions = new Map([
+      ["r1", { flags: ["compaction", "gateway:vercel"], stats: stats() }],
+      ["r2", { flags: ["compaction", "no-verification"], stats: stats() }],
+      ["r3", { flags: [], stats: stats() }],
+    ]);
+    assert.deepEqual(
+      signalRows(results, sessions as never).map((r) => r.scores),
+      [
+        { toolErrors: 0, "no-verification": 0, turns: 4, tokens: 15 },
+        { toolErrors: 0, "no-verification": 1, turns: 4, tokens: 15 },
+        { toolErrors: 0, "no-verification": 0, turns: 4, tokens: 15 },
+      ],
+    );
+  });
+
   it("hasRepeatedAttempts", () => {
     assert.equal(hasRepeatedAttempts([{ taskId: "t", arm: "A" }, { taskId: "t", arm: "B" }]), false);
     assert.equal(hasRepeatedAttempts([{ taskId: "t", arm: "A" }, { taskId: "t", arm: "A" }]), true);

@@ -362,6 +362,10 @@ order.
     copy when the database is not in WAL mode or has no `-wal` and `-shm` files.
   - Backfill follows symlinks and Windows junctions in transcript directories (a mirror of another
     machine's `~/.claude/projects`, say) and skips links that point nowhere.
+  - A time out of the Date range (more than 8.64e15 ms either side of 1970) is read as missing, as when the
+    source gives none, and so is a duration whose start would fall out of it: `toMs` in `_shared/jsonl.ts`
+    and `more/_util.ts`, and `dateMs` and `durationBefore` in `src/core/dates.ts`. Ingest reports an event
+    whose `ts` is still out of the range, as it does an event with no `ts`.
 
 ## Hook command
 

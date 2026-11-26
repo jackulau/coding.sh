@@ -46,6 +46,7 @@
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } from "../schema/index.ts";
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
+import { MAX_DATE_MS } from "../core/dates.ts";
 import { noteBlobHits, type RedactionTally, type Redactor, redactBlobValue, redactionTally } from "../core/redact.ts";
 import { geoValue, tierValue, tokenCount } from "../core/pricing.ts";
 import { WEIGHTS_CHECKPOINT_ATTRS, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_ATTRS, WEIGHTS_EDIT_KIND, weightsCheckpointOf, weightsEditOf } from "../core/weights.ts";
@@ -1779,8 +1780,6 @@ function stableJson(v: unknown): string {
 }
 
 const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
-/** The largest time in ms, either side of 1970, that a Date holds. */
-const MAX_DATE_MS = 8_640_000_000_000_000;
 
 /** Log time in ms: time_unix_nano, else observed time, else an ISO event.timestamp attribute. */
 function logTime(rec: OtelLogRecord): { ms: number; nanos: string } {

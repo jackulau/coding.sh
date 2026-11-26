@@ -111,6 +111,10 @@ describe("work against a seeded store", () => {
     const text = await runCmd(work, sb, {});
     assert.match(text.stdout, /Nothing needs you\. 3 items running, done, acknowledged or snoozed\./);
     assert.match(text.stdout + text.stderr, /(?:coding\.sh|codingsh) work --all/);
+    // The step keeps the --since and --agent given, so it lists the same items.
+    const kept = await runCmd(work, sb, { flags: { since: "2d", agent: "claude-code" } });
+    assert.match(kept.stdout, /Nothing needs you\. 3 items running, done, acknowledged or snoozed\./);
+    assert.match(kept.stderr, /^ +(?:coding[.]sh|codingsh) work --all --since 2d --agent claude-code$/m);
   });
 });
 

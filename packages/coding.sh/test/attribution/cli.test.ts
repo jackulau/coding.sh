@@ -1,17 +1,20 @@
 // `coding.sh attribution`, `attribution export` and `blame` end to end: the
 // fixture repo's sessions stored in a throwaway home, the CLI run against it, and
-// the same sessions under ids too long to print whole.
+// the same sessions under ids too long to print whole, and the next step when nothing can be matched.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { validateAgentTrace } from "../../src/attribution/export.ts";
 import { openContext } from "../../src/core/context.ts";
-import { nextStepBin } from "../../src/cli/next-steps.ts";
+import { snapshot } from "../../src/core/snapshot.ts";
+import { noSessionsNext } from "../../src/cli/first-session.ts";
+import { cliCommand, nextStepBin } from "../../src/cli/next-steps.ts";
+import type { Session } from "../../src/schema/index.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
-import { isolate, removeTmp, tmp } from "../capture/_helpers.ts";
-import { buildFixture, type Fixture } from "./_fixture.ts";
+import { isolate, makeRepo, removeTmp, tmp } from "../capture/_helpers.ts";
+import { buildFixture, HOUR, makeSession, ROOMY, type Fixture } from "./_fixture.ts";
 import { CLI } from "../_cli.ts";
 
 let fx: Fixture;
@@ -236,5 +239,79 @@ describe("coding.sh attribution / blame: session ids over 200 characters", () =>
     const want = (doc.commits as { attributions: { sessionId: string }[] }[]).map((c) => [...new Set(c.attributions.map((a) => a.sessionId))]);
     assert.deepEqual(cells.map((refs) => refs.map(opens)), want);
     assert.deepEqual(want.flat().sort(), Object.values(LONG).sort(), "each of the three sessions wrote a commit");
+  });
+});
+
+// Nothing in the repo can be matched: what the list says, and a next step that fits what the store holds.
+describe("coding.sh attribution: the next step when nothing can be matched", () => {
+  let other: string;
+  const cliIn = (e: NodeJS.ProcessEnv, cwd: string, ...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: e, encoding: "utf8", cwd });
+  /** What follows a next step's label on stderr: its command first. */
+  const afterStep = (stderr: string, label: string): string => {
+    const at = stderr.indexOf(`  ${label}:`);
+    assert.notEqual(at, -1, `no step "${label}" in: ${stderr}`);
+    return stderr.slice(at + label.length + 3).trimStart();
+  };
+  /** A throwaway home whose store holds only these sessions. */
+  async function storeWith(sessions: Session[]): Promise<NodeJS.ProcessEnv> {
+    const home = tmp("csh-attr-home-");
+    mkdirSync(join(home, "codex"), { recursive: true });
+    const e = { ...env, ["HO" + "ME"]: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), CODING_SH_HOME: join(home, "csh") };
+    const ctx = await openContext({ env: e, cwd: other });
+    try {
+      for (const s of sessions) await ctx.index.upsertSession(s);
+    } finally {
+      await ctx.close();
+    }
+    return e;
+  }
+
+  before(() => {
+    // A repo with one commit a person made today, where no captured session ran.
+    other = makeRepo({ "notes.txt": "a line a person wrote" });
+  });
+
+  test("sessions ran in other repos: it says none ran here, and the step shows where they ran", () => {
+    const r = cliIn(env, other, "attribution");
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("No captured session ran in this repo."), r.stdout);
+    assert.ok(afterStep(r.stderr, "See which repos your sessions ran in").startsWith(cliCommand(env, ["sessions", "--facets", "repo"])), r.stderr);
+    assert.ok(!r.stderr.includes("check capture:"), r.stderr);
+    // The step runs, and names the repo the stored sessions ran in.
+    const facets = cliIn(env, other, "sessions", "--facets", "repo");
+    assert.equal(facets.status, 0, facets.stderr);
+    assert.ok(facets.stdout.toLowerCase().includes(basename(fx.root).toLowerCase()), facets.stdout);
+  });
+
+  test("with --since, it says none ran here since then, and looks further back with the --repo given", () => {
+    const r = cliIn(env, fx.root, "attribution", "--since", "7d", "--repo", other);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /No captured session ran in this repo since /);
+    assert.ok(afterStep(r.stderr, "Look further back").startsWith(cliCommand(env, ["attribution", "--since", "90d", "--repo", other])), r.stderr);
+  });
+
+  test("a store with no session at all: the step is how the first one gets there", async () => {
+    const empty = await storeWith([]);
+    const r = cliIn(empty, other, "attribution");
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("No captured session ran in this repo."), r.stdout);
+    const first = noSessionsNext(empty);
+    assert.ok(afterStep(r.stderr, first.label).startsWith(first.command), r.stderr);
+  });
+
+  test("a session ran here with no lines to match: the step checks capture", async () => {
+    const here = makeSession("s-here", "claude-code", "claude-sonnet-4-5", Date.now() - HOUR, (await snapshot(other, { env, ...ROOMY }))!);
+    const one = await storeWith([here]);
+    const r = cliIn(one, other, "attribution");
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stdout.includes("No captured session ran"), r.stdout);
+    assert.ok(afterStep(r.stderr, "Sessions in this repo need an end snapshot or edit tool calls; check capture").startsWith(`${nextStepBin(one)} doctor`), r.stderr);
+  });
+
+  test("no commit in the window: the step looks further back, with the --rev given", () => {
+    const r = cliIn(env, fx.root, "attribution", "--since", "1d", "--rev", "main");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /No commits since .* on [0-9a-f]{8}/);
+    assert.ok(afterStep(r.stderr, "Look further back").startsWith(cliCommand(env, ["attribution", "--since", "90d", "--rev", "main"])), r.stderr);
   });
 });

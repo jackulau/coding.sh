@@ -19,6 +19,7 @@ import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
+import { dateMs, durationBefore } from "../core/dates.ts";
 import { tokenCount } from "../core/pricing.ts";
 import type { Adapter, AgentRunOutput, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -343,11 +344,13 @@ export async function normalizeOpencodeLine(line: SpoolLine, ctx: NormalizeConte
     case "session.step.failed": {
       const usage = tokensUsage(data.tokens, data.cost);
       const ok = event === "session.step.ended";
-      const end = num(raw.created) ?? line.ts;
+      // A time out of the Date range is read as missing, and so is a duration whose start falls out of it.
+      const end = dateMs(num(raw.created)) ?? line.ts;
+      const took = durationBefore(end, durationMs);
       em.emit(
         "llm.call",
-        { ok, stopReason: str(data.finish) ?? str(obj(data.finish).reason), error: ok ? undefined : (str(data.error) ?? str(obj(data.error).message))?.slice(0, 500), messageId: str(data.assistantMessageID), tokensPerSec: usage?.outputTokens && durationMs ? Math.round((usage.outputTokens / (durationMs / 1000)) * 10) / 10 : undefined },
-        { key: [str(raw.id) ?? end], ts: durationMs !== undefined ? end - durationMs : end, durationMs, usage },
+        { ok, stopReason: str(data.finish) ?? str(obj(data.finish).reason), error: ok ? undefined : (str(data.error) ?? str(obj(data.error).message))?.slice(0, 500), messageId: str(data.assistantMessageID), tokensPerSec: usage?.outputTokens && took ? Math.round((usage.outputTokens / (took / 1000)) * 10) / 10 : undefined },
+        { key: [str(raw.id) ?? end], ts: took !== undefined ? end - took : end, durationMs: took, usage },
       );
       break;
     }
@@ -632,7 +635,7 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
         });
         const events = await convertStoredSession(
           ctx,
-          { id, parentId: str(s.parent_id), title: str(s.title), directory: str(s.directory), version: str(s.version), created: toMs(s.time_created, 0), updated: num(s.time_updated), agent: str(s.agent) },
+          { id, parentId: str(s.parent_id), title: str(s.title), directory: str(s.directory), version: str(s.version), created: toMs(s.time_created, 0), updated: dateMs(num(s.time_updated)), agent: str(s.agent) },
           msgs,
           sessionTotals(s),
         );
@@ -748,9 +751,11 @@ export const opencode: Adapter = {
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 7 (0.1.8): a session id that two JSON session files name is read once, from the first.
-  // 8 (0.1.8): a token count in a message's, step's or session's usage that is not a whole number from 0 to 2^53 - 1 reads as missing,
+  // 8 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also a stored session's time_updated
+  //    and a step's created. A step's durationMs whose start falls out of that range is left out.
+  // 9 (0.1.8): a token count in a message's, step's or session's usage that is not a whole number from 0 to 2^53 - 1 reads as missing,
   //    so the output sum (output plus reasoning) skips it instead of carrying it.
-  parseVersion: 8,
+  parseVersion: 9,
 
   async detect() {
     const r = await detectAgent({

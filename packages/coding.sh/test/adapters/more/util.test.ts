@@ -586,6 +586,11 @@ describe("small parsers", () => {
     assert.equal(toMs("1790000000"), 1790000000000);
     assert.equal(toMs("nope"), undefined);
   });
+  it("toMs reads a time out of the Date range as missing", () => {
+    assert.equal(toMs(8.64e15), 8.64e15);
+    assert.equal(toMs(-8.64e12), -8.64e15);
+    for (const v of [1e308, -1e308, 9e15, -8.7e12, "9000000000000000"]) assert.equal(toMs(v), undefined, String(v));
+  });
   it("usageFrom reads the common shapes", () => {
     assert.deepEqual(usageFrom({ input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4, total_cost_usd: 0.5 }), { inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, costUsd: 0.5 });
     assert.deepEqual(usageFrom({ promptTokenCount: 5, candidatesTokenCount: 6, cachedContentTokenCount: 1 }), { inputTokens: 5, outputTokens: 6, cacheReadTokens: 1 });

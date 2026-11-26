@@ -1628,7 +1628,7 @@ latency.
 
 | Field | Meaning |
 |---|---|
-| `failures` | Sessions with a flag that has no colon |
+| `failures` | Sessions with a failure flag: a flag with no colon, other than `compaction`, `step-retried` and `resumed` |
 | `failureRate` | Failures over sessions |
 | `toolErrorRate` | Tool errors over tool calls |
 | `llmP95Ms` | The 95th percentile (nearest rank) of the sessions' own p95 model-call time. `null` in a bucket with no such session |

@@ -975,6 +975,24 @@ describe("blob redaction", () => {
   });
 });
 
+// In JSON text held in a string, a key right after the escape `\n` follows the letter `n`.
+describe("redaction of JSON text in a log record", () => {
+  it("redacts a key right after an escape in a prompt, in the event and in the source record", async () => {
+    const blobs = new MemBlobs();
+    const pipeline = createOtlpPipeline({ store: new MemIndex(), blobs, keepRaw: true, redactor: createRedactor() });
+    const BS = String.fromCharCode(92);
+    const key = ["sk-", "ant-", "api03-", "Zx8Qw2Lm4Np6Rt8Vb0Cd2Ef4Gh6Jk8Mn1Pq3"].join("");
+    const logs = fixture("claude-code-logs.json");
+    logs.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find((a: any) => a.key === "prompt").value = { stringValue: `see {"msg":"a${BS}n${key}"}` };
+    const events = (await pipeline.map("logs", decodeLogsJson(logs))).events;
+    const msg = events.find((e) => e.kind === "user.message")!;
+    assert.equal(msg.payload.text, `see {"msg":"a${BS}n[redacted:anthropic-key]"}`);
+    assert.deepEqual(msg.payload.redactions, { "anthropic-key": 1 });
+    assert.ok(blobs.data.size > 0);
+    for (const b of blobs.data.values()) assert.ok(!Buffer.from(b).toString().includes(key));
+  });
+});
+
 describe("trace → conversation map persistence", () => {
   it("routes a later span of a conversation trace into the conversation after a restart", async () => {
     const { MemoryIndexStore, MemoryBlobStore } = await import("../../src/store/memory.ts");

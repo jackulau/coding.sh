@@ -1047,6 +1047,11 @@ rounds as a run that was never interrupted.
   differ. Without `--weights` it keeps the stamp the experiment has.
   `--retry-errors` with `--resume <EXPERIMENT>` also runs its task-errored case-trials again, on a
   finished experiment too.
+- A run that has stored no experiment yet is not in the `exp list` table: `exp run` stores its
+  first record after a trial finishes, and the A/B, A/A, replay and matrix runs store theirs when
+  their trials are done (a sweep when its race ends). `exp list` names each such run after the
+  table, with the command to continue it (`exp status <id>` while it runs), and `--json` lists them
+  under `unfinished`. `exp show <id or name>` says where one stands.
 
 `coding.sh exp status` lists the durable runs with progress, ETA (from this session's pace) and
 the cost so far (from the trials that report one). `coding.sh exp status <id>` shows one run and
@@ -2299,8 +2304,9 @@ nothing within a task (0.50); `toolErrors` separates failed from passed runs of 
   half. `pooled` uses every pair, `task` pairs from the same task, `task+arm` pairs from the same task
   and bundle. The 95% CI resamples tasks (seeded), so it needs at least two tasks with task+arm
   pairs; with one, the column shows `–`.
-- Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` are left
-  out) and `toolErrors`. A run with no captured session has no score, and its pairs are dropped.
+- Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` and the
+  notes `compaction`, `step-retried` and `resumed` are left out) and `toolErrors`. A run with no
+  captured session has no score, and its pairs are dropped.
 - Reference rows come first. `difficulty(loo)` scores a run by the fail share of its task's other
   runs, leaving out both runs of the pair, so it is 0.5 within a task by construction. `arm(loo)` does
   the same for the bundle. `turns` and `tokens` are length baselines.
