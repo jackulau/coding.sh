@@ -269,6 +269,15 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+A log record joins a session in this order: the one a conversation id on the record names, the one
+its trace's spans went to, the one a conversation id on its resource names, then the one its trace
+id names. A record with none of these goes to `otel-logs-<agent>-<YYYY-MM-DD>`, one session per
+agent and UTC day.
+
+`<agent>` is a known agent such as `claude-code`, else a name taken from `gen_ai.main_agent.name` or
+`service.name`, else `otel`. `coding.sh sessions` lists such a session only with `--empty` when it
+holds no turn, tool call or model call.
+
 Token counts come from usage attributes such as `gen_ai.usage.input_tokens`, as numbers or as
 numeric text. A count that is not a whole number from 0 to 2^53 - 1 is read as not sent: one
 below 0, a fraction, or one too large to read exactly, such as 9007199254740993. It is left out
@@ -324,6 +333,10 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 ```json
 {"partialSuccess":{"rejectedSpans":"1","errorMessage":"span \"broken\" has no valid traceId/spanId"}}
 ```
+
+A span is rejected when its trace id or span id is missing, all zero, or the wrong length: a trace
+id is 16 bytes and a span id 8, sent as hex or base64 in JSON. A parent span id or a log record's
+id like that is read as not set, and the span or record is kept.
 
 | Status | When | Body (JSON requests) |
 |---|---|---|
@@ -507,7 +520,7 @@ share these errors:
 |---|---|---|
 | 400 | a bad parameter | `{"error":"limit must be between 1 and 500","status":400}` |
 | 401 | no valid read credential | `{"error":"missing or invalid token","status":401}` |
-| 403 | the server binds loopback and the `Host` header is not loopback (DNS-rebinding guard) | `{"error":"forbidden host","status":403}` |
+| 403 | the `Host` header is not a loopback name and not in `serve.allowed_hosts` (DNS-rebinding guard); a public bind with an empty list takes any `Host` | `{"error":"forbidden host: add it to serve.allowed_hosts (CODING_SH_ALLOWED_HOSTS)","status":403}`; `coding.sh ui`, which takes loopback names and the address it binds, sends `{"error":"forbidden host","status":403}` |
 | 404 | unknown route, a session outside the key's project, or a session id with a raw `/` (the error says to send `%2F`) | `{"error":"not found","status":404}` |
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
 

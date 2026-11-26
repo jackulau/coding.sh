@@ -738,6 +738,48 @@ describe("OTLP receiver over HTTP", () => {
     assert.ok(res.body.length > 0, "protobuf partial_success is non-empty");
   });
 
+  it("rejects a span whose id is not hex of its length and stores the rest of the request", async () => {
+    const traceId = "0af7651916cd43dd8448eb211c80319c";
+    const good = otlpSpan(traceId, "b7ad6b7169203331", undefined, "chat m", [sAttr("gen_ai.operation.name", "chat")], 1000, 2000);
+    const message = 'span "broken" has no valid traceId/spanId';
+    // JSON carries any text; protobuf carries bytes, so its bad id is hex of the wrong length.
+    for (const [wire, spanId] of [["json", "xyz"], ["protobuf", "abcdef"]] as const) {
+      await rx.close();
+      await start();
+      const req = otlpTraces("ids", [otlpSpan(traceId, spanId, "b7ad6b7169203331", "broken", [], 1100, 1200), good]);
+      const res = await send(rx.url, wire === "json" ? json("/v1/traces", req) : proto("/v1/traces", encodeTraces(req)));
+      assert.equal(res.status, 200, wire);
+      if (wire === "json") assert.deepEqual(JSON.parse(res.body.toString()), { partialSuccess: { rejectedSpans: "1", errorMessage: message } });
+      else {
+        let rejected = 0;
+        let error = "";
+        const r = new ProtoReader(res.body);
+        r.fields((f) => {
+          assert.equal(f, 1);
+          const sub = r.message();
+          sub.fields((g) => {
+            if (g === 1) rejected = sub.varint();
+            else error = sub.string();
+            return true;
+          });
+          return true;
+        });
+        assert.deepEqual([rejected, error], [1, message]);
+      }
+      assert.equal(store.all().filter((e) => e.kind === "llm.call").length, 1, wire);
+      assert.ok(await store.getSession(traceId), wire);
+    }
+  });
+
+  it("stores a log record whose trace id is not hex of its length, without that id", async () => {
+    const logs = fixture("claude-code-logs.json");
+    for (const r of logs.resourceLogs[0].scopeLogs[0].logRecords) r.traceId = "xyz";
+    const res = await send(rx.url, json("/v1/logs", logs));
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body.toString()), {});
+    assert.equal((await store.getSession("cc-session-1"))?.title, "fix the failing test");
+  });
+
   it("stores a model call whose messages are wrapped thousands deep, and answers 200", async () => {
     // Each LangChain {"kwargs":…} or OpenAI {"message":…} wrapper is one level, on a root span and on a
     // child span. At one call frame a level, 50,000 levels would not fit on the stack.

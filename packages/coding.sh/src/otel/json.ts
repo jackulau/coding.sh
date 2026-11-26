@@ -50,17 +50,18 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-/** Hex id (any case) or base64 bytes → lowercase hex; undefined if absent/empty/zero. */
+/**
+ * Hex id (any case) or base64 bytes → lowercase hex. Absent, empty, all zero, or not an id of `bytes`
+ * bytes: undefined, as an id that is not set. The mapper then rejects only the span that needs it.
+ */
 export function jsonId(v: unknown, bytes: 8 | 16): string | undefined {
   if (typeof v !== "string" || !v) return undefined;
-  if (v.length === bytes * 2 && /^[0-9a-fA-F]+$/.test(v)) return normId(v);
+  if (v.length === bytes * 2 && /^[0-9a-fA-F]+$/.test(v)) return normId(v, bytes);
   if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(v)) {
     const b = Buffer.from(v, v.includes("-") || v.includes("_") ? "base64url" : "base64");
-    if (b.length === bytes) return normId(bytesToHex(b));
+    if (b.length === bytes) return normId(bytesToHex(b), bytes);
   }
-  // Odd lengths/other shapes: keep hex-looking ids rather than dropping data.
-  if (/^[0-9a-fA-F]+$/.test(v)) return normId(v);
-  throw new OtlpDecodeError(`invalid ${bytes === 16 ? "trace" : "span"} id ${JSON.stringify(v.slice(0, 64))}`);
+  return undefined;
 }
 
 /** fixed64 holds times below 2^64 ns (the year 2554), each one a time a Date holds. */

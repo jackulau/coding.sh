@@ -1,5 +1,6 @@
 // The backfill checks of adapter-transcript-*.test.ts: an agent's backfill over a copy of one of its fixture
-// homes (test/fixtures/adapters), with one file of the copy changed at a time.
+// homes (test/fixtures/adapters), with one file of the copy changed at a time. _values.ts checks the same
+// homes with one value of a record changed.
 //
 // Every file in a copy gets the same mtime, a day back, so each session in it reads as finished, and the
 // backfill runs with no option but `copied`, so it reads every file on every run. A run's outcome is the
@@ -156,7 +157,7 @@ export class Copy {
   readonly home: Home;
   readonly dir: string;
   readonly label: string;
-  /** The changed files may hold a record twice, so two events may share an id. */
+  /** Whether two events may share an id when a call does not say: the changed files may hold a record twice. */
   readonly repeats: boolean;
   /** Backfill runs so far. */
   runs = 0;
@@ -201,9 +202,12 @@ export class Copy {
     return b;
   }
 
-  /** The outcome with `rel` holding `bytes` and every other file as copied. `where` names the input in a problem. */
-  async with(rel: string, bytes: Buffer, where: string): Promise<Outcome> {
-    const key = `${rel}\0${createHash("sha256").update(bytes).digest("hex")}`;
+  /**
+   * The outcome with `rel` holding `bytes` and every other file as copied. `where` names the input in a problem;
+   * `repeats` lets two events share an id.
+   */
+  async with(rel: string, bytes: Buffer, where: string, repeats = this.repeats): Promise<Outcome> {
+    const key = `${repeats ? "repeats " : ""}${rel}\0${createHash("sha256").update(bytes).digest("hex")}`;
     const hit = this.#outcomes.get(key);
     if (hit) {
       this.#outcomes.delete(key);
@@ -214,7 +218,7 @@ export class Copy {
     if (this.#changed !== undefined && this.#changed !== rel) this.#write(this.#changed, this.original(this.#changed));
     this.#write(rel, bytes);
     this.#changed = rel;
-    const out = await this.run(where);
+    const out = await this.run(where, repeats);
     this.#outcomes.set(key, out);
     if (this.#outcomes.size > 64) this.#outcomes.delete(this.#outcomes.keys().next().value!);
     return out;
@@ -226,8 +230,8 @@ export class Copy {
     utimesSync(path, T, T);
   }
 
-  /** One backfill over the copy as it is now. */
-  async run(where: string): Promise<Outcome> {
+  /** One backfill over the copy as it is now; `repeats` lets two events share an id. */
+  async run(where: string, repeats = this.repeats): Promise<Outcome> {
     const adapter = byId.get(this.home.agent);
     if (!adapter?.backfill) throw new Error(`${this.home.agent} has no backfill`);
     this.runs++;
@@ -251,7 +255,7 @@ export class Copy {
       else process.env[this.home.key] = prev;
     }
     if (threw !== undefined) this.#problems.add(`${this.label}: the backfill threw: ${threw}`, where);
-    for (const p of eventProblems(events, "the same backfill", this.repeats)) this.#problems.add(`${this.label}: ${p}`, where);
+    for (const p of eventProblems(events, "the same backfill", repeats)) this.#problems.add(`${this.label}: ${p}`, where);
     return threw === undefined ? { events, copied } : { events, copied, threw };
   }
 }
@@ -356,7 +360,7 @@ function kept(problems: Problems, copy: Copy, what: string, got: Outcome, withou
 }
 
 /** Checks a copy of each home under one temp root, then fails with every problem found. Returns the backfill runs. */
-async function eachHome(homes: readonly Home[], check: (copy: Copy, problems: Problems) => Promise<void>, repeats = false): Promise<number> {
+export async function eachHome(homes: readonly Home[], check: (copy: Copy, problems: Problems) => Promise<void>, repeats = false): Promise<number> {
   const env = tmpEnv();
   const problems = new Problems();
   let runs = 0;
