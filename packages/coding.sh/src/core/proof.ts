@@ -851,18 +851,46 @@ const NOT_CODE = /(?:^|\/)\.[^/]+\/|\.(?:md|markdown|txt|rst|org|adoc|log|out|lo
 
 /** An escape hatch the agent put in is still there. A count below zero is one the agent took out of the file as the session found it. */
 const opened = (f: ProofFile) => [...(f.sites?.values() ?? [])].some((n) => n > 0);
+/** The file holds an escape hatch the agent put in or a flipped change: its findings stand, so it is kept. */
+const pinned = (f: ProofFile) => !!f.flipped?.size || opened(f);
 
+/**
+ * The file at `path`, made on first use. Once `files` holds FILE_CAP files, a new one takes the
+ * place of the first that is not pinned. When every file is pinned, none is taken out and `files`
+ * grows past the cap.
+ */
 function fileOf(ps: ProofState, path: string): ProofFile {
   const files = (ps.files ??= new Map());
   let f = files.get(path);
   if (f) return f;
-  if (files.size >= FILE_CAP) for (const [k, v] of files) if (!opened(v) && !v.flipped?.size) {
-    files.delete(k);
-    break;
-  }
+  if (files.size >= FILE_CAP) makeRoom(ps);
   files.set(path, (f = {}));
-  placeLast(ps, f, path);
+  const ix = placeLast(ps, f, path);
+  if (ix) {
+    push(ix.free, [ix.next, f]);
+    if (ix.free.length > 2 * files.size + 256) {
+      ix.free = [];
+      for (const g of files.values()) if (!ix.aside.has(g)) push(ix.free, [(ix.place.get(g) as [number, string])[0], g]);
+    }
+  }
   return f;
+}
+
+/** Take out the first file in `files` that is not pinned, if there is one. */
+function makeRoom(ps: ProofState): void {
+  const ix = indexOf(ps);
+  const v = firstOf(ps, ix, ix.free, (g) => !pinned(g), ix.aside);
+  const p = v && ix.place.get(v);
+  if (p) ps.files?.delete(p[1]);
+}
+
+/** A file set aside while pinned goes back among the files that can make room once it is not. */
+function settle(ps: ProofState, f: ProofFile): void {
+  const ix = INDEXES.get(ps);
+  const p = ix?.place.get(f);
+  if (!ix || !p || !ix.aside.has(f) || pinned(f)) return;
+  ix.aside.delete(f);
+  push(ix.free, [p[0], f]);
 }
 
 const prune = (ps: ProofState, path: string, f: ProofFile) => {
@@ -880,15 +908,19 @@ type Queued = [number, ProofFile];
 
 /**
  * Kept beside a state, and made again from its files when the state is loaded: each held file's
- * place in `files` and its path, and by "+" or "-" and a name, the files whose record of that
- * statement a statement moved from another file can match. An entry whose file moved since it was
- * queued goes back at the new place when it comes up; one whose file left `files` or no longer
- * matches is dropped then.
+ * place in `files` and its path; by "+" or "-" and a name, the files whose record of that statement
+ * a statement moved from another file can match; and the files that can make room for a new one.
+ * An entry whose file moved since it was queued goes back at the new place when it comes up; one
+ * whose file left `files` or no longer matches is dropped then. A pinned file that comes up to make
+ * room is set aside until it is not pinned.
  */
 interface ProofIndex {
   place: WeakMap<ProofFile, [number, string]>;
   next: number;
   loose: Map<string, Queued[]>;
+  /** Each held file that is not set aside, by its place. */
+  free: Queued[];
+  aside: WeakSet<ProofFile>;
 }
 const INDEXES = new WeakMap<ProofState, ProofIndex>();
 
@@ -923,9 +955,10 @@ function pop(heap: Queued[]): void {
 function indexOf(ps: ProofState): ProofIndex {
   let ix = INDEXES.get(ps);
   if (ix) return ix;
-  ix = { place: new WeakMap(), next: 0, loose: new Map() };
+  ix = { place: new WeakMap(), next: 0, loose: new Map(), free: [], aside: new WeakSet() };
   for (const [path, f] of ps.files ?? []) {
     ix.place.set(f, [++ix.next, path]);
+    push(ix.free, [ix.next, f]);
     for (const [name, r] of f.stmts ?? []) {
       const k = looseKind(r);
       if (k) queue(ix, k + name, f);
@@ -936,9 +969,10 @@ function indexOf(ps: ProofState): ProofIndex {
 }
 
 /** The file just went last in `files`, at `path`. */
-function placeLast(ps: ProofState, f: ProofFile, path: string): void {
+function placeLast(ps: ProofState, f: ProofFile, path: string): ProofIndex | undefined {
   const ix = INDEXES.get(ps);
   if (ix) ix.place.set(f, [++ix.next, path]);
+  return ix;
 }
 
 function queue(ix: ProofIndex, key: string, f: ProofFile): void {
@@ -949,14 +983,16 @@ function queue(ix: ProofIndex, key: string, f: ProofFile): void {
   push(heap, [p[0], f]);
 }
 
-/** The queued file that comes first in `files` and that `ok` takes. */
-function firstOf(ps: ProofState, ix: ProofIndex, heap: Queued[], ok: (f: ProofFile) => boolean): ProofFile | undefined {
+/** The queued file that comes first in `files` and that `ok` takes. A held file `ok` turns down leaves the queue, for `aside` when given. */
+function firstOf(ps: ProofState, ix: ProofIndex, heap: Queued[], ok: (f: ProofFile) => boolean, aside?: WeakSet<ProofFile>): ProofFile | undefined {
   for (let q = heap[0]; q; q = heap[0]) {
     const p = ix.place.get(q[1]);
-    const live = p !== undefined && ps.files?.get(p[1]) === q[1] && ok(q[1]);
+    const here = p !== undefined && ps.files?.get(p[1]) === q[1];
+    const live = here && ok(q[1]);
     if (live && p[0] === q[0]) return q[1];
     pop(heap);
     if (live) push(heap, [p[0], q[1]]);
+    else if (here) aside?.add(q[1]);
   }
   return undefined;
 }
@@ -1030,8 +1066,10 @@ function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: P
   const t = proofTampered(f, key);
   const run = runOf(ps, id);
   let flip: { before: string; after: string } | undefined;
-  if (!t) f.flipped?.delete(key);
-  else if (!run?.green) (f.touched ??= new Map()).set(key, stampOf(ps, run));
+  if (!t) {
+    f.flipped?.delete(key);
+    settle(ps, f);
+  } else if (!run?.green) (f.touched ??= new Map()).set(key, stampOf(ps, run));
   else if (run.flip && proofTampered(f, key, stampOf(ps, run))) {
     (f.flipped ??= new Set()).add(key);
     flip = { before: run.before as string, after: run.at };
@@ -1173,7 +1211,7 @@ export function proofSourceWrite(h: HasProof, path: string, id: string | undefin
 export function proofHigh(ps: ProofState | undefined): boolean {
   if (!ps) return false;
   if (ps.bypass) return true;
-  for (const f of ps.files?.values() ?? []) if (f.flipped?.size || opened(f)) return true;
+  for (const f of ps.files?.values() ?? []) if (pinned(f)) return true;
   return false;
 }
 
@@ -1202,6 +1240,7 @@ function dropFile(ps: ProofState, path: string, e: AgentEvent, id: string | unde
   }
   const g = fileOf(ps, path);
   g.gone = true;
+  settle(ps, g);
   touch(ps, g, path, "#gone", "delete", e, id, note);
 }
 
@@ -1307,6 +1346,7 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
       if (was > 0 !== now > 0) note?.({ kind: "hatch", e, path, hatch: name, open: now > 0 });
     }
   if (f.sites && !f.sites.size) delete f.sites;
+  settle(ps, f);
   if (op === "delete" && (!diff || truncated)) {
     if (mine) dropFile(ps, path, e, id, note);
     else prune(ps, path, f);

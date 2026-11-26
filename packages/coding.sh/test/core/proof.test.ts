@@ -10,6 +10,7 @@ import {
   proofEnd,
   proofLang,
   proofStart,
+  proofWrite,
   readProofDiff,
   scanProof,
   statements,
@@ -442,5 +443,53 @@ describe("proofChange", () => {
     const notes = changes(events);
     assert.equal(notes.length, 6006);
     assert.deepEqual(notes.slice(-6), ["A.lean x true", "B.lean x true", "B.lean x false", "D.lean x false", "C.lean x false", "E.lean x false"]);
+  });
+});
+
+describe("proofWrite", () => {
+  let n = 0;
+  const ev = (kind: EventKind, payload: Record<string, unknown>): AgentEvent => ({ id: `e${++n}`, v: 0, sessionId: "s", ts: 1000 + n, agent: "claude-code", kind, payload });
+
+  it("keeps 1,000 proof files that hold a hatch put in or a flipped change while 5,000 more are made, in linear time, and makes room with them in the files' order once they hold neither", () => {
+    const edit = (path: string, ...lines: string[]): [string, AgentEvent] => [path, ev("file.change", { path, op: "modify", tool: "Edit", toolUseId: `w${n + 1}`, diff: diff(path, ...lines) })];
+    const end = (id: string, ok: boolean) => ev("tool.end", { tool: "Bash", toolUseId: id, ok, output: ok ? "Build completed successfully." : "error: Foo.lean:1:0: unsolved goals" });
+    // H0 to H499 get a sorry; F0 to F499 change a statement after a failing check, which then passes.
+    const hatched = Array.from({ length: 500 }, (_, i) => edit(`H${i}.lean`, `-theorem h${i} : p := by simp`, `+theorem h${i} : q := by sorry`));
+    const red = end("red", false);
+    const flipped = Array.from({ length: 500 }, (_, i) => edit(`F${i}.lean`, `-theorem f${i} : p`, `+theorem f${i} : q`));
+    const green = end("green", true);
+    const made = Array.from({ length: 5000 }, (_, j) => `N${j}.lean`);
+    const shell = ev("tool.start", { tool: "Bash", toolUseId: "sh", input: { command: "make-files" } });
+    // F100, H300 and H200 stop holding a flip or a hatch in that order, the reverse of the files' order;
+    // the next three files made take the places of H200, H300 and F100, in the files' order.
+    const putBack = edit("F100.lean", "-theorem f100 : q", "+theorem f100 : p");
+    const takenOut = edit("H300.lean", "-theorem h300 : q := by sorry", "+theorem h300 : q := by simp");
+    const run = () => {
+      const h: HasProof = {};
+      const check = (id: string, e: AgentEvent) => {
+        proofStart(h, id, "lake build", { command: "lake build" });
+        proofEnd(h, e);
+      };
+      const change = ([path, e]: [string, AgentEvent]) => proofChange(h, e, { path, origin: "edit", prot: false });
+      const make = (path: string) => proofWrite(h, shell, { op: "create" }, path, undefined, "sh");
+      hatched.forEach(change);
+      check("red", red);
+      flipped.forEach(change);
+      check("green", green);
+      made.forEach(make);
+      const before = h.proof?.files?.size;
+      change(putBack);
+      change(takenOut);
+      proofWrite(h, shell, { op: "delete" }, "H200.lean", undefined, "sh");
+      for (const path of ["X.lean", "Y.lean", "Z.lean"]) make(path);
+      return { before, files: [...(h.proof?.files?.keys() ?? [])] };
+    };
+    assertCpuUnder("5,000 proof files made after 1,000 kept ones", run);
+    const { before, files } = run();
+    assert.equal(before, 1001);
+    assert.equal(files.length, 1001);
+    assert.equal(files.filter((f) => /^[HF]/.test(f)).length, 997);
+    for (const gone of ["H200.lean", "H300.lean", "F100.lean"]) assert.ok(!files.includes(gone), gone);
+    assert.deepEqual(files.slice(-4), ["N4999.lean", "X.lean", "Y.lean", "Z.lean"]);
   });
 });
