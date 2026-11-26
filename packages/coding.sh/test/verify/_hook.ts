@@ -177,7 +177,7 @@ export interface ExpectedLine {
    * side file, however short redaction makes the payload.
    */
   long?: boolean;
-  /** The side file's exact text, in place of `line.raw`, for a payload too deep to compare as a value. */
+  /** The side file's exact text, in place of `line.raw`: a payload the hook left unparsed, when redaction left it alone. */
   rawText?: string;
   /** The secret kinds the rules find in a payload spool/gate.ts lets through without them. */
   gateMiss?: string[];
@@ -211,12 +211,9 @@ export function expectedLine(argv: readonly string[], stdin: Buffer, env: NodeJS
   if (kinds.length && (gate || secrets.length)) [payload, redactions] = [clean, { ...tally.kinds }];
   let raw: unknown;
   let rawText: string | undefined;
-  try {
-    raw = JSON.parse(JSON.stringify(payload));
-  } catch {
-    // Too deep for JSON.stringify: the hook can only have kept the text it got.
-    rawText = text;
-  }
+  // A payload the hook left unparsed goes to the side file as the hook read it, unless redaction changed it.
+  if (!inlineable && !redactions) rawText = text;
+  else raw = JSON.parse(JSON.stringify(payload));
   const [pid, ppid] = a.pids ?? [PID, PPID];
   const line: Record<string, unknown> = { v: 0, agent, event: a.event, pid, ppid, cwd, raw };
   if (env.CODING_SH_RUN_ID) line.runId = env.CODING_SH_RUN_ID;
