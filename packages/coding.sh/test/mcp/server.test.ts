@@ -6,10 +6,13 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { openContext } from "../../src/core/context.ts";
+import { openContext, type Context } from "../../src/core/context.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
-import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
+import { buildTools, CHARACTER_LIMIT, type ToolCtx } from "../../src/mcp/tools.ts";
 import { nextStepBin } from "../../src/cli/next-steps.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { connectMcp, resetEraCache } from "../../src/toolevals/mcp/client.ts";
 import { MAIN, RawClient, SEED, cleanup, makeWorld, seed, type World } from "./helpers.ts";
@@ -719,5 +722,37 @@ describe("session digests carry every token class", () => {
     assert.deepEqual(sessionSummary(s, 5000).tokens, { input: 14, output: 1981, cacheRead: 329484, cacheWrite: 31695 });
     const md = await sessionMarkdown({ listEvents: async () => [], listSessions: async () => [] } as never, s, 10, 5000);
     assert.match(md, /cache read 329484, cache write 31695, \$0\.1796/);
+  });
+});
+
+describe("compaction is a note: sessions_list and failures count failure flags only", () => {
+  const now = Date.UTC(2026, 10, 20, 12);
+  const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+  let ctx: ToolCtx;
+  before(async () => {
+    const index = new MemoryIndexStore();
+    for (const [i, flags] of flagSets.entries()) {
+      const id = `note-${i}`;
+      const at = now - 3_600_000 + i * 60_000;
+      const events: AgentEvent[] = [
+        { id: `${id}-0`, v: 0, sessionId: id, ts: at, agent: "claude-code", kind: "session.start", payload: {} },
+        { id: `${id}-1`, v: 0, sessionId: id, ts: at + 1000, agent: "claude-code", kind: "user.message", payload: { text: `Fix bug ${i}.` } },
+      ];
+      await index.putEvents(events);
+      await index.upsertSession({ ...buildSession(events), flags });
+    }
+    const fake: Pick<Context, "index"> = { index };
+    ctx = { env: {}, cwd: "/work/demo", now: () => now, store: async () => fake as Context };
+  });
+  const run = async (name: string, args: Record<string, unknown> = {}) => (await buildTools().find((t) => t.name === name)!.run(args, ctx)) as Record<string, unknown>;
+
+  it("sessions_list with flagged: true lists only the session with a failure flag", async () => {
+    assert.deepEqual(((await run("sessions_list", { flagged: true })).sessions as { id: string }[]).map((s) => s.id), ["note-1"]);
+  });
+
+  it("failures counts no-verification and lists only its session, with compaction left out", async () => {
+    const r = await run("failures");
+    assert.deepEqual(r.flagCounts, { "no-verification": 1 });
+    assert.deepEqual((r.flaggedSessions as { id: string; flags: string[] }[]).map((s) => [s.id, s.flags]), [["note-1", ["no-verification"]]]);
   });
 });

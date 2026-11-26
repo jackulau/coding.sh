@@ -1,6 +1,7 @@
 // show and sessions tell the whole story: show --json keeps whole messages, a failed
 // model call shows with its error, a source that cannot see tool calls prints `-`,
-// titles stay on one line off a TTY, and trial sessions stay out of the default list.
+// show's Flags row leaves out notes and tags, titles stay on one line off a TTY, and
+// trial sessions stay out of the default list.
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -118,6 +119,28 @@ describe("SDK sessions: a failed model call, and tools the source cannot see", (
     assert.equal(tools(SDK), "-", row(SDK));
     assert.equal(tools(TRACED), "0", row(TRACED));
     assert.equal(tools(CLAUDE), "0", row(CLAUDE));
+  });
+});
+
+describe("show: the Flags row leaves out notes and tags", () => {
+  const ids = ["9d1d0e2f-aaaa-4bbb-8ccc-000000000006", "9d1d0e2f-aaaa-4bbb-8ccc-000000000007", "9d1d0e2f-aaaa-4bbb-8ccc-000000000008"];
+  const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    await sb.seed(flagSets.map((flags, i) => mkSession(ids[i]!, T0 + i * 1000, { flags })));
+  });
+  after(() => sb.cleanup());
+
+  it("prints a Flags row only for the session with a failure flag, without compaction", async () => {
+    const flagRows = async (id: string) => {
+      const r = await runCmd(show, sb, { positionals: [id] });
+      assert.equal(r.error, undefined, String(r.error));
+      return r.stdout.split("\n").filter((l) => l.trimStart().startsWith("Flags")).map((l) => l.trim().split(/\s+/));
+    };
+    assert.deepEqual(await flagRows(ids[0]!), []);
+    assert.deepEqual(await flagRows(ids[1]!), [["Flags", "no-verification"]]);
+    assert.deepEqual(await flagRows(ids[2]!), []);
   });
 });
 

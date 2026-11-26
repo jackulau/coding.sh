@@ -21,6 +21,7 @@ import { historyRuns, listRuns } from "../bench/store.ts";
 import type { BenchRun } from "../bench/types.ts";
 import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Score, Session, SessionFilter } from "../core/types.ts";
+import { isFailureFlag } from "../core/failure-flags.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
@@ -1882,7 +1883,7 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
     if (matchesFacets(s, f, "flag")) for (const fl of s.flags) inc(byFlag, fl);
     if (s.repo?.root && matchesFacets(s, f, "repo")) inc(byRepo, s.repo.root);
     if (s.model && matchesFacets(s, f, "model")) inc(byModel, s.model);
-    if (matchesFacets(s, f, "time")) starts.push({ t: s.startedAt, flagged: s.flags.length > 0 || (s.stats.testsFailed ?? 0) > 0 });
+    if (matchesFacets(s, f, "time")) starts.push({ t: s.startedAt, flagged: s.flags.some(isFailureFlag) || (s.stats.testsFailed ?? 0) > 0 });
     if (!all) continue;
     sessions++;
     if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) {

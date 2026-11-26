@@ -10,7 +10,7 @@
 // fixed SQL below; every user value is a typed {pN:Type} parameter, so no input
 // changes the statement's text. A key this plugin does not know (a newer
 // coding.sh) throws QueryUnsupported instead of guessing.
-import { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported, searchTerms, type Cmp, type KeyDef, type Node, type Value } from "coding.sh/store";
+import { CONTEXT_FLAGS, HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported, searchTerms, type Cmp, type KeyDef, type Node, type Value } from "coding.sh/store";
 import type { ParamValue } from "./client.ts";
 
 /** Binds a value as a typed parameter and returns its placeholder ({pN:Type}). */
@@ -130,10 +130,12 @@ export const HAS_SQL: Record<string, string> = {
   error: `(ifNull(${stat("toolErrors")}, 0) > 0 OR ifNull(${stat("llmErrors.count")}, 0) > 0)`,
   title: "(ifNull(title, '') != '')",
 };
+/** The context flags as an SQL array: like tags, they are not failures, so `is:flagged` skips them. */
+const CONTEXT_SQL = CONTEXT_FLAGS.map((f) => `'${f.replace(/[\\']/g, (c) => `\\${c}`)}'`).join(", ");
 export const IS_SQL: Record<string, string> = {
   root: "isNull(parent_session_id)",
   child: "isNotNull(parent_session_id)",
-  flagged: "arrayExists(f -> position(f, ':') = 0, flags)",
+  flagged: `arrayExists(f -> position(f, ':') = 0${CONTEXT_SQL ? ` AND NOT has([${CONTEXT_SQL}], f)` : ""}, flags)`,
   run: "isNotNull(run_id)",
   ended: "isNotNull(ended_at)",
 };

@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isFailureFlag } from "../core/failure-flags.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { AgentEvent, IndexStore, RunResult, Session } from "../core/types.ts";
 import { eventText } from "../judge/prompt.ts";
@@ -96,8 +97,8 @@ export interface CorpusResult {
 const sha16 = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 16);
 const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`);
 const asText = (v: unknown): string => (typeof v === "string" ? v : v === undefined ? "" : JSON.stringify(v));
-/** A flag with a colon is a tag (gateway:vercel, skill:pdf), not a failure. */
-const failureFlags = (flags: readonly string[] | undefined): string[] => [...new Set(flags ?? [])].filter((f) => !f.includes(":")).sort();
+/** The session's failure flags, once each and sorted: tags (gateway:vercel, skill:pdf) and context flags (compaction) are not failures. */
+const failureFlags = (flags: readonly string[] | undefined): string[] => [...new Set(flags ?? [])].filter(isFailureFlag).sort();
 
 /** Tool calls of a session, start paired with end by toolUseId (redacted). */
 function toolCalls(episode: string, events: readonly AgentEvent[], r: Redactor): ToolCallRow[] {
