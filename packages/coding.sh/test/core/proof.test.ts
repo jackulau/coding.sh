@@ -377,6 +377,20 @@ describe("checkOutcome", () => {
     assert.equal(checkOutcome(lake, { ok: true, output: "info: ./Foo.lean:1:0: command timed out\nBuild completed successfully." }), "green");
   });
 
+  it("reads no error in what the harness writes about a call that timed out, went to the background or was turned down", () => {
+    const turnedDown = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).";
+    for (const output of [
+      "Error: Command timed out after 2m 0s",
+      "Error: Exit code 143\nCommand timed out after 2m 0.0s",
+      "Error: Command running in background with ID: bash_1",
+      `Error: ${turnedDown} STOP what you are doing and wait for the user to tell you how to proceed.`,
+      `${turnedDown} To tell you how to proceed, the user said:\ndon't build yet; first fix the error: in Foo.lean line 3`,
+    ])
+      assert.equal(checkOutcome(lake, { ok: false, output }), undefined, output);
+    assert.equal(checkOutcome(lake, { ok: false, output: "Error: Exit code 1\nerror: ./Foo.lean:3:2: unsolved goals\nCommand timed out after 2m 0s" }), "red");
+    assert.equal(checkOutcome(lake, { ok: false, output: "Error: Command timed out after 2m 0s\nerror: ./Foo.lean:3:2: unsolved goals" }), "red");
+  });
+
   it("reads a tool's output from a string or an object", () => {
     assert.equal(outText("x"), "x");
     assert.equal(outText({ stdout: "a", stderr: "b", exitCode: 1 }), "a\nb");

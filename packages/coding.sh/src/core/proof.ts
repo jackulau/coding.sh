@@ -681,6 +681,8 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
 
 /** What a harness writes, at the start of a line, when a call went to the background or ran out of time. */
 const STILL_RUNNING = /^[ \t]*(?:Error: )?(?:exec )?command (?:running in (?:the )?background|timed out)\b/im;
+/** The line Claude Code puts first when a call ends with an exit status other than 0. */
+const EXIT_LINE = /^\s*(?:Error: )?Exit code -?\d+[^\n]*\n?/;
 /** What a harness writes in place of the output when the user turned a call down or stopped it. */
 const TURNED_DOWN =
   /^\s*(?:Error: )?(?:The user doesn'?t want to proceed with this tool use|(?:The )?tool use was rejected|\[Request interrupted by user|[\w ]{0,40}?\b(?:rejected|denied) by (?:the )?user\b)/i;
@@ -736,20 +738,25 @@ export function outText(out: unknown): string {
 }
 
 /**
- * What a check's tool.end says: red, green, or nothing to go on. An exit status of 126 or 127 for
- * the checker means it never ran. Then an error line makes the check red, whatever else the output
- * says. Otherwise there is nothing to go on when the check ran in the background, was interrupted,
- * timed out or was turned down, when a line says the checker was not found, or when the output is
- * clipped.
+ * What a check's tool.end says: red, green, or nothing to go on. There is nothing to go on when the
+ * call ran in the background, was interrupted or was turned down, or when the checker's exit status
+ * is 126 or 127, which means it never ran. Then an error line makes the check red, whatever else
+ * the output says. For a call that timed out or went to the background, the lines the harness wrote
+ * about it, and the exit status line before them, are not read for errors. Otherwise there is
+ * nothing to go on when the call timed out or went to the background, when a line says the checker
+ * was not found, or when the output is clipped.
  */
 export function checkOutcome(check: ProofCheck, end: Record<string, unknown>): "red" | "green" | undefined {
   if (check.background || end.interrupted === true) return undefined;
   const out = outText(end.output);
+  if (TURNED_DOWN.test(out)) return undefined;
   const code = exitCodeOf(end.exitCode, out);
   if (check.exit && (code === 126 || code === 127)) return undefined;
-  const rest = withoutNotFound(check.lang, out);
-  if (ERROR.test(rest ?? out)) return "red";
-  if (rest !== undefined || TURNED_DOWN.test(out) || STILL_RUNNING.test(out)) return undefined;
+  const running = STILL_RUNNING.test(out);
+  const text = running ? out.replace(EXIT_LINE, "").split("\n").filter((line) => !STILL_RUNNING.test(line)).join("\n") : out;
+  const rest = withoutNotFound(check.lang, text);
+  if (ERROR.test(rest ?? text)) return "red";
+  if (rest !== undefined || running) return undefined;
   if (check.exit === "both" && end.ok === false) return "red";
   if (check.exit) return end.ok === true ? "green" : undefined;
   if (out.endsWith("…") || (!!end.cut && typeof end.cut === "object")) return undefined;
