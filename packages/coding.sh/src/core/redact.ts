@@ -183,6 +183,24 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
 }
 
 /**
+ * In JSON text inside a string (an OTLP log body, a prompt that quotes a tool result), a newline is
+ * written `\n` and other characters `\uXXXX`, so a token right after one follows a letter or a
+ * digit, which a rule's leading break rejects. orAfterEscape lets the break pass right after such
+ * an escape too: `\b`, `\f`, `\n`, `\r`, `\t`, or `\u` and four hex digits. Both lookbehinds have a
+ * fixed length, so a rule stays linear. A rule with the `i` flag also passes after `\N` or `\U0041`.
+ */
+const AFTER_ESCAPE = String.raw`(?<=\\[bfnrt])|(?<=\\u[0-9A-Fa-f]{4})`;
+/** A `(?<!…)` lookbehind or `\b` at the start of a regex source, maybe inside its first group. */
+const LEADING_BREAK = /^(\(?)(\(\?<!(?:\[(?:\\.|[^\\\]])+\]|\\.|[^()[\\])+\)|\\b)/;
+/** `guard`, a lookahead, applies only where the break passes after an escape. */
+function orAfterEscape(re: RegExp, guard = ""): RegExp {
+  const m = LEADING_BREAK.exec(re.source);
+  if (!m) return re;
+  const after = guard ? `(?:${AFTER_ESCAPE})${guard}` : AFTER_ESCAPE;
+  return new RegExp(`${m[1]}(?:${m[2]}|${after})${re.source.slice(m[0].length)}`, re.flags);
+}
+
+/**
  * Linear-time appliers for rules whose regex backtracks quadratically on some
  * inputs. createRedactor uses these instead of rule.pattern; each produces
  * exactly what `s.replace(rule.pattern, …)` would (test/core/redact.test.ts
@@ -298,7 +316,7 @@ function builtInSecretRules(): RedactRule[] {
     pattern: /(\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b[^\n[\]:=]{0,24}?(?::|=|\bis\b)\s*)(?![$[])(?=[^\s"'`]*\d)(?=[^\s"'`]*[A-Za-z])[^\s"'`,;)]{8,}/gi,
     replace: keepPrefix("prose-secret"),
   };
-  return [
+  const rules: RedactRule[] = [
     withFastApply(privateKey, (s, onMatch) => redactPrivateKeys(s, privateKey.pattern, onMatch)),
     { kind: "anthropic-key", pattern: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
     // OpenAI-style: sk-, sk-proj-, sk-svcacct-… Require a digit so kebab-case words don't match.
@@ -403,10 +421,12 @@ function builtInSecretRules(): RedactRule[] {
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
     },
     withFastApply(proseSecret, redactProseSecrets),
-    // A .netrc entry: machine <host> login <user> password <value>, on one line or several.
+    // A .netrc entry: machine <host> login <user> password <value>, on one line or several. The
+    // value also ends at a quote that ends a JSON string: one followed by a space, ",", ":", "}",
+    // "]" or the end of the text.
     {
       kind: "netrc",
-      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)([^\s\\]+)/g,
+      pattern: /(\b(?:machine\s+\S+|default)\s+login\s+\S+\s+password\s+)((?:[^\s"\\]|"(?![\s,:}\]]|$))+)/g,
       replace: (m, pre, v) => (isLiteralSecret(v) ? `${pre}${marker("netrc")}` : m),
     },
     // The value after a secret name and ":" or "=", quoted or not, with spaces or not: .env
@@ -419,6 +439,12 @@ function builtInSecretRules(): RedactRule[] {
       replace: (m, pre, q, v) => (isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m),
     },
   ];
+  // Set on the rule itself: fastApply and the needles are keyed by the rule object. A name right
+  // after an escape whose value is a marker and then a backslash is JSON text in which the value
+  // already ended (a blob's text: DB_PASSWORD=[redacted:…]\nexport): it is skipped.
+  const ASSIGNED_MARKER = `(?!${ENV_SECRET_NAME}=["']?\\[redacted:[a-z0-9-]+\\]\\\\)`;
+  for (const rule of rules) rule.pattern = orAfterEscape(rule.pattern, rule.kind === "secret-assignment" ? ASSIGNED_MARKER : "");
+  return rules;
 }
 
 // The private-key regex lazily scans to the next END line from every BEGIN line,
@@ -476,7 +502,7 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
 // the same alternatives in the same order (secret word, lazy 0–24 char gap, then
 // ":" / "=" / "is", greedy whitespace, value) and answers the lookaheads from a
 // table built in one right-to-left pass.
-const PROSE_WORD = /\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b/gi;
+const PROSE_WORD = orAfterEscape(/\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b/gi);
 const NON_ASCII_SPACE = /\s/;
 const isWordCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
 const isSpaceAt = (s: string, i: number): boolean => {
@@ -565,7 +591,7 @@ function redactProseSecrets(s: string): string {
       pos = p + 1;
       continue;
     }
-    out += s.slice(copied, value) + marker("prose-secret");
+    out += s.slice(copied, value) + cutWhole(s, value, end, marker("prose-secret"));
     copied = pos = end;
   }
   return copied === 0 ? s : out + s.slice(copied);
@@ -676,6 +702,10 @@ export function piiRules(kinds: readonly string[] = PII_KINDS): RedactRule[] {
     // North American: (555) 123-4567, 555-123-4567, 555.123.4567 (one separator throughout).
     rules.push({ kind: "phone", pattern: /(?<![\w.+-])(?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?![\w-]|\.\d)/g });
   }
+  // A number right after a JSON escape (`\n`, or `\u` and four hex digits) is found too. The
+  // email rule needs no change: its address can start at the escape's letter, and applyRule keeps
+  // the escape whole.
+  for (const rule of rules) if (rule.kind !== "email") rule.pattern = orAfterEscape(rule.pattern);
   return rules;
 }
 
@@ -949,14 +979,71 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
   r.pattern.lastIndex = 0;
   if (!r.pattern.test(s)) return s;
   r.pattern.lastIndex = 0;
-  if (r.replace) return s.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string);
-  if (onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
-    return s.replace(r.pattern, (m) => {
+  let replace = r.replace as ((m: string, ...rest: unknown[]) => string) | undefined;
+  if (!replace && onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
+    replace = (m) => {
       onMatch(r.kind, m);
       return marker(r.kind);
-    });
+    };
   }
-  return s.replace(r.pattern, marker(r.kind));
+  // A match can start or end inside a JSON escape: keepEscapes keeps the escape whole.
+  if (s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind))));
+  return replace ? s.replace(r.pattern, replace) : s.replace(r.pattern, marker(r.kind));
+}
+
+/**
+ * A replace callback for `s` that keeps each JSON escape a match starts or ends inside: in
+ * `a\nbob@example.com` the address starts at the `n` of `\n`, and in `token=x1y2z3w4\"` a value
+ * runs to the backslash of `\"`. Replacing either part alone leaves text that no longer parses as
+ * JSON. Only the part of the match that the replacement changes is cut (cutWhole).
+ */
+function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
+  return (m, ...rest) => {
+    const out = fn(m, ...rest);
+    if (out === m) return out;
+    // The match's offset comes after the groups, then the input, then the named groups if any.
+    const at = rest[rest.length - (typeof rest[rest.length - 1] === "string" ? 2 : 3)] as number;
+    // The text `out` keeps of the match at either end stops at the marker, so a value that ends
+    // as the marker does (`…x1y2\t]`, `…secret]`) is cut whole.
+    const most = Math.min(m.length, out.length);
+    const mk = out.lastIndexOf("[redacted:");
+    const headMost = mk < 0 ? most : Math.min(most, mk);
+    const tailMost = mk < 0 ? most : Math.min(most, out.length - 1 - out.indexOf("]", mk));
+    let a = 0;
+    while (a < headMost && m.charCodeAt(a) === out.charCodeAt(a)) a++;
+    let b = 0;
+    while (b < tailMost && b < most - a && m.charCodeAt(m.length - 1 - b) === out.charCodeAt(out.length - 1 - b)) b++;
+    return out.slice(0, a) + cutWhole(s, at + a, at + m.length - b, out.slice(a, out.length - b)) + out.slice(out.length - b);
+  };
+}
+
+/** The end of the JSON escape that starts at `p` (a backslash after an even run of them), or -1. */
+function escapeEnd(s: string, p: number): number {
+  let q = p;
+  while (q > 0 && s.charCodeAt(q - 1) === 92) q--;
+  if ((p - q) % 2) return -1;
+  const c = s.charCodeAt(p + 1);
+  if (c === 117) return /^[0-9A-Fa-f]{4}$/.test(s.slice(p + 2, p + 6)) ? p + 6 : -1;
+  return c === 34 || c === 92 || c === 47 || c === 98 || c === 102 || c === 110 || c === 114 || c === 116 ? p + 2 : -1;
+}
+
+/** `text` in place of s[from, to), keeping the part inside it of a JSON escape that crosses either end. */
+function cutWhole(s: string, from: number, to: number, text: string): string {
+  let head = from;
+  for (let p = from - 1; p >= 0 && p >= from - 5; p--) {
+    if (s.charCodeAt(p) !== 92) continue;
+    const e = escapeEnd(s, p);
+    if (e > from) head = Math.min(e, to);
+    break;
+  }
+  let tail = to;
+  for (let p = to - 1; p >= head && p >= to - 5; p--) {
+    if (s.charCodeAt(p) !== 92) continue;
+    if (escapeEnd(s, p) > to) tail = p;
+    break;
+  }
+  if (head === from && tail === to) return text;
+  return head >= tail ? s.slice(from, to) : s.slice(from, head) + text + s.slice(tail, to);
 }
 
 /**
@@ -1069,8 +1156,9 @@ const JSON_STRING_DEPTH = 3;
  * Redacts a value for a blob: every string on its own (Redactor.value), and a
  * string that holds a JSON document as that document, so a blob hides what the
  * events hide. Such a string is rewritten, as compact JSON, only when that found
- * something. Redacting the serialized text alone misses a `NAME=value` after a
- * newline: in JSON text the name follows the `n` of `\n`, with no word break.
+ * something. Redacting the serialized text alone misses a value that only its key
+ * shows to be secret (`{"password":"hunter"}`): in the text the key is part of a
+ * string, so the walk's check of each key does not see it.
  */
 export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
   if (level >= JSON_STRING_DEPTH) return r.value(v, tally);

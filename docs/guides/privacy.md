@@ -64,6 +64,9 @@ match becomes `[redacted:<kind>]`.
   allows, the rest is stored as `[redacted:too-deep]`, also in the spool.
 - A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
   of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
+- In JSON text held in a string, such as an OTLP log body or a prompt that quotes a tool result,
+  a value right after an escape such as `\n` or a `\u` escape is redacted too. The escape is kept
+  whole.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

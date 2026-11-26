@@ -29,7 +29,7 @@ const KINDS = [
 ];
 
 /** sha256 of the secret rules and of the lines in src/core/redact.ts that name secret keys and flags. */
-const RULES_HASH = "1a1bdc027f48b709072fa08630b01054a150b194fce491945e6e3d4de1b12d76";
+const RULES_HASH = "eaeaa5d51d43c7f47ab915f9b8eac4b1f251012e966a1b247d2979602102a7f1";
 
 function rulesHash(): string {
   const source = readFileSync(join(PKG_ROOT, "src", "core", "redact.ts"), "utf8").split(/\r?\n/);
@@ -305,14 +305,28 @@ describe("mayHoldSecret on payloads the default rules change", () => {
       ["secret-field", `{"api${esc(0x5f)}key":"v1"}`],
       ["secret-field", `{"d":"{${BS}"token${BS}":${BS}"v1${BS}"}"}`],
       ["secret-assignment", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nGOOGLE_CREDENTIALS=${v()}${BS}"}"}`],
-      ["secret-value", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nAPI_TOKEN=${v()}${BS}"}"}`],
+      ["secret-value", `{"d":"{${BS}"out${BS}":${BS}"ok${BS}${BS}nDB_PASSWORD = ${v()}${BS}"}"}`],
     ];
     for (const [kind, text] of cases) assert.ok(check(text).includes(kind), `${kind} in ${text}`);
-    // Three documents deep: a name= after an escaped newline, escaped again at each level.
-    for (const [kind, name] of [["secret-assignment", "GOOGLE_CREDENTIALS"], ["secret-value", "API_TOKEN"]] as const) {
-      let doc = JSON.stringify({ stdout: `loaded\n${name}=${v()}\n` }, null, 2);
+    // Three documents deep: a name and "=" after an escaped newline, escaped again at each level.
+    for (const [kind, name] of [["secret-assignment", "GOOGLE_CREDENTIALS="], ["secret-value", "DB_PASSWORD = "]] as const) {
+      let doc = JSON.stringify({ stdout: `loaded\n${name}${v()}\n` }, null, 2);
       for (let i = 0; i < 3; i++) doc = JSON.stringify({ tool_response: { stdout: doc } });
       assert.ok(check(doc).includes(kind), `${kind} three documents deep`);
+    }
+    // JSON text held in a string: in the string, each token follows the letter or digit that
+    // ends an escape (`\n`, or a \u escape of any character).
+    const ak = ["sk-", "ant-", "api03-", mixed(r, 40)].join("");
+    const gh = ["gh", "p_", draw(r, ALNUM, 36)].join("");
+    for (const e of [BS + "n", BS + "t", esc(0xe9), esc(0x30), esc(0x4b, true)]) {
+      for (const [kind, token] of [["anthropic-key", ak], ["github-token", gh], ["prose-secret", `PAT: ${v()}`], ["secret-assignment", `GOOGLE_CREDENTIALS=${v()}`]] as const) {
+        const text = JSON.stringify({ prompt: `see {"msg":"a${e}${token}"}` });
+        assert.ok(check(text).includes(kind), `${kind} in ${text}`);
+      }
+    }
+    // A rule with the `i` flag takes an upper-case escape letter too, and so does WORDS.
+    for (const [kind, text] of [["prose-secret", `a${BS}NPAT: ${v()}`], ["basic-auth", `a${BS}U0041Authorization: Basic ${draw(r, ALNUM + "+/", 20)}==`]] as const) {
+      assert.ok(check(JSON.stringify({ prompt: text })).includes(kind), `${kind} in ${text}`);
     }
   });
 

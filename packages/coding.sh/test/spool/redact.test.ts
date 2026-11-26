@@ -21,9 +21,10 @@ import { PKG_ROOT, tsNodeArgs } from "../capture/_helpers.ts";
 const GITHUB = ["gh", "p_", "R4nd0mT0k3nV4lu3xQ9zLm2Wp8Ks5Yt7Hc1D"].join("");
 const ANTHROPIC = ["sk-", "ant-", "api03-", "Zx8Qw2Lm4Np6Rt8Vb0Cd2Ef4Gh6Jk8"].join("");
 const AWS = ["AK", "IA", "Q3ZT7XW2LMNB4KRP"].join("");
-/** Only redacted inside its JSON document: in the document's text the name follows the `n` of `\n`. */
+/** In an env file in a JSON document: in the document's text its name follows the escape `\n`. */
 const HIDDEN = ["Wq7", "Lp2Zr9Kx4Vb8"].join("");
 const SECRETS = [GITHUB, ANTHROPIC, AWS, HIDDEN];
+const BS = String.fromCharCode(92);
 
 /** appendSpool's options with the redaction rules of the env's config. */
 const R = (env: NodeJS.ProcessEnv) => ({ redact: spoolLineRedactor(env) });
@@ -67,8 +68,8 @@ const fake: Adapter = {
 const adapters = new Map([["fake", fake]]);
 
 function payload(session: string, pad: number): string {
-  // A tool result that is itself JSON text, with an env file in one of its strings. Only
-  // secret-assignment knows the name CREDENTIALS; a name like API_TOKEN is found in the text too.
+  // A tool result that is itself JSON text, with an env file in one of its strings: in the text,
+  // the name follows the escape `\n`. Only secret-assignment knows the name CREDENTIALS.
   const doc = JSON.stringify({ stdout: `loaded\nGOOGLE_CREDENTIALS=${HIDDEN}\n` }, null, 2);
   return JSON.stringify({ session, cwd: "/w", text: `token ${GITHUB} key ${ANTHROPIC} id ${AWS} ${"y".repeat(pad)}`, doc });
 }
@@ -122,9 +123,9 @@ describe("the hook redacts before it writes", () => {
       assert.ok(!SECRETS.some((s) => JSON.stringify(stored).includes(s)));
       const [original] = await storedFromOriginal(text, `s-${pad}`);
       assert.deepEqual(stored!.payload.text, original!.payload.text);
-      // Ingest alone misses the value hidden in the document's text; the hook finds it and counts it.
-      assert.ok((original!.payload.doc as string).includes(HIDDEN));
-      assert.deepEqual(stored!.payload.redactions, { ...(original!.payload.redactions as object), "secret-assignment": 1 });
+      // The name follows the escape `\n`: ingest alone finds it too.
+      assert.deepEqual(stored!.payload.doc, original!.payload.doc);
+      assert.deepEqual(stored!.payload.redactions, original!.payload.redactions);
       const again = await ingest(opts);
       assert.deepEqual([again.lines, again.events, again.errors], [0, 0, []]);
       assert.deepEqual(holding(h, SECRETS), []);
@@ -177,14 +178,32 @@ describe("the hook redacts before it writes", () => {
   it("redactPayload redacts a document inside a document next to a value the rules replace, and counts each value once", () => {
     const r = createRedactor();
     // The password is too short for the text rules: only its key in the inner document shows it
-    // is secret. In the outer document's text, the rule that takes the log's value takes the
-    // backslash of the escaped quote after it too.
+    // is secret. In the outer document's text, the log's value runs to the backslash of the
+    // escaped quote after it; the rule keeps that escape whole, so the text still parses.
     const inner = JSON.stringify({ password: "hunter", log: `the password is ${HIDDEN}` });
     const tally = redactionTally();
     const clean = redactPayload(r, { tool_response: { stdout: JSON.stringify({ content: inner }) } }, tally) as { tool_response: { stdout: string } };
     const doc: unknown = JSON.parse((JSON.parse(clean.tool_response.stdout) as { content: string }).content);
     assert.deepEqual(doc, { password: "[redacted:secret-field]", log: "the password is [redacted:prose-secret]" });
     assert.deepEqual(tally.kinds, { "secret-field": 1, "prose-secret": 1 });
+  });
+
+  it("redactPayload redacts a document as documents when a match in its text runs past one of its strings", () => {
+    const r = createRedactor();
+    // With its data on the BEGIN line and no END line, a private key runs to the end of the
+    // text, past the end of the string that holds it: the document's text no longer parses.
+    const pem = ["-----BEGIN RSA PRI", "VATE KEY----- ", "Zx8Qw2Lm4Np6Rt8Vb0Cd2Ef4Gh6Jk8Mn1Pq3Rs5Tu7Vw9Xy"].join("");
+    const tally = redactionTally();
+    const clean = redactPayload(r, { stdout: JSON.stringify({ key: pem, note: "kept" }) }, tally) as { stdout: string };
+    assert.deepEqual(JSON.parse(clean.stdout), { key: "[redacted:private-key]", note: "kept" });
+    assert.deepEqual(tally.kinds, { "private-key": 1 });
+  });
+
+  it("redactPayload finds a key right after an escape in JSON text", () => {
+    const tally = redactionTally();
+    const out = redactPayload(createRedactor(), { prompt: `see {"msg":"a${BS}n${ANTHROPIC}"}` }, tally);
+    assert.deepEqual(out, { prompt: `see {"msg":"a${BS}n[redacted:anthropic-key]"}` });
+    assert.deepEqual(tally.kinds, { "anthropic-key": 1 });
   });
 
   it("withSpoolRedactions adds the line's counts to the event's", () => {

@@ -133,15 +133,16 @@ const MARKER_ONLY = /^\[redacted:[a-z0-9-]+\]$/;
  * Redacts a hook payload (parsed JSON, or the text when it did not parse). Every
  * string goes through the rules as ingest redacts an event's payload
  * (Redactor.value); then a string holding a JSON document is redacted as that
- * document, as a blob is (redactForBlob), which finds a `NAME=value` after an
- * escaped newline. A document with nothing more to redact keeps its text, so an
+ * document, as a blob is (redactForBlob), which finds a value that only its key
+ * shows to be secret. A document with nothing more to redact keeps its text, so an
  * event built from the result matches the one ingest builds from the original.
  *
- * A rule run on the text can take the backslash of an escape with a value (a
- * value that ends only at a quote), and a document in the text then no longer
- * parses, at any depth. For such a string the original is redacted as documents
- * instead (redactForBlob), and the counts the rules made on its text are taken
- * back, so each value is counted once.
+ * A rule run on the text keeps each JSON escape whole, but a match can still run
+ * past the end of one of a document's strings (a private key with no END line runs
+ * to the end of the text), and a document in the text then no longer parses, at
+ * any depth. For such a string the original is redacted as documents instead
+ * (redactForBlob), and the counts the rules made on its text are taken back, so
+ * each value is counted once.
  */
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
