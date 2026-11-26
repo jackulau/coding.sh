@@ -652,9 +652,16 @@ describe("token usage: cached input is not counted twice", () => {
 describe("token counts that are not a whole number from 0 to 2^53 - 1", () => {
   const T = "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2";
   const attr = (key: string, value: Record<string, unknown>) => ({ key, value });
-  const usageOf = async (attrs: ReturnType<typeof iAttr>[]) => {
+  const callOfSpan = async (attrs: ReturnType<typeof iAttr>[]) => {
     const req = otlpTraces("count-test", [otlpSpan(T, "d000000000000002", "d000000000000000", "chat", [sAttr("gen_ai.operation.name", "chat"), ...attrs], 0, 1000)]);
-    return ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!.usage;
+    return ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+  };
+  const usageOf = async (attrs: ReturnType<typeof iAttr>[]) => (await callOfSpan(attrs)).usage;
+  // A Claude Code api_request log record with these attributes.
+  const callOfLog = async (attrs: ReturnType<typeof iAttr>[]) => {
+    const record = { timeUnixNano: "1767225600000000000", body: { stringValue: "claude_code.api_request" }, attributes: [sAttr("event.name", "api_request"), sAttr("session.id", "cc-4"), sAttr("model", "claude-opus-5-5"), ...attrs] };
+    const log = { resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: [record] }] }] };
+    return ofKind((await mapLogs(decodeLogsJson(log), ctx())).events, "llm.call")[0]!;
   };
 
   it("reads one as not sent, so it is neither stored nor taken off the cached input", async () => {
@@ -673,6 +680,35 @@ describe("token counts that are not a whole number from 0 to 2^53 - 1", () => {
     assert.deepEqual(max, { outputTokens: Number.MAX_SAFE_INTEGER });
     const next = await usageOf([attr("gen_ai.usage.input_tokens", { intValue: "-500" }), iAttr("gen_ai.usage.prompt_tokens", 120)]);
     assert.deepEqual(next, { inputTokens: 120 });
+  });
+
+  it("a 5-minute cache write of 12.5 is left out of the split's sum, and a cache-write total of 12.5 gives way to the split", async () => {
+    let c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_5m_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_1h_tokens", 100)]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 100 }, 100]);
+    c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_5m_tokens", 40), iAttr("cache_creation_1h_tokens", 100)]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 140 }, 100]);
+  });
+
+  it("a log's input count of -1 or cache read of 12.5 reads as missing, so the next key gives the count", async () => {
+    const c = await callOfLog([iAttr("input_tokens", -1), iAttr("input_token_count", 40), attr("cache_read_tokens", { doubleValue: 12.5 }), iAttr("cached_content_token_count", 30)]);
+    assert.deepEqual(c.usage, { inputTokens: 40, cacheReadTokens: 30 });
+  });
+
+  it("an AI SDK noCacheTokens of 12.5 reads as missing, so the input is the total less the cache read and write", async () => {
+    const u = await usageOf([
+      iAttr("ai.usage.inputTokens", 1000),
+      attr("ai.usage.inputTokenDetails.noCacheTokens", { doubleValue: 12.5 }),
+      iAttr("ai.usage.inputTokenDetails.cacheReadTokens", 300),
+      iAttr("ai.usage.inputTokenDetails.cacheWriteTokens", 200),
+    ]);
+    assert.deepEqual(u, { inputTokens: 500, cacheReadTokens: 300, cacheWriteTokens: 200 });
+  });
+
+  it("a reasoning count of 12.5 is left out, and the next reasoning key is read past it", async () => {
+    let c = await callOfSpan([iAttr("gen_ai.usage.output_tokens", 50), attr("gen_ai.usage.reasoning.output_tokens", { doubleValue: 12.5 })]);
+    assert.equal(c.payload.reasoningTokens, undefined);
+    c = await callOfSpan([iAttr("gen_ai.usage.output_tokens", 50), attr("gen_ai.usage.reasoning.output_tokens", { doubleValue: 12.5 }), iAttr("ai.usage.reasoningTokens", 30)]);
+    assert.equal(c.payload.reasoningTokens, 30);
   });
 });
 
