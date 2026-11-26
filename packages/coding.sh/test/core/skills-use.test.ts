@@ -69,6 +69,13 @@ describe("skill use", () => {
     assert.deepEqual(brief([start("Skill", { skill: "design:design" })]), [["design", "plugin", "invoke", true]]);
   });
 
+  it("a cwd or home that ends in slashes scopes skills as without them", () => {
+    const events = [start("Read", { file_path: "/srv/me/.claude/skills/pdf/SKILL.md" }), start("Read", { file_path: "/work/demo/.claude/skills/ui/SKILL.md" })];
+    for (const [cwd, home] of [["/work/demo", "/srv/me"], ["/work/demo//", "/srv/me/"], ["/work/demo/", "/srv/me///"], ["\\work\\demo\\\\", "\\srv\\me\\"]]) {
+      assert.deepEqual(skillUse(events, { cwd, home }).used.map((u) => [u.name, u.scope]), [["pdf", "personal"], ["ui", "project"]], `${cwd} ${home}`);
+    }
+  });
+
   it("only installed skills count: no skills/ folder in a repo, no heredoc text, no writes, no bare file under skills/", () => {
     const none = [
       // A heredoc body is data: a test fixture that mentions a skill path.

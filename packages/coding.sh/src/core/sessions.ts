@@ -1734,7 +1734,7 @@ export function changeKeyer(eventCwd: string | undefined, sessionCwd: string | u
   if (!eventCwd || !sessionCwd) return (path) => underTraceRoot(onDrive(path, drive), root);
   const sessionRoot = traceRoot(sessionCwd);
   const sessionDrive = driveOf(sessionRoot);
-  const base = eventCwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = eventCwd.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   return (path) => {
     const k = underTraceRoot(onDrive(path, drive), root);
     // An absolute path outside the event's folder (a shell call that ran `cd <repo> && sed -i …` from a

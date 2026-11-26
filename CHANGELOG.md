@@ -540,6 +540,7 @@ grouped by area, with links to the docs for the details.
 - **Sessions.** A Claude Code prompt held in its transcript as two user entries with one `promptId` is one turn that ends once, and the turn's length runs to its end. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#turn))
 - **Capture.** An OpenCode session that two files under `storage/session` name is read once, from the first file, so backfill gives each of its events once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation))
 - **Capture.** A Droid or Pi line whose transcript path names a folder keeps its events, as does a Droid, Gemini CLI, Pi or Antigravity line whose transcript cannot be read. Before, ingest skipped such a line, for a folder only on Linux and macOS. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#live-capture))
+- **Sessions.** Trimming the trailing slashes, spaces and dots of the paths and text that ingest reads takes time linear in the text, as does quoting an argument for cmd.exe on Windows. Ingest derives the same files, links and stats as before, and each argument is quoted as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
 - **Capture.** A hook payload of exactly 64 MB no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 
 ## [0.1.7] - 2026-11-16
