@@ -1149,7 +1149,9 @@ rounds as a run that was never interrupted.
   `compare`, `refine test|run --suite`, `eval run`, `exp run|ab|aa|sweep|matrix|replay` and
   `toolevals run` take both flags; a refine round lost this way writes no verdict and stops the
   climb (`"stopped": "infra"`).
-- `--trial-timeout <SEC>` caps each trial, retries included. A trial over it fails.
+- `--trial-timeout <SEC>` limits each agent call or task run. Each retry and repair round gets it
+  again. A run over it is not retried. A case-trial over it fails. A task suite's verifier still
+  grades the partial work.
 - `exp run` also stores the experiment so far, at most once a second, while it runs. A crash or a
   kill then leaves a partial record: `exp list` marks it `(partial)` and `exp show` says how many
   case runs it holds. `exp run … --resume <EXPERIMENT>` continues it when no job has that id: the
