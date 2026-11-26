@@ -34,7 +34,7 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 17 minutes.
+ * 24 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
@@ -47,6 +47,15 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
   "hook-imports": {},
+  // At bound 1, the fresh fragment at every cut on the day after the file's, and the other cases at five
+  // cuts and at three seeded (cut, day) pairs per fixture: 4,929 fresh fragments and 40 cases.
+  "ingest-torn-1": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 4,874 fresh fragments and 40 cases.
+  "ingest-torn-2": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 3,597 fresh fragments and 72 cases.
+  "ingest-torn-3": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 3,592 fresh fragments and 72 cases.
+  "ingest-torn-4": { bound: 1 },
   "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
@@ -96,6 +105,20 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "shell-models": {},
   // About 1 minute.
   "short-id-prop": { runs: 10000 },
+  // At bound 2, every case, each also aged and read in every chunk size, then 14 seeded ones: 216 cases.
+  // About 50 seconds.
+  "spool-glued-1": { bound: 2 },
+  // As spool-glued-1, over its own fixtures: 216 cases and 14 seeded ones. About 1 minute.
+  "spool-glued-2": { bound: 2 },
+  // As spool-glued-1, over its own fixtures: 240 cases and 14 seeded ones. About 1 minute.
+  "spool-glued-3": { bound: 2 },
+  // At bound 2, the segments at every cut in every chunk size and the torn file at every cut: 4,120 cuts.
+  // About 1 minute.
+  "spool-torn-1": { bound: 2 },
+  // As spool-torn-1, over its own fixtures: 4,313 cuts. About 1 minute.
+  "spool-torn-2": { bound: 2 },
+  // As spool-torn-1, over its own fixtures: 8,559 cuts. About 1 minute.
+  "spool-torn-3": { bound: 2 },
   // About 1.5 minutes and 2 GB of heap.
   "work-model": { bound: 1 },
   "work-snooze": {},

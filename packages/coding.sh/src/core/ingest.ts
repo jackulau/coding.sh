@@ -801,6 +801,10 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
         if (e.offset >= fr.local) error({ source: e.source, offset: e.offset, message: e.message });
         fr.readPos = Math.max(fr.readPos, e.nextOffset);
       },
+      // A blank line stores nothing, but the cursors pass it: one that ends the file would hold them short of its size, and gc and the scrub wait for it.
+      onBlank: (next) => {
+        fr.readPos = Math.max(fr.readPos, next);
+      },
     });
     for await (const rec of reader) {
       let events: AgentEvent[];

@@ -18,8 +18,12 @@ import { readSpoolFile } from "./spool-read.ts";
  * spaces to its old length; a redacted line that comes out longer moves its
  * payload to a `raw/` side file, named relative to the agent dir. A line that
  * is not valid JSON and holds a secret becomes spaces (readers skip it as they
- * did before). The file keeps its size, line offsets and mtime, so every cursor
- * into it and every event id built from an offset still holds.
+ * did before). A torn fragment with a whole line glued on (core/spool-read.ts)
+ * is checked up to where that line starts: one that holds a secret becomes a
+ * blank line, spaces and a "\n", and the glued line is kept, redacted as any
+ * other line. The file keeps its size and mtime, and every line still reads
+ * from the offset where it started, so every cursor into it and every event id
+ * built from an offset still holds.
  *
  * Returns how many lines were rewritten. A file that can't be read or written
  * is left alone (never throws).
@@ -32,9 +36,13 @@ export async function scrubSpoolFile(spoolDir: string, path: string, redactorFor
   };
   /** `text` goes over bytes [offset, end): the line without its "\n". */
   const edits: { offset: number; end: number; text: string }[] = [];
-  const bad: { offset: number; nextOffset: number }[] = [];
+  /** Lines the reader reported; `kept` is where the whole line glued onto a torn fragment starts. */
+  const bad: { offset: number; nextOffset: number; kept?: number }[] = [];
   try {
-    for await (const { line, offset, nextOffset } of readSpoolFile(spoolDir, path, 0, { resolveRaw: false, onError: (e) => bad.push(e) })) {
+    for await (const { line, offset, nextOffset } of readSpoolFile(spoolDir, path, 0, { resolveRaw: false, onError: (e) => bad.push({ offset: e.offset, nextOffset: e.nextOffset }) })) {
+      // The reader reports a fragment with a line glued on, then yields that line: the same nextOffset.
+      const last = bad.at(-1);
+      if (last?.nextOffset === nextOffset && offset > last.offset) last.kept = offset;
       if (line.raw === undefined) continue;
       const redactor = redactorFor(line.cwd);
       const clean = found(redactor, (tally) => redactForBlob(redactor, line.raw, tally));
@@ -54,13 +62,16 @@ export async function scrubSpoolFile(spoolDir: string, path: string, redactorFor
     try {
       const before = await fh.stat();
       for (const b of bad) {
-        const buf = Buffer.alloc(b.nextOffset - b.offset);
+        // A glued line is redacted as a line of its own above: only the fragment before it is checked here.
+        const buf = Buffer.alloc((b.kept ?? b.nextOffset) - b.offset);
         const { bytesRead } = await fh.read(buf, 0, buf.length, b.offset);
         const text = buf.toString("utf8", 0, bytesRead);
         const redactor = redactorFor(undefined);
         if (found(redactor, (tally) => redactor.string(text, tally)) === undefined) continue;
+        // The fragment ends in a "\n": a blank line, so the glued line still reads from where it starts.
+        if (b.kept !== undefined) edits.push({ offset: b.offset, end: b.kept, text: `${" ".repeat(b.kept - b.offset - 1)}\n` });
         // Spaces: a blank line, skipped as the bad one was. A torn last line has no "\n" to keep.
-        edits.push({ offset: b.offset, end: b.offset + bytesRead - (text.endsWith("\n") ? 1 : 0), text: "" });
+        else edits.push({ offset: b.offset, end: b.offset + bytesRead - (text.endsWith("\n") ? 1 : 0), text: "" });
       }
       for (const e of edits) {
         const buf = Buffer.alloc(e.end - e.offset, " ");
