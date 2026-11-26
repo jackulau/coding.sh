@@ -544,6 +544,7 @@ grouped by area, with links to the docs for the details.
 - **Sessions.** Splitting a shell command into its simple commands reads a redirection to a descriptor, such as `2>&1`, in linear time. Ingest derives the same files, writes and flags as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
 - **Capture.** A hook payload of exactly 64 MB no longer logs `stdin truncated at 67108864 bytes` to `spool/errors.log`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Sessions.** Ingest reads tool error lines, PowerShell launch lines, the Copilot CLI shell trailer, fenced code blocks, PR URLs, push remotes, git commands and slash command tags in linear time. Sessions, flags and pull requests come out the same as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
+- **OTel.** An OTLP/JSON integer sent as decimal text, as in an attribute or a log body, is read in linear time. Each value comes out as before: a number when it is a safe integer, else its decimal text. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
 
 ## [0.1.7] - 2026-11-16
 
