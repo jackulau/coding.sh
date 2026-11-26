@@ -267,4 +267,33 @@ describe("a redaction keeps JSON text valid", () => {
     const inner = JSON.parse((JSON.parse(out) as { o: string }).o) as { m: string };
     assert.deepEqual(inner, { m: 'a\nDB_PASSWORD=[redacted:secret-assignment]"' });
   });
+
+  it("after an escape, a value that holds a backslash is hidden whole, one and two levels deep", () => {
+    // JSON text writes the value's own backslash as two backslashes, and JSON text held in JSON
+    // text as four. Before b, f, n, r or t those read as an escape one level down; they must not end
+    // the value. A quote ends it, as in plain text, and the rest of the line follows the marker.
+    const NL = String.fromCharCode(10);
+    const QT = String.fromCharCode(34);
+    const head = j("Kq9m", "Z2xR");
+    const rest = j("w0rd", "99xy");
+    const marked = j("echo hi", NL, "DB_PASSWORD=[redacted:secret-assignment]");
+    for (const x of ["b", "f", "n", "r", "t", QT, BS]) {
+      const stdout = j("echo hi", NL, "DB_PASSWORD=", head, BS, x, rest, NL, "ls");
+      const l1 = JSON.stringify({ stdout });
+      const docs: [string, (s: string) => string][] = [
+        [l1, (s) => (JSON.parse(s) as { stdout: string }).stdout],
+        [JSON.stringify({ body: l1 }), (s) => (JSON.parse((JSON.parse(s) as { body: string }).body) as { stdout: string }).stdout],
+      ];
+      for (const [input, decode] of docs) {
+        const label = `${JSON.stringify(x)} in ${input}`;
+        const ev = redactEventCounted(red, event(input));
+        assert.deepEqual(ev.payload.redactions, { "secret-assignment": 1 }, label);
+        for (const out of [red.string(input), red.value({ body: input }).body, ev.payload.text as string]) {
+          const text = decode(out);
+          if (x !== QT) assert.equal(text, j(marked, NL, "ls"), label);
+          else assert.ok(text.startsWith(marked) && text.endsWith(j(QT, rest, NL, "ls")) && !text.includes(head), label);
+        }
+      }
+    }
+  });
 });

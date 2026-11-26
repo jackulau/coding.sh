@@ -29,7 +29,7 @@ const KINDS = [
 ];
 
 /** sha256 of the secret rules and of the lines in src/core/redact.ts that name secret keys and flags. */
-const RULES_HASH = "df869d8ed52c3bd1d1ad46e111436657129eba02bf4923cd44052392c0e818e1";
+const RULES_HASH = "2d7600d3083ced6b686cb3f5df05887b0ac22f0aa3d940917281f234e3c3ed89";
 
 function rulesHash(): string {
   const source = readFileSync(join(PKG_ROOT, "src", "core", "redact.ts"), "utf8").split(/\r?\n/);

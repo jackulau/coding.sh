@@ -495,6 +495,18 @@ describe("redact: linear time on long input", () => {
       assert.equal(out, `${BS}n[redacted:phone] `.repeat(input.length / unit.length));
     }, createRedactor({ redact: ["pii"] }));
   });
+
+  it("redacts 1 MB of assignments, each after a long run of backslashes, in linear time and hides each value whole", () => {
+    // 999 backslashes and an n make an escape at the text's own level, 998 one a level down. Each
+    // value holds a backslash of its own, written as that level writes one.
+    const head = ["Kq9m", "Z2xR"].join("");
+    const rest = ["w0rd", "99xy"].join("");
+    const unit = `${BS.repeat(999)}nDB_PASSWORD=${head}${BS.repeat(2)}t${rest} ${BS.repeat(998)}nAPI_TOKEN=${head}${BS.repeat(4)}t${rest} `;
+    const want = `${BS.repeat(999)}nDB_PASSWORD=[redacted:secret-assignment] ${BS.repeat(998)}nAPI_TOKEN=[redacted:secret-assignment] `;
+    assertLinear("assignments after long escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+      assert.equal(out, want.repeat(input.length / unit.length));
+    });
+  });
 });
 
 describe("redact: same output as the original secret rules", () => {

@@ -190,6 +190,15 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
  * fixed length, so a rule stays linear. A rule with the `i` flag also passes after `\N` or `\U0041`.
  */
 const AFTER_ESCAPE = String.raw`(?<=\\[bfnrt])|(?<=\\u[0-9A-Fa-f]{4})`;
+/**
+ * AFTER_ESCAPE at one level. AFTER_ESCAPE_1 passes after an escape at the text's own level, an odd
+ * run of backslashes before the letter or the `u`. AFTER_ESCAPE_2 passes after an escape one level
+ * down, as in JSON text held in JSON text: a run of 4k + 2 backslashes. Each lookbehind reads back
+ * over the whole run, but only at the one place right after the escape's letter or hex digits, so
+ * a rule reads each run a bounded number of times and stays linear.
+ */
+const AFTER_ESCAPE_1 = String.raw`(?<=(?<!\\)(?:\\\\)*\\[bfnrt])|(?<=(?<!\\)(?:\\\\)*\\u[0-9A-Fa-f]{4})`;
+const AFTER_ESCAPE_2 = String.raw`(?<=(?<!\\)(?:\\\\\\\\)*\\\\[bfnrt])|(?<=(?<!\\)(?:\\\\\\\\)*\\\\u[0-9A-Fa-f]{4})`;
 /** A `(?<!…)` lookbehind or `\b` at the start of a regex source, maybe inside its first group. */
 const LEADING_BREAK = /^(\(?)(\(\?<!(?:\[(?:\\.|[^\\\]])+\]|\\.|[^()[\\])+\)|\\b)/;
 function orAfterEscape(re: RegExp): RegExp {
@@ -406,20 +415,34 @@ function builtInSecretRules(): RedactRule[] {
     // around "=" (that's code, not env), value isn't a $reference or a number.
     {
       kind: "secret-assignment",
-      // Right after an escape (JSON text held in a string) the value ends at an escape that
-      // AFTER_ESCAPE starts a match after (\n, \t, ...), at an escaped quote, and at escaped
-      // backslashes before b, f, n, r, t, a quote or another backslash (an escape one level down).
-      // \/, \uXXXX and escaped backslashes before any other character stay in the value. The match
-      // ends where the value does, so the next line, and an assignment on it, are matched too.
-      // Every match starts with A-Z, 0-9 or _, so the lookahead passes over other places without
-      // trying the lookbehinds there.
+      // Right after an escape (JSON text held in a string) the value is read at that escape's
+      // level. After an escape at the text's own level (AFTER_ESCAPE_1), the value ends at the next
+      // \b, \f, \n, \r, \t or escaped quote, and two backslashes are one backslash of the value.
+      // After an escape one level down (AFTER_ESCAPE_2), as in JSON text held in JSON text, four
+      // backslashes are one backslash of the value, and those escapes at either of the two levels
+      // end it. After an escape at another level (AFTER_ESCAPE), escaped backslashes before b, f,
+      // n, r, t, a quote or another backslash end the value, and before any other character they
+      // stay in it. \/ and \uXXXX stay in the value at every level. The match ends where the value
+      // does, so the next line, and an assignment on it, are matched too. Every match starts with
+      // A-Z, 0-9 or _, so the lookahead passes over other places without trying the lookbehinds
+      // there.
       pattern: new RegExp(
         `(?=[A-Z0-9_])(?:(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&]|$))(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2` +
-          `|(?:${AFTER_ESCAPE})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|(?:\\\\\\\\)+(?![bfnrt"\\\\])){8,})\\5)`,
+          `|(?:${AFTER_ESCAPE_1})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\){8,})\\5` +
+          `|(?:${AFTER_ESCAPE_2})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\[^bfnrt"\\\\\\s'\`;|&]|\\\\\\\\\\\\\\\\){8,})\\8` +
+          `|(?:${AFTER_ESCAPE})(${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\[redacted:[a-z0-9-]+\\](?:[\\s"'\`;|&\\\\]|$))(?!\\d+\\b)((?:[^\\s"'\`;|&\\\\]|\\\\[^bfnrt"\\\\\\s'\`;|&]|(?:\\\\\\\\)+(?![bfnrt"\\\\])){8,})\\11)`,
         "g",
       ),
-      replace: (_m, name, q, _v, afterName, afterQ) =>
-        name === undefined ? `${afterName}${afterQ}${marker("secret-assignment")}${afterQ}` : `${name}${q}${marker("secret-assignment")}${q}`,
+      // Each alternative has three groups: the name, the quote and the value.
+      replace: (m, ...g) => {
+        for (let i = 0; i < 12; i += 3) {
+          const name = g[i];
+          if (name === undefined) continue;
+          const q = g[i + 1] ?? "";
+          return `${name}${q}${marker("secret-assignment")}${q}`;
+        }
+        return m;
+      },
     },
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
     // word: the name it suffixes ("client_api_key", "x-api-key") is left as is, so
