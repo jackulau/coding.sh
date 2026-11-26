@@ -19,6 +19,7 @@ import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
+import { tokenCount } from "../core/pricing.ts";
 import type { Adapter, AgentRunOutput, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import {
@@ -259,16 +260,24 @@ function pluginNotes(version: string | undefined): string[] {
 
 // ---------------------------------------------------------------- normalize
 
+/**
+ * A message's or step's usage; reasoning tokens count as output. A token count that is not a whole
+ * number from 0 to 2^53 - 1 (pricing.ts tokenCount) reads as missing, so the output sum skips it.
+ */
 function tokensUsage(t: unknown, cost: unknown): Usage | undefined {
   if (!isObj(t) && num(cost) === undefined) return undefined;
   const o = obj(t);
   const cache = obj(o.cache);
+  const input = tokenCount(o.input);
+  const output = tokenCount(o.output);
+  const reasoning = tokenCount(o.reasoning);
+  const read = tokenCount(cache.read);
+  const write = tokenCount(cache.write);
   const u: Usage = {};
-  if (num(o.input) !== undefined) u.inputTokens = o.input as number;
-  const out = (num(o.output) ?? 0) + (num(o.reasoning) ?? 0);
-  if (num(o.output) !== undefined || num(o.reasoning) !== undefined) u.outputTokens = out;
-  if (num(cache.read) !== undefined) u.cacheReadTokens = cache.read as number;
-  if (num(cache.write) !== undefined) u.cacheWriteTokens = cache.write as number;
+  if (input !== undefined) u.inputTokens = input;
+  if (output !== undefined || reasoning !== undefined) u.outputTokens = (output ?? 0) + (reasoning ?? 0);
+  if (read !== undefined) u.cacheReadTokens = read;
+  if (write !== undefined) u.cacheWriteTokens = write;
   if (num(cost) !== undefined) u.costUsd = cost as number;
   return Object.keys(u).length ? u : undefined;
 }
@@ -513,13 +522,15 @@ const parseJson = (v: unknown): Record<string, unknown> => {
 
 const SESSION_TOTALS = [["tokens_input", "inputTokens"], ["tokens_output", "outputTokens"], ["tokens_cache_read", "cacheReadTokens"], ["tokens_cache_write", "cacheWriteTokens"], ["cost", "costUsd"]] as const;
 
+/** A session row's totals; a token count that is not a whole number from 0 to 2^53 - 1 reads as missing, as in tokensUsage. */
 function sessionTotals(s: SqlRow): Usage | undefined {
   const totals: Usage = {};
   for (const [col, k] of SESSION_TOTALS) {
-    const v = num(s[col]);
+    const v = k === "costUsd" ? num(s[col]) : tokenCount(s[col]);
     if (v !== undefined) totals[k] = v;
   }
-  if (num(s.tokens_reasoning)) totals.outputTokens = (totals.outputTokens ?? 0) + (s.tokens_reasoning as number);
+  const reasoning = tokenCount(s.tokens_reasoning);
+  if (reasoning) totals.outputTokens = (totals.outputTokens ?? 0) + reasoning;
   return Object.keys(totals).length ? totals : undefined;
 }
 
@@ -737,7 +748,9 @@ export const opencode: Adapter = {
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 7 (0.1.8): a session id that two JSON session files name is read once, from the first.
-  parseVersion: 7,
+  // 8 (0.1.8): a token count in a message's, step's or session's usage that is not a whole number from 0 to 2^53 - 1 reads as missing,
+  //    so the output sum (output plus reasoning) skips it instead of carrying it.
+  parseVersion: 8,
 
   async detect() {
     const r = await detectAgent({

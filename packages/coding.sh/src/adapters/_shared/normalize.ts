@@ -205,13 +205,22 @@ export function openaiUsage(u: unknown): Usage | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+/**
+ * `a` plus `b`, field by field. A token count that is not a whole number from 0 to 2^53 - 1
+ * (pricing.ts tokenCount) is skipped, so the sum keeps the counts that are; a field neither one
+ * counts is left out. A sum of two costs is rounded to the millionth of a dollar.
+ */
 export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | undefined {
-  if (!a) return b ? { ...b } : undefined;
-  if (!b) return { ...a };
+  if (!a && !b) return undefined;
   const out: Usage = {};
-  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd"] as const) {
-    const s = (a[k] ?? 0) + (b[k] ?? 0);
-    if (a[k] !== undefined || b[k] !== undefined) out[k] = k === "costUsd" ? Math.round(s * 1e6) / 1e6 : s;
+  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+    const x = tokenCount(a?.[k]);
+    const y = tokenCount(b?.[k]);
+    if (x !== undefined || y !== undefined) out[k] = (x ?? 0) + (y ?? 0);
+  }
+  if (a?.costUsd !== undefined || b?.costUsd !== undefined) {
+    const s = (a?.costUsd ?? 0) + (b?.costUsd ?? 0);
+    out.costUsd = a && b ? Math.round(s * 1e6) / 1e6 : s;
   }
   return out;
 }

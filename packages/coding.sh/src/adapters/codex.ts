@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
+import { tokenCount } from "../core/pricing.ts";
 import { parseToml } from "../core/toml.ts";
 import { T3_AGENT, T3_ORIGINATOR } from "../spool/host.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
@@ -185,17 +186,23 @@ function featureDisabledAt(env = process.env): string {
 
 // ---------------------------------------------------------------- usage
 
-/** Codex usage: OpenAI-style (input includes cached reads/writes; output includes reasoning). */
+/**
+ * Codex usage: OpenAI-style (input includes cached reads/writes; output includes reasoning).
+ * A count that is not a whole number from 0 to 2^53 - 1 (pricing.ts tokenCount) reads as
+ * missing before the uncached input is worked out, so it is not subtracted: with no cached
+ * count, the whole input is uncached.
+ */
 export function codexUsage(u: unknown): Usage | undefined {
   if (!isObj(u)) return undefined;
-  const input = num(u.input_tokens);
-  const cached = num(u.cached_input_tokens) ?? 0;
-  const written = num(u.cache_write_input_tokens) ?? 0;
+  const input = tokenCount(u.input_tokens);
+  const cached = tokenCount(u.cached_input_tokens);
+  const written = tokenCount(u.cache_write_input_tokens) ?? 0;
+  const output = tokenCount(u.output_tokens);
   const out: Usage = {};
-  if (input !== undefined) out.inputTokens = Math.max(0, input - cached - written);
-  if (num(u.cached_input_tokens) !== undefined) out.cacheReadTokens = cached;
+  if (input !== undefined) out.inputTokens = Math.max(0, input - (cached ?? 0) - written);
+  if (cached !== undefined) out.cacheReadTokens = cached;
   if (written > 0) out.cacheWriteTokens = written;
-  if (num(u.output_tokens) !== undefined) out.outputTokens = u.output_tokens as number;
+  if (output !== undefined) out.outputTokens = output;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -1152,7 +1159,9 @@ export const codex: Adapter = {
   // 14 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 15 (0.1.8): a session record with no id takes the thread id in the rollout's file name before its session_id,
   //    which a subagent thread shares with its root thread, so the subagent thread stays its own session.
-  parseVersion: 15,
+  // 16 (0.1.8): a token count in a usage record that is not a whole number from 0 to 2^53 - 1 (a fraction, a number too large
+  //    to be exact, or one below 0) reads as missing before the uncached input is worked out: with no cached count, the whole input is uncached.
+  parseVersion: 16,
 
   detect() {
     const home = codexHome();

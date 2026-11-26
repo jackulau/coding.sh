@@ -45,6 +45,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { userHome } from "../core/paths.ts";
+import { tokenCount } from "../core/pricing.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import { HOST_AGENT_PROMPT, HOST_MARK_SLACK_MS, HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
@@ -216,14 +217,18 @@ const threadTitle = (v: unknown): string | undefined => {
 const ptSessionId = (pt: ProviderThread): string => (pt.nativeId ? unscope(pt.nativeId) : `t3code-${pt.id}`);
 const primaryOf = (t: Thread): string => (t.providerThreads[0] ? ptSessionId(t.providerThreads[0]) : `t3code-${t.id}`);
 
-/** T3 turn usage counts cache reads and writes inside inputTokens; coding.sh keeps them apart. */
+/**
+ * T3 turn usage counts cache reads and writes inside inputTokens; coding.sh keeps them apart.
+ * A count that is not a whole number from 0 to 2^53 - 1 (pricing.ts tokenCount) reads as
+ * missing before the cache counts are taken out of the input.
+ */
 export function turnUsage(u: unknown): Usage | undefined {
   const t = obj(u);
   if (t.usageStatus === "unavailable") return undefined;
-  const input = num(t.inputTokens);
-  const output = num(t.outputTokens);
-  const cacheRead = num(t.cachedInputTokens) ?? 0;
-  const cacheWrite = num(t.cacheCreationTokens) ?? 0;
+  const input = tokenCount(t.inputTokens);
+  const output = tokenCount(t.outputTokens);
+  const cacheRead = tokenCount(t.cachedInputTokens) ?? 0;
+  const cacheWrite = tokenCount(t.cacheCreationTokens) ?? 0;
   if (input === undefined && output === undefined) return undefined;
   const usage: Usage = {};
   if (input !== undefined) usage.inputTokens = Math.max(0, input - cacheRead - cacheWrite);
@@ -935,9 +940,10 @@ function readV1Rows(db: DatabaseSync, threadId: string): StoreRows {
         items.push({ id: String(r.activity_id), kind: "compact", done: true, ok: true, start: ts, end: ts });
       } else if (kind === "context-window.updated") {
         // Running totals (v1 has no per-turn usage): the latest snapshot wins, here and in buildSession.
-        const input = num(pl.inputTokens);
-        const cached = num(pl.cachedInputTokens) ?? 0;
-        const output = num(pl.outputTokens);
+        // A count that is not a whole number from 0 to 2^53 - 1 reads as missing, as in turnUsage.
+        const input = tokenCount(pl.inputTokens);
+        const cached = tokenCount(pl.cachedInputTokens) ?? 0;
+        const output = tokenCount(pl.outputTokens);
         if (input !== undefined || output !== undefined) {
           totals = {};
           if (input !== undefined) totals.inputTokens = Math.max(0, input - cached);
@@ -1156,7 +1162,9 @@ export const t3code: Adapter = {
   //    adds to that turn, which ends once: one turn.end, with the turn's own duration.
   // 19 (0.1.8): a Codex session record with no id takes the thread id in the rollout's file name before its
   //    session_id, as in the codex adapter (15).
-  parseVersion: 19,
+  // 20 (0.1.8): a token count in turn usage, a v1 context-window snapshot or a Codex usage record that is not a whole
+  //    number from 0 to 2^53 - 1 reads as missing before the cache counts are taken out of the input, as in the codex adapter (16).
+  parseVersion: 20,
 
   async detect() {
     const env = process.env;

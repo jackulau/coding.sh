@@ -62,6 +62,7 @@ import {
   toJson,
   toMs,
   toRunOutput,
+  tokens,
   usageFrom,
   walkFiles,
 } from "./_util.ts";
@@ -350,8 +351,9 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
   const tail = new Emitter(ctx, { agent: ID, sessionId, ts: lastTs, cwd, model }, ["droid-file", sessionId, "tail"]);
   if (sawUser) tail.turnEnd({}, last);
   // Session totals from the sidecar: on one event with a stable id, so re-backfill never double counts.
+  // A count that is not a whole number from 0 to 2^53 - 1 reads as missing (tokens), so the output sum skips it.
   const tu = isObj(sidecar?.tokenUsage) ? sidecar.tokenUsage : undefined;
-  const usage: Usage | undefined = tu ? usageFrom({ inputTokens: tu.inputTokens, outputTokens: (num(tu.outputTokens) ?? 0) + (num(tu.thinkingTokens) ?? 0), cacheReadTokens: tu.cacheReadTokens, cacheWriteTokens: tu.cacheCreationTokens }) : undefined;
+  const usage: Usage | undefined = tu ? usageFrom({ inputTokens: tokens(tu.inputTokens), outputTokens: (tokens(tu.outputTokens) ?? 0) + (tokens(tu.thinkingTokens) ?? 0), cacheReadTokens: tokens(tu.cacheReadTokens), cacheWriteTokens: tokens(tu.cacheCreationTokens) }) : undefined;
   if (usage) tail.push("notification", { kind: "usage.total", source: "settings.json" }, { usage });
   out.push(...tail.events);
   for (const e of out) if (since === undefined || e.ts >= since) yield e;
@@ -375,7 +377,9 @@ export const droidAdapter: Adapter = {
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 7 (0.1.8): Execute is a shell call: a skill file its command reads names the skill (payload.skill).
   // 8 (0.1.8): a hook whose transcript_path names a folder, or a file that cannot be read, gives its events (jsonlTail).
-  parseVersion: 8,
+  // 9 (0.1.8): a token count in the sidecar's totals that is not a whole number from 0 to 2^53 - 1 reads as missing,
+  //    so the output sum (output plus thinking) skips it instead of carrying it.
+  parseVersion: 9,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["droid"]);
     const dir = factoryDir();

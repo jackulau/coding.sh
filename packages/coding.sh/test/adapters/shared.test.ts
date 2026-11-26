@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { parseToml } from "../../src/core/toml.ts";
 import {
+  addUsage,
   buildHookCommand,
   editStats,
   ensureTomlKey,
@@ -191,6 +192,12 @@ describe("usage mapping", () => {
   });
   it("Anthropic usage maps cache fields", () => {
     assert.deepEqual(anthropicUsage({ input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }), { inputTokens: 5, outputTokens: 7, cacheReadTokens: 100, cacheWriteTokens: 20 });
+  });
+  it("addUsage skips a count that is not a whole number from 0 to 2^53 - 1 and keeps the rest of the sum", () => {
+    assert.deepEqual(addUsage({ inputTokens: 100, outputTokens: 12.5 }, { inputTokens: -1, outputTokens: 20, cacheReadTokens: 2 ** 53 }), { inputTokens: 100, outputTokens: 20 });
+    assert.deepEqual(addUsage(undefined, { inputTokens: 10.5, outputTokens: 3, costUsd: 0.5 }), { outputTokens: 3, costUsd: 0.5 });
+    assert.deepEqual(addUsage({ inputTokens: 1, costUsd: 0.1 }, { inputTokens: 2, costUsd: 0.2 }), { inputTokens: 3, costUsd: 0.3 });
+    assert.equal(addUsage(undefined, undefined), undefined);
   });
 });
 

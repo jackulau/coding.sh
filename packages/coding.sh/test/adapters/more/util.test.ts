@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, jsonlTail, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, sqliteShapeError, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { addUsage, copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, jsonlTail, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, sqliteShapeError, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv, testCtx } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
@@ -591,6 +591,11 @@ describe("small parsers", () => {
     assert.deepEqual(usageFrom({ promptTokenCount: 5, candidatesTokenCount: 6, cachedContentTokenCount: 1 }), { inputTokens: 5, outputTokens: 6, cacheReadTokens: 1 });
     assert.deepEqual(usageFrom({ input: 7, output: 8, cacheRead: 2, cacheWrite: 1, cost: { total: 0.1 } }), { inputTokens: 7, outputTokens: 8, cacheReadTokens: 2, cacheWriteTokens: 1, costUsd: 0.1 });
     assert.equal(usageFrom({}), undefined);
+  });
+  it("addUsage skips a count that is not a whole number from 0 to 2^53 - 1 and keeps the rest of the sum", () => {
+    assert.deepEqual(addUsage({ inputTokens: 100, outputTokens: 12.5 }, { inputTokens: -1, outputTokens: 20, cacheReadTokens: 2 ** 53 }), { inputTokens: 100, outputTokens: 20 });
+    assert.deepEqual(addUsage(undefined, { inputTokens: 10.5, outputTokens: 3, costUsd: 0.5 }), { outputTokens: 3, costUsd: 0.5 });
+    assert.deepEqual(addUsage({ inputTokens: 1 }, undefined), { inputTokens: 1 });
   });
   it("parseJsonc tolerates comments and trailing commas", () => {
     assert.deepEqual(parseJsonc('{\n // c\n "a": "http://x", /* b */ "b": [1,2,],\n}'), { a: "http://x", b: [1, 2] });
