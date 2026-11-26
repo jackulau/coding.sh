@@ -760,7 +760,7 @@ export interface ProofState {
   reds?: Map<string, ProofRed>;
   /** Set at each pass; `edited`: the agent changed code that is not a proof since. */
   green?: { edited?: true };
-  /** A check that passed with a bypass flag after failing, until it passes without one. */
+  /** The key of a failed check that a run with a bypass flag then passed, until a run without one passes. */
   bypass?: string;
   /** Check outcomes read so far. */
   seq?: number;
@@ -871,13 +871,16 @@ export function proofStart(h: HasProof, id: string | undefined, cmd: string, inp
 
 /** Checks are the same when they check the same language, build target and files. */
 const checkKey = (c: ProofCheck) => `${c.lang}\u0000${c.target ?? ""}\u0000${c.path ?? ""}`;
+/** For a `dafny build`, the key of a `dafny verify` of the same files: a build verifies them first. */
+const verifyKey = (c: ProofCheck) => (c.lang === "dafny" && c.target === "build" ? checkKey({ ...c, target: "verify" }) : undefined);
 
 /**
  * A shell call ends: what its check says. A pass after a failure of the same check flips the
  * changes made after its last failure that still stand, unless the agent changed code outside the
  * proofs since the failure, or the failure came after such a change. A pass with a bypass flag
- * after a failure stands until the check passes without one. A make or dune build counts as a
- * check once its output shows a proof checker ran.
+ * after a failure stands until the check passes without one. A `dafny build` with a bypass flag
+ * also stands after a failed `dafny verify` of the same files, until either passes without one. A
+ * make or dune build counts as a check once its output shows a proof checker ran.
  */
 export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   const ps = h.proof;
@@ -899,9 +902,11 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   run.seq = seq;
   const reds = (ps.reds ??= new Map());
   if (check.bypass) {
-    if (out === "green" && was) {
-      ps.bypass = key;
-      note?.({ kind: "bypass", e, flag: check.bypass, before: was.at });
+    const of = was ? key : verifyKey(check);
+    const failed = of === undefined ? undefined : reds.get(of);
+    if (out === "green" && of !== undefined && failed) {
+      ps.bypass = of;
+      note?.({ kind: "bypass", e, flag: check.bypass, before: failed.at });
     }
   } else if (out === "red") {
     reds.delete(key);
@@ -928,7 +933,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
         delete f.touched;
         prune(ps, path, f);
       }
-    if (ps.bypass === key) delete ps.bypass;
+    if (ps.bypass === key || ps.bypass === verifyKey(check)) delete ps.bypass;
     ps.green = {};
     if (flips.length) note?.({ kind: "check", e, flips, before: was?.at as string });
   }
