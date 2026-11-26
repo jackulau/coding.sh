@@ -9,6 +9,7 @@
 import {
   type Attrs,
   bytesToHex,
+  int64Value,
   normId,
   type OtelLink,
   type OtelLogRecord,
@@ -77,13 +78,19 @@ function nanos(v: unknown): string {
   return n !== undefined && n >= 0n && n < FIXED64_END ? n.toString() : "0";
 }
 
+/**
+ * An int64 as a number when it is a safe integer, else as its decimal text, as protobuf gives it. Text
+ * with more than 16 digits after its leading zeros is past the safe range, so it is kept as text
+ * without reading it as a number.
+ */
 function int64(v: unknown): number | string | null {
   if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : null;
-  if (typeof v === "string" && /^-?\d+$/.test(v.trim())) {
-    const b = BigInt(v.trim());
-    return b >= BigInt(Number.MIN_SAFE_INTEGER) && b <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(b) : b.toString();
-  }
-  return null;
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  if (!/^-?\d+$/.test(t)) return null;
+  const sign = t.startsWith("-") ? "-" : "";
+  const digits = t.slice(sign.length).replace(/^0+(?=\d)/, "");
+  return digits.length > 16 ? sign + digits : int64Value(BigInt(sign + digits));
 }
 
 function double(v: unknown): number | string | null {
