@@ -183,4 +183,16 @@ describe("compare timing", () => {
     const pair = { id: "pair_1", arm: "a", experiments: ["x", "y"] as [string, string], seed: 1 };
     assert.deepEqual(runTiming({ createdAt: 0, finishedAt: 10, pair }, { createdAt: 0, finishedAt: 10, pair: { ...pair, arm: "b" } }), { interleaved: true, gapMs: 0 });
   });
+
+  it("the command it suggests has a dataset and a grader, and names the dataset both runs share", () => {
+    const on = (id: string) => ({ id, name: id, version: "1" });
+    // A run that started at `at`, on the dataset `id` when one is given.
+    const ran = (at: number, id: string | undefined): Parameters<typeof runTiming>[0] =>
+      id ? { createdAt: at, finishedAt: at + 10, dataset: on(id) } : { createdAt: at, finishedAt: at + 10 };
+    const warn = (a: string | undefined, b: string | undefined) => runTiming(ran(0, a), ran(20, b)).warning ?? "";
+    assert.match(warn("triage", "triage"), / coding\.sh exp run -d triage -g <GRADER> --arm a=<TASK> --arm b=<TASK>$/);
+    assert.match(warn("triage", "other"), / exp run -d <DATASET> -g <GRADER> --arm /);
+    assert.match(warn(undefined, undefined), / exp run -d <DATASET> -g <GRADER> --arm /);
+    assert.match(warn("my set", "my set"), / exp run -d <DATASET> -g /, "an id a shell would split stays a placeholder");
+  });
 });

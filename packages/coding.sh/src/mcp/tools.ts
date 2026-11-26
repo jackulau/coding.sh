@@ -1,6 +1,8 @@
 // The coding.sh MCP tools. Read-mostly, small paginated outputs; each tool has
-// an inputSchema, an outputSchema, and annotations. eval_from_session is the
-// only write and needs `confirm: true`.
+// an inputSchema, an outputSchema, and annotations. eval_from_session and
+// eval_init write and need `confirm: true`, exp_session_note writes a note, and
+// session_replay's fork calls a model (score_add and score_add_batch, which also
+// write, are in scores/mcp.ts).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "../core/context.ts";
@@ -749,7 +751,8 @@ function toolDefs(): PagedTool[] {
         ["sessionId"],
       ),
       outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, treeTotal: I, changesTotal: I, filesTotal: I, unchanged: arr(S), unchangedTotal: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S, limitUsed: I, truncated: { type: "boolean" }, note: S, trials: { type: "array" } }, ["sessionId"]),
-      annotations: { ...READ, idempotentHint: false, openWorldHint: true },
+      // Not read-only: fork sends a step's stored model call to the provider again, with the user's key.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       async run(a, c) {
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);

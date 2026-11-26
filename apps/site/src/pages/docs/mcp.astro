@@ -118,10 +118,11 @@ const gemini = `// ~/.gemini/settings.json
     </table>
   </div>
   <p>
-    Only <code>eval_from_session</code>, <code>eval_init</code>, <code>score_add</code> and <code>exp_session_note</code> write. Agents ask
-    you before <code>eval_from_session</code> and <code>eval_init</code>. Notes have secrets redacted. <code>eval_init</code> and
-    <code>score_add</code> are marked destructive, because <code>eval_init</code> with <code>force</code> replaces a suite and a new
-    score replaces the one stored for the same target, name, source and person.
+    Only <code>eval_from_session</code>, <code>eval_init</code>, <code>score_add</code>, <code>score_add_batch</code> and
+    <code>exp_session_note</code> write. Agents ask you before <code>eval_from_session</code> and <code>eval_init</code>. Notes have
+    secrets redacted. <code>eval_init</code> and both score tools are marked destructive: <code>eval_init</code> with
+    <code>force</code> replaces a suite, and a new score replaces the one with the same target, name, source and person.
+    <code>session_replay</code> is not marked read-only, since its <code>fork</code> calls a model.
   </p>
   <p>
     A tool answer stays under 25,000 characters. When the rows asked for would be longer, the answer has fewer rows and a

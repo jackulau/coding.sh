@@ -9,8 +9,8 @@ import type { Context } from "../../core/context.ts";
 import { version } from "../meta.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { printedRefs } from "../../core/session-ref.ts";
-import { autoIngest, oneLine, readIngest, str, withContext } from "../common.ts";
-import { nextStepBin } from "../next-steps.ts";
+import { autoIngest, emptyStateNext, oneLine, readIngest, str, withContext } from "../common.ts";
+import { cliCommand, nextStepBin, widerSince } from "../next-steps.ts";
 import { CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -51,6 +51,17 @@ export async function report(c: CommandContext, ctx: Context, extra: Partial<Att
 
 const short = (sha: string) => sha.slice(0, 8);
 
+/** The same attribution from further back than `since`, with the --repo, --rev and --all given. */
+function furtherBack(c: CommandContext, since: number): string {
+  const args = ["attribution", "--since", widerSince(since)];
+  const repo = str(c.flags.repo);
+  if (repo) args.push("--repo", repo);
+  const rev = str(c.flags.rev);
+  if (rev) args.push("--rev", rev);
+  if (c.flags.all === true) args.push("--all");
+  return cliCommand(c.env, args);
+}
+
 async function list(c: CommandContext, ctx: Context): Promise<number> {
   const { out } = c;
   const bin = nextStepBin(c.env);
@@ -74,14 +85,22 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
   }
   if (!r.commits.length) {
     out.note(`No commits since ${localTime(r.since)} on ${short(r.rev)}`);
-    out.next("Look further back", `${bin} attribution --since 90d`);
+    out.next("Look further back", furtherBack(c, r.since));
     return 0;
   }
   const pct = added ? Math.round((attributed / added) * 100) : 0;
   out.print(`${plural(r.commits.length, "commit")} since ${localTime(r.since)}: ${attributed} of ${added} added lines by ${plural(r.sessions.length, "session")} (${pct}%)`);
   if (!shown.length) {
     out.print("No commit has lines a captured session wrote.");
-    if (!r.sources) out.next("Sessions in this repo need an end snapshot or edit tool calls; check capture", `${bin} doctor`);
+    if (!r.considered) {
+      // No session ran here, so capture is not what to check. Without --since every session in the repo
+      // was read, so a wider window finds none either: the step shows where the stored sessions ran.
+      const typed = str(c.flags.since) !== undefined;
+      out.print(typed ? `No captured session ran in this repo since ${localTime(r.since)}.` : "No captured session ran in this repo.");
+      const widen = typed ? { label: "Look further back", command: furtherBack(c, r.since) } : { label: "See which repos your sessions ran in", command: cliCommand(c.env, ["sessions", "--facets", "repo"]) };
+      // On a store with no session at all, the step is how the first one gets here instead.
+      await emptyStateNext(out, c.env, ctx.index, widen);
+    } else if (!r.sources) out.next("Sessions in this repo need an end snapshot or edit tool calls; check capture", `${bin} doctor`);
     return 0;
   }
   out.print();

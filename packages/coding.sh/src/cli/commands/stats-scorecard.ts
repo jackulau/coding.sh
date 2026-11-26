@@ -15,7 +15,7 @@ import { NONE } from "../../viewer/metrics.ts";
 import { UsageError } from "../args.ts";
 import { pendingField, queryCliError, refolding, str, windowJson, windowNote, type IngestBacklog, type TimeWindow } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
-import { cliCommand } from "../next-steps.ts";
+import { cliCommand, widerSince } from "../next-steps.ts";
 import { duration, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -97,12 +97,6 @@ export async function runScorecard(c: CommandContext, ctx: Context, o: Scorecard
   const firstTwo = firstTwoWhere(card, found.sessions, o);
   if (firstTwo) out.next("Compare the first two columns, with a DIFFERENCE column", again(...typed("since"), ...typed("until"), "--where", firstTwo));
   return 0;
-}
-
-/** A --since that starts before `since`: 90 days back, or twice as far back as `since` when that is 90 days or more. To the nearest day, so --since 100d gives 200d. */
-export function widerSince(since: number, now = Date.now()): string {
-  const days = Math.round((now - since) / 86_400_000);
-  return `${days < 90 ? 90 : days * 2}d`;
 }
 
 /**
