@@ -16,7 +16,7 @@
 // core/toml.ts.
 import type { AgentEvent } from "../schema/index.ts";
 import type { SpoolLine } from "../core/types.ts";
-import { createRedactor, redactForBlob, redactionCounts, redactionTally, type RedactionTally, type Redactor } from "../core/redact.ts";
+import { createRedactor, redactForBlob, redactionCounts, redactionTally, type BlobMemo, type RedactionTally, type Redactor } from "../core/redact.ts";
 import { paths } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
 import type { RedactLine } from "./write.ts";
@@ -129,24 +129,62 @@ function documents(s: string, level = 0): number {
 
 const MARKER_ONLY = /^\[redacted:[a-z0-9-]+\]$/;
 
+/** The characters a redacted string still shows: its length without markers, or for a document the same over its strings, as deep as documents() follows them. */
+function shownLength(s: string, level = 0): number {
+  const doc = level < 3 ? jsonDocument(s) : undefined;
+  if (doc === undefined) return s.replace(/\[redacted:[a-z0-9-]+\]/g, "").length;
+  let n = 0;
+  const visit = (v: unknown, depth: number): void => {
+    if (typeof v === "string") n += shownLength(v, level + 1);
+    else if (v !== null && typeof v === "object" && depth <= 64) for (const x of Object.values(v)) visit(x, depth + 1);
+  };
+  visit(doc, 0);
+  return n;
+}
+
 /**
  * Redacts a hook payload (parsed JSON, or the text when it did not parse). Every
  * string goes through the rules as ingest redacts an event's payload
  * (Redactor.value); then a string holding a JSON document is redacted as that
- * document, as a blob is (redactForBlob), which finds a `NAME=value` after an
- * escaped newline. A document with nothing more to redact keeps its text, so an
+ * document, as a blob is (redactForBlob), which finds a value that only its key
+ * shows to be secret. A document with nothing more to redact keeps its text, so an
  * event built from the result matches the one ingest builds from the original.
  *
- * A rule run on the text can take the backslash of an escape with a value (a
- * value that ends only at a quote), and a document in the text then no longer
- * parses, at any depth. For such a string the original is redacted as documents
+ * A rule run on the text keeps whole each JSON escape a match starts or ends
+ * inside, at every depth, but a match can still run past the end of one of a
+ * document's strings (a private key with no END line runs to the end of the text),
+ * and a document in the text then no longer parses, at any depth. A match can also
+ * stop at an escape inside a value (below). The text's result is kept only when as
+ * many documents parse in it as in the original and it shows no more than the
+ * original redacted as documents. Otherwise the original is redacted as documents
  * instead (redactForBlob), and the counts the rules made on its text are taken
- * back, so each value is counted once.
+ * back, so each value is counted once. The documents in the two texts hold mostly
+ * the same strings, and the passes over them share a BlobMemo, so each string is
+ * redacted once.
  */
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
+  const memo: BlobMemo = new Map();
   return mapJsonStrings(r.value(v, tally), v, (s, before) => {
-    if (before === undefined || before === s || MARKER_ONLY.test(s) || documents(s) >= documents(before)) return redactForBlob(r, s, tally) as string;
+    if (before === undefined || before === s || MARKER_ONLY.test(s)) return redactForBlob(r, s, tally, 0, memo) as string;
+    const docs = documents(before);
+    if (docs === 0) return redactForBlob(r, s, tally, 0, memo) as string;
+    let viaDoc: RedactionTally | undefined;
+    let doc: string | undefined;
+    if (documents(s) >= docs) {
+      // A match the text pass started right after an escape can stop at an escape inside its value
+      // (an escaped quote, for one): the rest of the value then follows a marker, where the
+      // document pass does not look again. The text's result is kept only when it shows no more
+      // than the original redacted as documents.
+      const viaText = redactionTally();
+      const clean = redactForBlob(r, s, viaText, 0, memo) as string;
+      viaDoc = redactionTally();
+      doc = redactForBlob(r, before, viaDoc, 0, memo) as string;
+      if (clean === doc || shownLength(clean) <= shownLength(doc)) {
+        addTally(tally, viaText);
+        return clean;
+      }
+    }
     const onText = redactionTally();
     r.string(before, onText);
     for (const [k, n] of Object.entries(onText.kinds)) {
@@ -154,8 +192,15 @@ export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): u
       if (left > 0) tally.kinds[k] = left;
       else delete tally.kinds[k];
     }
-    return redactForBlob(r, before, tally) as string;
+    if (doc === undefined || viaDoc === undefined) return redactForBlob(r, before, tally, 0, memo) as string;
+    addTally(tally, viaDoc);
+    return doc;
   });
+}
+
+function addTally(into: RedactionTally, from: RedactionTally): void {
+  for (const [k, n] of Object.entries(from.kinds)) into.kinds[k] = (into.kinds[k] ?? 0) + n;
+  if (from.preexisting) into.preexisting = true;
 }
 
 /**
