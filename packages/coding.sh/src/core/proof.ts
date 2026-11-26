@@ -766,6 +766,8 @@ export interface ProofFile {
   touched?: Map<string, number>;
   /** Keys whose change turned a failing check green and that are still changed. */
   flipped?: Set<string>;
+  /** Its path, kept once the log of changes (ProofState.log) holds it. */
+  path?: string;
 }
 
 /** A check that failed and has not passed since. */
@@ -773,6 +775,8 @@ export interface ProofRed {
   /** Its tool.end, and the number of that outcome: a pass flips only what changed after it. */
   at: string;
   seq: number;
+  /** The length of the log of changes when it failed: a pass reads the log from there. */
+  log?: number;
   /** It failed after the agent changed code that is not a proof since a pass. */
   own?: true;
   /** The agent changed code that is not a proof since it failed, so a pass may come from the code. */
@@ -793,6 +797,14 @@ export interface ProofRun {
 
 export interface ProofState {
   files?: Map<string, ProofFile>;
+  /**
+   * The keys changed since a pass left no check failing, each with its file, in order. A pass reads
+   * the changes made after its failure, and clears the files the log holds. A state an older build
+   * saved has no log until such a pass, and reads every file until then.
+   */
+  log?: [ProofFile, string][];
+  /** The log's length when it was last cut to the latest change of each key in a file still held. */
+  logCut?: number;
   /** Checks started and not yet ended, by call id (the last 8). */
   runs?: [string, ProofCheck][];
   /** Checks that ended (the last 8). */
@@ -856,6 +868,52 @@ const prune = (ps: ProofState, path: string, f: ProofFile) => {
   if (!f.sites?.size && !f.stmts?.size && !f.lines?.size && !f.added && !f.gone && !f.lang && !f.touched?.size && !f.flipped?.size) ps.files?.delete(path);
 };
 
+/** The state, made on first use with an empty log of changes. */
+const stateOf = (h: HasProof): ProofState => (h.proof ??= { log: [] });
+
+/** The file is still the one at its path: not moved over, deleted or dropped. */
+const held = (ps: ProofState, f: ProofFile) => f.path !== undefined && ps.files?.get(f.path) === f;
+
+/** True the first time `seen` meets the key of the file. */
+function first(seen: Map<ProofFile, Set<string>>, f: ProofFile, key: string): boolean {
+  let keys = seen.get(f);
+  if (keys?.has(key)) return false;
+  if (!keys) seen.set(f, (keys = new Set()));
+  keys.add(key);
+  return true;
+}
+
+/**
+ * Log a change. Once the log is twice as long as after its last cut, cut it to the latest change
+ * of each key in a file still held, and move each failure's place in it to match: a pass still
+ * reads the same keys.
+ */
+function logChange(ps: ProofState, f: ProofFile, path: string, key: string): void {
+  const log = ps.log;
+  if (!log) return;
+  f.path = path;
+  if (log.push([f, key]) < 2 * (ps.logCut ?? 0) + 256) return;
+  const seen = new Map<ProofFile, Set<string>>();
+  const keep = log.map(() => false);
+  for (let i = log.length - 1; i >= 0; i--) {
+    const [g, k] = log[i] as [ProofFile, string];
+    keep[i] = held(ps, g) && first(seen, g, k);
+  }
+  const place = [0];
+  keep.forEach((k, i) => place.push((place[i] as number) + (k ? 1 : 0)));
+  for (const r of ps.reds?.values() ?? []) if (r.log !== undefined) r.log = place[r.log] as number;
+  ps.log = log.filter((_, i) => keep[i]);
+  ps.logCut = ps.log.length;
+}
+
+/** The keys changed from the log's `from`th change on, once each, in files still held: [path, file, key]. */
+function changedSince(ps: ProofState, from: number): [string, ProofFile, string][] {
+  const seen = new Map<ProofFile, Set<string>>();
+  const out: [string, ProofFile, string][] = [];
+  for (const [f, key] of ps.log?.slice(from) ?? []) if (held(ps, f) && first(seen, f, key)) out.push([f.path as string, f, key]);
+  return out;
+}
+
 /**
  * Whether a key of the file is changed from what the session started with. With `since`, a line
  * counts only when the agent changed it after that many outcomes: a line changed before a failure
@@ -877,8 +935,9 @@ const runOf = (ps: ProofState, id: string | undefined) => (id === undefined ? un
 const stampOf = (ps: ProofState, run: ProofRun | undefined) => (run?.seq !== undefined ? run.seq - 1 : (ps.seq ?? 0));
 
 /**
- * A key changed: keep it for the next pass. A change made by a call that also ran a check comes
- * before the check: after a pass it is not kept, and after a pass that followed a failure it flips.
+ * A key changed: log it, and keep it for the next pass. A change made by a call that also ran a
+ * check comes before the check: after a pass it is not kept, and after a pass that followed a
+ * failure it flips.
  */
 function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: ProofShape, e: AgentEvent, id: string | undefined, note: Note): void {
   const t = proofTampered(f, key);
@@ -890,6 +949,7 @@ function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: P
     (f.flipped ??= new Set()).add(key);
     flip = { before: run.before as string, after: run.at };
   }
+  logChange(ps, f, path, key);
   if (!note) return;
   const n: Extract<ProofNote, { kind: "change" }> = { kind: "change", e, path, key, shape, tampered: t };
   if (flip) n.flip = flip;
@@ -905,7 +965,7 @@ function closeSites(f: ProofFile, path: string, e: AgentEvent, note: Note): void
 export function proofStart(h: HasProof, id: string | undefined, cmd: string, input: unknown): void {
   const check = id === undefined ? undefined : proofCheck(cmd, input);
   if (!check) return;
-  const ps = (h.proof ??= {});
+  const ps = stateOf(h);
   if (check.lang === "rocq") ps.rocq = true;
   if (check.lang === "tlc" || check.lang === "tla") ps.tlc = true;
   (ps.runs ??= []).push([id as string, check]);
@@ -954,6 +1014,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   } else if (out === "red") {
     reds.delete(key);
     const red: ProofRed = { at: e.id, seq };
+    if (ps.log) red.log = ps.log.length;
     if (ps.green?.edited) red.own = true;
     reds.set(key, red);
     if (reds.size > RECENT) reds.delete(reds.keys().next().value as string);
@@ -963,19 +1024,27 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
     if (was && !was.own && !was.broken) {
       run.flip = true;
       run.before = was.at;
-      for (const [path, f] of ps.files ?? [])
-        for (const [t, at] of f.touched ?? [])
-          if (at >= was.seq && proofTampered(f, t, was.seq)) {
-            (f.flipped ??= new Set()).add(t);
-            flips.push([path, t]);
-          }
+      // The keys changed since the failure; every file's for a failure an older build saved.
+      const since = ps.log && was.log !== undefined ? changedSince(ps, was.log) : [...(ps.files ?? [])].flatMap(([path, f]) => [...(f.touched?.keys() ?? [])].map((t): [string, ProofFile, string] => [path, f, t]));
+      for (const [path, f, t] of since) {
+        const at = f.touched?.get(t);
+        if (at !== undefined && at >= was.seq && proofTampered(f, t, was.seq)) {
+          (f.flipped ??= new Set()).add(t);
+          flips.push([path, t]);
+        }
+      }
     }
     reds.delete(key);
-    if (!reds.size)
-      for (const [path, f] of ps.files ?? []) {
+    if (!reds.size) {
+      // Only the files in the log hold changed keys, but in a state an older build saved.
+      const changed = ps.log ? [...new Set(ps.log.map(([f]) => f))].filter((f) => held(ps, f)).map((f): [string, ProofFile] => [f.path as string, f]) : [...(ps.files ?? [])];
+      for (const [path, f] of changed) {
         delete f.touched;
         prune(ps, path, f);
       }
+      ps.log = [];
+      delete ps.logCut;
+    }
     if (ps.bypass === key || ps.bypass === verifyKey(check)) delete ps.bypass;
     ps.green = {};
     if (flips.length) note?.({ kind: "check", e, flips, before: was?.at as string });
@@ -1030,6 +1099,7 @@ function moveFile(ps: ProofState, from: string, to: string, e: AgentEvent, note:
   if (f) {
     ps.files?.delete(from);
     ps.files?.set(to, f);
+    f.path = to;
   }
   note?.({ kind: "move", from, to });
 }
@@ -1058,7 +1128,7 @@ const sameKind = (a: string, b: string) => (isProofConfig(a) && isProofConfig(b)
 export function proofWrite(h: HasProof, e: AgentEvent, w: { op: string }, path: string, to: string | undefined, id: string | undefined, test = false, note?: Note): void {
   if (test || (!isProofConfig(path) && !langOf(h.proof, path))) return proofSourceWrite(h, path, id, true, test);
   if (OUTSIDE.test(path)) return;
-  const ps = (h.proof ??= {});
+  const ps = stateOf(h);
   if (w.op === "delete") {
     if (to !== undefined && !OUTSIDE.test(to) && sameKind(path, to)) {
       moveFile(ps, path, to, e, note);
@@ -1102,7 +1172,7 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
   }
   const handled = lang !== "verus";
   if (OUTSIDE.test(path)) return handled;
-  const ps = (h.proof ??= {});
+  const ps = stateOf(h);
   if (lang === "tla" && !ps.tla?.includes(path)) {
     (ps.tla ??= []).push(path);
     if (ps.tla.length > RECENT) ps.tla.shift();

@@ -5,8 +5,11 @@ import {
   compareStatements,
   isProofConfig,
   outText,
+  proofChange,
   proofCheck,
+  proofEnd,
   proofLang,
+  proofStart,
   readProofDiff,
   scanProof,
   statements,
@@ -14,8 +17,12 @@ import {
   syntaxOf,
   textKey,
   weakens,
+  type HasProof,
   type ProofLang,
+  type ProofNote,
 } from "../../src/core/proof.ts";
+import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
+import { assertCpuUnder } from "../helpers-timing.ts";
 
 /** A one-hunk diff of `path`; each line starts with " ", "-" or "+". */
 const diff = (path: string, ...lines: string[]) => `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n${lines.join("\n")}\n`;
@@ -372,5 +379,38 @@ describe("checkOutcome", () => {
     assert.equal(outText("x"), "x");
     assert.equal(outText({ stdout: "a", stderr: "b", exitCode: 1 }), "a\nb");
     assert.equal(outText(undefined), "");
+  });
+});
+
+describe("proofEnd", () => {
+  let n = 0;
+  const ev = (kind: EventKind, payload: Record<string, unknown>): AgentEvent => ({ id: `e${++n}`, v: 0, sessionId: "s", ts: 1000 + n, agent: "claude-code", kind, payload });
+
+  it("runs 4,000 passing checks after 1,000 proof files are made in linear time, and flips a change made after a later failure", () => {
+    const made = Array.from({ length: 1000 }, (_, i) => ev("file.change", { path: `P${i}.lean`, op: "add", tool: "Write", toolUseId: `w${i}`, diff: diff(`P${i}.lean`, `+-- note ${i}`) }));
+    const end = (id: string, ok: boolean): [string, AgentEvent] => [id, ev("tool.end", { tool: "Bash", toolUseId: id, ok, output: ok ? "Build completed successfully." : "error: Foo.lean:1:0: unsolved goals" })];
+    const passes = Array.from({ length: 4000 }, (_, m) => end(`c${m}`, true));
+    const red = end("red", false);
+    const weaken = ev("file.change", { path: "Foo.lean", op: "modify", tool: "Edit", toolUseId: "w", diff: diff("Foo.lean", "-theorem t : p", "+theorem t : q") });
+    const green = end("green", true);
+    const run = () => {
+      const h: HasProof = {};
+      const flips: [string, string][][] = [];
+      const note = (x: ProofNote) => {
+        if (x.kind === "check") flips.push(x.flips);
+      };
+      const check = ([id, e]: [string, AgentEvent]) => {
+        proofStart(h, id, "lake build", { command: "lake build" });
+        proofEnd(h, e, note);
+      };
+      made.forEach((e, i) => proofChange(h, e, { path: `P${i}.lean`, origin: "edit", prot: false }, note));
+      passes.forEach(check);
+      check(red);
+      proofChange(h, weaken, { path: "Foo.lean", origin: "edit", prot: false }, note);
+      check(green);
+      return flips;
+    };
+    assertCpuUnder("4,000 passing checks after 1,000 proof files are made", run);
+    assert.deepEqual(run(), [[["Foo.lean", "t"]]]);
   });
 });

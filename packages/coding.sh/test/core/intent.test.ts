@@ -926,4 +926,20 @@ describe("proof tampering", () => {
     assert.deepEqual(new Set(said(fs).map((x) => x.join())), new Set(["statement,unknown,info,false"]));
     assert.deepEqual(new Set(fs.map((f) => `${f.path} ${f.eventId}`)), new Set([`Bar.lean ${change[2]?.id}`]));
   });
+
+  it("drops a file a moved statement emptied at the next pass, so a removal made there later is matched after the others", () => {
+    const change = (path: string, ...lines: string[]) => edit(path, udiff(path, ...lines));
+    const a1 = change("A.lean", "-theorem c : p");
+    const g1 = green();
+    const d = change("D.lean", "-theorem x : p");
+    const b = change("B.lean", "+theorem c : q");
+    const g2 = green();
+    const a2 = change("A.lean", "-theorem x : p");
+    const e = change("E.lean", "+theorem x : q");
+    const fs = trace([...a1, ...g1, ...d, ...b, ...g2, ...a2, ...e]);
+    assert.deepEqual(
+      fs.map((f) => `${f.path} ${f.theorem} ${f.shape} ${f.eventId}`),
+      [`B.lean c unknown ${b[2]?.id}`, `A.lean x delete ${a2[2]?.id}`, `E.lean x unknown ${e[2]?.id}`],
+    );
+  });
 });
