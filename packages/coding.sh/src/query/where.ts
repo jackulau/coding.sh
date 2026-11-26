@@ -5,8 +5,8 @@
 // key table is the one allowlist: src/query/compile.ts turns the AST into
 // parameterized SQL for the SQLite store and src/query/match.ts evaluates it on rows
 // for every other store. Both read the same table, so a key behaves the same on
-// every surface. This file has no imports beyond types so the CLI registry can
-// load the key docs for help without loading a store.
+// every surface. This file imports no store, so the CLI registry can load the
+// key docs for help without one.
 import { CONTEXT_FLAGS, isFailureFlag } from "../core/failure-flags.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { parseWhen } from "./time.ts";
