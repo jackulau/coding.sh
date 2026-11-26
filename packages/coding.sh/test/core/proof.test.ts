@@ -225,12 +225,14 @@ describe("proofCheck", () => {
     assert.deepEqual(proofCheck("dafny verify src/A.dfy"), { lang: "dafny", target: "verify", path: "src/A.dfy", exit: "both" });
     assert.deepEqual(proofCheck("isabelle build -d . Main"), { lang: "isabelle", exit: "both" });
     assert.deepEqual(proofCheck("java -cp tla2tools.jar tlc2.TLC MC.tla"), { lang: "tlc", path: "MC.tla", exit: "both" });
+    assert.deepEqual(proofCheck("java -XX:+UseParallelGC -jar tla2tools.jar -config MC.cfg MC.tla"), { lang: "tlc", path: "MC.cfg MC.tla", exit: "both" });
+    assert.equal(proofCheck("java -jar /opt/tla/tla2tools.jar MC.tla")?.lang, "tlc");
     assert.equal(proofCheck("make -j4")?.lang, "make");
     assert.equal(proofCheck("dune build @all")?.lang, "dune");
   });
 
   it("is undefined for commands that check nothing", () => {
-    for (const c of ["echo hi", "lake --version", "coqc --help", "make clean", "lean --run Main.lean -h", "cat A.v", "git commit -m lean", "dafny format A.dfy", "lake update"]) assert.equal(proofCheck(c), undefined, c);
+    for (const c of ["echo hi", "lake --version", "coqc --help", "make clean", "lean --run Main.lean -h", "cat A.v", "git commit -m lean", "dafny format A.dfy", "lake update", "java -cp tla2tools.jar pcal.trans Spec.tla", "java -jar tla2tools.jar -h"]) assert.equal(proofCheck(c), undefined, c);
   });
 
   it("keeps quoted words whole: a commit message that names a checker runs no check", () => {
@@ -315,7 +317,11 @@ describe("checkOutcome", () => {
     assert.equal(checkOutcome(lake, { ok: true, output: "Command running in background with ID: b1" }), undefined);
   });
 
-  it("has nothing to go on when the checker never ran: not found, exit status 126 or 127, or turned down", () => {
+  it("has nothing to go on when the checker never ran: not found, a jar java could not open, exit status 126 or 127, or turned down", () => {
+    const tlcJar = proofCheck("java -jar tla2tools.jar -config MC.cfg MC.tla")!;
+    assert.equal(checkOutcome(tlcJar, { ok: false, exitCode: 1, output: "Error: Unable to access jarfile /opt/tla/tla2tools.jar" }), undefined);
+    assert.equal(checkOutcome(tlcJar, { ok: false, exitCode: 1, output: "Error: Unable to access jarfile tla2tools.jar" }), undefined);
+    assert.equal(checkOutcome(lake, { ok: false, exitCode: 1, output: "Error: Unable to access jarfile tla2tools.jar" }), "red");
     assert.equal(checkOutcome(lake, { ok: false, output: "bash: line 1: lake: command not found" }), undefined);
     assert.equal(checkOutcome(lake, { ok: false, output: "The user doesn't want to proceed with this tool use. The tool use was rejected." }), undefined);
     assert.equal(checkOutcome(lake, { ok: false, exitCode: 127 }), undefined);

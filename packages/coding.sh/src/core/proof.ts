@@ -479,7 +479,9 @@ export interface ProofCheck {
   background?: true;
 }
 
-const CHECKER_HINT = /\b(?:coqc|coqchk|rocq|rocqchk|lake|lean|dafny|verus|isabelle|tlc2?|tlapm|apalache-mc|make|dune)\b/;
+const CHECKER_HINT = /\b(?:coqc|coqchk|rocq|rocqchk|lake|lean|dafny|verus|isabelle|tlc2?|tla2tools|tlapm|apalache-mc|make|dune)\b/;
+/** The jar that runs TLC by default: `java -jar tla2tools.jar MC.tla`. */
+const TLC_JAR = /(?:^|[/\\])tla2tools\.jar$/;
 const PROOF_ARG = /\.(?:v|lean|dfy|thy|tla|cfg)$/;
 const FILTERS = new Set(["grep", "egrep", "fgrep", "rg", "head", "tail", "sed", "awk", "cut", "wc", "sort", "uniq", "jq"]);
 /** Checker flags that skip the work, and the `-o` (Isabelle) and `-D` (Lean) options that do, unless set to false. */
@@ -539,8 +541,10 @@ function checkerLang(cmd: string, args: string[]): string | undefined {
     case "tlc":
     case "tlc2":
       return "tlc";
-    case "java":
-      return args.includes("tlc2.TLC") ? "tlc" : undefined;
+    case "java": {
+      const jar = args.indexOf("-jar");
+      return args.includes("tlc2.TLC") || (jar >= 0 && TLC_JAR.test(args[jar + 1] ?? "")) ? "tlc" : undefined;
+    }
     case "tlapm":
       return "tla";
     case "apalache-mc":
@@ -633,18 +637,18 @@ const PROGRAMS: Record<string, readonly string[]> = {
   dafny: ["dafny"],
   verus: ["verus", "cargo"],
   isabelle: ["isabelle"],
-  tlc: ["tlc", "tlc2", "java"],
+  tlc: ["tlc", "tlc2", "java", "tla2tools.jar"],
   tla: ["tlapm", "apalache-mc"],
 };
 /** The commands that start a checker (`timeout 600 lake build`, `opam exec -- coqc A.v`). */
 const WRAPPERS = ["timeout", "opam"];
 /**
- * A line in which a shell, make, env, cmd or PowerShell says it found no program by that name. The
- * name is the first group that matched.
+ * A line in which a shell, make, env, cmd or PowerShell says it found no program by that name, or
+ * java says it could not open the jar. The name is the first group that matched.
  */
 const NO_PROGRAM =
-  /^(?:[^\s:]+: )?(?:line \d+: |\d+: )?(?:[^\s:']*\/)?'?([\w.+-]+)'?: (?:[Cc]ommand not found|not found|No such file or directory)(?: \[[^\]\n]*\])?$|^[^\s:]*sh(?::\d+)?: command not found: (?:[^\s:]*\/)?([\w.+-]+)$|^(?:[\w.+-]+ ?: )?The term '(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized\b|^'(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized as an internal or external command\b|^(?:fish: Unknown command:|\[ERROR\] Command not found|timeout: failed to run command) '?(?:[^'\s]*\/)?([\w.+-]+?)'?(?:: No such file or directory)?$/;
-const MAYBE_NO_PROGRAM = /not (?:found|recognized)|No such file|Unknown command/i;
+  /^(?:[^\s:]+: )?(?:line \d+: |\d+: )?(?:[^\s:']*\/)?'?([\w.+-]+)'?: (?:[Cc]ommand not found|not found|No such file or directory)(?: \[[^\]\n]*\])?$|^[^\s:]*sh(?::\d+)?: command not found: (?:[^\s:]*\/)?([\w.+-]+)$|^(?:[\w.+-]+ ?: )?The term '(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized\b|^'(?:[^'\n]*[/\\])?([\w.+-]+)' is not recognized as an internal or external command\b|^(?:fish: Unknown command:|\[ERROR\] Command not found|timeout: failed to run command) '?(?:[^'\s]*\/)?([\w.+-]+?)'?(?:: No such file or directory)?$|^Error: Unable to access jarfile (?:\S*[/\\])?([\w.+-]+)$/;
+const MAYBE_NO_PROGRAM = /not (?:found|recognized)|No such file|Unknown command|Unable to access jarfile/i;
 /** A line in which make reports a failed recipe. */
 const MAKE_STATUS = /^g?make(?:\[\d+\])?: \*\*\* /;
 
@@ -658,7 +662,7 @@ function withoutNotFound(lang: string, out: string): string | undefined {
   const lines = out.split("\n");
   const kept = lines.filter((line) => {
     const m = NO_PROGRAM.exec(line.trimEnd());
-    const name = m ? (m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? "").replace(/\.exe$/i, "") : "";
+    const name = m ? (m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6] ?? "").replace(/\.exe$/i, "") : "";
     return !own.has(name);
   });
   return kept.length < lines.length ? kept.filter((line) => !MAKE_STATUS.test(line)).join("\n") : undefined;

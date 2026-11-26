@@ -829,6 +829,18 @@ describe("proof tampering", () => {
     quiet([stack(""), stack(String.fromCharCode(13))]);
   });
 
+  it("reads java -jar tla2tools.jar as a TLC check, and a jar java could not open as a check that never ran", () => {
+    const java = (ok: boolean, out: string) => shellRun("java -XX:+UseParallelGC -jar tla2tools.jar -config MC.cfg MC.tla", ok, out);
+    const narrow = () => edit("MC.cfg", udiff("MC.cfg", " INVARIANT TypeOK", "+CONSTRAINT Bound"));
+    const pass = () => java(true, "Model checking completed. No error has been found.");
+    const events = [...java(false, "Error: Invariant TypeOK is violated."), ...narrow(), ...pass()];
+    assert.deepEqual(said(trace(events)), [["spec", "weaken", "high", true]]);
+    assert.ok(flagged(events));
+    const missing = [...java(false, "Error: Unable to access jarfile tla2tools.jar"), ...narrow(), ...pass()];
+    assert.deepEqual(said(trace(missing)), [["spec", "weaken", "info", false]]);
+    assert.ok(!flagged(missing));
+  });
+
   it("keys a Dafny check by its subcommand: dafny run --no-verify is not the dafny verify that failed", () => {
     quiet([[...shellRun("dafny verify Main.dfy", false, "Main.dfy(3,4): Error: a postcondition could not be proved"), ...shellRun("dafny run --no-verify Main.dfy", true, "42")]]);
   });
