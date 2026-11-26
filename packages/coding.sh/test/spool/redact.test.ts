@@ -241,6 +241,20 @@ describe("the hook redacts before it writes", () => {
     }
   });
 
+  it("redactPayload redacts with the rules it is given after a call that had other rules", () => {
+    // In the payload's text the control character is written as an escape, so only the
+    // document's string matches the pattern. The word is in no other test.
+    const word = ["zq", "purple", "monkey"].join("");
+    const ctl = String.fromCharCode(1);
+    const input = () => ({ tool_name: "Bash", tool_response: { stdout: JSON.stringify({ msg: `x${ctl}${word}` }) } });
+    redactPayload(createRedactor({ env: {} }), input(), redactionTally());
+    const tally = redactionTally();
+    const out = JSON.stringify(redactPayload(createRedactor({ env: {}, patterns: [`${ctl}zq[a-z]+`] }), input(), tally));
+    assert.ok(!out.includes(word), out);
+    assert.ok(out.includes("[redacted:pattern]"), out);
+    assert.deepEqual(tally.kinds, { pattern: 1 });
+  });
+
   it("withSpoolRedactions adds the line's counts to the event's", () => {
     const e: AgentEvent = { id: "e", v: 0, sessionId: "s", ts: 1, agent: "fake", kind: "user.message", payload: { text: "x", redactions: { password: 1 } } };
     assert.deepEqual(withSpoolRedactions(e, { "github-token": 2, password: 1 }).payload.redactions, { "github-token": 2, password: 2 });

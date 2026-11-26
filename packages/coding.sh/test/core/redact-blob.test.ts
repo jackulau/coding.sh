@@ -108,6 +108,32 @@ describe("redactForBlob on a value its caller gives it", () => {
     }
   });
 
+  it("copies the caller's objects and arrays, and leaves them as they were, when nothing in them changes", () => {
+    for (const level of [0, 1, 2, 3]) {
+      const obj = { a: "plain text", n: [1, 2, { b: "more text" }] };
+      const before = JSON.stringify(obj);
+      const out = redactForBlob(createRedactor({ env: {} }), obj, redactionTally(), level, new Map()) as typeof obj;
+      const label = `level ${level}`;
+      assert.notEqual(out, obj, label);
+      assert.notEqual(out.n, obj.n, label);
+      assert.equal(JSON.stringify(obj), before, label);
+      assert.equal(JSON.stringify(out), before, label);
+    }
+  });
+
+  it("copies an object with toJSON, so serializing the result does not call it, at each level it is called at", () => {
+    // toJSON gives an assignment; the object's own keys hold nothing to redact.
+    const line = () => `DB_PASSWORD=${part}`;
+    for (const level of [0, 1, 2, 3]) {
+      const bare: object = Object.create({ toJSON: () => line() });
+      const withKey: object = Object.assign(Object.create({ toJSON: () => ({ note: line() }) }), { a: "plain" });
+      for (const x of [bare, withKey]) {
+        const out = redactForBlob(createRedactor({ env: {} }), x, redactionTally(), level, new Map());
+        assert.ok(!JSON.stringify(out).includes(part), `level ${level}: ${JSON.stringify(out)}`);
+      }
+    }
+  });
+
   it("gives each redactor that shares a memo the text that redactor makes", () => {
     const s = `token ${["Zq8", "mK2pW7", "xR4vT9"].join("")} here`;
     const memo = new Map();
