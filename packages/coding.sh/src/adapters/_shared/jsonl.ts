@@ -4,6 +4,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Transform } from "node:stream";
 import * as zlib from "node:zlib";
+import { dateMs } from "../../core/dates.ts";
 
 export interface JsonlRecord {
   value: unknown;
@@ -285,9 +286,9 @@ export async function* walkFiles(root: string, opts: WalkOpts, depth = 0): Async
   }
 }
 
-/** Parses an ISO timestamp / epoch seconds / epoch ms into ms, else fallback. */
+/** Parses an ISO timestamp / epoch seconds / epoch ms into ms, else fallback (also for a time out of the Date range). */
 export function toMs(v: unknown, fallback: number): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+  if (typeof v === "number" && Number.isFinite(v)) return dateMs(v < 1e12 ? Math.round(v * 1000) : Math.round(v)) ?? fallback;
   if (typeof v === "string" && v) {
     const t = Date.parse(v);
     if (Number.isFinite(t)) return t;

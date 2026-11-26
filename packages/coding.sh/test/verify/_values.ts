@@ -29,7 +29,7 @@ import { type Copy, eachHome, type Home, JSON_PARTS, LINE_PARTS, segments } from
 
 const REMOVED = Symbol("removed");
 /** What a change sets a value to, or REMOVED. */
-const VALUES: readonly unknown[] = [null, 0, -1, 1e308, "", "x", true, [], [null], {}, REMOVED];
+const VALUES: readonly unknown[] = [null, 0, -1, 1e308, -1e308, "", "x", true, [], [null], {}, REMOVED];
 /** How deep a changed value may be, in keys and indexes. */
 const DEPTH = 8;
 /** At bound 0 a part checks every SAMPLE-th of the changes bound 1 checks. */
