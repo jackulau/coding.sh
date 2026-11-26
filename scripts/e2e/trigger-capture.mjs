@@ -26,6 +26,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "../../packages/coding.sh/src/core/spawn.ts";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const isWin = process.platform === "win32";
@@ -150,7 +151,7 @@ function scenario(body) {
 // ------------------------------------------------------------------ main
 
 const opts = parseArgs(process.argv.slice(2));
-const root = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), "csh-trigger-"));
+const root = mkdtempSync(join(tempBase(process.env.RUNNER_TEMP || tmpdir()), "csh-trigger-"));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
 const csHome = join(home, ".coding.sh");

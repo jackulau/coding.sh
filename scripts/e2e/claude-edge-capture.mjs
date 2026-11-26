@@ -16,6 +16,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const PKG = "@anthropic-ai/claude-code@2.1.319";
 const MODEL = "claude-sonnet-4-5";
@@ -26,7 +27,7 @@ const keep = args.includes("--keep");
 if (!outDir) throw new Error("--out <dir> is required");
 
 // Real path: Claude Code records the resolved cwd (/private/var/… on macOS), which the scrub must match.
-const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-cc-edge-")));
+const root = realpathSync(mkdtempSync(join(tempBase(tmpdir()), "csh-cc-edge-")));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
 const project = join(root, "demo");

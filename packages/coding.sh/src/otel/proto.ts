@@ -202,7 +202,11 @@ function anyValue(r: ProtoReader, depth: number): OtelValue {
     if (f === 1 && wt === WT_LEN) out = r.string();
     else if (f === 2 && wt === WT_VARINT) out = r.varint() !== 0;
     else if (f === 3 && wt === WT_VARINT) out = int64Value(BigInt.asIntN(64, r.varint64()));
-    else if (f === 4 && wt === WT_I64) out = r.double();
+    else if (f === 4 && wt === WT_I64) {
+      // NaN and the infinities aren't JSON values: their protojson strings, as OTLP/JSON sends them.
+      const d = r.double();
+      out = Number.isFinite(d) ? d : String(d);
+    }
     else if (f === 5 && wt === WT_LEN) {
       const arr: OtelValue[] = [];
       const sub = r.message();
