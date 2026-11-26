@@ -59,6 +59,89 @@ describe("raw blobs are redacted before they are serialized", () => {
     assert.ok(!JSON.stringify(out).includes(SECRET));
     assert.ok(Object.keys(tally.kinds).length > 0);
   });
+
+  it("redactForBlob with a memo gives the text and counts it gives without one, for each string it has seen before", () => {
+    const token = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+    // AWS's documentation key: counted as placeholder-key.
+    const docKey = ["AK", "IA", "IOSFODNN7EXAMPLE"].join("");
+    const line = `AWS_SECRET_ACCESS_KEY=${SECRET}`;
+    const inner = JSON.stringify({ t: token, again: token, password: "hunter", note: "[redacted:email] kept", doc: docKey });
+    let deep: unknown = { out: line, t: token };
+    for (let i = 0; i < 70; i++) deep = { n: deep, t: token };
+    const values: unknown[] = [
+      { a: line, b: line, c: [line, token, token], d: JSON.stringify({ a: line, b: [line, inner, inner] }) },
+      // Documents in strings at each level redactForBlob follows, and one past them.
+      JSON.stringify({ x: inner, y: JSON.stringify({ z: inner, w: JSON.stringify({ v: inner }) }) }),
+      ["node", "cli.js", "--api-key", "abcd1234efgh", "--api-key", "abcd1234efgh"],
+      { api_key: "abcdefgh", same: { api_key: "abcdefgh" }, note: "[redacted:openai-key]", note2: "[redacted:openai-key]" },
+      deep,
+      [docKey, docKey, `${docKey} ${token}`],
+    ];
+    // One memo for every value, twice over: the second round finds each string in it.
+    const memo = new Map();
+    for (let round = 0; round < 2; round++) {
+      for (const v of values) {
+        const want = redactionTally();
+        const got = redactionTally();
+        const label = `round ${round}: ${JSON.stringify(v).slice(0, 80)}`;
+        assert.equal(JSON.stringify(redactForBlob(redactor, v, got, 0, memo)), JSON.stringify(redactForBlob(redactor, v, want)), label);
+        assert.equal(JSON.stringify(got), JSON.stringify(want), label);
+      }
+    }
+    assert.ok(memo.size > 0);
+  });
+});
+
+describe("redactForBlob on a value its caller gives it", () => {
+  // Built from parts so no secret-looking literal sits in the source.
+  const part = ["Kq9m", "Z2xR", "7vWp"].join("");
+
+  it("serializes what its walk read from a getter, at each level it is called at", () => {
+    for (const level of [0, 1, 2, 3]) {
+      let reads = 0;
+      // "nothing here" on the first read, an assignment on any later one.
+      const o = { get note() { return ++reads > 1 ? `DB_PASSWORD=${part}` : "nothing here"; } };
+      const out = redactForBlob(createRedactor({ env: {} }), o, redactionTally(), level, new Map());
+      const label = `level ${level}: ${JSON.stringify(out)}`;
+      assert.notEqual(out, o, label);
+      assert.ok(!JSON.stringify(out).includes(part), label);
+    }
+  });
+
+  it("copies the caller's objects and arrays, and leaves them as they were, when nothing in them changes", () => {
+    for (const level of [0, 1, 2, 3]) {
+      const obj = { a: "plain text", n: [1, 2, { b: "more text" }] };
+      const before = JSON.stringify(obj);
+      const out = redactForBlob(createRedactor({ env: {} }), obj, redactionTally(), level, new Map()) as typeof obj;
+      const label = `level ${level}`;
+      assert.notEqual(out, obj, label);
+      assert.notEqual(out.n, obj.n, label);
+      assert.equal(JSON.stringify(obj), before, label);
+      assert.equal(JSON.stringify(out), before, label);
+    }
+  });
+
+  it("copies an object with toJSON, so serializing the result does not call it, at each level it is called at", () => {
+    // toJSON gives an assignment; the object's own keys hold nothing to redact.
+    const line = () => `DB_PASSWORD=${part}`;
+    for (const level of [0, 1, 2, 3]) {
+      const bare: object = Object.create({ toJSON: () => line() });
+      const withKey: object = Object.assign(Object.create({ toJSON: () => ({ note: line() }) }), { a: "plain" });
+      for (const x of [bare, withKey]) {
+        const out = redactForBlob(createRedactor({ env: {} }), x, redactionTally(), level, new Map());
+        assert.ok(!JSON.stringify(out).includes(part), `level ${level}: ${JSON.stringify(out)}`);
+      }
+    }
+  });
+
+  it("gives each redactor that shares a memo the text that redactor makes", () => {
+    const s = `token ${["Zq8", "mK2pW7", "xR4vT9"].join("")} here`;
+    const memo = new Map();
+    assert.equal(redactForBlob(createRedactor({ env: {} }), s, redactionTally(), 0, memo), s);
+    const tally = redactionTally();
+    assert.equal(redactForBlob(createRedactor({ env: {}, patterns: ["Zq8[A-Za-z0-9]+"] }), s, tally, 0, memo), "token [redacted:pattern] here");
+    assert.deepEqual(tally.kinds, { pattern: 1 });
+  });
 });
 
 describe("redactBlobValue runs only the rules the value's JSON text holds a needle of", () => {

@@ -44,6 +44,8 @@ const SLACK_USER = ["xox", "p-1234567890-abcdef"].join("");
 const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const STRIPE_LIVE = ["sk_li", "ve_", "51H8abcdefghijklmnop"].join("");
 
+/** A backslash, so no JSON escape is written out in this file. */
+const BS = String.fromCharCode(92);
 const HEX = "0123456789abcdef";
 const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const B64 = `${B62}+/`;
@@ -454,10 +456,65 @@ describe("redact: linear time on long input", () => {
     ["repeated 'secret = '", (n) => "secret = ".repeat(Math.floor(n / 9))],
     ["'AccountKey=' + base64", (n) => `AccountKey=${randomFrom(rand, B64, n)}`],
     ["repeated base64 BEGIN", (n) => "LS0tLS1CRUdJTi".repeat(Math.floor(n / 14))],
+    // A rule's leading break also passes right after a JSON escape, and a match that starts or
+    // ends inside an escape keeps it whole.
+    [`repeated '${BS}nsk-'`, (n) => `${BS}nsk-`.repeat(Math.floor(n / 5))],
+    [`repeated '${BS}u0041'`, (n) => `${BS}u0041`.repeat(Math.floor(n / 6))],
+    [`repeated '${BS}npassword: '`, (n) => `${BS}npassword: `.repeat(Math.floor(n / 12))],
+    [`repeated 'a${BS}'`, (n) => `a${BS}`.repeat(n / 2)],
+    ["a run of backslashes", (n) => BS.repeat(n)],
+    [`repeated 'token=x1${BS}"'`, (n) => `token=x1${BS}"`.repeat(Math.floor(n / 10))],
+    [`'DB_PASSWORD="' + repeated 'a${BS}${BS}'`, (n) => `DB_PASSWORD="${`a${BS}${BS}`.repeat(Math.floor(n / 3))}`],
+    [`repeated '${BS}nTOKEN="x1${BS}${BS}'`, (n) => `${BS}nTOKEN="x1${BS}${BS}`.repeat(Math.floor(n / 13))],
+    [`repeated '${BS}nTOKEN=[redacted:a]'`, (n) => `${BS}nTOKEN=[redacted:a]`.repeat(Math.floor(n / 20))],
+    [`'${BS}n' + a name of 1 MB`, (n) => `${BS}n${"A".repeat(n - 2)}`],
+    [`'machine a login b password ' + repeated '"a'`, (n) => `machine a login b password ${'"a'.repeat(Math.floor(n / 2))}`],
+    ["keys, each after 1000 backslashes and an n", (n) => `${BS.repeat(1000)}n${GITHUB_CLASSIC}`.repeat(Math.floor(n / (1001 + GITHUB_CLASSIC.length)))],
   ];
   for (const [name, make] of cases) {
     it(`redacts 1 MB of ${name} in linear time (under 500 ms, else linear growth)`, () => assertLinear(name, make));
   }
+
+  it("redacts 1 MB of keys, each right after an escape, in linear time and keeps each escape whole", () => {
+    const unit = `${BS}n${GITHUB_CLASSIC}`;
+    assertLinear("keys after escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+      assert.equal(out, `${BS}n[redacted:github-token]`.repeat(input.length / unit.length));
+    });
+  });
+
+  it("redacts 1 MB of e-mail addresses, each starting inside an escape, in linear time and keeps each escape whole", () => {
+    const unit = `a${BS}nuser@example.test `;
+    assertLinear("addresses after escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+      assert.equal(out, `a${BS}n[redacted:email] `.repeat(input.length / unit.length));
+    }, createRedactor({ redact: ["email"] }));
+  });
+
+  it("redacts 1 MB of phone numbers, each right after an escape, in linear time", () => {
+    const unit = `${BS}n415-555-2671 `;
+    assertLinear("phone numbers after escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+      assert.equal(out, `${BS}n[redacted:phone] `.repeat(input.length / unit.length));
+    }, createRedactor({ redact: ["pii"] }));
+  });
+
+  it("redacts 1 MB of assignments, each after a long run of backslashes, in linear time and hides each value whole", () => {
+    // 999 backslashes and an n make an escape at the text's own level, 998 one a level down. Each
+    // value holds a backslash of its own, written as that level writes one.
+    const head = ["Kq9m", "Z2xR"].join("");
+    const rest = ["w0rd", "99xy"].join("");
+    const unit = `${BS.repeat(999)}nDB_PASSWORD=${head}${BS.repeat(2)}t${rest} ${BS.repeat(998)}nAPI_TOKEN=${head}${BS.repeat(4)}t${rest} `;
+    const want = `${BS.repeat(999)}nDB_PASSWORD=[redacted:secret-assignment] ${BS.repeat(998)}nAPI_TOKEN=[redacted:secret-assignment] `;
+    assertLinear("assignments after long escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+      assert.equal(out, want.repeat(input.length / unit.length));
+    });
+  });
+
+  it("leaves 1 MB of backslashes as it is, in linear time, when a pattern matches each one", () => {
+    // The whole run is one escape at some level, so no match inside it is cut.
+    const backslash = createRedactor({ redact: ["none"], patterns: [BS + BS] });
+    assertLinear("a pattern inside a run of backslashes", (n) => BS.repeat(n), 500, (input, out) => {
+      assert.equal(out, input);
+    }, backslash);
+  });
 });
 
 describe("redact: same output as the original secret rules", () => {
