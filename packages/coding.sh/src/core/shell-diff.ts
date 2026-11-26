@@ -13,7 +13,7 @@ export const slashed = (x: string): string => (x.includes("\\") ? x.replace(/\\/
 
 /** A cwd as normalizeTracePath compares a path with it: forward slashes, no trailing slash, no macOS `/private`. */
 export function traceRoot(cwd: string | undefined): string | undefined {
-  return cwd ? unprivate(slashed(cwd).replace(/\/+$/, "")) : undefined;
+  return cwd ? unprivate(slashed(cwd).replace(/(?<!\/)\/+$/, "")) : undefined;
 }
 
 /** normalizeTracePath against a root from traceRoot: for many paths under one cwd, the cwd read once. */

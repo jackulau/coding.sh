@@ -475,12 +475,17 @@ async function* backfillJsonStorage(ctx: NormalizeContext, storage: string, sinc
   } catch {
     return;
   }
+  // A session id that two session files name is read once, from the first file: its messages are under its id
+  // either way, and reading it again would give every event twice.
+  const seen = new Set<string>();
   for (const proj of projects) {
     for (const s of await readJsonDir(join(storage, "session", proj))) {
       const id = str(s.id);
       if (!id) continue;
       const updated = toMs(obj(s.time).updated, toMs(obj(s.time).created, 0));
       if (since !== undefined && updated < since) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
       const msgs: StoredMessage[] = [];
       for (const m of await readJsonDir(join(storage, "message", id))) {
         const mid = str(m.id);
@@ -731,7 +736,8 @@ export const opencode: Adapter = {
   // 4 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
-  parseVersion: 6,
+  // 7 (0.1.8): a session id that two JSON session files name is read once, from the first.
+  parseVersion: 7,
 
   async detect() {
     const r = await detectAgent({

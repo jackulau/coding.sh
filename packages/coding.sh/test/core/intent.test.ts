@@ -364,6 +364,60 @@ describe("test-tamper false positives seen on real sessions", () => {
   });
 });
 
+describe("string literals and options on a test's diff line", () => {
+  /** The shape of a change that adds one line to a test that was there before. */
+  const addLine = (line: string) => trace(edit("test/a.test.ts", `--- a/test/a.test.ts\n+++ b/test/a.test.ts\n@@ -10,2 +10,3 @@\n it("adds", () => {\n+${line}\n   assert.equal(add(1, 1), 2);\n`))[0]?.shape;
+  /** The shape of a change that rewrites a test's opening line. */
+  const redeclare = (from: string, to: string) => trace(edit("test/a.test.ts", `--- a/test/a.test.ts\n+++ b/test/a.test.ts\n@@ -10,2 +10,2 @@\n-${from}\n+${to}\n   assert.equal(add(1, 1), 2);\n`))[0]?.shape;
+
+  it("a literal that closes after an escaped quote is emptied, so the marker in it is data", () => {
+    assert.equal(addLine("  const line = 'it.skip(\\'adds\\')';"), "additive");
+    assert.equal(addLine('  const line = "it.skip(\\"adds\\")";'), "additive");
+    assert.equal(addLine("  const line = `it.skip(\\`adds\\`)`;"), "additive");
+  });
+
+  it("a backslash that is itself escaped does not escape the quote after it", () => {
+    assert.equal(addLine('  const dir = "C:\\\\tmp\\\\"; return t.skip("windows");'), "skip");
+    assert.equal(addLine("  const dir = 'C:\\\\', line = 'it.skip(';"), "additive");
+  });
+
+  it("a quote after a backslash never closes a literal, and a quote that closes nothing is passed over", () => {
+    // As in JS and Python strings. A template literal that goes on to the next line is not
+    // emptied, so its marker counts, with or without escaped backticks in it.
+    assert.equal(addLine("  const src = `it.skip(adds, () => {"), "skip");
+    assert.equal(addLine("  const src = `it.skip(\\`adds\\`, () => {"), "skip");
+    assert.equal(addLine("  const src = 'it.skip(\\'"), "skip");
+    // A quote that closes nothing is passed over: a literal after it still closes and is emptied.
+    assert.equal(addLine("  const a = 'it\\', b = \"it.skip(\";"), "additive");
+  });
+
+  it("a literal does not run past a line end inside the line", () => {
+    for (const end of ["\r", String.fromCharCode(0x2028), String.fromCharCode(0x2029)]) {
+      assert.equal(addLine(`  const line = 'it.skip(${end}';`), "skip");
+      assert.equal(addLine(`  const line = 'it.skip(\\${end}';`), "skip");
+    }
+  });
+
+  it("a test is keyed by its first literal that closes, escaped quotes included", () => {
+    assert.equal(redeclare("it('can\\'t add', () => {", "it.skip('can\\'t add', () => {"), "skip");
+    assert.equal(redeclare('it("C:\\\\", () => {', 'it.skip("C:\\\\", () => {'), "skip");
+    // Another test's name, the same up to its escaped quote, is not the test that was removed.
+    assert.notEqual(redeclare("it('can\\'t add', () => {", "it.skip('can\\'t subtract', () => {"), "skip");
+  });
+
+  it("a quote that closes nothing is passed over, so the literal after it names the test", () => {
+    assert.equal(redeclare("it('a\\', \"adds\", () => {", "it.skip('b\\', \"adds\", () => {"), "skip");
+    assert.notEqual(redeclare("it('a\\', \"adds\", () => {", "it.skip('a\\', \"subtracts\", () => {"), "skip");
+  });
+
+  it("node:test options are read from the nearest brace before the key", () => {
+    const skips = (line: string) => SKIP_MARKERS.some((re) => re.test(line));
+    assert.ok(skips('describe("math", () => { it("adds", { skip: true }, () => {'));
+    assert.ok(skips('it("adds", { timeout: 5, todo: "later" }, () => {'));
+    assert.ok(!skips('it("adds", { timeout: 5 }, () => {'));
+  });
+});
+
 describe("DISCLOSURE", () => {
   const yes = [
     "The test expecting 5 is incorrect.",

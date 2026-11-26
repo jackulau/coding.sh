@@ -22,7 +22,7 @@ export const RUNNER_CONFIG_PATH =
 export const SKIP_MARKERS: readonly RegExp[] = [
   /\b(?:it|test|describe|context|suite)\.(?:skip|only|todo|skipIf)\s*\(/, // jest/vitest/mocha/node:test
   /^\s*(?:xit|xtest|xdescribe|xcontext|fit|fdescribe)\s*\(/, // a statement, not `def fit(` or `model.fit(`
-  /\{[^}]*\b(?:skip|only|todo)\s*:\s*(?:true|["'`])/, // node:test options
+  /\{[^{}]*\b(?:skip|only|todo)\s*:\s*(?:true|["'`])/, // node:test options, from the nearest { so the line is read in linear time
   /\bt\.(?:skip|todo|Skip|SkipNow|Skipf)\s*\(/, // node:test / ava / go
   /@pytest\.mark\.(?:skip|skipif|xfail)\b/,
   /\bpytest\.(?:skip|xfail|importorskip)\s*\(/,
@@ -133,9 +133,49 @@ export function isProtectedPath(path: string, opts: Pick<TamperTraceOpts, "patte
 }
 
 const hasSkip = (lines: readonly string[]) => lines.some((l) => SKIP_MARKERS.some((re) => re.test(l)));
+const QUOTES = "'\"`";
+/** The line ends `.` stops at in a regex: \n, \r, U+2028 and U+2029. */
+const isLineEnd = (code: number) => code === 10 || code === 13 || code === 0x2028 || code === 0x2029;
+
+/**
+ * The string literals closed on a line, leftmost first, as [open, close] quote indexes. A literal
+ * is a quote, then any characters but that quote and a line end, a backslash taking the one after
+ * it, then the same quote: a quote after a backslash never closes one, as in JS and Python
+ * strings. A quote that closes nothing is passed over. A later quote of its kind, up to where that
+ * try stopped, was escaped in it, so its own try would stop there too: it is skipped, and the line
+ * is read in linear time.
+ */
+function closedLiterals(line: string): [number, number][] {
+  const found: [number, number][] = [];
+  const stopped = [-1, -1, -1]; // for each of QUOTES, where its last try that closed nothing stopped
+  for (let open = 0; open < line.length; open++) {
+    const kind = QUOTES.indexOf(line.charAt(open));
+    if (kind < 0 || open < stopped[kind]!) continue;
+    let i = open + 1;
+    for (; i < line.length && line[i] !== line[open] && !isLineEnd(line.charCodeAt(i)); i++) {
+      if (line[i] !== "\\") continue;
+      if (i + 1 === line.length || isLineEnd(line.charCodeAt(i + 1))) break;
+      i++;
+    }
+    if (line[i] === line[open]) {
+      found.push([open, i]);
+      open = i;
+    } else stopped[kind] = i;
+  }
+  return found;
+}
+
 /** String literals closed on the line, emptied: `"it.skip('x')"` in a test's data is text, `it.skip("x")` still a call. */
-const STRING_LITERAL = /(['"`])(?:\\.|(?!\1).)*\1/g;
-const codeSkip = (line: string) => hasSkip([line.replace(STRING_LITERAL, "$1$1")]);
+function emptyLiterals(line: string): string {
+  let out = "";
+  let from = 0;
+  for (const [open, close] of closedLiterals(line)) {
+    out += line.slice(from, open + 1) + line.charAt(open);
+    from = close + 1;
+  }
+  return out + line.slice(from);
+}
+const codeSkip = (line: string) => hasSkip([emptyLiterals(line)]);
 /** In a shell command the focus/exclude calls sit inside a script (`sed -i 's/it(/xit(/'`), not at a line start. */
 const SHELL_FOCUS = /(?<![.\w$])(?<!def\s)(?:xit|xtest|xdescribe|xcontext|fit|fdescribe)\s*\(/;
 const shellSkips = (cmd: string) => hasSkip([cmd]) || SHELL_FOCUS.test(cmd);
@@ -145,7 +185,10 @@ const TEST_OPENER = /^\s*(?:(?:it|test|describe|context|suite|specify|xit|xtest|
 /** A marker that annotates the test below it: `@pytest.mark.skip`, `#[ignore]`, `@Disabled`, `[Ignore]`. */
 const ANNOTATION = /^\s*(?:@|#\[|\[)/;
 /** The test a declaration names: its first string literal, else its function name. */
-const testKey = (line: string): string | undefined => /(['"`])((?:\\.|(?!\1).)*)\1/.exec(line)?.[2] ?? /(?:def|func|fn)\s+(\w+)/.exec(line)?.[1];
+const testKey = (line: string): string | undefined => {
+  const [first] = closedLiterals(line);
+  return first ? line.slice(first[0] + 1, first[1]) : /(?:def|func|fn)\s+(\w+)/.exec(line)?.[1];
+};
 
 /**
  * True when a skip marker added in the hunk disables a test that existed

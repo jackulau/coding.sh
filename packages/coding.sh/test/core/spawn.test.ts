@@ -13,8 +13,9 @@ const win = process.platform === "win32";
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "csh-spawn-")));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-// Arguments a prompt or a JSON flag can carry: spaces, quotes, cmd.exe and sh metacharacters, a newline.
-const NASTY = ["plain", "two words", 'say "hi"', "a&b|c<d>e^f", "100% %PATH% !x!", "back\\slash\\", "$HOME `x`", "line1\nline2", ""];
+// Arguments a prompt or a JSON flag can carry: spaces, quotes, cmd.exe and sh metacharacters, a newline,
+// trailing backslashes.
+const NASTY = ["plain", "two words", 'say "hi"', "a&b|c<d>e^f", "100% %PATH% !x!", "back\\slash\\", "$HOME `x`", "line1\nline2", "", "dir\\\\\\", "\\\\", 'q\\"x\\\\'];
 
 describe("resolveSpawn", () => {
   it("is the identity off Windows", { skip: win && "Windows resolves commands" }, () => {

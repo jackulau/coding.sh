@@ -494,7 +494,7 @@ function globTokens(glob: string, env: NodeJS.ProcessEnv = process.env): number[
   let g = expandHome(glob, env);
   // Windows: give a rooted glob (`/work/**`) the drive resolve() gives paths.
   if (isWin && isAbsolute(g)) g = resolve(g);
-  g = slashed(g).replace(/\/+$/, "");
+  g = slashed(g).replace(/(?<!\/)\/+$/, "");
   const out: number[] = [];
   for (let i = 0; i < g.length; i++) {
     const c = g[i]!;
