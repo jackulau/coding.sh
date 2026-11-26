@@ -13,8 +13,8 @@
 // a newer version writes them, and counts every other record as unknown
 // instead of failing. A result whose key was never started in this journal is
 // treated as a resume cache hit (inferred).
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, sep } from "node:path";
 import { sha256Hex, hashParts } from "../../core/ids.ts";
 import { applyPricing, type Prices } from "../../core/pricing.ts";
 import { finishEvent, normalizeContext, type CaptureProfile } from "../../core/ingest.ts";
@@ -436,11 +436,22 @@ export async function copiedRunOwner(d: ClaudeWorkflowDir): Promise<ClaudeWorkfl
   return (await ls(runDir)).includes("journal.jsonl") ? describeRunDir(runDir) : undefined;
 }
 
-/** The script Claude Code persists for a run: <session dir>/workflows/scripts/<meta.name>-<runId>.js. */
+/**
+ * The script Claude Code persists for a run: <session dir>/workflows/scripts/<meta.name>-<runId>.js.
+ * Only a file whose real path is in the session dir is read.
+ */
 async function persistedScript(d: ClaudeWorkflowDir): Promise<string | undefined> {
   const dir = join(d.sessionDir, "workflows", "scripts");
-  const f = (await ls(dir)).find((x) => x.endsWith(`-${d.runId}.js`));
-  return f === undefined ? undefined : join(dir, f);
+  for (const f of await ls(dir)) {
+    if (!f.endsWith(`-${d.runId}.js`)) continue;
+    try {
+      const [file, home] = await Promise.all([realpath(join(dir, f)), realpath(d.sessionDir)]);
+      if (file.startsWith(home + sep) && (await stat(file)).isFile()) return join(dir, f);
+    } catch {
+      // vanished mid-scan
+    }
+  }
+  return undefined;
 }
 
 export interface FindOpts {
@@ -601,8 +612,9 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
  * 2: a running run is named by its persisted script's meta.name, not its id.
  * 3: an agent's shell call reads the last jest, vitest, node:test or mocha summary in its output, not the first.
  * 4: the failed and null shares are of the agents that ran, cached agents left out.
+ * 5: a script is read only from the run's record or the copy in its session dir's workflows/scripts, and stored redacted (none in metadata mode).
  */
-const IMPORT_VERSION = 4;
+const IMPORT_VERSION = 5;
 
 /** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {
@@ -700,10 +712,13 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
   let script = s(record?.script);
   // The journal's launch line names no script and the record is written when the run ends, so
   // a running run has only the copy Claude Code keeps in workflows/scripts/<name>-<runId>.js.
-  const scriptPath = s(record?.scriptPath) ?? parsed.scriptPath ?? (script === undefined ? await persistedScript(dir) : undefined);
-  if (script === undefined && scriptPath) {
+  // The file a record or journal names in scriptPath may have changed since the run, so it is
+  // kept as the run's path and not read: the script is the record's own, or that copy.
+  const persisted = script === undefined ? await persistedScript(dir) : undefined;
+  const scriptPath = s(record?.scriptPath) ?? parsed.scriptPath ?? persisted;
+  if (persisted !== undefined) {
     try {
-      script = await readFile(scriptPath, "utf8");
+      script = await readFile(persisted, "utf8");
     } catch {
       // script moved or deleted
     }

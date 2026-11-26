@@ -47,8 +47,12 @@ const CLAUDE_TRANSCRIPT = /[\\/]projects[\\/][^\\/]+[\\/][0-9a-f]{8}(?:-[0-9a-f]
 /**
  * A coding.sh hook command for Devin: the hook file's path, quoted or bare, then `devin`. In a quoted
  * path only `\"`, `\\`, `\$` and `` \` `` are escape pairs; any other backslash is part of the path.
+ * The lookbehinds keep the time linear. A quoted path is not tried from a quote that follows an odd
+ * run of backslashes with an earlier quote before the run and no quote between, and a bare path is
+ * tried only from the start of a run of non-space characters. Whenever a start they skip would
+ * match, an earlier start matches too, so the first match is unchanged.
  */
-const DEVIN_HOOK = /(?:"((?:[^"\\]|\\["\\$`]|\\(?!["\\$`]))*hook\.(?:mjs|sh))"|(\S*hook\.(?:mjs|sh)))\s+devin(?:\s|$)/;
+const DEVIN_HOOK = /(?:"(?<!"(?:[^"]*[^"\\])?\\(?:\\\\)*")((?:[^"\\]|\\["\\$`]|\\(?!["\\$`]))*hook\.(?:mjs|sh))"|(?<!\S)(\S*hook\.(?:mjs|sh)))\s+devin(?:\s|$)/;
 /** Compaction events: Devin's own hook fires PostCompaction, Claude Code's PreCompact, for one compaction. */
 const COMPACT = /^(?:pre|post)compact(?:ion)?$/i;
 

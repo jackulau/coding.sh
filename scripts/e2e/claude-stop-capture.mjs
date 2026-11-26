@@ -24,11 +24,12 @@
 // Needs network for npm. Never touches the real HOME. Exit 0 when a transcript with both stops was
 // written. On Windows npm and claude are .cmd shims: they run through coding.sh's portable spawn, the
 // npm global bin is the prefix itself, and USERPROFILE/APPDATA point into the throwaway home.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { execFileSync, spawn } from "../../packages/coding.sh/src/core/spawn.ts";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const PKG = "@anthropic-ai/claude-code@2.1.319";
 const isWin = process.platform === "win32";
@@ -42,11 +43,7 @@ const keep = args.includes("--keep");
 if (!outDir) throw new Error("--out <dir> is required");
 
 // Real path: Claude Code records the resolved cwd (/private/var/… on macOS), which the scrub must match.
-const base = realpathSync(flag("--tmp") ?? tmpdir());
-const above = [base];
-while (dirname(above.at(-1)) !== above.at(-1)) above.push(dirname(above.at(-1)));
-const found = above.flatMap((d) => ["CLAUDE.md", "CLAUDE.local.md", ".claude", ".git"].map((n) => join(d, n))).filter((p) => existsSync(p));
-if (found.length) throw new Error(`Claude Code would read ${found.join(", ")}: pass --tmp <dir> with a folder that has none of them above it`);
+const base = tempBase(realpathSync(flag("--tmp") ?? tmpdir()), "pass --tmp <dir> with a folder that has none of them above it");
 const root = realpathSync(mkdtempSync(join(base, "csh-cc-stop-")));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");

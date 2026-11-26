@@ -25,6 +25,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { startStub, toolNames } from "./stub-model.mjs";
+import { tempBase } from "./temp-base.ts";
 
 const PKG = "@anthropic-ai/claude-code@2.1.319";
 const MODEL = "claude-sonnet-4-5";
@@ -34,7 +35,7 @@ const outDir = args.includes("--out") ? resolve(args[args.indexOf("--out") + 1])
 const keep = args.includes("--keep");
 if (!outDir) throw new Error("--out <dir> is required");
 
-const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-cc-forksub-")));
+const root = realpathSync(mkdtempSync(join(tempBase(tmpdir()), "csh-cc-forksub-")));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
 const project = join(root, "demo");
