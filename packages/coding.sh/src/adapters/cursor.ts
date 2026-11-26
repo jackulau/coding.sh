@@ -196,9 +196,11 @@ export async function normalizeCursorLine(line: SpoolLine, ctx: NormalizeContext
       break;
     case "subagentStop": {
       const tp = str(raw.agent_transcript_path);
-      const subagentId = str(raw.subagent_id) ?? (tp ? basename(tp, extname(tp)) : ctx.id(sessionId, "subagent", ...lineKey(line, ctx)));
       // Cursor subagents run as their own conversation; the transcript basename is that conversation's id.
-      const child = tp ? basename(tp, extname(tp)) : `${sessionId}:sub:${subagentId}`;
+      // A path with no name in it ("/") names none.
+      const conversation = tp ? str(basename(tp, extname(tp))) : undefined;
+      const subagentId = str(raw.subagent_id) ?? conversation ?? ctx.id(sessionId, "subagent", ...lineKey(line, ctx));
+      const child = conversation ?? `${sessionId}:sub:${subagentId}`;
       const d = num(raw.duration_ms);
       const startTs = d !== undefined ? line.ts - d : line.ts;
       const type = str(raw.subagent_type);
@@ -381,7 +383,8 @@ export const cursor: Adapter = {
   // 4 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
-  parseVersion: 6,
+  // 7 (0.1.8): a subagentStop whose agent_transcript_path names no file ("/") gets the child session <session>:sub:<id>.
+  parseVersion: 7,
 
   async detect() {
     const dir = cursorConfigDir();
