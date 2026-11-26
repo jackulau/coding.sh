@@ -74,7 +74,7 @@ there is no compile step for development.
 | Path | What |
 |---|---|
 | `src/core/types.ts`, `src/schema/index.ts` | the contracts: events, sessions, adapters, stores |
-| `src/spool/hook.ts` | the hook agents run (hot path: no network, no git, always exits 0) |
+| `src/spool/hook.ts`, `src/spool/hook-run.ts` | the hook agents run (hot path: no network, no git, always exits 0) |
 | `src/adapters/` | one adapter per agent: detect, install, uninstall, normalize, backfill, run |
 | `src/core/ingest.ts`, `src/core/redact.ts` | spool to index, with redaction before any write |
 | `src/otel/` | the OTLP/HTTP receiver |
