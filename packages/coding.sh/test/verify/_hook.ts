@@ -522,10 +522,11 @@ function prefixCuts(n: number, shared: number, bound: number): number[] {
  * The truncation check, on the fixtures of one shard: each payload cut to its first k bytes, for the k a
  * `bound` (CODING_SH_MODEL_BOUND) gives. At bound 0 those are the ones SAMPLE names; at 1 or more, every
  * k from 0 to n; at a bound b of 2 or more, each run of 1 to b - 1 bytes deleted at every offset as well.
- * A prefix that an earlier payload of the same agent and event shares is the same call, run once. Fixture
- * files go to `shards` shards, balanced by the time their calls take at bound 1 (largest first, each to
- * the shard with the least so far): a prefix too long to inline writes a side file, which takes about
- * twice as long as a call that does not.
+ * Cuts no longer than the prefix an earlier payload of the same agent and event shares are skipped: at
+ * bound 1 or more that payload ran each of them, and at bound 0 it ran the ones SAMPLE names for its own
+ * length. Fixture files go to `shards` shards, balanced by the time their calls take at bound 1 (largest
+ * first, each to the shard with the least so far): a prefix too long to inline writes a side file, which
+ * takes about twice as long as a call that does not.
  */
 export async function checkTruncations(shard: number, shards: number, bound: number): Promise<{ calls: number; payloads: number }> {
   const all = fixturePayloads();

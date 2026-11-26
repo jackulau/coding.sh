@@ -480,6 +480,7 @@ const bigLine = (argv: [string, string], rawText: string) => ({
   rawText,
 });
 
+// Each of the two 64 MB tests peaks at about 400 MB of memory in the test process.
 test("the hook keeps the first 64 MB of a larger stdin in a side file, logs the cut and drains the rest", async () => {
   const argv: [string, string] = ["claude-code", "PostToolUse"];
   const stdin = bigPayload(MAX_STDIN_BYTES + 1024);

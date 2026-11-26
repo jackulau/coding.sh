@@ -2,8 +2,9 @@
 // are split between hook-truncate-1, -2 and -3.test.ts by size, so each part runs about as long).
 // Each payload in test/fixtures/adapters/**/*.spool.jsonl goes to the hook's work
 // (src/spool/hook-run.ts runHook, called in-process with a fake stdin and stdout) cut to its first k
-// bytes. Over every k, the cuts fall inside a multi-byte character, a string, a number and an escape,
-// and past the 1023 bytes a line holds inline.
+// bytes. Over every k, the cuts fall inside strings, numbers and escapes. Few fixture payloads have a
+// multi-byte character or run past the 1023 bytes a line holds inline, and not every part has one:
+// hook-entry.test.ts pads and cuts payloads for those cases.
 //
 // For each of those inputs, the call keeps the contract in src/spool/hook.ts as test/verify/_hook.ts
 // states it:
