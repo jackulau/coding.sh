@@ -432,9 +432,10 @@ limit, as in the example. Each agent call gets 30 minutes unless `compare --tria
 sets another limit, and each [repair round](#repair-rounds) gets the limit again.
 
 Keep `.lake` in `repo/.gitignore`. Under [verifier isolation](#verifier-isolation), the verifier
-gets the start tree as setup left it, ignored files included, plus the agent's changes to files git
-tracks or would track. So it sees the build output setup made, never build output the agent left
-behind.
+gets the start tree as setup left it, ignored files included. It adds the agent's changes to files
+git tracks or would track, except the ones isolation drops, such as changes to a Makefile or to a
+file the verifier command runs. So it sees the build output setup made, never build output the
+agent left behind.
 
 In an `exp run` dataset whose output is the proof itself, a `command` grader (see [Grader
 fields](#grader-fields)) can do the same: write the output next to its own copy of the statements,
