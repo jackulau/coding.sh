@@ -380,10 +380,12 @@ test("the hook reads a payload that arrives a few bytes at a time between EAGAIN
 
 test("the hook stops reading after 10 s of EAGAIN with no data, and writes the line", async () => {
   const realNow = Date.now;
+  const start = realNow();
   let offset = 0;
   let reads = 0;
-  // Each read moves the clock 3 s on: the hook gives up on the read that finds more than 10 s since the first.
-  Date.now = () => realNow() + offset;
+  // Each read moves the clock 3 s on, and nothing else does: the hook gives up on the read that finds more
+  // than 10 s since the first.
+  Date.now = () => start + offset;
   try {
     await inHome({}, async (home) => {
       const read = () => {
