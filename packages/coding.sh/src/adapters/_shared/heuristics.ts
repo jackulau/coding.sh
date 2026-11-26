@@ -120,7 +120,8 @@ function stageRunsTests(stage: string, depth: number): boolean {
     const arg = argAfter(/^[-/](?:c|command)$/i);
     if (arg !== undefined) return runsTestsAt(arg, depth + 1);
   } else if (depth < 4 && (name === "bash" || name === "sh" || name === "zsh" || name === "dash")) {
-    const k = rest.findIndex((w) => !w.quoted && /^-[a-z]*c[a-z]*$/.test(w.value));
+    // A flag word that holds `c` (`-c`, `-lc`). The letters before its first `c` are not `c`, so the time is linear.
+    const k = rest.findIndex((w) => !w.quoted && /^-[abd-z]*c[a-z]*$/.test(w.value));
     if (k >= 0 && rest[k + 1]) return runsTestsAt(rest[k + 1]!.value, depth + 1);
   } else if (depth < 4 && name === "cmd") {
     const arg = argAfter(/^\/[ck]$/i);
@@ -195,7 +196,8 @@ function stageQuiet(stage: string, depth: number): boolean {
   const name = exeName(first.value);
   const args = words.slice(i + 1).map((w) => w.value);
   if (name === "bash" || name === "sh" || name === "zsh" || name === "dash") {
-    const k = args.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
+    // A flag word that holds `c` (`-c`, `-lc`). The letters before its first `c` are not `c`, so the time is linear.
+    const k = args.findIndex((a) => /^-[abd-z]*c[a-z]*$/.test(a));
     return depth < 4 && k >= 0 && args[k + 1] !== undefined && quietAt(args[k + 1]!, depth + 1);
   }
   if (name === "git") {
@@ -208,8 +210,10 @@ function stageQuiet(stage: string, depth: number): boolean {
   return QUIET.has(name);
 }
 
+// A redirection to a descriptor (`2>&1`, `>&2`) becomes a space, and `&>` or `>&` becomes `>`. The
+// descriptor before `>&` is read from its first digit, `(?<!\d)`, so the time is linear.
 const quietAt = (cmd: string, depth: number): boolean =>
-  shellStages(stripHeredocs(cmd).replace(/\d*>&\d+|&>|>&/g, (m) => (m === "&>" || m === ">&" ? ">" : " "))).every((st) => stageQuiet(st, depth));
+  shellStages(stripHeredocs(cmd).replace(/(?<!\d)\d+>&\d+|>&\d+|&>|>&/g, (m) => (m === "&>" || m === ">&" ? ">" : " "))).every((st) => stageQuiet(st, depth));
 
 /**
  * Whether a shell command writes no file: every stage runs a program that only reads, waits or
@@ -223,7 +227,8 @@ export function writesNothing(cmd: string): boolean {
 
 /** A directory as one form: forward slashes, no trailing slash, Git Bash's /c/… as c:/…, a drive path lower-cased. */
 function dirKey(p: string): string {
-  let s = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  // The trailing slashes are matched from the first one, `(?<!\/)`, so the time is linear.
+  let s = p.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   const m = /^\/([a-zA-Z])(?=\/|$)/.exec(s);
   if (m) s = `${m[1]}:${s.slice(2)}`;
   return /^[a-zA-Z]:/.test(s) ? s.toLowerCase() : s;
@@ -260,7 +265,10 @@ export function runsElsewhere(cmd: string, cwd: string | undefined): boolean {
 
 const n = (s: string | undefined) => (s ? Number.parseInt(s, 10) : 0);
 
-/** The count in the first match of `re`, for a field within one summary line. */
+/**
+ * The count in the first match of `re`, for a field within one summary line. A count pattern starts
+ * at the first digit of a number, `(?<!\d)`, so each number is read once and the time is linear.
+ */
 function pick(text: string, re: RegExp): number | undefined {
   const m = re.exec(text);
   return m ? n(m[1]) : undefined;
@@ -315,19 +323,21 @@ const PARSERS: Parser[] = [
     }
     return hit ? s : undefined;
   },
-  // jest: "Tests:       1 failed, 2 skipped, 10 passed, 13 total"
+  // jest: "Tests:       1 failed, 2 skipped, 10 passed, 13 total". The counts start at the first
+  // non-space character after "Tests:" and end at " total" after a digit, so the time is linear.
   (t) => {
-    const m = lastMatch(t, /^[ \t]*Tests:[ \t]+(.*\d+ total)[ \t]*$/gm);
+    const m = lastMatch(t, /^[ \t]*Tests:[ \t]+(?![ \t])(.*\d total)[ \t]*$/gm);
     if (!m) return undefined;
     const l = m[1]!;
-    return { runner: "jest", passed: pick(l, /(\d+) passed/) ?? 0, failed: pick(l, /(\d+) failed/) ?? 0, skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) todo/) ?? 0) };
+    return { runner: "jest", passed: pick(l, /(?<!\d)(\d+) passed/) ?? 0, failed: pick(l, /(?<!\d)(\d+) failed/) ?? 0, skipped: (pick(l, /(?<!\d)(\d+) skipped/) ?? 0) + (pick(l, /(?<!\d)(\d+) todo/) ?? 0) };
   },
-  // vitest: " Tests  3 failed | 12 passed | 1 skipped (16)"
+  // vitest: " Tests  3 failed | 12 passed | 1 skipped (16)". The counts start at the first non-space
+  // character after "Tests", so the time is linear.
   (t) => {
-    const m = lastMatch(t, /^[ \t]*Tests[ \t]{2,}(.*\(\d+\))[ \t]*$/gm);
+    const m = lastMatch(t, /^[ \t]*Tests[ \t]{2,}(?![ \t])(.*\(\d+\))[ \t]*$/gm);
     if (!m) return undefined;
     const l = m[1]!;
-    return { runner: "vitest", passed: pick(l, /(\d+) passed/) ?? 0, failed: pick(l, /(\d+) failed/) ?? 0, skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) todo/) ?? 0) };
+    return { runner: "vitest", passed: pick(l, /(?<!\d)(\d+) passed/) ?? 0, failed: pick(l, /(?<!\d)(\d+) failed/) ?? 0, skipped: (pick(l, /(?<!\d)(\d+) skipped/) ?? 0) + (pick(l, /(?<!\d)(\d+) todo/) ?? 0) };
   },
   // pytest: "==== 2 failed, 10 passed, 1 skipped, 1 error in 0.12s ====" or "10 passed in 0.50s"
   (t) => {
@@ -336,9 +346,9 @@ const PARSERS: Parser[] = [
     if (!l) return undefined;
     return {
       runner: "pytest",
-      passed: pick(l, /(\d+) passed/) ?? 0,
-      failed: (pick(l, /(\d+) failed/) ?? 0) + (pick(l, /(\d+) errors?/) ?? 0),
-      skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) xfailed/) ?? 0),
+      passed: pick(l, /(?<!\d)(\d+) passed/) ?? 0,
+      failed: (pick(l, /(?<!\d)(\d+) failed/) ?? 0) + (pick(l, /(?<!\d)(\d+) errors?/) ?? 0),
+      skipped: (pick(l, /(?<!\d)(\d+) skipped/) ?? 0) + (pick(l, /(?<!\d)(\d+) xfailed/) ?? 0),
     };
   },
   // node:test: TAP "# pass 10 / # fail 0 / # skipped 1" or spec "ℹ pass 10", read from the last pass line on

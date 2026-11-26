@@ -54,6 +54,37 @@ describe("session titles", () => {
     assert.equal(title("<pasted_content>\n\nstack trace line\nnext line\n</pasted_content>"), "stack trace line");
   });
 
+  it("a pasted block with no close tag runs to the end of the prompt", () => {
+    assert.equal(title("why does this fail\n<pasted_content>\nTypeError: x\n  at f"), "why does this fail");
+    assert.equal(title('<pasted_content lines="2">\n\nTypeError: x\n  at f'), "TypeError: x");
+  });
+
+  it("a block opens only at a whole <pasted_content> tag that has its >", () => {
+    // A longer tag name is not a paste.
+    assert.equal(title("<pasted_contents>\nnot a paste"), "<pasted_contents> not a paste");
+    // An open tag with no `>` after it is text.
+    assert.equal(title("<pasted_content\nstill the prompt"), "<pasted_content still the prompt");
+    assert.equal(title("<pasted_content>log</pasted_content>\nwhy does <pasted_content fail"), "why does <pasted_content fail");
+  });
+
+  it("each block ends at the first close tag after it opens", () => {
+    // An open tag inside a block is part of its body, so the second close tag is outside.
+    assert.equal(title("<pasted_content>a\n<pasted_content>b\n</pasted_content>\n</pasted_content> what now"), "</pasted_content> what now");
+    // Two blocks and nothing outside them: the first block's first line.
+    assert.equal(title("<pasted_content>\none\n</pasted_content>\n<pasted_content>\ntwo\n</pasted_content>"), "one");
+  });
+
+  it("a slash command's name and args drop the whitespace around them", () => {
+    assert.equal(title("<command-name> /model \n</command-name>\n<command-message>model</command-message>\n<command-args>\n\t opus  </command-args>"), "/model opus");
+    // Whitespace beyond ASCII too: a no-break space, an ideographic space, a byte order mark, a line separator.
+    assert.equal(title("<command-name>\u00a0/model\u3000</command-name>\n<command-args>\ufeffopus\u2028</command-args>"), "/model opus");
+    // Args of only whitespace add nothing; a name of only whitespace gives no title.
+    assert.equal(title("<command-name>/clear</command-name>\n<command-args> \n\t</command-args>"), "/clear");
+    assert.equal(title("<command-name> \n </command-name>\n<command-args>opus</command-args>"), undefined);
+    // A tag whose text has a `<` is not read; a later whole tag is.
+    assert.equal(title("<command-name>/a<b</command-name>\n<command-name>/review</command-name>\n<command-args>src</command-args>"), "/review src");
+  });
+
   it("a prompt that is only skipped lines keeps today's title", () => {
     assert.equal(title("Project: demo"), "Project: demo");
     assert.equal(title(FRAME), FRAME.slice(0, 280));

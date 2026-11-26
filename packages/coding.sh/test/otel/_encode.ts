@@ -21,7 +21,10 @@ function anyValue(w: ProtoWriter, v: J): void {
 
 function keyValue(w: ProtoWriter, kv: J): void {
   w.string(1, kv.key);
-  if (kv.value) w.message(2, (b) => anyValue(b, kv.value));
+  // A value given as bytes is an AnyValue encoded already: this encoder makes a few calls a level, so a value
+  // nested thousands deep would run out of stack here (test/verify/_otlp.ts nestedProto builds those).
+  if (kv.value instanceof Uint8Array) w.bytes(2, kv.value);
+  else if (kv.value) w.message(2, (b) => anyValue(b, kv.value));
 }
 
 function attrs(w: ProtoWriter, field: number, list: J[] | undefined): void {

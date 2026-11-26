@@ -86,6 +86,22 @@ describe("a shell call's dirty-tree diff holds only its own edits", () => {
     assert.deepEqual(changed("cd /other/checkout && node gen.mjs", "src/a.ts"), []);
   });
 
+  it("a redirection to a descriptor writes nothing, and `&>` or `>&` to a file writes", () => {
+    for (const cmd of ["git status 2>&1", "git log 12>&1 | head", "echo done >&2", "git fetch 1>&2", "git status &> /dev/null", "git log >& /dev/null"]) assert.ok(writesNothing(cmd), cmd);
+    for (const cmd of ["git log &> log.txt", "git log >& log.txt", "git log &>log.txt"]) assert.ok(!writesNothing(cmd), cmd);
+  });
+
+  it("a shell's -c or -lc command is judged by the command it runs", () => {
+    for (const cmd of ["bash -c 'git status'", "sh -lc 'cat log | tail -5'", "zsh -ec 'ls'"]) assert.ok(writesNothing(cmd), cmd);
+    for (const cmd of ["bash -c 'npm run build'", "bash -lc 'git log > log.txt'", "bash -x build.sh"]) assert.ok(!writesNothing(cmd), cmd);
+  });
+
+  it("a directory with trailing slashes is the same directory", () => {
+    assert.ok(!runsElsewhere("cd /work/demo/pkg && npm test", "/work/demo/"));
+    assert.ok(!runsElsewhere("cd /work/demo// && npm test", "/work/demo"));
+    assert.ok(runsElsewhere("cd /work/other/ && npm test", "/work/demo//"));
+  });
+
   it("files a command names or a script writes stay", () => {
     assert.deepEqual(changed("git checkout -- src/a.ts", "src/a.ts"), ["src/a.ts"]);
     assert.deepEqual(changed("node scripts/gen.ts && git diff --stat", "docs/cli.md"), ["docs/cli.md"]);
