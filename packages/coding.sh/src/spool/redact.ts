@@ -150,8 +150,8 @@ function shownLength(s: string, level = 0): number {
  * shows to be secret. A document with nothing more to redact keeps its text, so an
  * event built from the result matches the one ingest builds from the original.
  *
- * A rule run on the text keeps the text well-formed where a match starts or ends
- * inside a JSON escape, but a match can still run past the end of one of a
+ * A rule run on the text keeps whole each JSON escape a match starts or ends
+ * inside, at every depth, but a match can still run past the end of one of a
  * document's strings (a private key with no END line runs to the end of the text),
  * and a document in the text then no longer parses, at any depth. A match can also
  * stop at an escape inside a value (below). The text's result is kept only when as

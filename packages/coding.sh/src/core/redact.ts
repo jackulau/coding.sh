@@ -1415,7 +1415,8 @@ export function redactArgv<T>(args: readonly T[]): T[] {
 /**
  * `full`: the redact for text the walk made (an argv marker, a too-deep copy), when `redact` is limited to the input's text.
  * `keep`: an object or array that comes out the same is returned as is when it is JSON data (isJsonData), for a caller
- * that only serializes the result. Without it every object and array is a new one.
+ * that only serializes the result. Without it each object and array within 64 levels is a new one; a Uint8Array, and a
+ * deeper subtree that tooDeep keeps as it was, are returned as is.
  * `copy`: `v` is part of a copy tooDeep made, which holds no cycle.
  */
 function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally, full = redact, keep = false, copy = false): unknown {
