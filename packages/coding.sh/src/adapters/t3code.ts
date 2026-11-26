@@ -1164,6 +1164,7 @@ export const t3code: Adapter = {
   //    session_id, as in the codex adapter (15).
   // 20 (0.1.8): a token count in turn usage, a v1 context-window snapshot or a Codex usage record that is not a whole
   //    number from 0 to 2^53 - 1 reads as missing before the cache counts are taken out of the input, as in the codex adapter (16).
+  //    So does a Claude message's 5-minute or 1-hour cache-write count before the two are summed (claude-code 25).
   parseVersion: 20,
 
   async detect() {

@@ -159,7 +159,7 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   if (num(u.cache_read_input_tokens) !== undefined) out.cacheReadTokens = u.cache_read_input_tokens as number;
   if (num(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
   else {
-    // Only the 5-minute / 1-hour split: its sum is the total.
+    // Only the 5-minute / 1-hour split: its sum is the total, without a count cacheSplit reads as missing.
     const { m5, h1 } = cacheSplit(u);
     if (m5 !== undefined || h1 !== undefined) out.cacheWriteTokens = (m5 ?? 0) + (h1 ?? 0);
   }
@@ -168,9 +168,10 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** The 5-minute and 1-hour cache writes; a count that is not a whole number from 0 to 2^53 - 1 reads as missing. */
 const cacheSplit = (u: Record<string, unknown>): { m5?: number; h1?: number } => {
   const c = isObj(u.cache_creation) ? u.cache_creation : {};
-  return { m5: num(c.ephemeral_5m_input_tokens), h1: num(c.ephemeral_1h_input_tokens) };
+  return { m5: tokenCount(c.ephemeral_5m_input_tokens), h1: tokenCount(c.ephemeral_1h_input_tokens) };
 };
 
 /**

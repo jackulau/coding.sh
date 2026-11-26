@@ -49,7 +49,6 @@ import {
   jsonLines,
   mergeClaudeHooks,
   mtimeMs,
-  num,
   overlayHome,
   parseJsonc,
   rawBlob,
@@ -65,6 +64,7 @@ import {
   stripClaudeHooks,
   textOf,
   toJson,
+  tokens,
   toMs,
   toRunOutput,
   usageFrom,
@@ -339,7 +339,8 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
     } else if (m.type === "gemini") {
       last = str(m.id);
       const t = isObj(m.tokens) ? m.tokens : undefined;
-      const usage: Usage | undefined = t ? usageFrom({ input: t.input, output: (num(t.output) ?? 0) + (num(t.thoughts) ?? 0), cached: t.cached }) : undefined;
+      // The output is the sum of the output and thought counts, without one that reads as missing (tokens).
+      const usage: Usage | undefined = t ? usageFrom({ input: t.input, output: (tokens(t.output) ?? 0) + (tokens(t.thoughts) ?? 0), cached: t.cached }) : undefined;
       em.push("llm.call", { provider: "google", responseModel: model, ok: true }, usage ? { usage } : {});
       if (text) await emitText(em, ctx, "assistant.message", text);
       for (const tc of Array.isArray(m.toolCalls) ? m.toolCalls.filter(isObj) : []) {
@@ -411,7 +412,9 @@ export const geminiCliAdapter: Adapter = {
   // 6 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 7 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 8 (0.1.8): a hook whose transcript_path names a file that cannot be read gives its events (jsonlTail).
-  parseVersion: 8,
+  // 9 (0.1.8): a message's output or thought count that is not a whole number from 0 to 2^53 - 1 reads as missing
+  //    before the two are summed into its output.
+  parseVersion: 9,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["gemini"]);
     const dir = geminiDir();

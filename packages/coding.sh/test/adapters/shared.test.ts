@@ -17,6 +17,7 @@ import {
   mergeFlatHooks,
   mergeNestedHooks,
   openaiUsage,
+  anthropicPriceHints,
   anthropicUsage,
   parseHookCommand,
   parsePatch,
@@ -192,6 +193,12 @@ describe("usage mapping", () => {
   });
   it("Anthropic usage maps cache fields", () => {
     assert.deepEqual(anthropicUsage({ input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }), { inputTokens: 5, outputTokens: 7, cacheReadTokens: 100, cacheWriteTokens: 20 });
+  });
+  it("Anthropic usage sums the cache-write split without a count that is not a whole number from 0 to 2^53 - 1", () => {
+    assert.deepEqual(anthropicUsage({ input_tokens: 5, cache_creation: { ephemeral_5m_input_tokens: 12.5, ephemeral_1h_input_tokens: 100 } }), { inputTokens: 5, cacheWriteTokens: 100 });
+    assert.deepEqual(anthropicUsage({ input_tokens: 5, cache_creation: { ephemeral_5m_input_tokens: -1, ephemeral_1h_input_tokens: 2 ** 53 } }), { inputTokens: 5 });
+    assert.deepEqual(anthropicPriceHints({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 100.5 } }), {});
+    assert.deepEqual(anthropicPriceHints({ cache_creation: { ephemeral_5m_input_tokens: 12.5, ephemeral_1h_input_tokens: 100 } }), { cacheWrite1hTokens: 100 });
   });
   it("addUsage skips a count that is not a whole number from 0 to 2^53 - 1 and keeps the rest of the sum", () => {
     assert.deepEqual(addUsage({ inputTokens: 100, outputTokens: 12.5 }, { inputTokens: -1, outputTokens: 20, cacheReadTokens: 2 ** 53 }), { inputTokens: 100, outputTokens: 20 });

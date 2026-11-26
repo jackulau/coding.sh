@@ -911,7 +911,9 @@ export const claudeCode: Adapter = {
   // 24 (0.1.8): a user entry with the promptId of the turn it is in, other than a stop prompt (such as a skill's text
   //    with no isMeta flag), adds to that turn, which ends once: one turn.end, with the turn's own duration.
   // 25 (0.1.8): a fork's inheritedTokens skips a token count that is not a whole number from 0 to 2^53 - 1 in the parent's Agent
-  //    call (a fraction, or a number too large to be exact), as an estimate does.
+  //    call (a fraction, or a number too large to be exact), as an estimate does. A 5-minute or 1-hour cache-write
+  //    count (cache_creation) that is not such a whole number reads as missing before the two are summed, and gives
+  //    no 1-hour hint.
   parseVersion: 25,
 
   detect() {

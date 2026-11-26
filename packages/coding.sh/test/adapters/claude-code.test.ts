@@ -796,6 +796,39 @@ describe("claude-code transcript service tier", () => {
   });
 });
 
+describe("claude-code cache-write split with a count that reads as missing", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("leaves a split count that is not a whole number from 0 to 2^53 - 1 out of the cache writes and the 1-hour hint", async () => {
+    // Copies of a real capture (scripts/e2e/claude-edge-capture.mjs) whose first call gives only the 5-minute / 1-hour split.
+    const rel = join("projects", "-work-demo", "f3205161-efab-4b61-bb5e-4f1195467e35.jsonl");
+    const text = readFileSync(join(FIXTURES, "claude-code", "edge", "config", rel), "utf8");
+    assert.equal(text.split(`"msg_mw7hl1ic0"`).length, 2, "one line holds this call");
+    const cases = [
+      { m5: 12.5, h1: 100, write: 100, hint: 100 },
+      { m5: 40, h1: 100.5, write: 40, hint: undefined },
+    ];
+    for (const [i, c] of cases.entries()) {
+      const lines = text.split("\n").map((l) => {
+        if (!l.includes(`"msg_mw7hl1ic0"`)) return l;
+        const e = JSON.parse(l);
+        delete e.message.usage.cache_creation_input_tokens;
+        e.message.usage.cache_creation = { ephemeral_1h_input_tokens: c.h1, ephemeral_5m_input_tokens: c.m5 };
+        return JSON.stringify(e);
+      });
+      process.env.CLAUDE_CONFIG_DIR = join(env.root, `config-${i}`);
+      writeFile(join(env.root, `config-${i}`, rel), lines.join("\n"));
+      const { ctx } = testCtx();
+      const call = (await collect(claudeCode.backfill!(ctx))).find((e) => e.kind === "llm.call" && e.payload.messageId === "msg_mw7hl1ic0")!;
+      assert.deepEqual([call.usage?.cacheWriteTokens, call.payload.cacheWrite1hTokens], [c.write, c.hint], `5m ${c.m5}, 1h ${c.h1}`);
+    }
+  });
+});
+
 describe("claude-code harness loads and Bash edits", () => {
   const TS = "2026-11-07T20:48:10.000Z";
   const att = (uuid: string, attachment: Record<string, unknown>, more: Record<string, unknown> = {}) => ({ type: "attachment", uuid, timestamp: TS, sessionId: "cc-h", cwd: "/w", attachment, ...more });
