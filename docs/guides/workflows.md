@@ -10,8 +10,10 @@ against a known answer, and compares two versions on the same cases.
 
 ## Capture and measure a run
 
-`workflows import` reads Claude Code workflow runs from disk: each run's journal and the transcript
-of every agent it started. Runs you start with `workflows run` are captured as they go.
+`workflows import` reads Claude Code workflow runs from disk: each run's journal, the transcript
+of every agent it started, and its script. The script comes from the run's record or from the copy
+Claude Code keeps in the session folder, not from the path the run names, as that file may have
+changed after the run. Runs you start with `workflows run` are captured as they go.
 
 ```sh
 coding.sh workflows import
@@ -160,6 +162,11 @@ coding.sh workflows replay <run> --script wf/review-v2.js
 ```
 
 The cache follows call order, so an edit to the first stage re-runs everything.
+
+The prediction compares your script with the one the run used, as the workflow store keeps it.
+That copy is redacted, so yours is redacted the same way before the two are compared. A run
+imported while `capture.mode` is `metadata` keeps no script: pass the one it used with
+`--base-script <path>`.
 
 To test an edit this way, add a control fork: a variant that resumes the unedited script from the
 same run, so the two differ only in the edit.
