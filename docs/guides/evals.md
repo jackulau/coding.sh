@@ -428,11 +428,12 @@ Leave the proof files out, since the agent is meant to edit them.
 variant, since the hidden files hold no test assertion to flip.
 
 Proof checks can be slow. The verifier gets 10 minutes unless `verifier.timeoutMs` sets another
-limit, as in the example. The agent gets 30 minutes a run unless `compare --trial-timeout <SEC>`
-sets another.
+limit, as in the example. Each agent call gets 30 minutes unless `compare --trial-timeout <SEC>`
+sets another limit, and each [repair round](#repair-rounds) gets the limit again.
 
-Keep `.lake` in `repo/.gitignore`. Under [verifier isolation](#verifier-isolation), files git
-ignores never reach the verifier, so it builds the agent's sources, not build output the agent left
+Keep `.lake` in `repo/.gitignore`. Under [verifier isolation](#verifier-isolation), the verifier
+gets the start tree as setup left it, ignored files included, plus the agent's changes to files git
+tracks or would track. So it sees the build output setup made, never build output the agent left
 behind.
 
 In an `exp run` dataset whose output is the proof itself, a `command` grader (see [Grader
@@ -441,16 +442,16 @@ then run the checker.
 
 #### Attempts, cost and reuse
 
-Anthropic's [formal verification work](https://www.anthropic.com/research/formal-verification) gave
-each task 3 attempts at a 5M-token budget and audited patches for reward hacking. Agents that could
-copy each other's proofs in a shared workspace needed 17% fewer tokens than agents working alone.
-Each part maps onto what coding.sh already has:
+Anthropic's [formal verification work](https://www.anthropic.com/research/formal-verification)
+compared models with 3 attempts per task at a 5M-token budget, and audited patches for reward
+hacking. Agents that could copy each other's proofs in a shared workspace needed 17% fewer tokens
+than agents working alone. Each part maps onto what coding.sh already has:
 
 - **Attempts.** `compare --k 3` runs each task 3 times per arm, and the report adds `pass@3`,
   `pass^3` and `flaky tasks` (see [Efficiency, reliability and tasks
   needed](#efficiency-reliability-and-tasks-needed)).
 - **Cost per proof.** `cost / solved` and `tokens / solved` divide each arm's agent cost and tokens
-  by its passing runs. Compare has no cap on one attempt's tokens: `--trial-timeout` caps its time,
+  by its passing runs. Compare does not cap tokens: `--trial-timeout` caps each agent call's time,
   and `--max-cost` the whole comparison's spend.
 - **One attempt's agents.** Each run tags its sessions with its run id, so `coding.sh tree <run id>
   --run` shows every agent and subagent of one attempt, with each one's cost, tokens and time, and
@@ -464,8 +465,8 @@ Each part maps onto what coding.sh already has:
   home from each task to the next, so a lemma library kept there carries over. The work tree is not
   carried (see [Sequential runs](#sequential-runs)).
 - **Reward hacking.** `coding.sh sessions --where 'run:run_* flag:test-tamper'` lists trial
-  sessions that changed a test or statement to pass a failing check, or added an escape hatch such
-  as `sorry`. [Witness audits](#witness-audits) replay more checks on passing runs.
+  sessions that changed a test or statement to pass a failing check, or kept an escape hatch they
+  added, such as `sorry`. [Witness audits](#witness-audits) replay more checks on passing runs.
 
 ## Datasets and experiments
 
@@ -2346,11 +2347,12 @@ These changes are dropped, and the start's version is used instead:
   (`symlink`), and anything that is not a file, link or directory (`special`).
 
 A file the verifier only reads, such as `out.txt` in `cat out.txt`, is the agent's deliverable and
-is kept. Files git ignores never reach the verifier. Each run records what was dropped in
-`isolation` (`carried`, and `stripped` with each path, why and whether it was an add, edit or
-delete); when any run dropped something, the report adds a note. A task can allow paths with
-`meta.verifierAllow` (globs) or turn isolation off with `meta.verifierIsolation = "off"`.
-`compare --no-isolation` grades the agent's own tree, as before.
+is kept. Files git ignores reach the verifier only as setup left them.
+
+Each run records what was dropped in `isolation` (`carried`, and `stripped` with each path, why and
+whether it was an add, edit or delete); when any run dropped something, the report adds a note. A
+task can allow paths with `meta.verifierAllow` (globs) or turn isolation off with
+`meta.verifierIsolation = "off"`. `compare --no-isolation` grades the agent's own tree, as before.
 
 ### Efficiency, reliability and tasks needed
 
