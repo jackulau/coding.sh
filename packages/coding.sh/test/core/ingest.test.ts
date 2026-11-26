@@ -212,6 +212,20 @@ describe("ingest", () => {
     assert.deepEqual((await ingest(opts)).errors, [], "errors are not repeated");
   });
 
+  it("reports an event whose ts is out of the Date range as an error, and keeps the rest", async () => {
+    const t = setup();
+    t.write(
+      t.line({ session: "s", kind: "user.message", text: "late" }, { ts: 1e300 }),
+      t.line({ session: "s", kind: "user.message", text: "early" }, { ts: -8.64e15 - 1 }),
+      t.line({ session: "s", kind: "user.message", text: "fine" }),
+    );
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    assert.equal(r.events, 1);
+    assert.equal(r.errors.length, 2);
+    for (const e of r.errors) assert.ok(e.message.startsWith("fake: event ") && e.message.endsWith(" has a ts out of the Date range"), e.message);
+    assert.deepEqual((await t.index.listEvents("s")).map((e) => e.payload.text), ["fine"]);
+  });
+
   it("records `run --agent <any name>` wrapper lines under that name", async () => {
     const t = setup();
     const wrapper = new Map<string, Adapter>([["fake", fakeAdapter], ["wrapper", wrapperAdapter]]);

@@ -109,6 +109,18 @@ describe("claude-code normalize", () => {
     assert.deepEqual([once("subagent.start", SID), once("subagent.end", SID), once("session.start", `${SID}:sub:abc123`), once("session.end", `${SID}:sub:abc123`), once("user.message", `${SID}:sub:abc123`)], [1, 1, 1, 1, 1]);
   });
 
+  it("a subagent's totalDurationMs whose start falls out of the Date range is left out", async () => {
+    const start = loadSpool("claude-code/hooks.spool.jsonl").find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStart")!;
+    const ts = 1793527500000;
+    const response = { status: "completed", agentId: "hg1", agentType: "general-purpose", content: [{ type: "text", text: "Done." }], totalDurationMs: 1e308 };
+    const raw = { ...(start.raw as Record<string, unknown>), agent_id: undefined, agent_type: undefined, hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: "toolu_agent_hg1", tool_input: { description: "Read docs", prompt: "Read these pages", subagent_type: "general-purpose" }, tool_response: response };
+    const events = await claudeCode.normalize({ ...start, event: "PostToolUse", ts, raw }, testCtx().ctx);
+    assertWellFormed(events);
+    const sub = events.filter((e) => e.sessionId === SID && e.kind.startsWith("subagent."));
+    assert.deepEqual(sub.map((e) => [e.kind, e.ts, e.durationMs]), [["subagent.start", ts, undefined], ["subagent.end", ts, undefined]]);
+    assert.equal(events.find((e) => e.kind === "session.start" && e.sessionId === `${SID}:sub:hg1`)!.ts, ts);
+  });
+
   it("is deterministic (same line → same ids)", async () => {
     const lines = loadSpool("claude-code/hooks.spool.jsonl");
     const a = await claudeCode.normalize(lines[3]!, testCtx().ctx);

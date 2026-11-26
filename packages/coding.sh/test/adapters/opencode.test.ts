@@ -64,6 +64,22 @@ describe("opencode normalize", () => {
   it("is deterministic", async () => {
     assert.deepEqual(await normalizeAll("opencode/v2.spool.jsonl"), await normalizeAll("opencode/v2.spool.jsonl"));
   });
+
+  it("a step time out of the Date range is read as missing, and so is a duration whose start falls out of it", async () => {
+    const step = loadSpool("opencode/v2.spool.jsonl").find((l) => l.event === "session.step.ended")!;
+    const llmOf = async (raw: Record<string, unknown>) => {
+      const events = await opencode.normalize({ ...step, raw: { ...(step.raw as Record<string, unknown>), ...raw } }, testCtx().ctx);
+      assertWellFormed(events);
+      return events.find((e) => e.kind === "llm.call")!;
+    };
+    assert.equal(step.ts, T0 + 4000);
+    const late = await llmOf({ created: 1e300, durationMs: 1e308 });
+    assert.deepEqual([late.ts, late.durationMs, late.payload.tokensPerSec], [T0 + 4000, undefined, undefined]);
+    const long = await llmOf({ durationMs: 1e308 });
+    assert.deepEqual([long.ts, long.durationMs], [T0 + 4000, undefined]);
+    const fine = await llmOf({});
+    assert.deepEqual([fine.ts, fine.durationMs], [T0 + 4000 - 2400, 2400]);
+  });
 });
 
 describe("opencode backfill", () => {
