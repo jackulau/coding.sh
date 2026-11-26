@@ -45,6 +45,26 @@ describe("cursor normalize", () => {
     );
   });
 
+  it("a duration whose start falls out of the Date range is left out, and the start is the line's time", async () => {
+    const spool = loadSpool("cursor/hooks.spool.jsonl");
+    const post = spool[4]!;
+    const stop = spool[7]!;
+    assert.deepEqual([post.event, stop.event], ["postToolUse", "subagentStop"]);
+    const events = [
+      ...(await cursor.normalize({ ...post, raw: { ...(post.raw as object), duration: -1e308 } }, testCtx().ctx)),
+      ...(await cursor.normalize({ ...stop, raw: { ...(stop.raw as object), duration_ms: 1e308 } }, testCtx().ctx)),
+    ];
+    assertWellFormed(events);
+    const start = events.find((e) => e.kind === "tool.start")!;
+    const end = events.find((e) => e.kind === "tool.end")!;
+    assert.equal(start.ts, post.ts);
+    assert.deepEqual([end.durationMs, end.payload.durationMs], [undefined, undefined]);
+    const sub = events.find((e) => e.kind === "subagent.start")!;
+    assert.equal(sub.ts, stop.ts);
+    assert.equal(events.find((e) => e.kind === "session.start" && e.sessionId === sub.payload.childSessionId)!.ts, stop.ts);
+    assert.equal(events.find((e) => e.kind === "subagent.end")!.durationMs, undefined);
+  });
+
   it("the same event fired as a Claude-format hook is dropped by claude-code (dedupe)", async () => {
     const line = loadSpool("cursor/hooks.spool.jsonl")[4]!;
     const asClaude = { ...line, agent: "claude-code", event: "PostToolUse", raw: { ...(line.raw as object), session_id: CID, hook_event_name: "PostToolUse" } };
