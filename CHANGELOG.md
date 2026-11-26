@@ -541,6 +541,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** An OpenCode session that two files under `storage/session` name is read once, from the first file, so backfill gives each of its events once. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation))
 - **Capture.** A Droid or Pi line whose transcript path names a folder keeps its events, as does a Droid, Gemini CLI, Pi or Antigravity line whose transcript cannot be read. Before, ingest skipped such a line, for a folder only on Linux and macOS. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#live-capture))
 - **Sessions.** Trimming the trailing slashes, spaces and dots of the paths and text that ingest reads takes time linear in the text, as does quoting an argument for cmd.exe on Windows. Ingest derives the same files, links and stats as before, and each argument is quoted as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
+- **Sessions.** Splitting a shell command into its simple commands reads a redirection to a descriptor, such as `2>&1`, in linear time. Ingest derives the same files, writes and flags as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#session))
 
 ## [0.1.7] - 2026-11-16
 

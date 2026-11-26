@@ -69,6 +69,16 @@ describe("simpleCommands", () => {
     assert.deepEqual(argv(cmd), [["cat", "x"]]);
     assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
   });
+
+  it("drops a redirection to a descriptor, whatever digits name the descriptors", () => {
+    assert.deepEqual(argv("npm test 2>&1 | tail -5"), [["npm", "test"], ["tail", "-5"]]);
+    assert.deepEqual(argv("seq 100 >&2"), [["seq", "100"]]);
+    assert.deepEqual(argv("echo 12 10>&2 345"), [["echo", "12", "345"]]);
+    assert.deepEqual(argv("cmd 1>&2>&3 x"), [["cmd", "x"]]);
+    assert.deepEqual(argv("echo 2024-01-02 1>&22"), [["echo", "2024-01-02"]]);
+    assert.deepEqual(shellWrites("make 2>&1 > build.log"), [{ path: "build.log", op: "create" }]);
+    assert.deepEqual(shellWrites("make > build.log 12>&1"), [{ path: "build.log", op: "create" }]);
+  });
 });
 
 /** One command through each agent's shell tool, shaped as its adapter stores the call. */
