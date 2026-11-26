@@ -118,7 +118,10 @@ function checkAfter(red: Redactor, ex: Example, escape: string): void {
   const alone = redactEventCounted(red, event(ex.text));
   const out = redactEventCounted(red, event(text));
   const outText = out.payload.text as string;
-  assert.deepEqual(JSON.parse(outText), { msg: (JSON.parse(`"x${escape}"`) as string) + (alone.payload.text as string) }, label);
+  // After an escaped backslash, a token that starts with b, f, n, r or t starts inside what reads
+  // as an escape one level down, so that letter stays before the marker.
+  const kept = escape === BS + BS && /^[bfnrt]/.test(ex.text) ? ex.text.slice(0, 1) : "";
+  assert.deepEqual(JSON.parse(outText), { msg: (JSON.parse(`"x${escape}"`) as string) + kept + (alone.payload.text as string) }, label);
   for (const part of ex.secret) assert.ok(!outText.includes(part), label);
   assert.deepEqual(out.payload.redactions, alone.payload.redactions, label);
 }
@@ -229,10 +232,10 @@ describe("a redaction keeps JSON text valid", () => {
     ["a netrc password before the next key", red, `{"t":"machine api.test login demo password x1y2z3w4","u":"v"}`, `{"t":"machine api.test login demo password [redacted:netrc]","u":"v"}`],
     ["a marker before an escape is left as it is", red, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nexport X=1"}`, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nexport X=1"}`],
     ["a value after a marker and an escape is still found", red, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nAPI_KEY=x1y2z3w4v5"}`, `{"r":"one${BS}nDB_PASSWORD=[redacted:secret-assignment]${BS}nAPI_KEY=[redacted:secret-assignment]"}`],
-    // A match that starts inside an escape: the escape is finished as U+FFFD, so the text still
-    // parses and the escape keeps none of the match's characters.
-    ["an address that starts at the letter of `\\n`", email, `{"t":"a${BS}nbob@example.com"}`, `{"t":"a${BS}ufffd[redacted:email]"}`],
-    ["an address that starts at the `u` of an escape", email, `{"t":"a${BS}u00e9bob@example.com"}`, `{"t":"a${BS}ufffd[redacted:email]"}`],
+    // A match that starts inside an escape: the rest of the escape stays before the marker, so the
+    // text still parses.
+    ["an address that starts at the letter of `\\n`", email, `{"t":"a${BS}nbob@example.com"}`, `{"t":"a${BS}n[redacted:email]"}`],
+    ["an address that starts at the `u` of an escape", email, `{"t":"a${BS}u00e9bob@example.com"}`, `{"t":"a${BS}u00e9[redacted:email]"}`],
   ];
   for (const [name, r, input, want] of cases) {
     it(name, () => {
@@ -253,12 +256,13 @@ describe("a redaction keeps JSON text valid", () => {
     assert.equal(red.string(`machine api.test login demo password ab"}cd1234`), "machine api.test login demo password [redacted:netrc]");
   });
 
-  it("in plain text, a match that starts inside what reads as a JSON escape is replaced whole", () => {
-    // `\b` and `\u2024` read as JSON escapes, `\d` does not.
-    assert.equal(email.string(`DOMAIN${BS}bob@example.com`), `DOMAIN${BS}ufffd[redacted:email]`);
+  it("in plain text, a match that starts inside what reads as a JSON escape keeps the rest of the escape", () => {
+    // `\b` and `\u2024` read as JSON escapes, `\d` does not. A match that lies inside an
+    // escape is left as it is.
+    assert.equal(email.string(`DOMAIN${BS}bob@example.com`), `DOMAIN${BS}b[redacted:email]`);
     assert.equal(email.string(`CORP${BS}dev.ops@example.com`), `CORP${BS}[redacted:email]`);
     const year = createRedactor({ redact: ["none"], patterns: [String.raw`\d{4}`] });
-    assert.equal(year.string(`C:${BS}u2024${BS}report`), `C:${BS}ufffd[redacted:pattern]${BS}report`);
+    assert.equal(year.string(`C:${BS}u2024${BS}report`), `C:${BS}u2024${BS}report`);
   });
 
   it("an assignment in JSON text held in JSON text keeps both levels", () => {
@@ -294,6 +298,92 @@ describe("a redaction keeps JSON text valid", () => {
           else assert.ok(text.startsWith(marked) && text.endsWith(j(QT, rest, NL, "ls")) && !text.includes(head), label);
         }
       }
+    }
+  });
+});
+
+/** How many levels of JSON text parse: 0 when `s` is not JSON, 1 for a document, 2 when a string in it is one too. */
+function levels(s: string): number {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(s);
+  } catch {
+    return 0;
+  }
+  if (typeof doc !== "object" || doc === null) return 0;
+  let best = 0;
+  const visit = (v: unknown): void => {
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (t.startsWith("{") || t.startsWith("[")) best = Math.max(best, levels(t));
+    } else if (v && typeof v === "object") for (const x of Object.values(v)) visit(x);
+  };
+  visit(doc);
+  return 1 + best;
+}
+
+describe("a redaction keeps JSON text held in JSON text valid", () => {
+  // JSON text held in a string writes each backslash of the text it holds as two, so a run of
+  // backslashes and the character after it make one escape some level down. A match that starts
+  // or ends inside that run must leave every level parsing.
+  const QT = String.fromCharCode(34);
+  const NL = String.fromCharCode(10);
+  const secret = j("Zq8", "mK2pW7", "xR4vT9");
+  const hidden = [secret.slice(3, 9), secret.slice(9)];
+  // Each escape as the innermost text writes it.
+  const escapes = ["n", "t", "r", "b", "f", QT, "/", BS, "u00e9", "u4F60", "u0001", "uD83D", "u2028"].map((e) => BS + e);
+  /** `inner` held in JSON text until `depth` levels parse. */
+  const nest = (inner: string, depth: number): string => {
+    let s = inner;
+    for (let d = 1; d < depth; d++) s = JSON.stringify({ t: s });
+    return s;
+  };
+  const check = (input: string, pattern: string, label: string): void => {
+    const out = createRedactor({ redact: ["none"], patterns: [pattern] }).string(input);
+    const at = `${label}: ${out}`;
+    assert.equal(levels(out), levels(input), at);
+    assert.ok(out.includes("[redacted:pattern]"), at);
+    for (const part of hidden) assert.ok(!out.includes(part), at);
+  };
+
+  for (const depth of [2, 3]) {
+    it(`a match that starts at each place in an escape, ${depth} levels deep`, () => {
+      for (const esc of escapes) {
+        const input = nest(`{"a":"x${esc}${secret} tail"}`, depth);
+        assert.equal(levels(input), depth, input);
+        // From the `x` before the escape, as this level writes it, to the value after it.
+        const written = input.indexOf(secret) - input.indexOf("x" + BS) - 1;
+        for (let k = 0; k <= written + 1; k++) check(input, `[${BS}s${BS}S]{${k}}Zq8[A-Za-z0-9]+`, `${JSON.stringify(esc)}, ${k} before`);
+      }
+    });
+
+    it(`a match that ends at each place in an escape, ${depth} levels deep`, () => {
+      for (const esc of escapes) {
+        const input = nest(`{"a":"x${secret}${esc} tail"}`, depth);
+        assert.equal(levels(input), depth, input);
+        const written = input.indexOf(" tail") - input.indexOf(secret) - secret.length;
+        for (let k = 0; k <= written + 1; k++) check(input, `Zq8[A-Za-z0-9]+[${BS}s${BS}S]{${k}}`, `${JSON.stringify(esc)}, ${k} after`);
+      }
+    });
+  }
+
+  it("a match that starts at the quote, backslash or letter of an escape keeps both levels", () => {
+    const quoted = createRedactor({ redact: ["none"], patterns: [QT + "Zq8[A-Za-z0-9]+"] });
+    const folder = createRedactor({ redact: ["none"], patterns: [BS + BS + "Users" + BS + BS + "+[A-Za-z0-9]+"] });
+    const email = createRedactor({ redact: ["secrets", "email"] });
+    const addr = j("dev.person", String.fromCharCode(64), "corp-mail", ".io");
+    const cases: [Redactor, Record<string, string>, Record<string, string>][] = [
+      // The quote before a quoted value, and the quote that opens the inner document's string.
+      [quoted, { a: j("say ", QT, secret, QT, " now") }, { a: j("say ", QT, "[redacted:pattern]", QT, " now") }],
+      [quoted, { a: secret, b: "tail" }, { a: "[redacted:pattern]", b: "tail" }],
+      // The backslash before a folder name, with a pattern written for any level.
+      [folder, { cwd: ["C:", "Users", "dev1", "src"].join(BS) }, { cwd: ["C:", "[redacted:pattern]", "src"].join(BS) }],
+      // The `n` of a newline before an address.
+      [email, { log: j("first line", NL, addr, " wrote") }, { log: j("first line", NL, "[redacted:email] wrote") }],
+    ];
+    for (const [r, doc, want] of cases) {
+      const out = r.string(JSON.stringify({ t: JSON.stringify(doc) }));
+      assert.deepEqual(JSON.parse((JSON.parse(out) as { t: string }).t), want, out);
     }
   });
 });

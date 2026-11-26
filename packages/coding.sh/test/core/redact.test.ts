@@ -482,10 +482,10 @@ describe("redact: linear time on long input", () => {
     });
   });
 
-  it("redacts 1 MB of e-mail addresses, each starting inside an escape, in linear time and keeps the text well-formed", () => {
+  it("redacts 1 MB of e-mail addresses, each starting inside an escape, in linear time and keeps each escape whole", () => {
     const unit = `a${BS}nuser@example.test `;
     assertLinear("addresses after escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
-      assert.equal(out, `a${BS}ufffd[redacted:email] `.repeat(input.length / unit.length));
+      assert.equal(out, `a${BS}n[redacted:email] `.repeat(input.length / unit.length));
     }, createRedactor({ redact: ["email"] }));
   });
 
@@ -506,6 +506,14 @@ describe("redact: linear time on long input", () => {
     assertLinear("assignments after long escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
       assert.equal(out, want.repeat(input.length / unit.length));
     });
+  });
+
+  it("leaves 1 MB of backslashes as it is, in linear time, when a pattern matches each one", () => {
+    // The whole run is one escape at some level, so no match inside it is cut.
+    const backslash = createRedactor({ redact: ["none"], patterns: [BS + BS] });
+    assertLinear("a pattern inside a run of backslashes", (n) => BS.repeat(n), 500, (input, out) => {
+      assert.equal(out, input);
+    }, backslash);
   });
 });
 

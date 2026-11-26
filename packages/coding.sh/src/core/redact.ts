@@ -1022,19 +1022,17 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
       return marker(r.kind);
     };
   }
-  // A match can start or end inside a JSON escape: keepEscapes keeps the text well-formed.
+  // A match can start or end inside a JSON escape: keepEscapes keeps that escape whole.
   if (s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind))));
   return replace ? s.replace(r.pattern, replace) : s.replace(r.pattern, marker(r.kind));
 }
 
 /**
- * A replace callback for `s` that keeps the text well-formed where a match starts or ends inside a
- * JSON escape: in `a\nbob@example.com` the address starts at the `n` of `\n`, and in
- * `token=x1y2z3w4\"` a value runs to the backslash of `\"`. Replacing the match alone leaves text
- * that no longer parses as JSON. cutWhole finishes an escape the match starts inside with the end
- * of CUT_ESCAPE, which reads as U+FFFD when the match starts at the escape's letter, and keeps the
- * backslashes of one it ends inside, so each escape stays well-formed and the marker stands for the
- * whole match. Only the part of the match that the replacement changes is cut.
+ * A replace callback for `s` that keeps whole each JSON escape a match starts or ends inside: in
+ * `a\nbob@example.com` the address starts at the `n` of `\n`, and in `token=x1y2z3w4\"` a value
+ * runs to the backslash of `\"`. Replacing the match alone leaves text that no longer parses as
+ * JSON, at its own level or, for JSON text held in a string, at a level below. Only the part of
+ * the match that the replacement changes is cut (cutWhole).
  */
 function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
   return (m, ...rest) => {
@@ -1056,48 +1054,75 @@ function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): 
   };
 }
 
-/** The end of the JSON escape that starts at `p` (a backslash after an even run of them), or -1. */
-function escapeEnd(s: string, p: number): number {
-  let q = p;
-  while (q > 0 && s.charCodeAt(q - 1) === 92) q--;
-  if ((p - q) % 2) return -1;
-  const c = s.charCodeAt(p + 1);
-  if (c === 117) return /^[0-9A-Fa-f]{4}$/.test(s.slice(p + 2, p + 6)) ? p + 6 : -1;
-  return c === 34 || c === 92 || c === 47 || c === 98 || c === 102 || c === 110 || c === 114 || c === 116 ? p + 2 : -1;
+/** True when s[i, i + 4) are four hex digits. */
+function hex4(s: string, i: number): boolean {
+  for (let k = i; k < i + 4; k++) {
+    const c = s.charCodeAt(k);
+    if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102))) return false;
+  }
+  return true;
 }
 
 /**
- * An escape's text after its backslash (U+FFFD, the replacement character): any suffix of it
- * finishes an escape a cut starts inside, so the escape keeps none of the match's characters.
- * Hex letters only, so a rule that matches digits does not match it again on a second pass.
+ * The end of the JSON escape whose run of backslashes ends at `r`: after the character at `r` when
+ * that is `"`, `/`, b, f, n, r or t, after a `u` at `r` and its four hex digits, else `r`.
  */
-const CUT_ESCAPE = "ufffd";
+function runEscapeEnd(s: string, r: number): number {
+  const c = s.charCodeAt(r);
+  if (c === 34 || c === 47 || c === 98 || c === 102 || c === 110 || c === 114 || c === 116) return r + 1;
+  return c === 117 && hex4(s, r + 1) ? r + 5 : r;
+}
 
-/** `text` in place of s[from, to), keeping the part inside it of a JSON escape that crosses either end. */
+/**
+ * `text` in place of s[from, to), keeping whole each JSON escape that crosses either end. An escape
+ * here is a run of backslashes, with the character after it when that is `"`, `/`, b, f, n, r or
+ * t, or with a `u` and four hex digits. A run of any length counts: in JSON text held in a string,
+ * `\\n` is the escape `\n` one level down and `\\\"` is `\"`, so a cut into an escape breaks the
+ * level it belongs to. The part of an escape inside the cut stays: before `text` where the cut
+ * starts inside it, and after `text` where the cut ends inside it. When escapes take all of the
+ * cut, s[from, to) stays as it is. Keeping the whole run is what holds at every level, so a value's
+ * own backslash before an escaped quote shows after the marker: one level down, that backslash and
+ * the quote are one escaped quote. Each walk stays inside the cut, so cutting takes time linear in
+ * the text.
+ */
 function cutWhole(s: string, from: number, to: number, text: string): string {
-  // An escape that starts before `from` and ends after it: finished with CUT_ESCAPE, not with the match.
-  let lead = "";
-  for (let p = from - 1; p >= 0 && p >= from - 5; p--) {
-    if (s.charCodeAt(p) !== 92) continue;
-    if (escapeEnd(s, p) > from) lead = CUT_ESCAPE.slice(from - p - 1);
-    break;
-  }
-  // An escape that starts before `to` and ends after it: its backslash and the run of backslashes
-  // before it stay (a quote escaped at a deeper level), and a \u keeps its letter with zeros for
-  // the digits the match took.
-  let tail = to;
-  let keep = "";
-  for (let p = to - 1; p >= from && p >= to - 5; p--) {
-    if (s.charCodeAt(p) !== 92) continue;
-    if (escapeEnd(s, p) > to) {
-      tail = p;
-      while (tail > from && s.charCodeAt(tail - 1) === 92) tail--;
-      keep = s.slice(tail, p + 1) + (to > p + 1 ? "u" + "0".repeat(to - p - 2) : "");
+  // The cut starts inside an escape (in its run, at its character or in its hex digits): the rest
+  // of the escape stays before `text`. When the escape reaches `to`, head >= to and nothing is cut.
+  let head = from;
+  if (s.charCodeAt(from - 1) === 92) {
+    let r = from;
+    while (r < to && s.charCodeAt(r) === 92) r++;
+    head = runEscapeEnd(s, r);
+  } else {
+    for (let d = 1; d <= 4; d++) {
+      if (s.charCodeAt(from - d) === 117 && s.charCodeAt(from - d - 1) === 92 && hex4(s, from - d + 1)) {
+        head = from - d + 5;
+        break;
+      }
     }
-    break;
   }
-  if (!lead && tail === to) return text;
-  return lead + text + keep;
+  // The cut ends inside an escape (in its run, or after its `u` and before the end of its hex
+  // digits): the escape's part in the cut, from the start of its run, stays after `text`.
+  let tail = to;
+  if (head < to) {
+    let p = -1;
+    if (s.charCodeAt(to - 1) === 92) {
+      if (s.charCodeAt(to) === 92 || runEscapeEnd(s, to) > to) p = to - 1;
+    } else {
+      for (let d = 1; d <= 4; d++) {
+        if (s.charCodeAt(to - d) === 117 && s.charCodeAt(to - d - 1) === 92 && hex4(s, to - d + 1)) {
+          p = to - d - 1;
+          break;
+        }
+      }
+    }
+    if (p >= head) {
+      tail = p;
+      while (tail > head && s.charCodeAt(tail - 1) === 92) tail--;
+    }
+  }
+  if (head === from && tail === to) return text;
+  return head >= tail ? s.slice(from, to) : s.slice(from, head) + text + s.slice(tail, to);
 }
 
 /**
