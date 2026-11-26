@@ -336,4 +336,18 @@ describe("recorded fallbacks, switches and back, and subagents", () => {
     // 900 input and 40 output tokens at $5/$25 per M instead of $4/$20, as in a call with only those.
     assert.equal(s.stats.modelSwitch?.extraUsd, (900 * 1 + 40 * 5) / 1e6);
   });
+
+  it("a switched call's cache read that is not a whole number leaves out only that count, not the other call's", () => {
+    reset();
+    // Two switched calls of 900 input and 40 output tokens: one reads 12.5 tokens from the cache, the other 1000.
+    const withCacheRead = (cacheReadTokens: number) => ({ usage: { inputTokens: 900, outputTokens: 40, cacheReadTokens } });
+    const s = buildSession([
+      ...times(2, () => call(OPUS_55)),
+      ev("notification", { kind: "model.fallback", trigger: "overloaded", from: OPUS_55, to: OPUS_48 }),
+      call(OPUS_48, {}, withCacheRead(12.5)),
+      call(OPUS_48, {}, withCacheRead(1000)),
+    ]);
+    // 1800 input, 80 output and 1000 cache-read tokens at $5/$25/$0.50 per M instead of $4/$20/$0.20.
+    assert.deepEqual([s.stats.modelSwitch?.switchedCalls, s.stats.modelSwitch?.extraUsd], [2, (1800 * 1 + 80 * 5 + (1000 * 3) / 10) / 1e6]);
+  });
 });
