@@ -1196,7 +1196,14 @@ const JSON_STRING_DEPTH = 3;
  */
 export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0, memo?: BlobMemo): unknown {
   // Redactor.value, with the strings through `memo`; only for a redactor createRedactor made, whose value is that walk.
-  const value = memo && passes.has(r) ? (x: unknown) => walk(x, memoString(r, memo, tally), 0, tally) : (x: unknown) => r.value(x, tally);
+  // Below the top level the result is only serialized (documentsRedacted), so the walk keeps what comes out the same.
+  const value =
+    memo && passes.has(r)
+      ? (x: unknown) => {
+          const f = memoString(r, memo, tally);
+          return walk(x, f, 0, tally, f, level > 0);
+        }
+      : (x: unknown) => r.value(x, tally);
   if (level >= JSON_STRING_DEPTH) return value(v);
   return value(documentsRedacted(r, v, tally, level, undefined, memo));
 }
@@ -1229,8 +1236,10 @@ function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level
     const found = redactionTally();
     let clean: string;
     try {
-      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1, memo));
-      if (clean === JSON.stringify(doc)) return s;
+      const out = redactForBlob(r, doc, found, level + 1, memo);
+      clean = JSON.stringify(out);
+      // With a memo the walk gives the document itself back when nothing in it changed.
+      if (out === doc || clean === JSON.stringify(doc)) return s;
     } catch {
       return tooDeepMarker(tally); // a document too deep to serialize
     }
