@@ -238,10 +238,15 @@ unless you opt in to full content.
 
 <br>
 
-The hook first writes the agent's payload unredacted to `~/.coding.sh/spool` (mode 600). Ingest
-redacts the payloads kept in `spool/<agent>/raw/` in place. A payload written inside its spool
-line stays unredacted until `coding.sh gc` deletes the file after 7 days. Details in
-[docs/guides/privacy.md](docs/guides/privacy.md).
+The node hook (`hook.mjs`), which agents run on Windows, redacts the agent's payload before it
+writes it to `~/.coding.sh/spool` (mode 600). Elsewhere agents run the POSIX sh hook (`hook.sh`).
+It writes the payload without redacting it, to stay fast, and passes the calls it does not handle,
+such as those from an eval run or from T3 Code, to `hook.mjs`.
+
+Ingest stores a redacted copy either way. It also redacts the spool itself: a payload kept in
+`spool/<agent>/raw/` once its line is stored, and the short payloads inside a day's spool file once
+that UTC day has passed. `coding.sh gc` deletes ingested spool files after 7 days. Details in
+[docs/guides/privacy.md](docs/guides/privacy.md#the-raw-spool).
 
 </details>
 
