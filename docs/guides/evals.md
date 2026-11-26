@@ -2304,8 +2304,9 @@ nothing within a task (0.50); `toolErrors` separates failed from passed runs of 
   half. `pooled` uses every pair, `task` pairs from the same task, `task+arm` pairs from the same task
   and bundle. The 95% CI resamples tasks (seeded), so it needs at least two tasks with task+arm
   pairs; with one, the column shows `–`.
-- Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` are left
-  out) and `toolErrors`. A run with no captured session has no score, and its pairs are dropped.
+- Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` and the
+  notes `compaction`, `step-retried` and `resumed` are left out) and `toolErrors`. A run with no
+  captured session has no score, and its pairs are dropped.
 - Reference rows come first. `difficulty(loo)` scores a run by the fail share of its task's other
   runs, leaving out both runs of the pair, so it is 0.5 within a task by construction. `arm(loo)` does
   the same for the bundle. `turns` and `tokens` are length baselines.

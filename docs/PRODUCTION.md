@@ -256,8 +256,10 @@ In serve, an `llm.call` that has tokens but no `costUsd` gets
 - `coding_sh_session_cost_usd_total{agent,model}`: the cost of sessions, subagent sessions
   included
 - `coding_sh_sessions_total{agent,outcome="ok|failed"}`: top-level sessions; `failed` means the
-  session has a failure flag (a flag with no colon)
-- `coding_sh_session_flags_total{flag}`: the failure flags on those sessions, tags left out
+  session has a failure flag (a flag with no colon, other than `compaction`, `step-retried` and
+  `resumed`)
+- `coding_sh_session_flags_total{flag}`: the failure flags on those sessions, tags and those three
+  left out
 
 The three session counters appear once a session is counted. A session counts once, when a commit
 stores its `session.end` event; cost or flags it gains later are not added. Cost is also counted

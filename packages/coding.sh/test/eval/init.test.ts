@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { parseTriggerSpec } from "../../src/eval/trigger.ts";
 import { draftCases, draftTriggers, DraftError } from "../../src/eval/draft.ts";
-import { chooseGraders, ciWorkflow, initSuite, InitError, suiteName } from "../../src/eval/init.ts";
+import { chooseGraders, ciWorkflow, initSuite, InitError, isFlagged, recentSessions, suiteName } from "../../src/eval/init.ts";
 import { commandsForShell } from "../../src/cli/commands/eval.ts";
 import { quoteArg } from "../../src/cli/next-steps.ts";
 import { loadSuite } from "../../src/eval/suite-spec.ts";
@@ -355,6 +355,22 @@ describe("initSuite: sessions", () => {
     const all = await initSuite({ name: "any", root, source: "sessions", sessionsRepo: "all", since: 5_000 }, { ...w, now: 12_000 });
     assert.deepEqual(all.tasks!.map((t) => t.sessionId), ["failed"]);
     await assert.rejects(initSuite({ name: "none", root, source: "sessions", sessionsRepo: "/elsewhere", since: 5_000 }, { ...w, now: 12_000 }), /no failed or flagged sessions in \/elsewhere/);
+  });
+
+  it("compaction is a note: a session with only notes and tags is not flagged, so no task is drafted from it", async () => {
+    const root = await project();
+    const w = await world();
+    const failed = (await w.index.getSession("failed"))!;
+    const flagSets = [["compaction", "gateway:vercel"], ["compaction", "no-verification"], []];
+    const notes = flagSets.map((flags, i) => ({ ...failed, id: `note${i}`, flags, startedAt: 11_000 + i }));
+    for (const s of notes) {
+      await w.index.upsertSession(s);
+      await w.index.putEvents([ev(s.id, "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev(s.id, "user.message", { text: `fix add and mul (${s.id})` })]);
+    }
+    assert.deepEqual(notes.map(isFlagged), [false, true, false]);
+    assert.deepEqual((await recentSessions({ root: ROOT, since: 5_000 }, w.index, 12_000)).map((s) => s.id), ["note1", "failed"]);
+    const r = await initSuite({ name: "notes", root, source: "sessions", since: 5_000 }, { ...w, now: 12_000 });
+    assert.deepEqual(r.tasks!.map((t) => t.sessionId).sort(), ["failed", "note1"]);
   });
 });
 
