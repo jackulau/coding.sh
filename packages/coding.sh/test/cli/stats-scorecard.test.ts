@@ -9,7 +9,7 @@ import { after, before, describe, test } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import * as stats from "../../src/cli/commands/stats.ts";
-import { widerSince } from "../../src/cli/commands/stats-scorecard.ts";
+import { widerSince } from "../../src/cli/next-steps.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
 import { buildSession } from "../../src/core/sessions.ts";

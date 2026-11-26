@@ -102,3 +102,9 @@ export function envLine(env: NodeJS.ProcessEnv, name: string, value: string, pla
 export function envRef(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform = process.platform): string {
   return windowsShell(env, platform) ? `$env:${name}` : `$${name}`;
 }
+
+/** A --since that starts before `since`: 90 days back, or twice as far back as `since` when that is 90 days or more. To the nearest day, so --since 100d gives 200d. */
+export function widerSince(since: number, now = Date.now()): string {
+  const days = Math.round((now - since) / 86_400_000);
+  return `${days < 90 ? 90 : days * 2}d`;
+}
