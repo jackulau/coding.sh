@@ -44,7 +44,7 @@ export function memoryUseState(): MemoryUseState {
 
 const WAITING = "\n";
 /** The audit's test of a resolved path, before it knows the home (homeKey drops a trailing slash first). */
-const isMemoryPath = (abs: string): boolean => memoryKind(abs.replace(/\/+$/, "")) !== undefined;
+const isMemoryPath = (abs: string): boolean => memoryKind(abs.replace(/(?<!\/)\/+$/, "")) !== undefined;
 
 /** Folds the next event, in time order. `cwd`: the session's directory, once an earlier event gave it. */
 export function foldMemoryUse(s: MemoryUseState, e: AgentEvent, cwd: string | undefined): void {

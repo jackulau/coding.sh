@@ -59,6 +59,21 @@ describe("memory audit: helpers", () => {
     assert.equal(claudeProjectSlug("/Users/ann/my.app"), "-Users-ann-my-app");
   });
 
+  it("drops trailing slashes from the path and the home", () => {
+    assert.equal(homeKey("/Users/ann/.claude/"), "~/.claude");
+    assert.equal(homeKey("/tmp/h/a///", "/tmp/h//"), "~/a");
+    assert.equal(homeKey("/tmp/h/", "/tmp/h"), "~");
+    assert.equal(homeKey("C:\\Users\\ann\\repo\\\\"), "~/repo");
+    assert.equal(homeKey("/work/demo//"), "/work/demo");
+  });
+
+  it("a session at the root loads the root CLAUDE.md, however many slashes its cwd has", () => {
+    for (const cwd of ["/", "//"]) {
+      const b = auditMemory([session("r", [], { cwd })], [file("/CLAUDE.md")], { home: HOME });
+      assert.equal(row(b, "/CLAUDE.md").loaded, 1, cwd);
+    }
+  });
+
   it("keys a Git Bash drive path as the Windows path it names, so one file is one row", () => {
     assert.equal(homeKey("/c/Users/ann/.claude/CLAUDE.md"), "~/.claude/CLAUDE.md");
     assert.equal(homeKey("/c/Users/ann/.claude/CLAUDE.md", "C:\\Users\\ann"), "~/.claude/CLAUDE.md");
@@ -197,6 +212,15 @@ describe("memory audit: synthetic sessions", () => {
     assert.equal(row(b, "~/repo/pkg/AGENTS.md").loaded, 1);
     assert.equal(row(b, "~/.codex/AGENTS.md").loaded, 1);
     assert.deepEqual(row(b, "~/AGENTS.md").flags, ["never-read"], "above the repo root");
+  });
+
+  it("a repo root or cwd that ends in slashes loads the same AGENTS.md files", () => {
+    const files = [file("~/repo/AGENTS.md"), file("~/repo/pkg/AGENTS.md"), file("~/AGENTS.md")];
+    for (const [cwd, repoRoot] of [["/home/me/repo/pkg", "/home/me/repo//"], ["/home/me/repo/pkg/", "/home/me/repo"], ["/home/me/repo//", "/home/me/repo/"]]) {
+      const b = auditMemory([session("c", [], { agent: "codex", cwd, repoRoot })], files, { home: HOME });
+      assert.equal(row(b, "~/repo/AGENTS.md").loaded, 1, `${cwd} ${repoRoot}`);
+      assert.deepEqual(row(b, "~/AGENTS.md").flags, ["never-read"], `${cwd} ${repoRoot}`);
+    }
   });
 
   it("is empty when there are no memory files", () => {

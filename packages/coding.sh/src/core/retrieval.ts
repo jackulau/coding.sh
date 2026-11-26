@@ -941,7 +941,7 @@ const NOT_READ = /no such file|not found|cannot find|can't (?:open|read|find)|ca
  * Bash's `/c/x` as `C:/x`. The cwds are read once for all of a call's paths.
  */
 function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: string) => string | undefined {
-  const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = (eventCwd ?? cwd)?.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   const rooted = !!base && /^(?:\/|[A-Za-z]:\/)/.test(base);
   const change = changeKeyer(eventCwd, cwd);
   return (path) => {
@@ -955,7 +955,7 @@ function keyer(eventCwd: string | undefined, cwd: string | undefined): (path: st
 /** An edit's filesChanged key (changeKey: Git Bash's `/c/x` already `C:/x`) in keyer's form: `.` and `..` resolved. */
 function editKey(key: string, cwd: string | undefined): string {
   let k = posix.normalize(key.replace(/\\/g, "/"));
-  const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const c = cwd?.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   k = normalizeTracePath(k, c);
   if (c && ABSOLUTE.test(c) && k.startsWith("../")) k = normalizeTracePath(posix.join(c, k), c);
   return k;
