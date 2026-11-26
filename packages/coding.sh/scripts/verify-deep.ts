@@ -34,7 +34,7 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 30 minutes.
+ * 33 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
@@ -65,6 +65,13 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "adapter-transcript-json-1": { bound: 1 },
   // As adapter-transcript-json-1, over its own homes: 3,075 cuts and 869 closed cuts over 11 files.
   "adapter-transcript-json-2": { bound: 1 },
+  // At bound 2, the first two changes of each name (_values.ts): 8,964 changes in 506 records of 24 files.
+  // About 1 minute.
+  "adapter-values-1": { bound: 2 },
+  // As adapter-values-1, over its own homes: 8,152 changes in 144 records of 8 files. About 1.5 minutes.
+  "adapter-values-2": { bound: 2 },
+  // As adapter-values-1, over its own homes: 13,254 changes in 164 records of 25 files. About 35 seconds.
+  "adapter-values-3": { bound: 2 },
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
   // about 9.
   "capture-code": { runs: 200 },
