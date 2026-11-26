@@ -481,12 +481,15 @@ export class ClaudeTranscriptConverter {
 
   /**
    * Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, `prompts`, or `always`).
-   * An entry keyed like the turn that just ended starts none: the stop prompt carries the promptId of the turn the
-   * person stopped, and ending that turn again would give a second turn.end its id.
+   * An entry keyed like the current turn (the promptId of the prompt it is for) starts none: a turn reopened under
+   * the same id would end twice under one event id. The stop prompt (the entry opened with `always`) carries the
+   * promptId of the turn the person stopped and ends that turn at the stop; any other such entry adds to the turn,
+   * which ends later.
    */
   private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>, always = false): Promise<void> {
-    await this.endTurn(ts, lineNo);
     const turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
+    if (turnId === this.turnId && !always) await this.flushCall();
+    else await this.endTurn(ts, lineNo);
     if (turnId !== this.turnId) {
       this.turnId = turnId;
       this.turnStartTs = ts;

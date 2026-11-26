@@ -613,8 +613,10 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
  * 3: an agent's shell call reads the last jest, vitest, node:test or mocha summary in its output, not the first.
  * 4: the failed and null shares are of the agents that ran, cached agents left out.
  * 5: a script is read only from the run's record or the copy in its session dir's workflows/scripts, and stored redacted (none in metadata mode).
+ * 6: a user entry with the promptId of an agent's open turn, other than a stop prompt, adds to that turn, which
+ *    ends once, at its end.
  */
-const IMPORT_VERSION = 5;
+const IMPORT_VERSION = 6;
 
 /** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {

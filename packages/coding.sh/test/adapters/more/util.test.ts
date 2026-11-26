@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, sqliteShapeError, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { copyMargin, emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, jsonlTail, openSqliteCopy, openSqliteInPlace, parseJsonc, readSnapshot, spawnAgent, sqliteBusy, sqliteShapeError, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv, testCtx } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
@@ -660,5 +660,40 @@ setTimeout(() => {}, 60000);
     const r = await spawnAgent({ bin: p, args: [], cwd: env.root, env: { ...process.env }, timeoutMs: 120_000, tailBytes: 256 }); // a ceiling, not a timing: node startup is slow under load
     assert.ok(r.stdoutTail.length <= 256);
     assert.match(r.stdoutTail, /line 1999/);
+  });
+});
+
+describe("jsonlTail", () => {
+  const pick = (r: Record<string, unknown>): unknown[] => [r.n];
+
+  it("gives no items for a path that names a folder or nothing, and reads a file's records, then the ones appended", () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-jsonl-tail-"));
+    try {
+      const file = join(dir, "t.jsonl");
+      writeFileSync(file, '{"n":1}\n{"n":2}\n'); // a folder with an entry has a size on every file system that gives folders one
+      assert.deepEqual(jsonlTail("tail-folder", dir, pick), []);
+      assert.deepEqual(jsonlTail("tail-none", join(dir, "none.jsonl"), pick), []);
+      assert.deepEqual(jsonlTail("tail-file", file, pick), [1, 2]);
+      appendFileSync(file, '{"n":3}\n');
+      assert.deepEqual(jsonlTail("tail-file", file, pick), [1, 2, 3]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives the items read so far while the file cannot be read, and the rest once it can", { skip: process.platform === "win32" ? "chmod does not stop a read on Windows" : process.getuid?.() === 0 && "root reads any file" }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-jsonl-tail-"));
+    const file = join(dir, "t.jsonl");
+    try {
+      writeFileSync(file, '{"n":1}\n');
+      assert.deepEqual(jsonlTail("tail-locked", file, pick), [1]);
+      appendFileSync(file, '{"n":2}\n');
+      chmodSync(file, 0o000);
+      assert.deepEqual(jsonlTail("tail-locked", file, pick), [1]);
+      chmodSync(file, 0o600);
+      assert.deepEqual(jsonlTail("tail-locked", file, pick), [1, 2]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
