@@ -59,6 +59,37 @@ describe("raw blobs are redacted before they are serialized", () => {
     assert.ok(!JSON.stringify(out).includes(SECRET));
     assert.ok(Object.keys(tally.kinds).length > 0);
   });
+
+  it("redactForBlob with a memo gives the text and counts it gives without one, for each string it has seen before", () => {
+    const token = ["gh", "p_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
+    // AWS's documentation key: counted as placeholder-key.
+    const docKey = ["AK", "IA", "IOSFODNN7EXAMPLE"].join("");
+    const line = `AWS_SECRET_ACCESS_KEY=${SECRET}`;
+    const inner = JSON.stringify({ t: token, again: token, password: "hunter", note: "[redacted:email] kept", doc: docKey });
+    let deep: unknown = { out: line, t: token };
+    for (let i = 0; i < 70; i++) deep = { n: deep, t: token };
+    const values: unknown[] = [
+      { a: line, b: line, c: [line, token, token], d: JSON.stringify({ a: line, b: [line, inner, inner] }) },
+      // Documents in strings at each level redactForBlob follows, and one past them.
+      JSON.stringify({ x: inner, y: JSON.stringify({ z: inner, w: JSON.stringify({ v: inner }) }) }),
+      ["node", "cli.js", "--api-key", "abcd1234efgh", "--api-key", "abcd1234efgh"],
+      { api_key: "abcdefgh", same: { api_key: "abcdefgh" }, note: "[redacted:openai-key]", note2: "[redacted:openai-key]" },
+      deep,
+      [docKey, docKey, `${docKey} ${token}`],
+    ];
+    // One memo for every value, twice over: the second round finds each string in it.
+    const memo = new Map();
+    for (let round = 0; round < 2; round++) {
+      for (const v of values) {
+        const want = redactionTally();
+        const got = redactionTally();
+        const label = `round ${round}: ${JSON.stringify(v).slice(0, 80)}`;
+        assert.equal(JSON.stringify(redactForBlob(redactor, v, got, 0, memo)), JSON.stringify(redactForBlob(redactor, v, want)), label);
+        assert.equal(JSON.stringify(got), JSON.stringify(want), label);
+      }
+    }
+    assert.ok(memo.size > 0);
+  });
 });
 
 describe("redactBlobValue runs only the rules the value's JSON text holds a needle of", () => {

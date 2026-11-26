@@ -16,7 +16,7 @@
 // core/toml.ts.
 import type { AgentEvent } from "../schema/index.ts";
 import type { SpoolLine } from "../core/types.ts";
-import { createRedactor, redactForBlob, redactionCounts, redactionTally, type RedactionTally, type Redactor } from "../core/redact.ts";
+import { createRedactor, redactForBlob, redactionCounts, redactionTally, type BlobMemo, type RedactionTally, type Redactor } from "../core/redact.ts";
 import { paths } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
 import type { RedactLine } from "./write.ts";
@@ -158,24 +158,30 @@ function shownLength(s: string, level = 0): number {
  * many documents parse in it as in the original and it shows no more than the
  * original redacted as documents. Otherwise the original is redacted as documents
  * instead (redactForBlob), and the counts the rules made on its text are taken
- * back, so each value is counted once.
+ * back, so each value is counted once. The documents in the two texts hold mostly
+ * the same strings, and the passes over them share a BlobMemo, so each string is
+ * redacted once.
  */
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
+  const memo: BlobMemo = new Map();
   return mapJsonStrings(r.value(v, tally), v, (s, before) => {
-    if (before === undefined || before === s || MARKER_ONLY.test(s)) return redactForBlob(r, s, tally) as string;
+    if (before === undefined || before === s || MARKER_ONLY.test(s)) return redactForBlob(r, s, tally, 0, memo) as string;
     const docs = documents(before);
-    if (docs === 0) return redactForBlob(r, s, tally) as string;
+    if (docs === 0) return redactForBlob(r, s, tally, 0, memo) as string;
+    let viaDoc: RedactionTally | undefined;
+    let doc: string | undefined;
     if (documents(s) >= docs) {
       // A match the text pass started right after an escape can stop at an escape inside its value
       // (\u00e9, \", \/): the rest of the value then follows a marker, where the document pass does
       // not look again. The text's result is kept only when it shows no more than the original
       // redacted as documents.
       const viaText = redactionTally();
-      const clean = redactForBlob(r, s, viaText) as string;
-      if (shownLength(clean) <= shownLength(redactForBlob(r, before, redactionTally()) as string)) {
-        for (const [k, n] of Object.entries(viaText.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
-        if (viaText.preexisting) tally.preexisting = true;
+      const clean = redactForBlob(r, s, viaText, 0, memo) as string;
+      viaDoc = redactionTally();
+      doc = redactForBlob(r, before, viaDoc, 0, memo) as string;
+      if (clean === doc || shownLength(clean) <= shownLength(doc)) {
+        addTally(tally, viaText);
         return clean;
       }
     }
@@ -186,8 +192,15 @@ export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): u
       if (left > 0) tally.kinds[k] = left;
       else delete tally.kinds[k];
     }
-    return redactForBlob(r, before, tally) as string;
+    if (doc === undefined || viaDoc === undefined) return redactForBlob(r, before, tally, 0, memo) as string;
+    addTally(tally, viaDoc);
+    return doc;
   });
+}
+
+function addTally(into: RedactionTally, from: RedactionTally): void {
+  for (const [k, n] of Object.entries(from.kinds)) into.kinds[k] = (into.kinds[k] ?? 0) + n;
+  if (from.preexisting) into.preexisting = true;
 }
 
 /**

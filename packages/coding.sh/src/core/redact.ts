@@ -1188,21 +1188,46 @@ const JSON_STRING_DEPTH = 3;
  * something. Redacting the serialized text alone misses a value that only its key
  * shows to be secret (`{"password":"hunter"}`): in the text the key is part of a
  * string, so the walk's check of each key does not see it.
+ *
+ * `memo` is shared by calls on values that hold many of the same strings: each
+ * string is redacted once, and what that replaced is counted again on each use.
  */
-export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
-  if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
-  return r.value(documentsRedacted(r, v, tally, level), tally);
+export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0, memo?: BlobMemo): unknown {
+  // Redactor.value, with the strings through `memo`; only for a redactor createRedactor made, whose value is that walk.
+  const value = memo && passes.has(r) ? (x: unknown) => walk(x, memoString(r, memo, tally), 0, tally) : (x: unknown) => r.value(x, tally);
+  if (level >= JSON_STRING_DEPTH) return value(v);
+  return value(documentsRedacted(r, v, tally, level, undefined, memo));
+}
+
+/** What a redactor made of each string it was given, for redactForBlob calls that share it. */
+export type BlobMemo = Map<string, { out: string; kinds?: Record<string, number>; preexisting?: boolean }>;
+
+/** Redactor.string with `tally`, through `memo`: a string seen before gives the same text and adds the same counts. */
+function memoString(r: Redactor, memo: BlobMemo, tally: RedactionTally): (s: string) => string {
+  return (s) => {
+    let seen = memo.get(s);
+    if (!seen) {
+      const t = redactionTally();
+      seen = { out: r.string(s, t) };
+      if (Object.keys(t.kinds).length) seen.kinds = t.kinds;
+      if (t.preexisting) seen.preexisting = true;
+      memo.set(s, seen);
+    }
+    if (seen.kinds) for (const [k, n] of Object.entries(seen.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
+    if (seen.preexisting) tally.preexisting = true;
+    return seen.out;
+  };
 }
 
 /** `v` with each string that holds a JSON document redacted as that document: redactForBlob's first step. */
-function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met): unknown {
+function documentsRedacted(r: Redactor, v: unknown, tally: RedactionTally, level: number, met?: Met, memo?: BlobMemo): unknown {
   return mapStrings(v, (s) => {
     const doc = jsonDocument(s);
     if (doc === undefined) return s;
     const found = redactionTally();
     let clean: string;
     try {
-      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
+      clean = JSON.stringify(redactForBlob(r, doc, found, level + 1, memo));
       if (clean === JSON.stringify(doc)) return s;
     } catch {
       return tooDeepMarker(tally); // a document too deep to serialize

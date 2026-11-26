@@ -216,6 +216,31 @@ describe("the hook redacts before it writes", () => {
     assert.deepEqual(tally.kinds, { "auth-header": 1 });
   });
 
+  it("redactPayload gives the text and counts of a redactor that shares no work between strings", () => {
+    const r = createRedactor();
+    // redactForBlob shares each string's result only for a redactor createRedactor made, not a copy.
+    const unshared = { ...r };
+    const doc = JSON.stringify({ a: `key ${GITHUB}`, b: [`key ${GITHUB}`, `key ${GITHUB}`], c: JSON.stringify({ password: "hunter", d: `key ${GITHUB}` }) });
+    const pem = ["-----BEGIN RSA PRI", "VATE KEY----- ", "Zx8Qw2Lm4Np6Rt8Vb0Cd2Ef4Gh6Jk8Mn1Pq3Rs5Tu7Vw9Xy"].join("");
+    const body = `{"m":"a${BS}nAuthorization: Token abcd1234${BS}u00e9efgh5678","n":"key ${GITHUB}","o":"key ${GITHUB}"}`;
+    const payloads: unknown[] = [
+      // The text's result is kept.
+      { stdout: doc, again: doc, prompt: `{"msg":"a${BS}n${ANTHROPIC}","m2":"a${BS}n${ANTHROPIC}"}` },
+      // The text no longer parses as many documents: the original is redacted as documents.
+      { stdout: JSON.stringify({ key: pem, note: `key ${GITHUB}`, more: `key ${GITHUB}` }) },
+      // The text shows more than the original redacted as documents.
+      { body, again: body },
+      `{"a":"[redacted:email] ${GITHUB}","b":"[redacted:email] ${GITHUB}"}`,
+    ];
+    for (const p of payloads) {
+      const shared = redactionTally();
+      const alone = redactionTally();
+      const label = JSON.stringify(p).slice(0, 80);
+      assert.equal(JSON.stringify(redactPayload(r, p, shared)), JSON.stringify(redactPayload(unshared, p, alone)), label);
+      assert.equal(JSON.stringify(shared), JSON.stringify(alone), label);
+    }
+  });
+
   it("withSpoolRedactions adds the line's counts to the event's", () => {
     const e: AgentEvent = { id: "e", v: 0, sessionId: "s", ts: 1, agent: "fake", kind: "user.message", payload: { text: "x", redactions: { password: 1 } } };
     assert.deepEqual(withSpoolRedactions(e, { "github-token": 2, password: 1 }).payload.redactions, { "github-token": 2, password: 2 });
