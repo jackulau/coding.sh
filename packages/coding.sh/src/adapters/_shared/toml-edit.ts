@@ -50,7 +50,7 @@ export function upsertTomlBlock(text: string | undefined, id: string, body: stri
   const src = text ?? "";
   const nl = eol(src);
   const lines = src.split(/\r?\n/);
-  const block = [BEGIN(id), ...body.replace(/\s+$/, "").split(/\r?\n/), END(id)];
+  const block = [BEGIN(id), ...body.replace(/(?<!\s)\s+$/, "").split(/\r?\n/), END(id)];
   const range = blockRange(lines, id);
   let out: string[];
   if (range) {
@@ -241,7 +241,7 @@ export function upsertTomlTable(text: string | undefined, name: string, body: st
   const nl = eol(src);
   const lines = dropMarkers(src.split(/\r?\n/), markerId);
   const cleaned = lines.join(nl);
-  const bodyLines = body.replace(/\s+$/, "").split(/\r?\n/);
+  const bodyLines = body.replace(/(?<!\s)\s+$/, "").split(/\r?\n/);
   const range = tableRange(cleaned, name);
   if (range) return [...lines.slice(0, range[0]), ...bodyLines, ...lines.slice(range[1])].join(nl);
   const parsed = cleaned.trim() ? parseToml(cleaned) : {};

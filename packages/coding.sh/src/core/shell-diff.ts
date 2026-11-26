@@ -13,7 +13,7 @@ export const slashed = (x: string): string => (x.includes("\\") ? x.replace(/\\/
 
 /** A cwd as normalizeTracePath compares a path with it: forward slashes, no trailing slash, no macOS `/private`. */
 export function traceRoot(cwd: string | undefined): string | undefined {
-  return cwd ? unprivate(slashed(cwd).replace(/\/+$/, "")) : undefined;
+  return cwd ? unprivate(slashed(cwd).replace(/(?<!\/)\/+$/, "")) : undefined;
 }
 
 /** normalizeTracePath against a root from traceRoot: for many paths under one cwd, the cwd read once. */
@@ -203,7 +203,9 @@ export function simpleCommands(command: string): SimpleCommand[] {
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
   let cd: ((to: string) => string) | undefined;
-  const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
+  // A redirection to a descriptor (`2>&1`, `>&2`) and a heredoc's marker become a space. The
+  // descriptor before `>&` is read from its first digit, `(?<!\d)`, so the time is linear.
+  const text = stripHeredocs(command).replace(/(?<!\d)\d+>&\d+|>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
     const words = wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.

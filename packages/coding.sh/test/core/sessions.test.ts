@@ -6,6 +6,7 @@ import type { AgentEvent, CostByTokenType, EventKind } from "../../src/schema/in
 import { priceEvent, pricesFor } from "../../src/core/pricing.ts";
 import {
   buildSession,
+  changeKey,
   detectFlags,
   FLAGS,
   isSyntheticPrompt,
@@ -375,6 +376,16 @@ describe("failure detectors", () => {
     assert.equal(files(both), 2, "src/a.ts three ways, and src/b.ts the shell call wrote");
     assert.equal(files(sh("g2", "echo x > /c/other/a.txt; echo y > /c")), 0, "outside the working directory, and a drive");
     assert.equal(files([ev("file.change", { path: "/c/work/demo/a.ts", op: "modify" }, { cwd: "/work/demo" }), ev("file.change", { path: "a.ts", op: "modify" }, { cwd: "/work/demo" })]), 2, "in a POSIX folder, /c is a folder, not a drive");
+  });
+
+  it("filesChanged keys a file the same way when a cwd ends in slashes", () => {
+    assert.equal(changeKey("a.ts", "/work/demo/pkg//", "/work/demo"), "pkg/a.ts");
+    assert.equal(changeKey("a.ts", "/work/demo/pkg", "/work/demo///"), "pkg/a.ts");
+    assert.equal(changeKey("/work/demo/src/a.ts", "/work/demo/pkg/", "/work/demo/"), "src/a.ts");
+    assert.equal(changeKey("a.ts", "C:\\work\\demo\\pkg\\\\", "C:\\work\\demo"), "pkg/a.ts");
+    const files = (events: AgentEvent[]) => buildSession(events).stats.filesChanged;
+    const change = (path: string, cwd: string) => ev("file.change", { path, op: "modify" }, { cwd });
+    assert.equal(files([change("src/a.ts", "/work/demo//"), change("/work/demo/src/a.ts", "/work/demo/"), change("a.ts", "/work/demo/src///")]), 1);
   });
 
   it("text-tool-call: a tool call written out as text, not markup quoted in a code block or in prose", () => {

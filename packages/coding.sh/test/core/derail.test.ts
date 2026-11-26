@@ -67,6 +67,23 @@ describe("derail detection", () => {
       assert.deepEqual(flags(acrossEdit), []);
     });
 
+    it("reads an MCP tool's server up to its first underscore: any tool of a browser or desktop server is UI driving", () => {
+      const tenTimes = (tool: string) => {
+        reset();
+        return flags(Array.from({ length: 10 }, () => call(tool, { q: "x" }, { output: "same" })).flat());
+      };
+      // The server's name holds the word, in any case and with other words around it. None of these
+      // tool names is a UI action by itself.
+      for (const tool of ["mcp__my-chrome__get_page_text", "mcp__desktop-commander__read_file", "MCP__Playwright__get_text", "mcp__cua__get_state"]) {
+        assert.deepEqual(tenTimes(tool), [], tool);
+      }
+      // The word is in the tool's name, after an underscore in the server's name, or there is no
+      // `__` after the server: the same call over and over is a loop.
+      for (const tool of ["mcp__files__chrome_history", "mcp__chrome_devtools__get_title", "mcp___browser__get_text", "mcp__desktop", "mcp__desktop_"]) {
+        assert.deepEqual(tenTimes(tool), ["looping"], tool);
+      }
+    });
+
     it("reads Antigravity's run_command line: a sleep between checks is waiting, and the detail names the command", () => {
       const agy = (command: string, output: string) => call("run_command", { CommandLine: command, Cwd: "/work/demo" }, { output });
       reset();

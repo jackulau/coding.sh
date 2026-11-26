@@ -892,11 +892,16 @@ const jsonlTails = new Map<string, { size: number; rest: Buffer; items: unknown[
  * incrementally: a call reads just the bytes appended since the last one, so
  * normalize can consult the transcript for every hook line of a long session.
  * A file that shrank is read again from the start. `tag` names the picker.
+ * A hook's payload names the path, so a path that names no file, such as a
+ * folder, gives no items, and a file that cannot be read gives the items read
+ * so far.
  */
 export function jsonlTail<T>(tag: string, path: string, pick: (record: Json) => T[]): T[] {
   let size: number;
   try {
-    size = statSync(path).size;
+    const st = statSync(path);
+    if (!st.isFile()) return [];
+    size = st.size;
   } catch {
     return [];
   }
@@ -909,11 +914,15 @@ export function jsonlTail<T>(tag: string, path: string, pick: (record: Json) => 
   }
   if (size === c.size) return c.items as T[];
   const buf = Buffer.alloc(size - c.size);
-  const fd = openSync(path, "r");
   try {
-    readSync(fd, buf, 0, buf.length, c.size);
-  } finally {
-    closeSync(fd);
+    const fd = openSync(path, "r");
+    try {
+      readSync(fd, buf, 0, buf.length, c.size);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return c.items as T[];
   }
   c.size = size;
   const data = Buffer.concat([c.rest, buf]);

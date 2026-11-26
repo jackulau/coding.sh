@@ -62,8 +62,8 @@ export function runsAgentCli(command: string, agent: string): boolean {
 
 function within(cwd: string | undefined, root: string | undefined): boolean {
   if (!cwd || !root) return false;
-  const c = cwd.replace(/[\\/]+$/, "");
-  const r = root.replace(/[\\/]+$/, "");
+  const c = cwd.replace(/(?<![\\/])[\\/]+$/, "");
+  const r = root.replace(/(?<![\\/])[\\/]+$/, "");
   return c === r || c.startsWith(r + "/") || c.startsWith(r + "\\");
 }
 
