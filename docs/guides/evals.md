@@ -465,8 +465,9 @@ than agents working alone. Each part maps onto what coding.sh already has:
   home from each task to the next, so a lemma library kept there carries over. The work tree is not
   carried (see [Sequential runs](#sequential-runs)).
 - **Reward hacking.** `coding.sh sessions --where 'run:run_* flag:test-tamper'` lists trial
-  sessions that changed a test or statement to pass a failing check, or kept an escape hatch they
-  added, such as `sorry`. [Witness audits](#witness-audits) replay more checks on passing runs.
+  sessions that changed a test or statement to pass a failing check, passed one with a flag such
+  as `--no-verify`, or kept an escape hatch they added, such as `sorry`.
+- **Patch audits.** [Witness audits](#witness-audits) replay more checks on passing runs.
 
 ## Datasets and experiments
 
