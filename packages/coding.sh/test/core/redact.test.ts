@@ -470,9 +470,45 @@ describe("redact: linear time on long input", () => {
     [`'${BS}n' + a name of 1 MB`, (n) => `${BS}n${"A".repeat(n - 2)}`],
     [`'machine a login b password ' + repeated '"a'`, (n) => `machine a login b password ${'"a'.repeat(Math.floor(n / 2))}`],
     ["keys, each after 1000 backslashes and an n", (n) => `${BS.repeat(1000)}n${GITHUB_CLASSIC}`.repeat(Math.floor(n / (1001 + GITHUB_CLASSIC.length)))],
+    // A value after a quote of JSON text one to four levels down, a quote of another level, and
+    // long runs of backslashes where a value or its quote would start.
+    ...[1, 2, 3, 4].map((k): [string, (n: number) => string] => {
+      const unit = `API_KEY=${BS.repeat(2 ** k - 1)}"x1`;
+      return [`repeated '${unit}'`, (n) => unit.repeat(Math.floor(n / unit.length))];
+    }),
+    ...[1, 3].map((k): [string, (n: number) => string] => {
+      const q = `${BS.repeat(2 ** k - 1)}"`;
+      const unit = `{${q}token${q}: ${q}x1`;
+      return [`repeated '${unit}'`, (n) => unit.repeat(Math.floor(n / unit.length))];
+    }),
+    ...[`api_key = ${BS.repeat(3)}"x1${BS}"`].map((unit): [string, (n: number) => string] => [`repeated '${unit}'`, (n) => unit.repeat(Math.floor(n / unit.length))]),
+    [`repeated 'API_KEY=' + 1000 backslashes + '"x1'`, (n) => `API_KEY=${BS.repeat(1000)}"x1`.repeat(Math.floor(n / 1011))],
+    ["'API_KEY=' + a run of backslashes", (n) => `API_KEY=${BS.repeat(n - 8)}`],
+    [`'api_key${BS}": ' + a run of backslashes`, (n) => `api_key${BS}": ${BS.repeat(n - 11)}`],
+    ["'api_key = ' + a run of backslashes", (n) => `api_key = ${BS.repeat(n - 10)}`],
+    [`'api_key' + a run of backslashes + '": ${BS}"x1'`, (n) => `api_key${BS.repeat(n - 14)}": ${BS}"x1`],
+    // An assignment after an escape three or more levels down, its value read at that level: in
+    // single quotes that do not close, holding its own backslashes, and next to long runs.
+    [`repeated '${BS.repeat(4)}nAPI_KEY='x1'`, (n) => `${BS.repeat(4)}nAPI_KEY='x1`.repeat(Math.floor(n / 16))],
+    [`repeated '${BS.repeat(4)}nAPI_KEY=x1${BS.repeat(8)}t'`, (n) => `${BS.repeat(4)}nAPI_KEY=x1${BS.repeat(8)}t`.repeat(Math.floor(n / 24))],
+    [`repeated '${BS.repeat(8)}nAPI_KEY='x1${BS.repeat(16)}n'`, (n) => `${BS.repeat(8)}nAPI_KEY='x1${BS.repeat(16)}n`.repeat(Math.floor(n / 37))],
+    [`'${BS.repeat(4)}nAPI_KEY=' + a run of backslashes`, (n) => `${BS.repeat(4)}nAPI_KEY=${BS.repeat(n - 13)}`],
+    [`'${BS.repeat(4)}nAPI_KEY='' + a run of backslashes`, (n) => `${BS.repeat(4)}nAPI_KEY='${BS.repeat(n - 14)}`],
+    [`a run of backslashes + 'nAPI_KEY=x1'`, (n) => `${BS.repeat(n - 11)}nAPI_KEY=x1`],
+    [`repeated '${BS.repeat(4)}u0041API_KEY='x1 '`, (n) => `${BS.repeat(4)}u0041API_KEY='x1 `.repeat(Math.floor(n / 21))],
+    [`repeated '${BS.repeat(4)}nAPI_KEY=x1y2z3w4${BS.repeat(8)}t '`, (n) => `${BS.repeat(4)}nAPI_KEY=x1y2z3w4${BS.repeat(8)}t `.repeat(Math.floor(n / 31))],
   ];
   for (const [name, make] of cases) {
     it(`redacts 1 MB of ${name} in linear time (under 500 ms, else linear growth)`, () => assertLinear(name, make));
+  }
+
+  // A custom pattern's match keeps a quote at either end, with the run of backslashes before it.
+  const quoted = createRedactor({ redact: ["none"], patterns: [`${BS}${BS}*"Zq8[A-Za-z0-9]+${BS}${BS}*"`] });
+  for (const unit of [`{"id":"Zq8x1y2z3"},`, `${BS.repeat(1000)}"Zq8x1y2z3${BS.repeat(1000)}" `]) {
+    const name = unit.length > 100 ? `repeated 1000 backslashes + '"Zq8x1y2z3' + 1000 backslashes + '" '` : `repeated '${unit}'`;
+    it(`redacts 1 MB of ${name} with a custom pattern in linear time and keeps each quote`, () => {
+      assertLinear(name, (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => assert.equal(out, input.split("Zq8x1y2z3").join("[redacted:pattern]")), quoted);
+    });
   }
 
   it("redacts 1 MB of keys, each right after an escape, in linear time and keeps each escape whole", () => {
@@ -497,15 +533,30 @@ describe("redact: linear time on long input", () => {
   });
 
   it("redacts 1 MB of assignments, each after a long run of backslashes, in linear time and hides each value whole", () => {
-    // 999 backslashes and an n make an escape at the text's own level, 998 one a level down. Each
-    // value holds a backslash of its own, written as that level writes one.
+    // 999 backslashes and an n make an escape at the text's own level, 998 one a level down, and
+    // 996, 1000, 1008 and 992 one three to six levels down. Each value holds a backslash of its
+    // own, written as that level writes one: 2^k backslashes, k levels down.
     const head = ["Kq9m", "Z2xR"].join("");
     const rest = ["w0rd", "99xy"].join("");
-    const unit = `${BS.repeat(999)}nDB_PASSWORD=${head}${BS.repeat(2)}t${rest} ${BS.repeat(998)}nAPI_TOKEN=${head}${BS.repeat(4)}t${rest} `;
-    const want = `${BS.repeat(999)}nDB_PASSWORD=[redacted:secret-assignment] ${BS.repeat(998)}nAPI_TOKEN=[redacted:secret-assignment] `;
+    const escapes: [number, number][] = [[999, 1], [998, 2], [996, 3], [1000, 4], [1008, 5], [992, 6]];
+    const name = (k: number): string => (k % 2 ? "DB_PASSWORD" : "API_TOKEN");
+    const unit = escapes.map(([run, k]) => `${BS.repeat(run)}n${name(k)}=${head}${BS.repeat(2 ** k)}t${rest} `).join("");
+    const want = escapes.map(([run, k]) => `${BS.repeat(run)}n${name(k)}=[redacted:secret-assignment] `).join("");
     assertLinear("assignments after long escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
       assert.equal(out, want.repeat(input.length / unit.length));
     });
+  });
+
+  it("redacts 1 MB of assignments in double quotes inside JSON text, one to four levels down, in linear time and hides each value whole", () => {
+    const value = ["Kq9m", "Z2xR", "w0rd", "99xy"].join("");
+    for (const k of [1, 2, 3, 4]) {
+      const q = `${BS.repeat(2 ** k - 1)}"`;
+      const unit = `API_KEY=${q}${value}${q} `;
+      const want = `API_KEY=${q}[redacted:secret-assignment]${q} `;
+      assertLinear(`assignments in quotes ${k} levels down`, (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
+        assert.equal(out, want.repeat(input.length / unit.length));
+      });
+    }
   });
 
   it("leaves 1 MB of backslashes as it is, in linear time, when a pattern matches each one", () => {
