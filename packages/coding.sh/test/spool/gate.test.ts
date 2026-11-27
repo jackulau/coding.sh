@@ -348,6 +348,18 @@ describe("mayHoldSecret on payloads the default rules change", () => {
         assert.ok(check(text).includes(kind), `${kind}, ${depth} deep, in ${text}`);
       }
     }
+    // An assignment after an escaped newline, one to four levels down, whose value holds a
+    // backslash of its own, in single quotes or not.
+    for (const x of ["b", "n", BS]) {
+      for (const inner of [`echo hi\nDB_PASSWORD=${v()}${BS}${x}${v()}\nls`, `echo hi\nDB_PASSWORD='ab${BS}${x}${v()}'\nls`]) {
+        let s = inner;
+        for (let depth = 1; depth <= 4; depth++) {
+          s = `see ${JSON.stringify({ t: s })}`;
+          const text = JSON.stringify({ prompt: s });
+          assert.ok(check(text).includes("secret-assignment"), `secret-assignment, ${depth} deep, in ${text}`);
+        }
+      }
+    }
   });
 
   it("passes generated text, in every payload form", () => {

@@ -333,6 +333,49 @@ describe("a redaction keeps JSON text valid", () => {
     }
   });
 
+  it("after an escape one to five levels deep, a value that holds a backslash is redacted whole, in single quotes or not", () => {
+    // Read at the level of the escape before its name, the value's own backslash is 2^k backslashes
+    // and stays in the value before b, f, n, r, t or another backslash. A quote ends the value, and
+    // the rest of the line follows the marker.
+    const NL = String.fromCharCode(10);
+    const QT = String.fromCharCode(34);
+    const head = j("Kq9m", "Z2xR");
+    const rest = j("w0rd", "99xy");
+    for (const depth of [1, 2, 3, 4, 5]) {
+      for (const x of ["b", "f", "n", "r", "t", QT, BS, j(BS, "n")]) {
+        for (const q of x === QT ? [""] : ["", "'"]) {
+          const marked = j("echo hi", NL, "DB_PASSWORD=", q, "[redacted:secret-assignment]", q);
+          let input = j("echo hi", NL, "DB_PASSWORD=", q, head, BS, x, rest, q, NL, "ls");
+          for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+          const label = `${JSON.stringify(x)} in ${input}`;
+          const ev = redactEventCounted(red, event(input));
+          assert.deepEqual(ev.payload.redactions, { "secret-assignment": 1 }, label);
+          for (const out of [red.string(input), red.value({ body: input }).body, ev.payload.text as string]) {
+            assert.equal(levels(out), depth, label);
+            let text = out;
+            for (let d = 0; d < depth; d++) text = (JSON.parse(text) as { t: string }).t;
+            if (x !== QT) assert.equal(text, j(marked, NL, "ls"), label);
+            else assert.ok(text.startsWith(marked) && text.endsWith(j(QT, rest, NL, "ls")) && !text.includes(head), label);
+          }
+        }
+      }
+    }
+  });
+
+  it("three levels deep, a value cut before an escape keeps the escape's run of backslashes whole, so each level still parses", () => {
+    // Seven characters, the value's own backslash, then an escaped newline: the backslash counts
+    // toward the value's eight characters, and stays with the newline's run of backslashes.
+    const NL = String.fromCharCode(10);
+    let input = j("echo hi", NL, "DB_PASSWORD=", j("Kq9m", "Z2x"), BS, NL, "ls");
+    for (let d = 0; d < 3; d++) input = JSON.stringify({ t: input });
+    for (const out of [red.string(input), red.value({ body: input }).body, redactEventCounted(red, event(input)).payload.text as string]) {
+      assert.equal(levels(out), 3, out);
+      let text = out;
+      for (let d = 0; d < 3; d++) text = (JSON.parse(text) as { t: string }).t;
+      assert.equal(text, j("echo hi", NL, "DB_PASSWORD=[redacted:secret-assignment]", BS, NL, "ls"));
+    }
+  });
+
   it("a match that ends inside the hex digits of an escape keeps the whole escape after the marker", () => {
     const pat = createRedactor({ redact: ["none"], patterns: [j("Zq8[A-Za-z0-9]+", BS, BS, "u00")] });
     assert.equal(pat.string(`{"a":"xZq8mK2pW7${BS}u00e9 tail"}`), `{"a":"x[redacted:pattern]${BS}u00e9 tail"}`);

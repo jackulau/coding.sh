@@ -227,7 +227,8 @@ function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) =
 /**
  * Passes that createRedactor runs once every rule has run, for the rules whose regex reads a value
  * at one level of JSON text: secret-assignment, secret-field and secret-value. A pass reads each
- * value at the level its opening quote is written at and replaces it whole, escapes and all. It
+ * value at the level its opening quote is written at, or an assignment's value after an escape
+ * three or more levels down at that escape's level, and replaces it whole, escapes and all. It
  * works on the text the rules wrote, so it only adds markers. Keyed by rule identity, as fastApply
  * is.
  */
@@ -281,9 +282,9 @@ function assignableAt(s: string, i: number): boolean {
  * Where a value in quotes ends, read from `i`, just after its opening quote, at the level whose
  * quote is `pow - 1` backslashes and `"`. A quote of that level ends the value before the quote's
  * run of backslashes, which stays whole (cutWhole), so a backslash of the value's own just before
- * the quote shows after the marker. A backslash of that level, an escape of a deeper level and a
- * `u` escape each count as one character. Returns -1 for a value of fewer than 8 characters, and
- * for one that meets any of these first: a space, a b, f, n, r or t escape of that level or a
+ * the quote shows after the marker. A backslash of that level counts as one character, and so does
+ * a `u` escape of that level or a level above. Returns -1 for a value of fewer than 8 characters,
+ * and for one that meets any of these first: a space, a b, f, n, r or t escape of that level or a
  * level above, a quote of a level above, `'`, a backtick, `;`, `|`, `&` or the end of the text.
  * For a field, `'` ends the value as its quote does, and a backtick, `;`, `|` and `&` are part of
  * it.
@@ -327,9 +328,67 @@ function readQuoted(s: string, i: number, pow: number, field: boolean): number {
 }
 
 /**
+ * The level of the escape (b, f, n, r, t, or u and four hex digits) that ends just before `p`, or 0
+ * when none does: its run of backslashes is 2^(level - 1) times an odd number.
+ */
+function escapeLevelBefore(s: string, p: number): number {
+  let q = p - 2;
+  if (!(isEscapeLetter(s.charCodeAt(p - 1)) && s.charCodeAt(q) === 92)) {
+    q = p - 6;
+    if (!(s.charCodeAt(p - 5) === 117 && s.charCodeAt(q) === 92 && hex4(s, p - 4))) return 0;
+  }
+  let r = 0;
+  while (q - r >= 0 && s.charCodeAt(q - r) === 92) r++;
+  let level = 1;
+  for (; r % 2 === 0; r /= 2) level++;
+  return level;
+}
+
+/**
+ * Where an assignment's value without quotes, or in single quotes, ends, read from `i` at the level
+ * whose backslash is `pow` backslashes. A backslash of that level counts as one character, and so
+ * does a `u` escape of that level or a level above. The value ends at `'`, or before a space, `"`,
+ * a backtick, `;`, `|`, `&`, a quote of any level, a b, f, n, r or t escape of that level or a
+ * level above, or the end of the text. A quote or an escape ends it before its run of backslashes,
+ * which stays whole, as in readQuoted. A value in single quotes ends only at `'`. Returns the end,
+ * or -1 minus where the read stopped when the value has fewer than 8 characters or its quote does
+ * not close.
+ */
+function readBare(s: string, i: number, pow: number, quoted: boolean): number {
+  const n = s.length;
+  let units = 0;
+  while (i < n) {
+    const c = s.charCodeAt(i);
+    if (c === 92) {
+      let e = i + 1;
+      while (e < n && s.charCodeAt(e) === 92) e++;
+      const r = e - i;
+      const d = s.charCodeAt(e);
+      units += Math.floor(r / pow);
+      if (e === n || d === 34 || (isEscapeLetter(d) && r % pow !== 0)) break;
+      if (isEscapeLetter(d)) {
+        units++;
+        i = e + 1;
+      } else if (d === 117 && r % pow !== 0 && hex4(s, e + 1)) {
+        units++;
+        i = e + 5;
+      } else i = e;
+      continue;
+    }
+    if (c === 39) return units >= 8 ? i : -1 - i;
+    if (c === 34 || c === 96 || c === 59 || c === 124 || c === 38 || isSpaceAt(s, i)) break;
+    units++;
+    i++;
+  }
+  return !quoted && units >= 8 ? i : -1 - i;
+}
+
+/**
  * The secret-assignment rule's level pass: a value in escaped quotes (`\"` in JSON text, `\\\"` in
- * JSON text held in JSON text), read at the level of its opening quote. Each value read is passed
- * over, so the pass takes time linear in the text.
+ * JSON text held in JSON text), read at the level of its opening quote, and after an escape three
+ * or more levels down, a value without quotes or in single quotes, read at that escape's level.
+ * Each value read is passed over, and so is the text a read without quotes passed over when it
+ * found no value, so the pass takes time linear in the text.
  */
 function levelAssignments(s: string): string {
   const n = s.length;
@@ -344,11 +403,25 @@ function levelAssignments(s: string): string {
     pos = eq + 1;
     let r = 0;
     while (s.charCodeAt(eq + 1 + r) === 92) r++;
-    if (r === 0 || s.charCodeAt(eq + 1 + r) !== 34 || !isPow2(r + 1)) continue;
-    const vs = eq + 2 + r;
-    if (!assignableAt(s, vs)) continue;
-    const end = readQuoted(s, vs, r + 1, false);
-    if (end < 0) continue;
+    let vs: number;
+    let end: number;
+    if (r > 0 && s.charCodeAt(eq + 1 + r) === 34 && isPow2(r + 1)) {
+      vs = eq + 2 + r;
+      if (!assignableAt(s, vs)) continue;
+      end = readQuoted(s, vs, r + 1, false);
+      if (end < 0) continue;
+    } else {
+      // The rule's regex reads a value one or two levels down in full; deeper, this pass does.
+      const level = escapeLevelBefore(s, m.index);
+      if (level < 3 || s.charCodeAt(eq + 1) === 34) continue;
+      vs = s.charCodeAt(eq + 1) === 39 ? eq + 2 : eq + 1;
+      if (!assignableAt(s, vs)) continue;
+      end = readBare(s, vs, 2 ** level, vs === eq + 2);
+      if (end < 0) {
+        pos = -1 - end;
+        continue;
+      }
+    }
     pos = end;
     const span = s.slice(vs, end);
     if (ONLY_MARKER.test(span)) continue;
@@ -583,7 +656,8 @@ function builtInSecretRules(): RedactRule[] {
     },
     // FOO_API_KEY=value / export DB_PASSWORD="value" (shell, .env). No spaces
     // around "=" (that's code, not env), value isn't a $reference or a number.
-    // A value in escaped quotes (\" in JSON text) is read by its level pass (levelAssignments).
+    // A value in escaped quotes (\" in JSON text), and a value after an escape three or more levels
+    // down, is read by its level pass (levelAssignments).
     withLevelPass({
       kind: "secret-assignment",
       // Right after an escape (JSON text held in a string) the value is read at that escape's
@@ -592,8 +666,9 @@ function builtInSecretRules(): RedactRule[] {
       // After an escape one level down (AFTER_ESCAPE_2), as in JSON text held in JSON text, four
       // backslashes are one backslash of the value, and those escapes at either of the two levels
       // end it. After an escape at another level (AFTER_ESCAPE), escaped backslashes before b, f,
-      // n, r, t, a quote or another backslash end the value, and before any other character they
-      // stay in it. \/ and \uXXXX stay in the value at every level. The match ends where the value
+      // n, r, t, a quote or another backslash end the match, and before any other character they
+      // stay in it; the level pass then reads the value at the escape's level and replaces it
+      // whole. \/ and \uXXXX stay in the value at every level. The match ends where the value
       // does, so the next line, and an assignment on it, are matched too. Every match starts with
       // A-Z, 0-9 or _, so the lookahead passes over other places without trying the lookbehinds
       // there.
