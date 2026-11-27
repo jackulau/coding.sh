@@ -9,11 +9,11 @@ import { reportProblems } from "../../scripts/report-complete.mjs";
 
 const RUNNER = new URL("../../scripts/test-ci.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
-function run(files: Record<string, string>, names: string[]) {
+function run(files: Record<string, string>, names: string[], extraEnv: NodeJS.ProcessEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), "test-ci-"));
   try {
     for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
-    const env: NodeJS.ProcessEnv = { ...process.env, SHARD: "", FLAKE_FLAG: join(dir, "flag") };
+    const env: NodeJS.ProcessEnv = { ...process.env, SHARD: "", FLAKE_FLAG: join(dir, "flag"), ...extraEnv };
     delete env.NODE_TEST_CONTEXT; // else the inner node --test reports to this test run instead of its own stdout
     // A hung run is killed after 60 s and reads as a failure, not a stuck test.
     const r = spawnSync(process.execPath, [RUNNER, ...names], { cwd: dir, encoding: "utf8", env, timeout: 60_000 });
@@ -29,6 +29,20 @@ const BROKEN = `import { it } from "node:test"; it("always fails", () => { throw
 const GREEN = `import { it } from "node:test"; it("passes", () => {});`;
 // A test that passes but leaves a handle open, as a browser's pipe can on Windows.
 const LEAKY = `import { it } from "node:test"; it("passes and leaks a timer", () => { setInterval(() => {}, 1000); });`;
+// A test that does not return for 90 s, longer than run() waits: its file's thread never gets back
+// to a timer of its own. It ends by itself, so a run without a limit leaves nothing running for good.
+const STUCK = `import { it } from "node:test"; it("does not return", () => { const end = Date.now() + 90_000; while (Date.now() < end) {} });`;
+// Waits 90 s before its first test, the first time only.
+const STUCK_ONCE = `import { it } from "node:test"; import { existsSync, writeFileSync } from "node:fs";
+if (!existsSync(process.env.FLAKE_FLAG!)) { writeFileSync(process.env.FLAKE_FLAG!, "1"); await new Promise((resolve) => setTimeout(resolve, 90_000)); }
+it("passes", () => {});`;
+// Short, so a file that hangs is stopped soon. A file that does not hang ends well before it.
+const LIMIT = { CODING_SH_TEST_FILE_LIMIT_MS: "3000" };
+// What a test file is handed: the limit, and the mark of the clock it started (none without one).
+const HAS_CLOCK = `import { it } from "node:test"; import assert from "node:assert/strict";
+it("has the default limit and a clock", () => { assert.equal(process.env.CODING_SH_TEST_FILE_LIMIT_MS, "300000"); assert.equal(process.env.CODING_SH_TEST_FILE_LIMITED, "1"); });`;
+const NO_CLOCK = `import { it } from "node:test"; import assert from "node:assert/strict";
+it("has no clock", () => { assert.equal(process.env.CODING_SH_TEST_FILE_LIMITED, undefined); });`;
 
 // Many tests that take no time: a file like this writes its report faster than the run reads it.
 const MANY_FILES = 12;
@@ -134,5 +148,40 @@ describe("scripts/test-ci.mjs", () => {
   it("finishes when a passing file leaves a handle open", () => {
     const r = run({ "l.test.ts": LEAKY }, ["l.test.ts"]);
     assert.equal(r.code, 0, r.out);
+  });
+
+  // The mark of a clock is set here as it is in CI, where this file runs with a clock of its own:
+  // the files of a run this file starts still get theirs.
+  it("stops a test file still running after the limit, names it, and fails when it hangs again alone", () => {
+    const r = run({ "s.test.ts": STUCK, "c.test.ts": GREEN }, ["s.test.ts", "c.test.ts"], { ...LIMIT, CODING_SH_TEST_FILE_LIMITED: "1" });
+    assert.equal(r.code, 1, r.out);
+    const [firstPass = "", alone = ""] = r.out.split("Rerunning s.test.ts alone");
+    assert.match(firstPass, /s\.test\.ts ran for more than 3 s and was stopped \(CODING_SH_TEST_FILE_LIMIT_MS=3000\)/);
+    assert.match(alone, /s\.test\.ts ran for more than 3 s and was stopped/);
+    assert.doesNotMatch(r.out, /Rerunning c\.test\.ts|::warning/);
+  });
+
+  it("passes when a file that hung passes alone, and says so as a warning", () => {
+    const r = run({ "w.test.ts": STUCK_ONCE, "c.test.ts": GREEN }, ["w.test.ts", "c.test.ts"], LIMIT);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /w\.test\.ts ran for more than 3 s and was stopped/);
+    assert.match(r.out, /::warning title=Passed when run alone::w\.test\.ts/);
+  });
+
+  it("gives each test file a clock with the default limit when none is set", () => {
+    const r = run({ "k.test.ts": HAS_CLOCK }, ["k.test.ts"], { CODING_SH_TEST_FILE_LIMIT_MS: undefined, CODING_SH_TEST_FILE_LIMITED: undefined });
+    assert.equal(r.code, 0, r.out);
+  });
+
+  it("starts no clock when the limit is 0", () => {
+    const r = run({ "n.test.ts": NO_CLOCK }, ["n.test.ts"], { CODING_SH_TEST_FILE_LIMIT_MS: "0", CODING_SH_TEST_FILE_LIMITED: "1" });
+    assert.equal(r.code, 0, r.out);
+    assert.doesNotMatch(r.out, /was stopped/);
+  });
+
+  it("refuses a limit that is not a whole number of milliseconds", () => {
+    const r = run({ "c.test.ts": GREEN }, ["c.test.ts"], { CODING_SH_TEST_FILE_LIMIT_MS: "5m" });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /CODING_SH_TEST_FILE_LIMIT_MS must be a whole number of milliseconds \(0 for no limit\), got 5m/);
   });
 });

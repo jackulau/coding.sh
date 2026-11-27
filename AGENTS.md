@@ -89,7 +89,8 @@ set it for the user's store unless they ask.
   That resets temp files, not processes, and the one-file command above does not load it, so a
   test still cleans up after itself.
 - Timing tests assume an idle machine. If one fails under load, rerun it alone first. CI does this
-  itself (`scripts/test-ci.mjs`): a file that passes alone is a warning, not a failure.
+  itself (`scripts/test-ci.mjs`): a file that passes alone is a warning, not a failure. A file
+  still running after 5 minutes is stopped and fails under its own name.
 
 ## Docs and changelog
 
