@@ -19,7 +19,7 @@ import type { AgentEvent, BlobRef } from "../../schema/index.ts";
 import { sha256Hex } from "../../core/ids.ts";
 import { decodeTraceJson } from "../../otel/json.ts";
 import { type MapContext, mapTraces, TraceSessionMap } from "../../otel/map.ts";
-import type { Attrs, OtelSpan, OtelValue, ResourceSpans } from "../../otel/model.ts";
+import { type Attrs, normId, type OtelSpan, type OtelValue, type ResourceSpans } from "../../otel/model.ts";
 import { enrichGatewaySpan } from "../gateway/otel.ts";
 import { enrichFromEve, type EveEnrichOptions } from "./map.ts";
 
@@ -78,10 +78,10 @@ const nsString = (v: unknown): string => (typeof v === "string" || typeof v === 
 
 function cliTraceToOtlp(t: { traceId: string; spans: EveCliSpan[] }): ResourceSpans[] {
   const byScope = new Map<string, OtelSpan[]>();
+  // An id that is not hex of its length is left unset, as in decodeTraceJson and ClickHouse import (normId).
+  const traceId = normId(t.traceId, 16);
   for (const s of t.spans) {
     const span: OtelSpan = {
-      traceId: t.traceId.toLowerCase(),
-      spanId: s.spanId.toLowerCase(),
       name: s.name,
       kind: s.kind ?? 1,
       startTimeUnixNano: nsString(s.startTimeNs),
@@ -91,7 +91,11 @@ function cliTraceToOtlp(t: { traceId: string; spans: EveCliSpan[] }): ResourceSp
       links: [],
       status: { code: s.statusCode ?? 0, ...(s.statusMessage ? { message: s.statusMessage } : {}) },
     };
-    if (s.parentSpanId) span.parentSpanId = s.parentSpanId.toLowerCase();
+    const spanId = normId(s.spanId, 8);
+    const parentSpanId = normId(s.parentSpanId ?? undefined, 8);
+    if (traceId) span.traceId = traceId;
+    if (spanId) span.spanId = spanId;
+    if (parentSpanId) span.parentSpanId = parentSpanId;
     const scope = s.scope ?? "eve.agent";
     byScope.set(scope, [...(byScope.get(scope) ?? []), span]);
   }

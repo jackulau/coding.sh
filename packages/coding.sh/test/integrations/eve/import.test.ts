@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { buildSession } from "../../../src/core/sessions.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
-import { importEveRuns, resolveEveTraceStore } from "../../../src/integrations/eve/index.ts";
+import { eveJsonToResourceSpans, importEveRuns, resolveEveTraceStore } from "../../../src/integrations/eve/index.ts";
 import { APP_DIR, bySession, CHILD_A0, CHILD_A1, ofKind, OTLP_EXPORT, readJson, ROOT_A, ROOT_B } from "./helpers.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "eve-import-"));
@@ -103,5 +103,56 @@ describe("importEveRuns", () => {
     const lastTurn = Math.max(...ofKind(all, "turn.end").map((e) => e.ts));
     const recent = await collect(APP_DIR, { since: lastTurn });
     assert.ok(recent.length < all.length);
+  });
+
+  it("reads CLI trace ids with the OTLP rule: non-hex, wrong-length or all-zero ids are unset", async () => {
+    const goodTrace = "0123456789abcdef0123456789ABCDEF";
+    const goodSpan = "0123456789ABCDEF";
+    const goodParent = "FEDCBA9876543210";
+    const [batch] = eveJsonToResourceSpans({
+      traceId: goodTrace,
+      spans: [
+        { spanId: goodSpan, parentSpanId: goodParent, name: "ok", startTimeNs: "1700000000000000000" },
+        { spanId: "not-hex", parentSpanId: "0000000000000000", name: "bad-span", startTimeNs: "1700000000000000000" },
+        { spanId: "0000000000000000", parentSpanId: "short", name: "zero-span", startTimeNs: "1700000000000000000" },
+      ],
+    });
+    const spans = batch!.scopeSpans[0]!.spans;
+    assert.equal(spans[0]!.traceId, goodTrace.toLowerCase());
+    assert.equal(spans[0]!.spanId, goodSpan.toLowerCase());
+    assert.equal(spans[0]!.parentSpanId, goodParent.toLowerCase());
+    assert.equal(spans[1]!.spanId, undefined);
+    assert.equal(spans[1]!.parentSpanId, undefined);
+    assert.equal(spans[2]!.spanId, undefined);
+    assert.equal(spans[2]!.parentSpanId, undefined);
+
+    const [badTraceBatch] = eveJsonToResourceSpans({
+      traceId: "00000000000000000000000000000000",
+      spans: [{ spanId: goodSpan, name: "s", startTimeNs: "1700000000000000000" }],
+    });
+    assert.equal(badTraceBatch!.scopeSpans[0]!.spans[0]!.traceId, undefined);
+
+    // End-to-end import: a bad span or trace is reported via onError while valid spans still import.
+    const cliTraces = toCliTraces() as { traceId: string; spans: Record<string, unknown>[] }[];
+    const first = structuredClone(cliTraces[0]!);
+    first.spans[0]!.parentSpanId = "not-a-span-id";
+    first.spans.push({
+      spanId: "bad-span-id",
+      parentSpanId: null,
+      name: "dropped",
+      scope: "eve.agent",
+      startTimeNs: first.spans[0]!.startTimeNs,
+      endTimeNs: first.spans[0]!.endTimeNs,
+    });
+    const badTrace = {
+      traceId: "too-short",
+      spans: [{ spanId: goodSpan, parentSpanId: null, name: "dropped-trace", scope: "eve.agent", startTimeNs: "1700000000000000000" }],
+    };
+    const file = join(tmp, "mixed-ids.json");
+    writeFileSync(file, JSON.stringify([first, badTrace]));
+    const errors: string[] = [];
+    const events = await collect(file, { onError: (_p, err) => errors.push(err.message) });
+    assert.ok(events.length > 0);
+    assert.ok(errors.length >= 2);
   });
 });

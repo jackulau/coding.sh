@@ -563,6 +563,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The README says which hook redacts the spool. The REST API reference gives the 403 body serve sends for a host it does not allow, and says which session an OTLP log record with no session id joins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Capture.** Phone number redaction, which `phone` or `pii` in `capture.redact` turns on, reads the digits after a `+` in one pass and then checks how they are grouped, so it takes time in proportion to the text it reads. It redacts the same numbers. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **CLI.** The --trial-timeout help and docs now say what the limit covers: each agent call, task run or workflow run. Each retry and repair round gets the full limit again, and a run over it is not retried. Before, they said one limit covered a trial and its retries. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#long-runs-resume-retries-status))
+- **OTel.** Importing `eve traces show --json` output now checks trace, span and parent span ids with the same OTLP hex-length rule as live collection and ClickHouse import, leaving an unset or non-hex id out so only the affected span is rejected. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#post-v1traces-post-v1logs-post-v1metrics))
 
 ## [0.1.7] - 2026-11-16
 
