@@ -157,9 +157,10 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   if (num(u.input_tokens) !== undefined) out.inputTokens = u.input_tokens as number;
   if (num(u.output_tokens) !== undefined) out.outputTokens = u.output_tokens as number;
   if (num(u.cache_read_input_tokens) !== undefined) out.cacheReadTokens = u.cache_read_input_tokens as number;
-  if (num(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
+  if (tokenCount(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
   else {
-    // Only the 5-minute / 1-hour split: its sum is the total, without a count cacheSplit reads as missing.
+    // No total, or one that is not a whole number from 0 to 2^53 - 1 (read as missing, as OTLP does): the 5-minute /
+    // 1-hour split's sum is the total, without a count cacheSplit reads as missing.
     const { m5, h1 } = cacheSplit(u);
     if (m5 !== undefined || h1 !== undefined) out.cacheWriteTokens = (m5 ?? 0) + (h1 ?? 0);
   }
