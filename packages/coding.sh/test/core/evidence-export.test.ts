@@ -209,4 +209,25 @@ describe("coding.sh export --evidence", () => {
       env.restore();
     }
   });
+
+  it("leaves out-of-range times blank in evidence markdown and keeps other sessions intact", async () => {
+    const store = new MemoryIndexStore();
+    const okS: Session = { id: "ok-ev", agent: "codex", startedAt: 1_800_000_000_000, endedAt: 1_800_000_005_000, flags: [], stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 } };
+    const farS: Session = { id: "far-ev", agent: "codex", startedAt: 8.64e15 + 1, endedAt: 1e300, flags: [], stats: { events: 2, turns: 0, toolCalls: 1, toolErrors: 0, filesChanged: 0 } };
+    await store.upsertSession(okS);
+    await store.upsertSession(farS);
+    await store.putEvents([
+      { id: "e-ok", v: 0, sessionId: "ok-ev", ts: 1_800_000_000_000, agent: "codex", kind: "user.message", payload: { text: "hello" } },
+      { id: "e-f1", v: 0, sessionId: "far-ev", ts: -8.64e15 - 1, agent: "codex", kind: "tool.start", payload: { tool: "Bash", toolUseId: "u1", input: { command: "ls" } } },
+      { id: "e-f2", v: 0, sessionId: "far-ev", ts: 1e300, agent: "codex", kind: "tool.end", payload: { tool: "Bash", toolUseId: "u1", ok: true, output: "ok" } },
+    ]);
+    const dir = tmp("csh-ev-range-");
+    const r = await writeEvidence({ index: store, blobs: new MemoryBlobStore(), sessions: [okS, farS], dir, redactor: redactor() });
+    assert.equal(r.sessions, 2);
+    const top = readFileSync(join(dir, "index.md"), "utf8");
+    assert.ok(top.includes("| [ok-ev](ok-ev/index.md) | codex | 2027-01-15T08:00:00.000Z |"));
+    assert.ok(top.includes("| [far-ev](far-ev/index.md) | codex |  |"));
+    const tool = readFileSync(join(dir, "far-ev/tools/0001-bash.txt"), "utf8");
+    assert.ok(tool.includes("started: \nended: \n"));
+  });
 });

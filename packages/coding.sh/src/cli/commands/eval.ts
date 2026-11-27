@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { isoMs } from "../../core/dates.ts";
 import { paths } from "../../core/paths.ts";
 import { shortener } from "../../core/session-ref.ts";
 import { materialize, shadowRepoPath, snapshotDir } from "../../core/snapshot.ts";
@@ -135,7 +136,7 @@ function witnessPaths(arg: string, cwd: string): { path: string; file: string } 
 }
 
 function taskJson(t: EvalTask): Record<string, unknown> {
-  return { id: t.id, name: t.name, status: t.status, sourceSessionId: t.sourceSessionId ?? null, repo: t.start.repoRoot, verifier: t.verifier, tags: t.tags, createdAt: new Date(t.createdAt).toISOString(), validation: t.validation ?? null, ...(t.meta?.crossCheck ? { crossCheck: t.meta.crossCheck } : {}) };
+  return { id: t.id, name: t.name, status: t.status, sourceSessionId: t.sourceSessionId ?? null, repo: t.start.repoRoot, verifier: t.verifier, tags: t.tags, createdAt: isoMs(t.createdAt) ?? null, validation: t.validation ?? null, ...(t.meta?.crossCheck ? { crossCheck: t.meta.crossCheck } : {}) };
 }
 
 export async function run(c: CommandContext): Promise<number> {

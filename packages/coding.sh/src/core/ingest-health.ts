@@ -14,6 +14,7 @@
 // stalled agents.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { dateMs, isoMs } from "./dates.ts";
 import { DERAIL_THRESHOLDS } from "./derail.ts";
 import { isLocked } from "./lock.ts";
 
@@ -38,10 +39,10 @@ export interface IngestStopped {
 function readMarker(file: string): IngestStopped | undefined {
   try {
     const m = JSON.parse(readFileSync(file, "utf8")) as Partial<IngestStopped> | null;
-    if (!m || typeof m.since !== "number" || typeof m.why !== "string") return undefined;
+    if (!m || typeof m.since !== "number" || dateMs(m.since) === undefined || typeof m.why !== "string") return undefined;
     const marker: IngestStopped = {
       since: m.since,
-      at: typeof m.at === "number" ? m.at : m.since,
+      at: typeof m.at === "number" && dateMs(m.at) !== undefined ? m.at : m.since,
       reason: typeof m.reason === "string" ? m.reason : "error",
       why: m.why,
       version: typeof m.version === "string" ? m.version : "",
@@ -81,8 +82,8 @@ export function clearIngestStopped(file: string): void {
 }
 
 export interface IngestStoppedJson {
-  since: string;
-  lastFailedAt: string;
+  since: string | null;
+  lastFailedAt: string | null;
   reason: string;
   message: string;
   next?: string;
@@ -90,7 +91,7 @@ export interface IngestStoppedJson {
 
 /** The marker as `--json` documents carry it. */
 export function ingestStoppedJson(s: IngestStopped): IngestStoppedJson {
-  const doc: IngestStoppedJson = { since: new Date(s.since).toISOString(), lastFailedAt: new Date(s.at).toISOString(), reason: s.reason, message: s.why };
+  const doc: IngestStoppedJson = { since: isoMs(s.since) ?? null, lastFailedAt: isoMs(s.at) ?? null, reason: s.reason, message: s.why };
   if (s.next) doc.next = s.next;
   return doc;
 }
@@ -164,7 +165,7 @@ export function recordLastIngest(home: string, version: string, at = Date.now())
 export function readLastIngest(home: string): LastIngest | undefined {
   try {
     const r = JSON.parse(readFileSync(lastIngestFile(home), "utf8")) as Partial<LastIngest> | null;
-    if (!r || typeof r.at !== "number" || !Number.isFinite(r.at)) return undefined;
+    if (!r || typeof r.at !== "number" || dateMs(r.at) === undefined) return undefined;
     return { at: r.at, version: typeof r.version === "string" ? r.version : "" };
   } catch {
     return undefined;
@@ -215,8 +216,9 @@ export function indexAgeText(age: Pick<IndexAge, "ageMs">): string {
 
 /** `index` for a `--json` document: `{ updatedAt, stale? }`, absent without a record. */
 export function indexAgeField(age: IndexAge | undefined): { index?: { updatedAt: string; stale?: true } } {
-  if (!age) return {};
-  const index: { updatedAt: string; stale?: true } = { updatedAt: new Date(age.at).toISOString() };
+  const updatedAt = age ? isoMs(age.at) : undefined;
+  if (!age || updatedAt === undefined) return {};
+  const index: { updatedAt: string; stale?: true } = { updatedAt };
   if (age.stale) index.stale = true;
   return { index };
 }

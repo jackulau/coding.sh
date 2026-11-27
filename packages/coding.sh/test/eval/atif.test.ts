@@ -222,4 +222,31 @@ describe("exportHarbor 1.4", () => {
       assert.equal(execFileSync(py, [script, join(dir, "task.toml"), join(dir, "solution/trajectory.json")], { encoding: "utf8" }).trim(), "ok");
     }
   });
+
+  it("leaves out timestamps that fall outside the Date range and keeps the other steps intact", () => {
+    const s: Session = {
+      id: "s-far",
+      agent: "claude-code",
+      startedAt: 8.64e15 + 1,
+      endedAt: 1e300,
+      flags: [],
+      stats: { events: 4, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 },
+    };
+    const evs: AgentEvent[] = [
+      { id: "e1", v: 0, sessionId: "s-far", ts: -8.64e15 - 1, agent: "claude-code", kind: "user.message", payload: { text: "hi" } },
+      { id: "e2", v: 0, sessionId: "s-far", ts: 1e300, agent: "claude-code", kind: "llm.call", model: "claude-opus-4-5", payload: { messageId: "m1" } },
+      { id: "e3", v: 0, sessionId: "s-far", ts: 1e300, agent: "claude-code", kind: "context.compact", payload: { trigger: "auto" } },
+      { id: "e4", v: 0, sessionId: "s-far", ts: Date.parse("2026-11-01T10:00:00Z"), agent: "claude-code", kind: "user.message", payload: { text: "next" } },
+    ];
+    const out = toAtif(s, evs);
+    assert.deepEqual(validateAtif(out), []);
+    assert.equal(out.steps.length, 4);
+    assert.equal("timestamp" in out.steps[0]!, false);
+    assert.equal(out.steps[1]!.timestamp, "2026-11-01T10:00:00.000Z");
+    assert.equal("timestamp" in out.steps[2]!, false);
+    assert.equal("timestamp" in out.steps[3]!, false);
+    const meta = (out.extra as { coding_sh: Record<string, unknown> }).coding_sh;
+    assert.equal("started_at" in meta, false);
+    assert.equal("ended_at" in meta, false);
+  });
 });

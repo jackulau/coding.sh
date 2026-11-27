@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { clearIngestStopped, ingestStoppedJson, markIngestStopped, readIngestStopped, spoolSize } from "../../src/core/ingest-health.ts";
+import { clearIngestStopped, indexAgeField, ingestStoppedJson, lastIngestFile, markIngestStopped, readIngestStopped, readLastIngest, spoolSize } from "../../src/core/ingest-health.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-ingest-health-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -41,6 +41,25 @@ describe("the ingest-stopped marker", () => {
     clearIngestStopped(file);
     writeFileSync(file, "not json");
     assert.equal(readIngestStopped(file), undefined);
+  });
+
+  it("reads out-of-range times in ingest markers as missing", () => {
+    const file = marker();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, JSON.stringify({ since: 8.64e15 + 1, at: 1e300, reason: "store_newer", why: "newer", version: "0.1.8", failures: 2 }));
+    assert.equal(readIngestStopped(file), undefined);
+    assert.deepEqual(ingestStoppedJson({ since: 8.64e15 + 1, at: -8.64e15 - 1, reason: "store_newer", why: "newer", version: "0.1.8", failures: 2 }), {
+      since: null,
+      lastFailedAt: null,
+      reason: "store_newer",
+      message: "newer",
+    });
+
+    const home = join(root, `last-${seq++}`);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(lastIngestFile(home), JSON.stringify({ at: 1e300, version: "0.1.8" }));
+    assert.equal(readLastIngest(home), undefined);
+    assert.deepEqual(indexAgeField({ at: 8.64e15 + 1, ageMs: 0, running: false, stale: false }), {});
   });
 });
 

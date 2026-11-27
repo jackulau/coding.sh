@@ -3,6 +3,8 @@
 // A day or a clock time without a zone is read in the caller's zone, so `--since 2026-11-09`
 // starts at local midnight, the same instant `--since 2026-11-09T00:00:00` names.
 
+import { dateMs } from "../core/dates.ts";
+
 const AGE_UNITS: Record<string, number> = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 };
 const DAY_WORDS: Record<string, number> = { today: 0, yesterday: 1 };
 const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3})\d*)?)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i;
@@ -55,8 +57,14 @@ export function parseWhen(raw: string, o: WhenOptions = {}): When | undefined {
   const t = raw.trim();
   const now = o.now ?? Date.now();
   const age = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/.exec(t);
-  if (age) return { ms: now - Number(age[1]) * AGE_UNITS[age[2]!]!, zoned: false };
-  if (/^\d{12,}$/.test(t)) return { ms: Number(t), zoned: false };
+  if (age) {
+    const ms = dateMs(now - Number(age[1]) * AGE_UNITS[age[2]!]!);
+    return ms === undefined ? undefined : { ms, zoned: false };
+  }
+  if (/^\d{12,}$/.test(t)) {
+    const ms = dateMs(Number(t));
+    return ms === undefined ? undefined : { ms, zoned: false };
+  }
   const word = DAY_WORDS[t.toLowerCase()];
   if (word !== undefined) return { ms: midnight(now, word, o.tzOffsetMin), zoned: true };
   const m = ISO.exec(t);
@@ -76,7 +84,11 @@ export function utcOffset(tzOffsetMin: number): string {
   return `${tzOffsetMin > 0 ? "-" : "+"}${String(Math.floor(a / 60)).padStart(2, "0")}:${String(a % 60).padStart(2, "0")}`;
 }
 
-/** `2026-11-09 00:00` in the zone (this process's when none is given). */
-export function wallText(ms: number, tzOffsetMin = new Date(ms).getTimezoneOffset()): string {
-  return new Date(ms - tzOffsetMin * 60_000).toISOString().slice(0, 16).replace("T", " ");
+/** `2026-11-09 00:00` in the zone (this process's when none is given); "" when out of the Date range. */
+export function wallText(ms: number, tzOffsetMin?: number): string {
+  const t = dateMs(ms);
+  if (t === undefined) return "";
+  const tz = tzOffsetMin ?? new Date(t).getTimezoneOffset();
+  const wall = dateMs(t - tz * 60_000);
+  return wall !== undefined ? new Date(wall).toISOString().slice(0, 16).replace("T", " ") : "";
 }

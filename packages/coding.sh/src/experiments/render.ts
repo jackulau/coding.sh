@@ -1,6 +1,7 @@
 // Plain-text experiment and comparison reports (stdout = the answer). Scores
 // from judges that are not calibrated on held-out human labels are marked
 // with "*" wherever they appear, including the overall pass rate they feed.
+import { isoMs } from "../core/dates.ts";
 import type { CalibrationStatus, Case, ExperimentResult, SeqSummary } from "../datasets/types.ts";
 import { CASE_KINDS } from "../datasets/types.ts";
 import type { KindComparisonReport } from "../datasets/kinds.ts";
@@ -788,7 +789,7 @@ export function renderSessionDelta(b: ExperimentBlock, opts: RenderOpts & { sess
 /** `exp session summary`: one line per experiment, note and command, oldest first. */
 export function renderSessionSummary(s: Pick<ExpSession, "id" | "name">, blocks: readonly SessionBlock[], opts: RenderOpts): string {
   const color = opts.color;
-  const when = (at: number) => new Date(at).toISOString().slice(0, 16).replace("T", " ");
+  const when = (at: number) => isoMs(at)?.slice(0, 16).replace("T", " ") ?? "-".padEnd(16);
   const out = [`${paint("session", "bold", color)} ${s.name ? `${s.name} ` : ""}${paint(s.id, "dim", color)}`];
   if (!blocks.length) out.push(paint("no runs or notes yet; coding.sh exp run <spec> in this folder joins it", "dim", color));
   let exps = 0;

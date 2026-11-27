@@ -5,6 +5,7 @@
 import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
 import { mainFilesChanged, stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
+import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore } from "../core/types.ts";
 import type { Session } from "../schema/index.ts";
 import { shortener } from "../core/session-ref.ts";
@@ -205,7 +206,7 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
     ...workItemJson(item),
     now: new Date(now).toISOString(),
     sessionFilesChanged: mainFilesChanged(item, byId),
-    workflowAgents: item.workflow ? itemWorkflowAgents(item, sessions, now).map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
+    workflowAgents: item.workflow ? itemWorkflowAgents(item, sessions, now).map(({ startedAt, ...a }) => ({ ...a, startedAt: isoMs(startedAt) ?? null })) : undefined,
     files: files.slice(0, FILES_MAX),
     sessions: [item.primaryId, ...children.map((s) => s.id)].map((sid) => {
       const s = byId.get(sid);
@@ -251,6 +252,7 @@ export async function workSnooze(index: IndexStore, src: WorkSource, q: URLSearc
   const now = src.now?.() ?? Date.now();
   const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
   const until = now + ms;
+  if (dateMs(until) === undefined) throw new WorkApiError(400, "duration is outside the supported date range");
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
   const overlay = readOverlay(src.overlay);
   snoozeItem(overlay, item, { until, bucket });

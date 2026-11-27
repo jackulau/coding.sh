@@ -98,6 +98,34 @@ describe("session outline", () => {
     assert.deepEqual(sessionOutline([...events, after, late]).days, [{ date: "2026-11-04", ts: late.ts, index: 3, eventId: late.id }]);
   });
 
+  it("reads out-of-range timestamps as missing days while keeping valid day marks", () => {
+    assert.equal(localDate(8.64e15 + 1), "");
+    assert.equal(localDate(-8.64e15 - 1), "");
+    assert.equal(localDate(1e300), "");
+    const d1 = new Date(2026, 10, 3, 12).getTime();
+    const d2 = new Date(2026, 10, 4, 12).getTime();
+    const events: AgentEvent[] = [
+      { id: "e0", v: 0, sessionId: "s", ts: -8.64e15 - 1, agent: "codex", kind: "session.start", payload: {} },
+      { id: "e1", v: 0, sessionId: "s", ts: d1, agent: "codex", kind: "user.message", payload: { text: "day 1" } },
+      { id: "e2", v: 0, sessionId: "s", ts: d2, agent: "codex", kind: "user.message", payload: { text: "day 2" } },
+      { id: "e3", v: 0, sessionId: "s", ts: 1e300, agent: "codex", kind: "user.message", payload: { text: "far" } },
+    ];
+    const o = sessionOutline(events);
+    assert.deepEqual(o.days, [{ date: "2026-11-04", ts: d2, index: 2, eventId: "e2" }]);
+    const stored = storedOutline({
+      stats: {
+        events: 4, turns: 3, toolCalls: 0, toolErrors: 0, filesChanged: 0,
+        phases: [
+          { n: 1, kind: "start", startTs: -8.64e15 - 1, endTs: -8.64e15 - 1, from: 0, to: 1, eventId: "e0", events: 1, prompts: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0 },
+          { n: 2, kind: "idle", startTs: d1, endTs: d1, from: 1, to: 2, eventId: "e1", events: 1, prompts: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0 },
+          { n: 3, kind: "idle", startTs: d2, endTs: d2, from: 2, to: 3, eventId: "e2", events: 1, prompts: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0 },
+          { n: 4, kind: "idle", startTs: 1e300, endTs: 1e300, from: 3, to: 4, eventId: "e3", events: 1, prompts: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0 },
+        ],
+      },
+    })!;
+    assert.deepEqual(stored.days, [{ date: "2026-11-04", ts: d2, index: 2, eventId: "e2" }]);
+  });
+
   it("keeps the phases on the session at ingest, so readers need no events", () => {
     n = 0;
     clock = T0;

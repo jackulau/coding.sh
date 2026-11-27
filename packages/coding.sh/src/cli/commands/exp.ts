@@ -10,6 +10,7 @@
 // `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
+import { isoMs } from "../../core/dates.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datasets/types.ts";
 import { slugify } from "../../datasets/dataset.ts";
@@ -1380,7 +1381,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (out.json) {
           // Each row carries the checkpoint its run recorded (exp run --weights), with the sessions that recorded that file; no key when it recorded none.
           const checkpoints = await checkpointSessions(ctx.index, all.map((e) => weightsOf(e)));
-          const experiments = all.map((e) => withSessions(stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e)), checkpoints));
+          const experiments = all.map((e) => withSessions(stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: isoMs(e.createdAt) ?? null, summary: e.summary }, weightsOf(e)), checkpoints));
           // `unfinished` holds those runs as `exp status --json` gives them; no key when there are none.
           out.data(open.length ? { experiments, unfinished: open.map(jobJson) } : { experiments });
           return 0;

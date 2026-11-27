@@ -6,6 +6,7 @@
 //
 // The viewer renders these documents and computes nothing: the CLI and the page show the same
 // numbers. The page lives at #/workflows/:runId in src/viewer/ui/index.html.
+import { dateMs } from "../core/dates.ts";
 import { buildGantt } from "./gantt.ts";
 import { totalTokens } from "./metrics.ts";
 import type { GanttData, WorkflowFramework, WorkflowNode, WorkflowRun } from "./types.ts";
@@ -18,15 +19,17 @@ export interface WorkflowViewSource {
 
 /** One run as `workflows list --json` and /api/workflows print it. */
 export function runSummary(run: WorkflowRun): Record<string, unknown> {
+  const start = dateMs(run.startedAt);
+  const end = dateMs(run.endedAt);
   return {
     id: run.id,
     framework: run.framework,
     name: run.name,
     status: run.status,
     error: run.error ?? null,
-    startedAt: new Date(run.startedAt).toISOString(),
-    endedAt: run.endedAt !== undefined ? new Date(run.endedAt).toISOString() : null,
-    wallMs: run.stats.wallMs ?? (run.endedAt !== undefined ? run.endedAt - run.startedAt : null),
+    startedAt: start !== undefined ? new Date(start).toISOString() : null,
+    endedAt: end !== undefined ? new Date(end).toISOString() : null,
+    wallMs: run.stats.wallMs ?? (start !== undefined && end !== undefined ? end - start : null),
     agents: run.stats.agents,
     costUsd: run.stats.costUsd ?? null,
     tokens: totalTokens(run.stats.tokens),

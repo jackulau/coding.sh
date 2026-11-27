@@ -13,6 +13,7 @@
 // into a human-audited pass rate.
 import { appendFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isoMs } from "../../core/dates.ts";
 import { estimateCost, pricesFor } from "../../core/pricing.ts";
 import { decodeText, readTextFile } from "../../core/text-file.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
@@ -401,7 +402,8 @@ export async function run(c: CommandContext): Promise<number> {
     const keep = report.status.n === 0 && (prior?.n ?? 0) > 0;
     if (stored && !keep) await store.putJudge(withCalibration(stored, report));
     if (keep && prior) {
-      out.warn(`Kept the judge's stored calibration (${prior.state}, n=${prior.n}${prior.ts ? `, ${new Date(prior.ts).toISOString().slice(0, 10)}` : ""}): this run has no held-out case with both a human label and a verdict`);
+      const priorDay = isoMs(prior.ts)?.slice(0, 10);
+      out.warn(`Kept the judge's stored calibration (${prior.state}, n=${prior.n}${priorDay ? `, ${priorDay}` : ""}): this run has no held-out case with both a human label and a verdict`);
     }
 
     if (probeSpec) {

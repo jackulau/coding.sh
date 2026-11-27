@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
+import { isoMs } from "../../core/dates.ts";
 import { repoRoot } from "../../core/git.ts";
 import { shortener } from "../../core/session-ref.ts";
 import { HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
@@ -124,12 +125,12 @@ function issueJson(i: Issue, n: number, provider: ModelProvider | undefined, cmd
 }
 
 /** A group's counts, with every flagged session (id, ISO start, title, flags). */
-const groupJson = ({ work: _work, ...g }: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: new Date(s.startedAt).toISOString(), ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
+const groupJson = ({ work: _work, ...g }: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: isoMs(s.startedAt) ?? null, ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
 
 export function changeJson(e: ChangeEffect, cmd: Cmd = asIs) {
   return {
     commit: e.change.commit,
-    at: new Date(e.change.at).toISOString(),
+    at: isoMs(e.change.at) ?? null,
     subject: e.change.subject,
     files: e.change.files,
     added: e.change.added.slice(0, 10),

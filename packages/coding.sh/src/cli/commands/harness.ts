@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { claudeUserJson } from "../../adapters/claude-code.ts";
 import { getAdapter } from "../../adapters/index.ts";
 import { agentFileProblems } from "../../core/agent-files.ts";
+import { isoMs } from "../../core/dates.ts";
 import { IMPORT_HOPS, IMPORTING, importPaths } from "../../core/memory-audit.ts";
 import { userHome } from "../../core/paths.ts";
 import { bundleFromDir, bundleFromToml, bundleId, canonicalJson, DEFAULT_INCLUDE, userFile, type BundleFromDirOpts } from "../../runner/bundle.ts";
@@ -27,7 +28,7 @@ export function bundleJson(b: HarnessBundle): Record<string, unknown> {
     files: Object.keys(b.files).sort(),
     remove: b.remove,
     ...(b.plugins?.length ? { plugins: b.plugins.map((p) => ({ name: p.name, marketplace: p.marketplace ?? null, version: p.version ?? null })) } : {}),
-    createdAt: new Date(b.createdAt).toISOString(),
+    createdAt: isoMs(b.createdAt) ?? null,
     note: b.note ?? null,
   };
   if (b.mcpServers?.length) json.mcpServers = b.mcpServers;
@@ -267,7 +268,7 @@ async function tools(c: CommandContext): Promise<number> {
     const rows = changedOnly ? d.tools.filter((t) => t.changed) : d.tools;
     const code = changedOnly && rows.length ? 1 : 0;
     if (out.json) {
-      const iso = (ms: number) => new Date(ms).toISOString();
+      const iso = (ms: number) => isoMs(ms) ?? null;
       const toolRows = rows.map((t) => {
         const row: Record<string, unknown> = { ...t, firstSeen: iso(t.firstSeen), lastSeen: iso(t.lastSeen) };
         if (t.pinned) row.pinned = { ...t.pinned, at: iso(t.pinned.at) };

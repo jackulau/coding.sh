@@ -10,6 +10,7 @@
 // validateAgentTrace checks a record against the schema; export runs it on
 // every record it writes.
 import { createHash } from "node:crypto";
+import { isoMs } from "../core/dates.ts";
 import type { AttributionReport } from "./index.ts";
 import type { CommitAttribution } from "./match.ts";
 
@@ -90,6 +91,8 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function commitRecord(c: CommitAttribution, opts: ExportOptions = {}): AgentTraceRecord | undefined {
   if (!c.attributions.length) return undefined;
+  const timestamp = isoMs(c.committedAt)?.replace(/\.000Z$/, "Z");
+  if (!timestamp) return undefined;
   const base = (opts.viewerUrl ?? DEFAULT_VIEWER_URL).replace(/\/+$/, "");
   const files = new Map<string, AgentTraceConversation[]>();
   for (const a of c.attributions) {
@@ -120,7 +123,7 @@ export function commitRecord(c: CommitAttribution, opts: ExportOptions = {}): Ag
   return {
     version: AGENT_TRACE_VERSION,
     id: stableUuid(`agent-trace:${c.commit}`),
-    timestamp: new Date(c.committedAt).toISOString().replace(/\.000Z$/, "Z"),
+    timestamp,
     vcs: { type: "git", revision: c.commit },
     tool: { name: "coding.sh", ...(opts.toolVersion ? { version: opts.toolVersion } : {}) },
     files: [...files].map(([path, conversations]) => ({ path, conversations })),

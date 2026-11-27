@@ -2000,9 +2000,15 @@ function fmtClock(ms) {
   const ss = String(s % 60).padStart(2, "0");
   return hr ? hr + ":" + String(m).padStart(2, "0") + ":" + ss : m + ":" + ss;
 }
+const MAX_DATE_MS = 8640000000000000;
+function dateMs(ts) { return typeof ts === "number" && Math.abs(ts) <= MAX_DATE_MS ? ts : undefined; }
+function isoMs(ts) { const t = dateMs(ts); return t !== undefined ? new Date(t).toISOString() : undefined; }
+function fmtLocale(ts, opts) { const t = dateMs(ts); return t !== undefined ? new Date(t).toLocaleString(undefined, opts) : ""; }
+function fmtClockTime(ts, opts) { const t = dateMs(ts); return t !== undefined ? new Date(t).toLocaleTimeString(undefined, opts) : ""; }
+function fmtLocaleDate(ts, opts) { const t = dateMs(ts); return t !== undefined ? new Date(t).toLocaleDateString(undefined, opts) : ""; }
 /** "5m ago", "in 5m" for a time ahead of this clock (a minute of skew still reads "just now"). */
 function fmtRel(ts) {
-  if (!ts) return "";
+  if (!ts || dateMs(ts) === undefined) return "";
   const d = Date.now() - ts;
   if (Math.abs(d) < 60e3) return "just now";
   if (d < 0) {
@@ -2010,23 +2016,24 @@ function fmtRel(ts) {
     if (a < 3600e3) return "in " + Math.floor(a / 60e3) + "m";
     if (a < 86400e3) return "in " + Math.floor(a / 3600e3) + "h";
     if (a < 7 * 86400e3) return "in " + Math.floor(a / 86400e3) + "d";
-    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+    return fmtLocaleDate(ts, { month: "short", day: "numeric", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
   }
   if (d < 3600e3) return Math.floor(d / 60e3) + "m ago";
   if (d < 86400e3) return Math.floor(d / 3600e3) + "h ago";
   if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + "d ago";
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+  return fmtLocaleDate(ts, { month: "short", day: "numeric", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 }
 function fmtDate(ts) {
-  return ts ? new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  return ts ? fmtLocale(ts, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 }
 function fmtDay(ts, withTime) {
-  return new Date(ts).toLocaleString(undefined, withTime ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" });
+  return fmtLocale(ts, withTime ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" });
 }
 /** "Oct 7 – Nov 5"; with the year on both ends when the range crosses a year or spans 365 days or more. */
 function fmtDayRange(from, to) {
+  if (dateMs(from) === undefined || dateMs(to) === undefined) return "";
   const year = new Date(from).getFullYear() !== new Date(to).getFullYear() || to - from >= 365 * 86400e3;
-  const one = (ts) => new Date(ts).toLocaleString(undefined, year ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
+  const one = (ts) => fmtLocale(ts, year ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
   return one(from) + " – " + one(to);
 }
 /** Where a session ran: its repo's main checkout (a worktree's too), else its repo root, else its working directory. */
@@ -3884,12 +3891,12 @@ function histogramPanel(view, hist) {
  *  changes); otherwise dates, blanking any repeat so no two ticks read the same. */
 function axisLabels(ts) {
   const span = ts[ts.length - 1] - ts[0];
-  const dayKey = (t) => new Date(t).toDateString();
+  const dayKey = (t) => (dateMs(t) !== undefined ? new Date(t).toDateString() : "");
   if (span <= 2.2 * 86400e3) {
-    const time = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-    return ts.map((t, i) => (i === 0 || dayKey(t) !== dayKey(ts[i - 1]) ? fmtDay(t) + ", " : "") + time(t));
+    const time = (t) => fmtClockTime(t, { hour: "numeric", minute: "2-digit" });
+    return ts.map((t, i) => (dateMs(t) === undefined ? "" : (i === 0 || dayKey(t) !== dayKey(ts[i - 1]) ? fmtDay(t) + ", " : "") + time(t)));
   }
-  return ts.map((t, i) => (i > 0 && dayKey(t) === dayKey(ts[i - 1]) ? "" : fmtDay(t)));
+  return ts.map((t, i) => (dateMs(t) === undefined || (i > 0 && dayKey(t) === dayKey(ts[i - 1])) ? "" : fmtDay(t)));
 }
 
 function sessionList(view) {
@@ -3962,7 +3969,7 @@ function sessionList(view) {
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
         h("span", { class: "cell num muted dur-cell" }, dur),
-        h("span", { class: "cell num muted", title: new Date(s.startedAt).toLocaleString(), "data-ts": s.startedAt }, fmtRel(s.startedAt))));
+        h("span", { class: "cell num muted", title: fmtLocale(s.startedAt), "data-ts": s.startedAt }, fmtRel(s.startedAt))));
     if (depth) row.style.setProperty("--depth", String(depth));
     lb.append(row);
   });
@@ -4172,7 +4179,7 @@ function eventRowEl(ev, i) {
         h("span", { dir: "auto" }, s ? sessionTitle(s) : clip(ev.sessionId, 24)),
         s ? h("span", { class: "sub" }, [s.parent ? s.type || "subagent" : s.agent, s.model && midClip(s.model, 22)].filter(Boolean).join(" · ")) : null),
       h("span", { class: "cell num muted dur-cell" }, v.dur !== undefined ? fmtDuration(v.dur) : ""),
-      h("span", { class: "cell num muted", title: new Date(ev.ts).toLocaleString(), "data-ts": ev.ts }, fmtRel(ev.ts))));
+      h("span", { class: "cell num muted", title: fmtLocale(ev.ts), "data-ts": ev.ts }, fmtRel(ev.ts))));
 }
 
 function syncActive(lb) {
@@ -4873,9 +4880,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     let nextDay = Infinity;
     for (let i = 0; i < items.length; i++) {
       const ts = items[i].ts;
-      if (!(ts >= nextDay) && i > 0) continue;
+      if (dateMs(ts) === undefined) continue;
+      if (!(ts >= nextDay) && nextDay !== Infinity) continue;
       const d = new Date(ts);
-      if (i > 0) meta[i].day = { ts };
+      if (nextDay !== Infinity) meta[i].day = { ts };
       nextDay = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
     }
     if (!outline) return;
@@ -5082,11 +5090,11 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
     const el = h("div", { class: "st turn fold" + (x.from === 0 ? " first" : "") + (t.fails ? " is-fail" : ""), role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": "false", "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => { activeItem = x.from; ctx.openFold(x.key); selectRow(rowOf[x.from]); } },
-      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, h("span", { class: "tw" }, "Prompt "), String(meta[x.from].prompt)),
+      h("span", { class: "t", title: fmtClockTime(it.ts) }, h("span", { class: "tw" }, "Prompt "), String(meta[x.from].prompt)),
       // Length, tool calls and failed steps first, so a narrow row cuts the words, not the counts.
       h("span", { class: "lbl" }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", { class: "dot tone-" + meta[x.from].v.tone, "aria-hidden": "true" }), h("span", { class: "arg" }, promptLine(it) || "Prompt"),
         h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "failed step")), " · "] : null, w.words)),
-      h("span", { class: "d" }, h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))), h("span", { class: "wf" }));
+      h("span", { class: "d" }, h("time", { datetime: isoMs(it.ts) }, fmtClock(it.ts - session.startedAt))), h("span", { class: "wf" }));
     el.style.transform = "translateY(" + r * ROW + "px)";
     return el;
   }
@@ -5113,7 +5121,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
       + (matchOf && matchOf.has(x) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
     const chip = m.phase || m.day ? h("span", { class: "phase-chip", title: m.phase ? "Phase " + m.phase.n + ": " + m.phase.label : "" },
-      [m.day ? new Date(m.day.ts).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "", m.phase ? m.phase.label : ""].filter(Boolean).join(" · ")) : null;
+      [m.day ? fmtLocaleDate(m.day.ts, { weekday: "short", month: "short", day: "numeric" }) : "", m.phase ? m.phase.label : ""].filter(Boolean).join(" · ")) : null;
     const flag = m.derail ? h("span", { class: "derail-flag", title: m.derail.map((d) => d.flag + ": " + d.detail).join("\n") }, "⚑ " + m.derail.map((d) => d.flag).join(", ")) : null;
     const wf = h("span", { class: "wf" + (m.isTurn ? " ruler" : "") });
     // Each turn has its own time scale, so its header row labels that scale.
@@ -5130,9 +5138,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const caret = m.isTurn ? h("span", { class: "caret open", "aria-hidden": "true", title: canFold ? "Fold this turn" : null, onclick: canFold ? (e) => { e.stopPropagation(); foldTurn(m.turn); } : null }, canFold ? "▸" : "") : null;
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": canFold ? "true" : null, "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
-      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Prompt " + m.prompt : fmtClock(it.ts - session.startedAt)),
+      h("span", { class: "t", title: fmtClockTime(it.ts) }, m.isTurn ? "Prompt " + m.prompt : fmtClock(it.ts - session.startedAt)),
       h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, cmtFlag(it), flag),
-      h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
+      h("span", { class: "d" }, m.isTurn ? h("time", { datetime: isoMs(it.ts) }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
     el.style.transform = "translateY(" + top + "px)";
@@ -5318,7 +5326,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[i], user = it.type === "user.message";
     const text = String(((it.ev || {}).payload || {}).text ?? "");
     return h("div", { class: "chat-msg " + (user ? "is-user" : "is-agent") },
-      h("div", { class: "chat-who" }, h("span", null, user ? "Prompt " + meta[i].prompt : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
+      h("div", { class: "chat-who" }, h("span", null, user ? "Prompt " + meta[i].prompt : "Assistant"), h("time", { datetime: isoMs(it.ts) }, fmtClock(it.ts - session.startedAt))),
       text.trim() ? clipped(text, (x) => mdView(x, "chat-text"), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
   }
   // A turn: its prompt, one line for the steps between prompt and replies, then the replies in order.
@@ -6224,7 +6232,7 @@ function sessionHeader(s, labels, rel) {
       fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "") + viaHost(s)),
       fact("model", s.model),
       fact("repo", repo.root ? basename(repo.root) + (repo.head ? "@" + short(repo.head) : "") + (repo.branch ? " (" + repo.branch + ")" : "") : "", repo.root),
-      fact("started", fmtDate(s.startedAt), new Date(s.startedAt).toISOString()),
+      fact("started", fmtDate(s.startedAt), isoMs(s.startedAt)),
       fact("duration", s.endedAt ? fmtDuration(s.endedAt - s.startedAt) : "no end recorded"),
       fact("tokens", tokensText(usage), dupText(st.duplicateUsage)),
       // No price: a dash that says why keeps the slot.
@@ -6512,7 +6520,7 @@ function commentThread(store, target, targetId, ids, label) {
     toggle.hidden = store.state === "off";
     count.textContent = mine.length ? String(mine.length) : "";
     const rows = mine.map((c) => h("li", null,
-      h("p", { class: "meta" }, String(c.by || "someone"), " · ", h("time", { datetime: new Date(c.ts).toISOString(), title: new Date(c.ts).toLocaleString() }, fmtRel(c.ts))),
+      h("p", { class: "meta" }, String(c.by || "someone"), " · ", h("time", { datetime: isoMs(c.ts), title: fmtLocale(c.ts) }, fmtRel(c.ts))),
       h("p", { class: "cmt-text", text: c.value })));
     if (store.state === "loading" && !box.hidden) rows.push(h("li", { class: "meta" }, "Loading comments…"));
     if (store.state === "error") rows.push(h("li", { class: "cmt-err" }, "Could not load comments: " + store.error.message + " ", h("button", { class: "btn btn-sm", type: "button", onclick: () => store.load() }, "Retry")));
@@ -7246,8 +7254,9 @@ function renderPane(pane, item, session, ctx) {
   const cmt = ctx.comments && rawEvents.length ? commentThread(ctx.comments, "event", rawEvents[rawEvents.length - 1].id, stepIds(item), "Comments on this step") : null;
   const rawBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-pressed": String(!!ctx.raw), "aria-keyshortcuts": "r", title: "Raw event JSON (r)",
     onclick: () => { ctx.raw = !ctx.raw; renderPane(pane, item, session, ctx); } }, "Raw");
+  const clock = fmtClockTime(ts);
   nodes.push(h("div", { class: "pane-top" },
-    h("p", { class: "meta truncate", title: v.kindText }, fmtClock(ts - session.startedAt), h("span", { class: "wide-only" }, " into the session · " + new Date(ts).toLocaleTimeString())),
+    h("p", { class: "meta truncate", title: v.kindText }, fmtClock(ts - session.startedAt), h("span", { class: "wide-only" }, " into the session" + (clock ? " · " + clock : ""))),
     h("div", { class: "pane-tools" },
       h("button", { class: "btn btn-sm to-steps", type: "button", onclick: ctx.backToSteps }, h("span", { "aria-hidden": "true" }, "↑"), "Steps"),
       cmt ? cmt.toggle : null,
@@ -7546,7 +7555,7 @@ async function showExperiments(seq) {
         h("span", { class: "meta" }, ciText(pr) + (s.errors ? " · " + fmtNum(s.errors) + " errored" : ""))),
       h("span", { class: "cell num muted opt", title: (e.trials || 1) > 1 ? plural(e.trials, "trial") + " per case" : undefined }, fmtNum(s.cases || 0) + ((e.trials || 1) > 1 ? " × " + e.trials : "")),
       h("span", { class: "cell num muted opt", title: s.latencyMs ? "p90 " + fmtDuration(s.latencyMs.p90) : undefined }, s.latencyMs ? fmtDuration(s.latencyMs.median) : ""),
-      h("span", { class: "cell num muted opt", title: new Date(e.createdAt || 0).toLocaleString(), "data-ts": e.finishedAt || e.createdAt || 0 }, fmtRel(e.finishedAt || e.createdAt || 0)),
+      h("span", { class: "cell num muted opt", title: fmtLocale(e.createdAt || 0), "data-ts": e.finishedAt || e.createdAt || 0 }, fmtRel(e.finishedAt || e.createdAt || 0)),
       // Phones drop the number columns; this line carries them.
       h("span", { class: "meta mob fact-line" }, ...[plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t))));
     rowEls.push(row);
@@ -8072,6 +8081,7 @@ function exploreHref(st) {
 }
 /** Local YYYY-MM-DD, the date axis lineChart labels. */
 function ymd(t) {
+  if (dateMs(t) === undefined) return "";
   const d = new Date(t);
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
@@ -8235,7 +8245,8 @@ function workCounts(counts) {
  * A code part that starts with `coding.sh ` is a command, named for the shell; a file named coding.sh stays, as in the CLI. */
 function workNext(next) {
   const m = /^snoozed until (\d{4}-\d{2}-\d{2}T[\d:.]+Z)$/.exec(next || "");
-  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, /^(npx )?coding\.sh /.test(text) ? forShell(text) : text) : text);
+  const until = m ? fmtLocale(Date.parse(m[1]), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  return until ? "snoozed until " + until : workNextParts(next).map(([code, text]) => code ? h("code", null, /^(npx )?coding\.sh /.test(text) ? forShell(text) : text) : text);
 }
 /** The CLI marks commands in a next step with backticks; the page shows them as code: [[false, "review: "], [true, "git diff"], …]. */
 function workNextParts(next) {
@@ -8417,9 +8428,10 @@ async function workAct(item, kind, button, since) {
     const r = await fetchJson("/api/work/" + kind + qs({ since }), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kind === "snooze" ? { id: item.id, duration: "1h" } : { id: item.id }),
     });
+    const until = kind === "snooze" ? fmtClockTime(Date.parse(r.snoozedUntil), { hour: "numeric", minute: "2-digit" }) : "";
     const msg = kind === "ack"
       ? (r.acked ? "Acknowledged " + item.id : item.id + " has nothing to acknowledge")
-      : "Snoozed " + item.id + " until " + new Date(Date.parse(r.snoozedUntil)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      : "Snoozed " + item.id + (until ? " until " + until : "");
     toast(msg);
     announce(msg);
     return true;
@@ -8896,7 +8908,7 @@ async function showReviewQueue(seq, name) {
       h("p", { class: "meta review-facts" },
         agent ? h("span", null, agent) : null,
         repo ? h("span", { class: "truncate", title: repoDir(s) }, repo) : null,
-        s && s.startedAt ? h("span", { title: new Date(s.startedAt).toLocaleString() }, "started " + fmtDate(s.startedAt)) : null,
+        s && dateMs(s.startedAt) !== undefined ? h("span", { title: fmtLocale(s.startedAt) }, "started " + fmtDate(s.startedAt)) : null,
         u && !u.none ? h("span", { title: u.title }, u.text) : null,
         it.assignee ? h("span", null, "for " + it.assignee) : null),
       flags.length ? h("div", { class: "badges" }, flagBadges(flags)) : null,
@@ -9205,7 +9217,7 @@ async function showPlayground(seq, callId, sessionId) {
   }
   if (!current(seq)) return;
   const c = rebuilt.call;
-  meta.textContent = [c.model, new Date(c.ts).toLocaleString(), rebuilt.source === "request" ? "rebuilt from the recorded request" : "rebuilt from the transcript (the request body was not stored)"].filter(Boolean).join(" · ");
+  meta.textContent = [c.model, fmtLocale(c.ts), rebuilt.source === "request" ? "rebuilt from the recorded request" : "rebuilt from the transcript (the request body was not stored)"].filter(Boolean).join(" · ");
   const req = rebuilt.request;
   const state = { messages: req.messages.map((m) => ({ ...m })), showAll: req.messages.length <= PG_SHOWN, last: null };
 
