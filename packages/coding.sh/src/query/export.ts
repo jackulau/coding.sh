@@ -1,17 +1,19 @@
-// `coding.sh export sessions|events|labels`: stream stored rows as JSONL or CSV.
+// `coding.sh export sessions|events|labels|scores`: stream stored rows as JSONL or CSV.
 //
 // Works on every index store (it only uses the IndexStore interface): sessions are
 // read a page at a time with the `sessions` filters, events a page at a time per
-// session, so memory stays flat however large the store is. Rows are what the store
-// holds, which is already redacted at ingest.
+// session, so memory stays flat however large the store is. Sessions and events are
+// already redacted at ingest; score text fields are redacted on export.
 import { dateMs, isoMs } from "../core/dates.ts";
-import type { IndexStore, Label, SessionFilter } from "../core/types.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
+import type { IndexStore, Label, Score, ScoreFilter, ScoreSource, SessionFilter } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { ScoreError } from "../scores/scores.ts";
 import { csvRow } from "./csv.ts";
 import { findSessions, sessionMatcher } from "./run.ts";
 import type { Query } from "./where.ts";
 
-export const EXPORT_KINDS = ["sessions", "events", "labels"] as const;
+export const EXPORT_KINDS = ["sessions", "events", "labels", "scores"] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 export const EXPORT_FORMATS = ["jsonl", "csv"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
@@ -19,10 +21,16 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export interface ExportOptions {
   /** Which sessions (limit and offset are ignored; use maxSessions). */
   filter: Omit<SessionFilter, "limit" | "offset">;
-  /** Stop after this many sessions (newest first, or by query.sort). */
+  /** Stop after this many sessions (newest first, or by query.sort), or scores when exporting scores without session filters. */
   maxSessions?: number;
   /** `--where`: only sessions matching it (src/query). */
   query?: Query;
+  /** With `scores`: only scores with this name. */
+  scoreName?: string;
+  /** With `scores`: only scores from this source. */
+  scoreSource?: ScoreSource;
+  /** With `scores`: redactor for text values and comments (default: built-in secret rules; null disables). */
+  redactor?: Redactor | null;
   format: ExportFormat;
   /** Receives the output in order; awaited, so a slow consumer applies backpressure. */
   write(chunk: string): void | Promise<void>;
@@ -36,6 +44,7 @@ export const CSV_COLUMNS: Record<ExportKind, readonly string[]> = {
   sessions: ["id", "agent", "model", "title", "started_at", "ended_at", "duration_ms", "repo_root", "branch", "parent_session_id", "project", "events", "turns", "tool_calls", "tool_errors", "files_changed", "input_tokens", "output_tokens", "cost_usd", "flags"],
   events: ["id", "session_id", "ts", "kind", "agent", "model", "tool", "ok", "duration_ms", "turn_id", "subagent_id", "input_tokens", "output_tokens", "cost_usd", "payload"],
   labels: ["id", "session_id", "case_id", "criterion", "value", "note", "by", "ts"],
+  scores: ["id", "target", "target_id", "session_id", "name", "data_type", "value", "source", "config_id", "judge_version", "calibrated", "comment", "by", "ts"],
 };
 
 function sessionCells(s: Session): unknown[] {
@@ -59,6 +68,33 @@ function eventCells(e: AgentEvent): unknown[] {
 }
 
 const labelCells = (l: Label): unknown[] => [l.id, l.sessionId, l.caseId ?? null, l.criterion, l.value, l.note ?? null, l.by, iso(l.ts)];
+
+const scoreCells = (s: Score): unknown[] => [
+  s.id,
+  s.target,
+  s.targetId,
+  s.sessionId ?? null,
+  s.name,
+  s.dataType,
+  s.value,
+  s.source,
+  s.configId ?? null,
+  s.judgeVersion ?? null,
+  s.calibrated ?? null,
+  s.comment ?? null,
+  s.by,
+  iso(s.ts),
+];
+
+function redactScore(s: Score, redactor: Redactor | undefined): Score {
+  if (!redactor) return s;
+  const value = typeof s.value === "string" ? redactor.string(s.value) : s.value;
+  const comment = s.comment !== undefined ? redactor.string(s.comment) : undefined;
+  if (value === s.value && comment === s.comment) return s;
+  const out: Score = { ...s, value };
+  if (comment !== undefined) out.comment = comment;
+  return out;
+}
 
 /**
  * Sessions matching the filter (and the query), newest first, a page at a time.
@@ -94,6 +130,11 @@ export async function* sessionsOf(index: IndexStore, o: Pick<ExportOptions, "fil
 const unfiltered = (o: ExportOptions): boolean =>
   o.maxSessions === undefined && !o.query?.root && Object.entries(o.filter).every(([k, v]) => v === undefined || (k === "parentSessionId" && v === null));
 
+/** True when any session-scoped filter is set (agent, repo, flag, project, runId, or --where). */
+const hasSessionFilter = (o: ExportOptions): boolean =>
+  Boolean(o.query?.root || o.query?.sort) ||
+  Object.entries(o.filter).some(([k, v]) => v !== undefined && k !== "since" && k !== "until" && !(k === "parentSessionId" && v === null));
+
 /** Streams the rows; returns how many were written. */
 export async function exportRows(index: IndexStore, kind: ExportKind, o: ExportOptions): Promise<{ rows: number }> {
   let rows = 0;
@@ -101,6 +142,30 @@ export async function exportRows(index: IndexStore, kind: ExportKind, o: ExportO
     rows++;
     await o.write(o.format === "jsonl" ? JSON.stringify(record) + "\n" : csvRow(cells()));
   };
+  if (kind === "scores") {
+    if (!index.listScores) throw new ScoreError(501, `the ${index.kind} store does not keep scores yet (use the default SQLite store)`);
+    const redactor = o.redactor === undefined ? createRedactor({ redact: ["secrets"], patterns: [] }) : (o.redactor ?? undefined);
+    const emitScore = async (raw: Score) => {
+      const s = redactScore(raw, redactor);
+      await emit(s, () => scoreCells(s));
+    };
+    if (o.format === "csv") await o.write(csvRow(CSV_COLUMNS.scores));
+    const baseFilter: ScoreFilter = {};
+    if (o.scoreName !== undefined) baseFilter.name = o.scoreName;
+    if (o.scoreSource !== undefined) baseFilter.source = o.scoreSource;
+    if (!hasSessionFilter(o)) {
+      const sf: ScoreFilter = { ...baseFilter };
+      if (o.filter.since !== undefined) sf.since = o.filter.since;
+      if (o.filter.until !== undefined) sf.until = o.filter.until;
+      if (o.maxSessions !== undefined) sf.limit = o.maxSessions;
+      for (const s of await index.listScores(sf)) await emitScore(s);
+      return { rows };
+    }
+    for await (const sess of sessionsOf(index, o)) {
+      for (const s of await index.listScores({ ...baseFilter, sessionId: sess.id })) await emitScore(s);
+    }
+    return { rows };
+  }
   if (o.format === "csv") await o.write(csvRow(CSV_COLUMNS[kind]));
   if (kind === "labels" && unfiltered(o)) {
     for (const l of await index.listLabels()) await emit(l, () => labelCells(l));

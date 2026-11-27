@@ -61,7 +61,7 @@ Every command accepts these.
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag, or a scorecard per model |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
-| [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory |
+| [`export`](#codingsh-export) | Explore | Stream sessions, events, labels or scores as JSONL or CSV, or write raw traces to a directory |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
 | [`work`](#codingsh-work) | Explore | What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review |
@@ -1222,7 +1222,7 @@ coding.sh stats [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-m, --measure <MEASURE>` | `sessions` | What the trend shows. One of: `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`. |
+| `-m, --measure <MEASURE>` | `sessions` | What the trend shows: sessions, failures, failure-rate, cost, tokens, tool-calls, tool-errors, tool-error-rate, llm-calls, llm-p95, ttft-p50, or score:&lt;NAME&gt; (mean of that numeric or boolean session score) |
 | `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week). With --scorecard: one column per model (the default) or agent. One of: `agent`, `model`, `repo`, `flag`. |
 | `--scorecard` |  | Compare models side by side: turns, and counts with a 95% interval for pushback and its kinds, cancelled turns, the median turn, failed file edits and failed shell commands. |
 | `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
@@ -1236,12 +1236,14 @@ coding.sh stats [options]
 coding.sh stats
 coding.sh stats --measure cost --by model --since 30d
 coding.sh stats --measure failure-rate --by agent --per week --since 90d
+coding.sh stats --measure score:helpfulness --by model --since 30d
 coding.sh stats --by flag --where 'agent:codex' --json
 coding.sh stats --scorecard --since 90d
 coding.sh stats --scorecard --by agent --where 'repo:coding.sh' --json
 ```
 
 - Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag: a flag with no colon, other than compaction, step-retried and resumed. TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
+- With --measure score:&lt;NAME&gt;, numeric and boolean (true as 1, false as 0) session scores of that name are averaged per bucket and per group; categorical and text scores are skipped.
 - With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
 - Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.
 - --json also prints waits: how often and how long the window's sessions waited on you, by kind, subagents included. GET /api/metrics does not have it. A store other than SQLite stops reading them at 100,000 sessions and sets waits.truncated.
@@ -1282,7 +1284,7 @@ coding.sh sql "select name, sql from sqlite_schema where type = 'table'"
 
 ## `coding.sh export`
 
-Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory.
+Stream sessions, events, labels or scores as JSONL or CSV, or write raw traces to a directory.
 
 ```text
 coding.sh export [what] [options]
@@ -1290,34 +1292,40 @@ coding.sh export [what] [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `what` | no | sessions, events or labels (not needed with --evidence) |
+| `what` | no | sessions, events, labels or scores (not needed with --evidence) |
 
 | Option | Default | Description |
 |---|---|---|
 | `--format <FORMAT>` | `jsonl` | Output format. One of: `jsonl`, `csv`. |
+| `-o, --out <FILE>` |  | Write the rows to FILE instead of stdout and print its path. |
 | `--evidence <DIR>` |  | Instead: write each matching session's events, tool inputs and full outputs, redacted, as files under DIR. |
 | `--force` |  | With --evidence, write into a directory that is not empty. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-r, --repo <PATH|NAME>` |  | Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `--until <WHEN>` |  | Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out. |
 | `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
-| `--subagents` |  | Include subagent sessions (and their events and labels). A --where with id:, parent:, is:root or is:child picks them itself. |
+| `--subagents` |  | Include subagent sessions (and their events, labels and scores). A --where with id:, parent:, is:root or is:child picks them itself. |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
-| `-n, --limit <N>` |  | Only the N newest matching sessions (default: all) |
-| `--where <QUERY>` |  | Only sessions (and their events and labels) matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--name <NAME>` |  | With scores: only scores with this name. |
+| `--source <SOURCE>` |  | With scores: only scores from this source. One of: `human`, `judge`, `code`, `api`, `monitor`. |
+| `-n, --limit <N>` |  | Only the N newest matching sessions (or scores when exporting scores with no session filter; default: all) |
+| `--where <QUERY>` |  | Only sessions (and their events, labels and scores) matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh export sessions --since 30d --format csv > sessions.csv
 coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 coding.sh export labels --format csv
+coding.sh export scores --name helpfulness --source judge --format csv --out scores.csv
 coding.sh export --evidence traces/ --where 'flag:repeated-tool-failure' --limit 20
 ```
 
 - --evidence writes DIR/index.md and, per session, index.md (stats and a timeline), session.json, events.jsonl and tools/NNNN-&lt;tool&gt;.txt (one tool call: input and whole output, read back from the blob store). Everything is redacted first; a tool file stops at 200 KB and events.jsonl at 5 MB. The same index gives the same bytes. Prints DIR.
 - JSONL rows are the stored objects, one per line. CSV has fixed columns (docs/reference/query.md); event payloads are a JSON column.
+- export scores redacts string score values and comments with your [capture] rules (secrets always on). Without a session filter it exports every matching score, including event, case and run scores.
 - Text cells that start with = + - or @ get a leading ' in CSV so a spreadsheet does not run them as formulas.
-- Works on every store, Postgres and ClickHouse included. Rows are streamed, so memory stays flat.
+- Works on every store, Postgres and ClickHouse included (scores need a store that keeps scores). Rows are streamed, so memory stays flat.
 
 ## `coding.sh ui`
 

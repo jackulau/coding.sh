@@ -1620,6 +1620,7 @@ viewer's Explore page and `coding.sh stats --json`. Parameters:
 | `groups` | 6 | how many groups get their own series (1 to 50); the rest add up in `other` |
 | `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives (360 for UTC-6); buckets start at local midnight. Without `tz` the buckets are UTC days and a date is read in the server's zone, so send `tz` with a date |
 | `scope` | `all` | `top` counts top-level sessions only, and adds each subagent's cost, tokens, tool calls and model calls to the session it ran under |
+| `measure` | | `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`, or `score:<name>`. With `score:<name>`, adds `scoreMean` and `scoreCount` over numeric and boolean (`true` as 1, `false` as 0) session scores of that name; categorical and text scores are skipped |
 | `where`, `project` | | as on `/api/sessions` |
 
 A session counts in the bucket it started in. With `scope=top`, a subagent counts in its top-level
@@ -1637,6 +1638,8 @@ latency.
 | `toolErrorRate` | Tool errors over tool calls |
 | `llmP95Ms` | The 95th percentile (nearest rank) of the sessions' own p95 model-call time. `null` in a bucket with no such session |
 | `ttftP50Ms` | The median of the sessions' median time to first token. `null` in a bucket with no such session |
+| `scoreMean` | With `measure=score:<name>`: mean of numeric and boolean session scores (absent in `totals` and `null` in a bucket when none) |
+| `scoreCount` | With `measure=score:<name>`: count of numeric and boolean session scores averaged into `scoreMean` |
 | `costUsd` | The sum over sessions that have a cost (`pricedSessions` of them) |
 | `all` | Every session, whatever the split |
 | `truncated` | Set by a store without a session-stats query, which reads only the first 100,000 sessions |
@@ -1656,8 +1659,8 @@ With `scope=all` and the same range and filters, `totals.sessions`, `toolCalls`,
 `llmCalls`, `costUsd` and `pricedSessions` equal `/api/stats`. The series' session counts equal its
 `byAgent`, `byModel` and `byFlag`.
 
-A bad `bucket`, `by`, `tz`, `groups` or time, `since` not before `until`, more than 400 buckets, or
-a bad `where` answers 400 with the reason: `{"error":"bucket must be day or week","status":400}`.
+A bad `bucket`, `by`, `measure`, `tz`, `groups` or time, `since` not before `until`, more than 400 buckets, or
+a bad `where` answers 400 with the reason: `{"error":"bucket must be day or week","status":400}`. Requesting `measure=score:<name>` on a store without scores answers 501.
 
 [`coding.sh stats --json`](cli.md#codingsh-stats) also prints `retrieval`, which this route does
 not: the [`stats.retrieval`](#get-apisessionsid) totals of the window's sessions that match

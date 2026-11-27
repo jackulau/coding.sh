@@ -43,7 +43,7 @@ import { WorkflowApiError, workflowsApi, type WorkflowViewSource } from "../work
 import { BOOT_LIST_PATHS, BOOT_MAX_BYTES, BOOT_SESSION_EVENTS, esc, renderPage, renderSessionsMain, sessionBootPaths } from "./ssr.ts";
 import { layoutRows, ModelCache, modelOutline, readRows, ROWS_LIMIT, ROWS_MAX } from "./model.ts";
 import { parseRequest as parsePlaygroundRequest, PlaygroundError, rebuildCall, type PlaygroundSource } from "./playground.ts";
-import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, MetricsError, type MetricBucket, type MetricGroup, type MetricsSpec } from "./metrics.ts";
+import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, MetricsError, parseMetricMeasure, type MetricBucket, type MetricGroup, type MetricsSpec } from "./metrics.ts";
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
 import { paths } from "../core/paths.ts";
@@ -1376,7 +1376,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const filter: MetricsSpec["filter"] = scopeParam(q) === "top" ? { parentSessionId: null } : {};
       if (project !== undefined) filter.project = project;
       const where = whereParam(q);
-      return sendJsonCompressed(req, res, await computeMetrics(ctx.index, { ...spec, filter, ...(where ? { where } : {}) }).catch((e) => Promise.reject(e instanceof MetricsError ? new HttpError(400, e.message, { reason: e.reason }) : queryHttpError(e))));
+      return sendJsonCompressed(
+        req,
+        res,
+        await computeMetrics(ctx.index, { ...spec, filter, ...(where ? { where } : {}) }).catch((e) =>
+          Promise.reject(e instanceof MetricsError ? new HttpError(400, e.message, { reason: e.reason }) : e instanceof ScoreError ? new HttpError(e.status, e.message) : queryHttpError(e)),
+        ),
+      );
     }
 
     case "playground": {
@@ -1748,7 +1754,7 @@ function withFacets(q: Query, f: Facets, top: boolean): Query {
  * Date#getTimezoneOffset minutes. A date without a zone (2026-11-09, yesterday) is midnight in
  * `tz`, the zone the buckets use, or in the server's zone without `tz`. Anything else is a 400.
  */
-export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<MetricsSpec, "since" | "until" | "bucket" | "by" | "tzOffsetMin" | "maxGroups"> {
+export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<MetricsSpec, "since" | "until" | "bucket" | "by" | "tzOffsetMin" | "maxGroups" | "measure"> {
   const tzRaw = q.get("tz");
   let tz: number | undefined;
   if (tzRaw !== null && tzRaw !== "") {
@@ -1770,7 +1776,24 @@ export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<Metric
   const by = q.get("by") || undefined;
   if (by !== undefined && !(METRIC_GROUPS as readonly string[]).includes(by)) throw new HttpError(400, `by must be one of ${METRIC_GROUPS.join(", ")}`);
   const maxGroups = q.get("groups") ? intParam(q, "groups", MAX_GROUPS, 1, 50) : MAX_GROUPS;
-  return { since, until, bucket: bucket as MetricBucket, ...(by ? { by: by as MetricGroup } : {}), tzOffsetMin: tz ?? 0, maxGroups };
+  const out: Pick<MetricsSpec, "since" | "until" | "bucket" | "by" | "tzOffsetMin" | "maxGroups" | "measure"> = {
+    since,
+    until,
+    bucket: bucket as MetricBucket,
+    ...(by ? { by: by as MetricGroup } : {}),
+    tzOffsetMin: tz ?? 0,
+    maxGroups,
+  };
+  const measureRaw = q.get("measure");
+  if (measureRaw !== null && measureRaw !== "") {
+    try {
+      out.measure = parseMetricMeasure(measureRaw);
+    } catch (e) {
+      if (e instanceof MetricsError) throw new HttpError(400, e.message, { reason: e.reason });
+      throw e;
+    }
+  }
+  return out;
 }
 
 /** List filters shared by /api/sessions, /api/search and /api/stats. */

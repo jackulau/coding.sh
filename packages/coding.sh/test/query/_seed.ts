@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import type { Label } from "../../src/core/types.ts";
+import type { Label, Score } from "../../src/core/types.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { CLI } from "../_cli.ts";
@@ -31,6 +31,7 @@ export interface Seed {
   sessions?: Session[];
   events?: AgentEvent[];
   labels?: Label[];
+  scores?: Score[];
 }
 
 /** Writes the rows into `<dataHome>/index.db` (the default store). */
@@ -41,6 +42,7 @@ export async function seed(dataHome: string, s: Seed): Promise<string> {
     if (s.events?.length) await store.putEvents(s.events);
     for (const x of s.sessions ?? []) await store.upsertSession(x);
     for (const l of s.labels ?? []) await store.putLabel(l);
+    for (const sc of s.scores ?? []) await store.putScore(sc);
   } finally {
     await store.close();
   }

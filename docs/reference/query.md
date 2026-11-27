@@ -338,20 +338,24 @@ with a Postgres or ClickHouse store, use `coding.sh export` or the database's ow
 
 ## `coding.sh export`
 
-Streams sessions, events or labels as JSONL (the default) or CSV.
+Streams sessions, events, labels or scores as JSONL (the default) or CSV to stdout or `--out <file>`.
 
 ```sh
 coding.sh export sessions --since 30d --format csv > sessions.csv
 coding.sh export events --agent codex --since 7d > events.jsonl
 coding.sh export labels --format csv
+coding.sh export scores --name helpfulness --source judge --format csv --out scores.csv
 ```
 
-The filters `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--where`, `--subagents` and
+The filters `--agent`, `--repo`, `--since`, `--until`, `--flag`, `--project`, `--where`, `--subagents` and
 `--limit` (the N newest sessions) pick sessions, as they do for `coding.sh sessions` (`--repo` takes
-a path or a repo name); `events` and `labels` export the rows of those
-sessions. With no filter, `export labels` exports every label, including labels on eval cases.
+a path or a repo name); `events`, `labels` and `scores` export the rows of those
+sessions. For `scores`, `--name` and `--source` narrow by score name and source; with no session filter,
+`export scores` exports every matching score, including event, case and run scores, and redacts string
+values and comments with your `[capture]` rules (secrets always on). With no filter, `export labels`
+exports every label, including labels on eval cases.
 
-JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label` in the
+JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label`, `Score` in the
 [trace format](https://coding.sh/docs/trace-format)). CSV has these columns. A text cell that starts
 with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet shows it instead of running it.
 
@@ -360,6 +364,7 @@ with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet shows it instead 
 | `sessions` | id, agent, model, title, started_at, ended_at, duration_ms, repo_root, branch, parent_session_id, project, events, turns, tool_calls, tool_errors, files_changed, input_tokens, output_tokens, cost_usd, flags (space-separated) |
 | `events` | id, session_id, ts, kind, agent, model, tool, ok, duration_ms, turn_id, subagent_id, input_tokens, output_tokens, cost_usd, payload (JSON) |
 | `labels` | id, session_id, case_id, criterion, value, note, by, ts |
+| `scores` | id, target, target_id, session_id, name, data_type, value, source, config_id, judge_version, calibrated, comment, by, ts |
 
 ### Evidence folders
 
