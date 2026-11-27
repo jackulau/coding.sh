@@ -32,7 +32,7 @@ export const STOP_AFTER_INFRA_FLAG: FlagSpec = {
   default: "5",
 };
 
-export const TRIAL_TIMEOUT_FLAG: FlagSpec = { name: "trial-timeout", type: "number", value: "<SEC>", desc: "Time limit per trial, retries included; a trial over it fails" };
+export const TRIAL_TIMEOUT_FLAG: FlagSpec = { name: "trial-timeout", type: "number", value: "<SEC>", desc: "Time limit for each agent call, task run or workflow run; each retry and repair round gets it again, and a run over it is not retried" };
 
 /** What a durable command adds to its flags. */
 export function durableFlags(what?: string, o: { timeout?: boolean } = {}): FlagSpec[] {

@@ -357,6 +357,119 @@ removes it) is applied after setup instead, as an agent's run sees it.
 [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) walks through a full set of hand-written
 tasks, from a stub CLI to the compare report.
 
+#### Proof tasks
+
+A task can grade proofs the way it grades code: the verifier runs the proof checker, such as
+`coqc`, `lake build`, `dafny verify` or `cargo verus`. It must also fail when the agent changes the
+statements it proves, or leaves a proof unfinished in a way the checker accepts. This Lean task
+does both:
+
+```
+tasks/prove-add-comm/
+  task.json          {"name": "prove-add-comm", "tags": ["proofs"],
+                      "verifier": {"command": "sh verify.sh", "timeoutMs": 3600000},
+                      "meta": {"testGlobs": ["Spec.lean", "lakefile.lean", "lean-toolchain"]}}
+  instruction.md     Prove each theorem in Proofs.lean. Keep its name. Do not change Spec.lean.
+  repo/              Spec.lean, Proofs.lean (every proof is sorry), lakefile.lean, lean-toolchain
+  tests/verify.sh    the verifier, below
+  tests/spec.sha256  the hashes of Spec.lean, lakefile.lean and lean-toolchain
+  tests/Check.lean   ties each proof to its statement and prints the axioms it uses
+  reference.patch    a correct proof, for eval validate
+  near-misses/edits-spec.patch   a run that weakens a statement in Spec.lean
+```
+
+`Spec.lean` holds each statement as a definition, such as `def AddComm : Prop := forall a b : Nat,
+a + b = b + a`. `Proofs.lean` imports it and starts as `theorem add_comm' : AddComm := by sorry`.
+The hidden `Check.lean`:
+
+```lean
+import Proofs
+
+example : AddComm := add_comm'
+#print axioms add_comm'
+```
+
+The verifier, `tests/verify.sh`:
+
+```sh
+sha256sum -c spec.sha256 || exit 1
+lake build || exit 1
+lake env lean Check.lean > axioms.txt || exit 1
+cat axioms.txt
+if grep -q sorryAx axioms.txt; then echo "a proof uses sorry"; exit 1; fi
+```
+
+Make the hash file from inside `repo/`, and again whenever the spec changes on purpose:
+`sha256sum Spec.lean lakefile.lean lean-toolchain > ../tests/spec.sha256`. Where `sha256sum` is
+missing, `shasum -a 256` makes and checks the same file.
+
+Each check stops a different way to pass without a proof:
+
+- The hash check fails a run that edited a statement, the build file or the toolchain: a build file
+  can pass options to the checker, and `lean-toolchain` picks the checker's version. Pin
+  `lake-manifest.json` too when there are dependencies.
+- The `example` line fails a proof whose theorem no longer has the pinned statement. Without it,
+  `theorem add_comm' : True := trivial` would pass.
+- Lean reports `sorry` as a warning, so `lake build` passes with one left in, but `#print axioms`
+  lists `sorryAx`. It also lists axioms the agent declared: to refuse them, allow only `propext`,
+  `Classical.choice` and `Quot.sound`.
+
+In Rocq, `Print Assumptions` does the same job: it prints `Closed under the global context` when a
+proof assumes nothing, and otherwise lists the axioms it uses, admitted lemmas included. For another
+checker, fail on its own report of what a proof assumes, where it has one.
+
+`meta.testGlobs` adds the pinned files to compare's tamper check of the agent's diff. An edit to one
+of them is flagged and counts in the `tamper rate` row, and a [repair round](#repair-rounds) that
+makes one ends the loop. The hash check is what fails the run; the flag shows the agent tried.
+Leave the proof files out, since the agent is meant to edit them.
+
+`eval validate` then checks the verifier: the start tree, with every proof `sorry`, must fail,
+`reference.patch` must pass, and `edits-spec.patch` must fail. It notes that it found no impossible
+variant, since the hidden files hold no test assertion to flip.
+
+Proof checks can be slow. The verifier gets 10 minutes unless `verifier.timeoutMs` sets another
+limit, as in the example. Each agent call gets 30 minutes unless `compare --trial-timeout <SEC>`
+sets another limit, and each [repair round](#repair-rounds) gets the limit again.
+
+Keep `.lake` in `repo/.gitignore`. Under [verifier isolation](#verifier-isolation), the verifier
+gets the start tree as setup left it, ignored files included. It adds the agent's changes to files
+git tracks or would track, except the ones isolation drops, such as changes to a Makefile or to a
+file the verifier command runs. So it sees the build output setup made, never build output the
+agent left behind.
+
+In an `exp run` dataset whose output is the proof itself, a `command` grader (see [Grader
+fields](#grader-fields)) can do the same: write the output next to its own copy of the statements,
+then run the checker.
+
+#### Attempts, cost and reuse
+
+Anthropic's [formal verification work](https://www.anthropic.com/research/formal-verification)
+compared models with 3 attempts per task at a 5M-token budget, and audited patches for reward
+hacking. Agents that could copy each other's proofs in a shared workspace needed 17% fewer tokens
+than agents working alone. Each part maps onto what coding.sh already has:
+
+- **Attempts.** `compare --k 3` runs each task 3 times per arm, and the report adds `pass@3`,
+  `pass^3` and `flaky tasks` (see [Efficiency, reliability and tasks
+  needed](#efficiency-reliability-and-tasks-needed)).
+- **Cost per proof.** `cost / solved` and `tokens / solved` divide each arm's agent cost and tokens
+  by its passing runs. Compare does not cap tokens: `--trial-timeout` caps each agent call's time,
+  and `--max-cost` the whole comparison's spend.
+- **One attempt's agents.** Each run tags its sessions with its run id, so `coding.sh tree <run id>
+  --run` shows every agent and subagent of one attempt, with each one's cost, tokens and time, and
+  the totals.
+- **Shared work.** Subagents in one attempt share its work tree, so they can reuse each other's
+  lemmas. Compare a bundle that points them at a shared lemma file with one that does not, on
+  `tokens / solved`.
+- **Cost by subagent.** `coding.sh usage --by subagent` splits the cost of child sessions by
+  subagent type (see [Track cost](../how-to/track-cost.md#cost-by-mcp-server-skill-or-subagent)).
+- **Reuse across tasks.** `compare --sequential --carry <path>` carries that path of the agent's
+  home from each task to the next, so a lemma library kept there carries over. The work tree is not
+  carried (see [Sequential runs](#sequential-runs)).
+- **Reward hacking.** `coding.sh sessions --where 'run:run_* flag:test-tamper'` lists trial
+  sessions that changed a test or statement to pass a failing check, passed one with a flag such
+  as `--no-verify`, or kept an escape hatch they added, such as `sorry`.
+- **Patch audits.** [Witness audits](#witness-audits) replay more checks on passing runs.
+
 ## Datasets and experiments
 
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
@@ -1038,7 +1151,9 @@ rounds as a run that was never interrupted.
   `compare`, `refine test|run --suite`, `eval run`, `exp run|ab|aa|sweep|matrix|replay` and
   `toolevals run` take both flags; a refine round lost this way writes no verdict and stops the
   climb (`"stopped": "infra"`).
-- `--trial-timeout <SEC>` caps each trial, retries included. A trial over it fails.
+- `--trial-timeout <SEC>` limits each agent call or task run. Each retry and repair round gets it
+  again. A run over it is not retried. A case-trial over it fails. A task suite's verifier still
+  grades the partial work.
 - `exp run` also stores the experiment so far, at most once a second, while it runs. A crash or a
   kill then leaves a partial record: `exp list` marks it `(partial)` and `exp show` says how many
   case runs it holds. `exp run … --resume <EXPERIMENT>` continues it when no job has that id: the
@@ -2331,11 +2446,12 @@ These changes are dropped, and the start's version is used instead:
   (`symlink`), and anything that is not a file, link or directory (`special`).
 
 A file the verifier only reads, such as `out.txt` in `cat out.txt`, is the agent's deliverable and
-is kept. Files git ignores never reach the verifier. Each run records what was dropped in
-`isolation` (`carried`, and `stripped` with each path, why and whether it was an add, edit or
-delete); when any run dropped something, the report adds a note. A task can allow paths with
-`meta.verifierAllow` (globs) or turn isolation off with `meta.verifierIsolation = "off"`.
-`compare --no-isolation` grades the agent's own tree, as before.
+is kept. Files git ignores reach the verifier only as setup left them.
+
+Each run records what was dropped in `isolation` (`carried`, and `stripped` with each path, why and
+whether it was an add, edit or delete); when any run dropped something, the report adds a note. A
+task can allow paths with `meta.verifierAllow` (globs) or turn isolation off with
+`meta.verifierIsolation = "off"`. `compare --no-isolation` grades the agent's own tree, as before.
 
 ### Efficiency, reliability and tasks needed
 
