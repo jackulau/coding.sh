@@ -20,6 +20,7 @@ import { plateau, plateauLine, type PlateauResult } from "../../experiments/plat
 import { signedPct } from "../../experiments/text.ts";
 import { outcomesByCase } from "../../experiments/turnover.ts";
 import { providerFromSpec } from "../../graders/index.ts";
+import { ProviderError } from "../../judge/providers.ts";
 import { runCritics, type CriticCheck } from "../../refine/critics.ts";
 import { decideRound, type RoundDecision } from "../../refine/decide.ts";
 import { flagFindings, type Finding } from "../../refine/findings.ts";
@@ -55,7 +56,7 @@ import { positiveInt, UsageError } from "../args.ts";
 import { sh } from "../../runner/exec.ts";
 import { gateFlags, list, num, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
-import { infraStopNote } from "../jobs.ts";
+import { infraStopNote, trialTimeout } from "../jobs.ts";
 import { cliCommand, envLine } from "../next-steps.ts";
 import { protectOptions, protectOverrides } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
@@ -103,6 +104,7 @@ export interface Env {
   protect: { protect: string[]; autoProtect: boolean };
   allow: string[];
   maxGuard: number;
+  timeoutMs?: number;
 }
 
 export interface Candidate {
@@ -130,7 +132,8 @@ export async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
   const { files: _f, ...protect } = protectOptions(c);
   const maxGuard = c.flags["max-guard"] === undefined ? 24 : Number(c.flags["max-guard"]);
   if (!(Number.isInteger(maxGuard) && maxGuard >= 0)) throw new UsageError(`--max-guard must be a whole number of at least 0, got ${String(c.flags["max-guard"])}`, { reason: "invalid_argument" });
-  return {
+  const timeoutMs = trialTimeout(c);
+  const env: Env = {
     c,
     ctx,
     store: new FileEvalStore({ env: c.env, index: ctx.index }),
@@ -143,6 +146,8 @@ export async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
     allow: protectOverrides(c.flags["allow-protected-edit"]),
     maxGuard,
   };
+  if (timeoutMs !== undefined) env.timeoutMs = timeoutMs;
+  return env;
 }
 
 export const baseArm = (root: string): Arm => ({ label: "current files", files: harnessFilesIn(root), watch: [] });
@@ -549,22 +554,38 @@ async function proposalInput(e: Env, base: Arm) {
   return { findings, target, prompt };
 }
 
+export const DEFAULT_PROPOSER_TIMEOUT_MS = 600_000;
+
+/** Plain-English limit for a timeout error: "10 minute", "1 minute", "30 second", "1 second". */
+export function timeoutLimitText(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s >= 60 && s % 60 === 0) return `${s / 60} minute`;
+  return `${s} second`;
+}
+
 /**
  * The proposer's reply: from --proposer-command (the system and user prompt on
  * stdin, the reply on stdout), else from the provider's model.
  */
 export async function proposerReply(e: Env, spend: Spend, req: { system: string; user: string; schema: Record<string, unknown> }): Promise<string> {
+  const timeoutMs = e.timeoutMs ?? trialTimeout(e.c);
   const cmd = str(e.c.flags["proposer-command"]);
   if (cmd) {
-    const r = await sh(cmd, { cwd: e.root, env: e.c.env, stdin: `${req.system}\n\n${req.user}\n`, timeoutMs: 600_000, tailBytes: 1 << 20, signal: e.c.signal });
+    const limitMs = timeoutMs ?? DEFAULT_PROPOSER_TIMEOUT_MS;
+    const r = await sh(cmd, { cwd: e.root, env: e.c.env, stdin: `${req.system}\n\n${req.user}\n`, timeoutMs: limitMs, tailBytes: 1 << 20, signal: e.c.signal });
     if (r.exitCode !== 0) {
-      throw new CliError(`--proposer-command exited ${r.timedOut ? "after the 10 minute limit" : String(r.exitCode)}: ${r.stderrTail.trim().slice(-400) || "no output on stderr"}`, { reason: "proposer_failed" });
+      throw new CliError(`--proposer-command exited ${r.timedOut ? `after the ${timeoutLimitText(limitMs)} limit` : String(r.exitCode)}: ${r.stderrTail.trim().slice(-400) || "no output on stderr"}`, { reason: "proposer_failed" });
     }
     return r.stdoutTail;
   }
   const spec = { ...judgeSpec(e.o, baseURLFor(e.o, e.c.env)), model: proposerModel(e), name: "refine-proposer" };
-  const provider = metered(providerFromSpec(spec, { env: e.c.env }), spend, () => {});
+  const proposerDeps: { env: NodeJS.ProcessEnv; timeoutMs?: number } = { env: e.c.env };
+  if (timeoutMs !== undefined) proposerDeps.timeoutMs = timeoutMs;
+  const provider = metered(providerFromSpec(spec, proposerDeps), spend, () => {});
   const res = await provider.complete({ system: req.system, user: req.user, jsonSchema: req.schema, signal: e.c.signal }).catch((err: unknown) => {
+    if (timeoutMs !== undefined && err instanceof ProviderError && err.message.includes("(trial timeout)")) {
+      throw new CliError(`Proposer timed out after the ${timeoutLimitText(timeoutMs)} limit`, { reason: "proposer_failed" });
+    }
     // The provider's message says "to call the judge"; here it is the proposer.
     const key = /set (\w+) to call the judge/.exec(err instanceof Error ? err.message : "")?.[1];
     if (!key) throw err;

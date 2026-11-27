@@ -3036,7 +3036,7 @@ It replies with edits: `{"find", "replace"}`, where `find` occurs exactly once, 
 a higher level. The protected-line check and the critics still run on the result, so a cut
 that removes or weakens a safety line is rejected before any agent runs. `--proposer-command 'claude
 -p'` writes the edit with a command instead of the proposer model: it gets the prompt on stdin and
-prints the JSON reply.
+prints the JSON reply (10 minute limit by default, or `--trial-timeout`).
 
 **Skills.** `--target .claude/skills/<name>` edits that skill's `SKILL.md`. When `evals/<name>`
 exists and `--suite` is not given, it is the suite.
@@ -3183,7 +3183,8 @@ left as it is. With `--dry-run` nothing is written to DIR.
 directory with a copy of the corpus and an isolated config, so your own agent config is untouched.
 Its brief tells it to measure the corpus with code it writes, then write `out/SKILL.md` with a
 frontmatter name and description and a number behind each rule. `--n` draws run one after another,
-each in its own directory, until `--max-cost` (default $5).
+each in its own directory, until `--max-cost` (default $5), with a 20 minute limit per draw or
+`--trial-timeout`.
 
 **The checks.** A skill over 160 lines or 10 KB is rejected, and so is one the harmless or duplicate
 critic rejects. Each skill is stored as a candidate at `.claude/skills/<name>/SKILL.md` (or

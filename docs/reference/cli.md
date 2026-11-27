@@ -3811,6 +3811,7 @@ coding.sh refine propose [options]
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
 | `--target <PATH>` |  | Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else the repo's Claude Code or Gemini instructions file) |
 | `--mined <FILE>` |  | Also show the proposer the patterns in this file (the output of refine mine --json) |
+| `--trial-timeout <SEC>` |  | Time limit for each agent call, task run or workflow run; each retry and repair round gets it again, and a run over it is not retried. |
 | `--dry-run` |  | Print the findings and the prompt; make no model call. |
 
 ```sh
@@ -4073,6 +4074,7 @@ coding.sh refine recheck <CANDIDATE> [options]
 | `--canary-delta <SHARE>` | `10pp` | How far the pass rate's lower bound may fall before it counts as a regression. |
 | `--max-cost <USD>` |  | Stop starting runs once agent spend reaches this; the recheck is then inconclusive. |
 | `--concurrency <N>` | `4` | Agent sessions at once. |
+| `--trial-timeout <SEC>` |  | Time limit for each agent call, task run or workflow run; each retry and repair round gets it again, and a run over it is not retried. |
 | `--dry-run` |  | Print what would run; start no agent. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
@@ -4102,6 +4104,7 @@ coding.sh refine distill [options]
 | `--min-episodes <N>` | `20` | Refuse a corpus with fewer episodes. |
 | `--min-failures <N>` | `5` | Refuse a corpus with fewer failing or flagged episodes. |
 | `--keep-corpus <DIR>` |  | Write the corpus here and keep it: an empty or new directory, or one that holds only an earlier corpus, which is replaced. Nothing is written there with --dry-run. |
+| `--trial-timeout <SEC>` |  | Time limit for each agent call, task run or workflow run; each retry and repair round gets it again, and a run over it is not retried. |
 | `--dry-run` |  | Write the corpus to a temp dir, print its counts and the plan; start no agent. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
@@ -4130,6 +4133,7 @@ coding.sh refine diagnose [options]
 | `--provider <PROVIDER>` |  | anthropic, openai, gemini, claude-code or codex (default: anthropic or openai, whichever has its key set; with neither, a $0 plan) |
 | `--model <MODEL>` |  | The diagnosing model (default: the provider's current one) |
 | `--concurrency <N>` | `4` | Sessions diagnosed at once. |
+| `--trial-timeout <SEC>` |  | Time limit for each agent call, task run or workflow run; each retry and repair round gets it again, and a run over it is not retried. |
 | `--no-split` |  | One Signal per component and type, with no grouping call. |
 | `--include-runs` |  | Also diagnose eval-run sessions. |
 | `--dry-run` |  | Print the plan and make no call. |

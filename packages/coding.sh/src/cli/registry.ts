@@ -2162,7 +2162,7 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "propose",
         summary: "Ask a model for lines that address your sessions' most severe flags; stores them as a candidate",
-        flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, PROPOSER_COMMAND, REFINE_TARGET, REFINE_MINED, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
+        flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, PROPOSER_COMMAND, REFINE_TARGET, REFINE_MINED, TRIAL_TIMEOUT_FLAG, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
         examples: ["coding.sh refine propose", "coding.sh refine propose --target AGENTS.md --dry-run"],
       },
       {
@@ -2261,6 +2261,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "canary-delta", type: "string", value: "<SHARE>", desc: "How far the pass rate's lower bound may fall before it counts as a regression", default: "10pp" },
           { name: "max-cost", type: "number", value: "<USD>", desc: "Stop starting runs once agent spend reaches this; the recheck is then inconclusive" },
           { name: "concurrency", type: "number", value: "<N>", desc: "Agent sessions at once", default: "4" },
+          TRIAL_TIMEOUT_FLAG,
           { name: "dry-run", type: "boolean", desc: "Print what would run; start no agent" },
           YES,
         ],
@@ -2282,6 +2283,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "min-episodes", type: "number", value: "<N>", desc: "Refuse a corpus with fewer episodes", default: "20" },
           { name: "min-failures", type: "number", value: "<N>", desc: "Refuse a corpus with fewer failing or flagged episodes", default: "5" },
           { name: "keep-corpus", type: "string", value: "<DIR>", desc: "Write the corpus here and keep it: an empty or new directory, or one that holds only an earlier corpus, which is replaced. Nothing is written there with --dry-run" },
+          TRIAL_TIMEOUT_FLAG,
           { name: "dry-run", type: "boolean", desc: "Write the corpus to a temp dir, print its counts and the plan; start no agent" },
           YES,
         ],
@@ -2300,6 +2302,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "provider", type: "string", value: "<PROVIDER>", desc: "anthropic, openai, gemini, claude-code or codex (default: anthropic or openai, whichever has its key set; with neither, a $0 plan)" },
           { name: "model", type: "string", value: "<MODEL>", desc: "The diagnosing model (default: the provider's current one)" },
           { name: "concurrency", type: "number", value: "<N>", desc: "Sessions diagnosed at once", default: "4" },
+          TRIAL_TIMEOUT_FLAG,
           { name: "no-split", type: "boolean", desc: "One Signal per component and type, with no grouping call" },
           { name: "include-runs", type: "boolean", desc: "Also diagnose eval-run sessions" },
           { name: "dry-run", type: "boolean", desc: "Print the plan and make no call" },
