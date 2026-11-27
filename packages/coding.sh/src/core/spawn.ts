@@ -76,7 +76,7 @@ const META = /([()\][%!^"`<>&|;, *?])/g;
 
 function escapeCmdArg(arg: string, twice: boolean): string {
   // CommandLineToArgvW quoting: double the backslashes before a quote, escape the quote.
-  let s = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1");
+  let s = arg.replace(/(?<!\\)(\\*)"/g, '$1$1\\"').replace(/(?<!\\)(\\*)$/, "$1$1");
   s = `"${s}"`.replace(META, "^$1");
   return twice ? s.replace(META, "^$1") : s;
 }

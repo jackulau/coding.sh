@@ -122,6 +122,13 @@ describe("clickhouse rows → OTLP", () => {
     assert.deepEqual(rs[1]!.resource?.attributes, { "service.name": "other" });
   });
 
+  it("reads an id that is not hex of its length, or is all zero, as unset, as the receiver does", () => {
+    const row: ClickHouseSpanRow = { TimestampNs: "1000", TraceId: "xyz", SpanId: "0".repeat(16), ParentSpanId: "abc", SpanName: "x", ServiceName: "svc", ScopeName: "s", "Links.TraceId": ["cd".repeat(8)], "Links.SpanId": ["02".repeat(8)], "Links.TraceState": [""], "Links.Attributes": [{}] };
+    const s = rowsToResourceSpans([row])[0]!.scopeSpans[0]!.spans[0]!;
+    assert.deepEqual([s.traceId, s.spanId, s.parentSpanId], [undefined, undefined, undefined]);
+    assert.deepEqual(s.links, [{ spanId: "02".repeat(8), attributes: {} }]);
+  });
+
   it("sends every value as a typed parameter and splices only --where", () => {
     const { sql, params } = spansQuery({ since: 1_700_000_000_000, after: { ts: "5", traceId: "t", spanId: "s" }, where: "ServiceName = 'claude-code'", limit: 10 }, "otel_traces", "map");
     assert.match(sql, /FROM \{table:Identifier\}/);

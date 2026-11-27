@@ -42,11 +42,11 @@ import { parseCaseLabels, type VerifierAudit } from "../../judge/verifier.ts";
 import { sortableId } from "../../core/ids.ts";
 import { readTextFile, readTextFileSync } from "../../core/text-file.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
-import type { Job, JobKind } from "../../jobs/store.ts";
+import type { Job, JobKind, JobView } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { checkpointSessions, withSessions } from "../../experiments/checkpoints.ts";
 import { parseWeights, shortWeights, stampedWith, weightsOf, withWeights } from "../../experiments/weights.ts";
-import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
+import { finishJob, infraStopNote, jobJson, kindLabel, openJob, resumeCommand, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, shellQuote, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -937,6 +937,28 @@ async function showTaskRuns(c: CommandContext, index: IndexStore, id: string, ru
   return 0;
 }
 
+/**
+ * A durable run that has stored no experiment yet. `exp run` stores its first record when a trial
+ * finishes; the A/B, A/A, replay, sweep and matrix runs store theirs when their trials are done (a
+ * sweep's race before its held-out cases), so until then the run is only a job. Compare, refine,
+ * bench and workflows runs keep their results in other stores, so they are left out.
+ */
+async function storedNone(store: FileEvalStore, v: JobView): Promise<boolean> {
+  if (v.status === "completed" || !v.header.kind.startsWith("exp ")) return false;
+  for (const id of new Set([v.header.id, ...v.header.refs])) if (await store.getExperiment(id).catch(() => undefined)) return false;
+  return true;
+}
+
+/** What `exp list` and `exp show` say about such a run, with its next step. */
+function storedNoneStep(v: JobView): { text: string; next: [string, string] } {
+  const h = v.header;
+  const p = v.progress;
+  const state = v.status === "running" ? "is still running" : v.status === "incomplete" ? "is incomplete" : "was interrupted";
+  const done = p.done ? `${p.done} of ${p.total} trials finished` : "no trial finished";
+  const next: [string, string] = v.status === "running" ? ["See its progress", `coding.sh exp status ${h.id}`] : ["Continue it", resumeCommand(h)];
+  return { text: `${h.id} (${kindLabel(h)} ${h.name}) ${state} with ${done}, and has stored no experiment yet`, next };
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   if (c.action === "metrics") return runMetricsCmd(c);
@@ -1323,7 +1345,16 @@ export async function run(c: CommandContext): Promise<number> {
           const runs = (await ctx.index.listRuns({ experimentId: ref })).filter((r) => !r.superseded && !r.cancelled);
           if (runs.length) return showTaskRuns(c, ctx.index, ref, runs);
         }
-        if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        if (!e) {
+          // A run that has stored no experiment yet is only a job (by its id, a record id or its name): say where it stands.
+          const jobs = JobStore.forEnv(env);
+          const v = (await jobs.find(ref).catch(() => undefined)) ?? (await jobs.list({ unfinished: true }).catch(() => [])).find((j) => j.header.name === ref && j.header.kind.startsWith("exp "));
+          if (v && (await storedNone(store, v))) {
+            const s = storedNoneStep(v);
+            throw new CliError(s.text, { reason: "not_found", next: [`${s.next[0]}:`, s.next[1]], data: { run: jobJson(v) } });
+          }
+          throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        }
         const verifiers = await verifierAudits(store, e);
         // The sessions that recorded the experiment's weights file as a checkpoint (a weights.checkpoint event).
         const checkpoints = await checkpointSessions(ctx.index, [weightsOf(e)]);
@@ -1343,11 +1374,28 @@ export async function run(c: CommandContext): Promise<number> {
       case "list": {
         const limit = positiveInt(c.flags.limit, "limit") ?? 20;
         const all = await store.listExperiments({ limit });
+        // Runs that have stored no experiment yet, stopped or still going: named after the table.
+        const open: JobView[] = [];
+        for (const v of await JobStore.forEnv(env).list({ unfinished: true })) if (open.length < limit && (await storedNone(store, v))) open.push(v);
         if (out.json) {
           // Each row carries the checkpoint its run recorded (exp run --weights), with the sessions that recorded that file; no key when it recorded none.
           const checkpoints = await checkpointSessions(ctx.index, all.map((e) => weightsOf(e)));
-          out.data({ experiments: all.map((e) => withSessions(stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e)), checkpoints)) });
+          const experiments = all.map((e) => withSessions(stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e)), checkpoints));
+          // `unfinished` holds those runs as `exp status --json` gives them; no key when there are none.
+          out.data(open.length ? { experiments, unfinished: open.map(jobJson) } : { experiments });
           return 0;
+        }
+        const notes = () => {
+          for (const v of open) {
+            const s = storedNoneStep(v);
+            out.note(s.text);
+            out.next(...s.next);
+          }
+          return 0;
+        };
+        if (!all.length && open.length) {
+          out.note("No experiments stored yet");
+          return notes();
         }
         if (!all.length) {
           out.note("No experiments");
@@ -1363,7 +1411,7 @@ export async function run(c: CommandContext): Promise<number> {
           rows.forEach((r, i) => r.push(stamps[i] ? shortWeights(stamps[i]) : ""));
         }
         out.table(head, rows);
-        return 0;
+        return notes();
       }
     }
     throw new UsageError(`Unknown exp command ${c.action}`);

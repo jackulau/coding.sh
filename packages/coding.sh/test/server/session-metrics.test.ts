@@ -136,20 +136,21 @@ describe("serve session metrics", () => {
 describe("ServeMetrics.observeSessions", () => {
   const s = (id: string, over: Partial<Session> = {}): Session => ({ id, agent: "codex", startedAt: 1, endedAt: 2, flags: [], stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.5 } }, ...over }) as Session;
 
-  it("labels failed sessions and their failure flags, skips tags, and counts subagent cost only", () => {
+  it("labels failed sessions and their failure flags, skips tags and notes, and counts subagent cost only", () => {
     const m = new ServeMetrics();
     try {
       m.observeSessions([
         s("a", { model: "gpt-5", flags: ["repeated-tool-failure", "gateway:vercel"] }),
         s("a", { model: "gpt-5", flags: ["repeated-tool-failure"] }),
         s("b", { flags: ["model:switch"] }),
+        s("c", { model: "gpt-5-mini", flags: ["compaction", "resumed", "step-retried"] }),
         s("child", { parent: { sessionId: "a" }, flags: ["tests-failed"] }),
       ]);
       const text = m.render();
       assert.match(text, /^coding_sh_sessions_total\{agent="codex",outcome="failed"\} 1$/m);
-      assert.match(text, /^coding_sh_sessions_total\{agent="codex",outcome="ok"\} 1$/m);
+      assert.match(text, /^coding_sh_sessions_total\{agent="codex",outcome="ok"\} 2$/m);
       assert.match(text, /^coding_sh_session_flags_total\{flag="repeated-tool-failure"\} 1$/m);
-      assert.doesNotMatch(text, /flag="gateway:vercel"|flag="model:switch"|flag="tests-failed"/);
+      assert.doesNotMatch(text, /flag="gateway:vercel"|flag="model:switch"|flag="tests-failed"|flag="compaction"|flag="resumed"|flag="step-retried"/);
       assert.match(text, /^coding_sh_session_cost_usd_total\{agent="codex",model="gpt-5"\} 0\.5$/m);
       assert.match(text, /^coding_sh_session_cost_usd_total\{agent="codex",model="unknown"\} 1$/m);
     } finally {

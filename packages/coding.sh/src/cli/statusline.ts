@@ -19,7 +19,7 @@ function rank(flag: string): number {
  * beats a risk beats an inefficiency.
  */
 export function worstFailureFlag(flags: readonly string[]): string | undefined {
-  const real = failureFlags(flags).filter((f) => FLAG_DIAGNOSIS[f] !== "context-only");
+  const real = failureFlags(flags);
   if (real.length === 0) return undefined;
   return [...real].sort((a, b) => rank(a) - rank(b))[0];
 }

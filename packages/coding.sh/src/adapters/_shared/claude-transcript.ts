@@ -29,6 +29,7 @@
 // stamped at its first block. The full transcript's copy, with the same id, has them.
 import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
 import { billableUsage, promptTokens, tierValue } from "../../core/pricing.ts";
+import { dateMs } from "../../core/dates.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
@@ -188,7 +189,14 @@ function isForkCall(e: unknown, toolUseId: string): e is Record<string, unknown>
   return isObj(e) && e.type === "assistant" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_use" && b.id === toolUseId);
 }
 
-const tag = (text: string, name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() || undefined;
+/** The text between the first `<name>` and the `</name>` after it, trimmed. Each is found with one search, so the text is read in linear time. */
+function tag(text: string, name: string): string | undefined {
+  const open = text.indexOf(`<${name}>`);
+  if (open < 0) return undefined;
+  const start = open + name.length + 2;
+  const close = text.indexOf(`</${name}>`, start);
+  return close < 0 ? undefined : text.slice(start, close).trim() || undefined;
+}
 
 interface PendingCommand {
   ts: number;
@@ -481,12 +489,15 @@ export class ClaudeTranscriptConverter {
 
   /**
    * Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, `prompts`, or `always`).
-   * An entry keyed like the turn that just ended starts none: the stop prompt carries the promptId of the turn the
-   * person stopped, and ending that turn again would give a second turn.end its id.
+   * An entry keyed like the current turn (the promptId of the prompt it is for) starts none: a turn reopened under
+   * the same id would end twice under one event id. The stop prompt (the entry opened with `always`) carries the
+   * promptId of the turn the person stopped and ends that turn at the stop; any other such entry adds to the turn,
+   * which ends later.
    */
   private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>, always = false): Promise<void> {
-    await this.endTurn(ts, lineNo);
     const turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
+    if (turnId === this.turnId && !always) await this.flushCall();
+    else await this.endTurn(ts, lineNo);
     if (turnId !== this.turnId) {
       this.turnId = turnId;
       this.turnStartTs = ts;
@@ -815,8 +826,8 @@ function apiError(e: Record<string, unknown>): Record<string, unknown> {
     errorType,
     errorClass: errorClass(status, errorType, network),
     rateLimitType: str(rl.rateLimitType),
-    // Seconds since the epoch on the wire.
-    resetsAt: resets !== undefined ? (resets < 1e12 ? resets * 1000 : resets) : undefined,
+    // Seconds since the epoch on the wire; a time out of the Date range is left out.
+    resetsAt: resets !== undefined ? dateMs(resets < 1e12 ? resets * 1000 : resets) : undefined,
     retryAfterMs: num(e.retryInMs),
     retryAttempt: num(e.retryAttempt),
     maxRetries: num(e.maxRetries),

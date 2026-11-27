@@ -269,6 +269,15 @@ become events and sessions: one session per trace, or per conversation when span
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
+A log record joins a session in this order: the one a conversation id on the record names, the one
+its trace's spans went to, the one a conversation id on its resource names, then the one its trace
+id names. A record with none of these goes to `otel-logs-<agent>-<YYYY-MM-DD>`, one session per
+agent and UTC day.
+
+`<agent>` is a known agent such as `claude-code`, else a name taken from `gen_ai.main_agent.name` or
+`service.name`, else `otel`. `coding.sh sessions` lists such a session only with `--empty` when it
+holds no turn, tool call or model call.
+
 A model call's time to first token (`ttftMs`) comes from the first of these on its span:
 
 - `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.
@@ -319,6 +328,10 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 ```json
 {"partialSuccess":{"rejectedSpans":"1","errorMessage":"span \"broken\" has no valid traceId/spanId"}}
 ```
+
+A span is rejected when its trace id or span id is missing, all zero, or the wrong length: a trace
+id is 16 bytes and a span id 8, sent as hex or base64 in JSON. A parent span id or a log record's
+id like that is read as not set, and the span or record is kept.
 
 | Status | When | Body (JSON requests) |
 |---|---|---|
@@ -502,7 +515,7 @@ share these errors:
 |---|---|---|
 | 400 | a bad parameter | `{"error":"limit must be between 1 and 500","status":400}` |
 | 401 | no valid read credential | `{"error":"missing or invalid token","status":401}` |
-| 403 | the server binds loopback and the `Host` header is not loopback (DNS-rebinding guard) | `{"error":"forbidden host","status":403}` |
+| 403 | the `Host` header is not a loopback name and not in `serve.allowed_hosts` (DNS-rebinding guard); a public bind with an empty list takes any `Host` | `{"error":"forbidden host: add it to serve.allowed_hosts (CODING_SH_ALLOWED_HOSTS)","status":403}`; `coding.sh ui`, which takes loopback names and the address it binds, sends `{"error":"forbidden host","status":403}` |
 | 404 | unknown route, a session outside the key's project, or a session id with a raw `/` (the error says to send `%2F`) | `{"error":"not found","status":404}` |
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
 
@@ -625,7 +638,7 @@ instruction files, unapproved actions, and tool errors and fold errors.
 | `stats.usage.estimatedCostUsd` | The part of `costUsd` that was estimated (in the example, all of it) |
 | `stats.usage.estimatedCostByTier` | The estimate totalled by `priceTier`. Left out when every call was standard |
 | `stats.usage.estimatedCostByTokenType` | The estimate in USD by token type: `cacheRead`, `cacheWrite` (1-hour writes included), `input` (uncached) and `output`. The parts add up to `estimatedCostUsd`. Left out when there is no estimate, or when an estimated call has no split |
-| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out because an enclosing call or an earlier copy of the same response already counted it |
+| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out of `stats.usage`. `calls` counts the calls nested in another call, whose figures the outer call took, and the copies of a response another call counts. `tokens` and `costUsd` are what was left out, such as the estimate of a call nested in a billed call, or an outer call's cost that a nested call's bill replaced |
 
 Each estimated `llm.call` has `payload.costEstimated: true`. It adds `payload.pricedAs` when a
 sibling model's price was used, and `payload.priceTier` when it was priced at batch, flex, priority,
@@ -635,12 +648,58 @@ gateway-billed cost has no split.
 
 A model call nested in another of the same trace (a framework's span around the provider's call)
 counts once. The outer call keeps its own figures and takes the rest from the calls nested in it. A
-cost a nested call reported, even $0, beats an estimate on the outer call, and so does a cost a
-gateway billed for it.
+cost a nested call reported, even $0, beats an estimate on the outer call.
 
-A call a gateway billed counts at the billed cost, without its nested calls' cost on top. A gateway
-bill linked to two copies of one call, such as the proxy's copy and the agent's own record, counts
-once.
+A gateway's bill for a nested call, at any depth, beats the estimated or reported cost of an outer
+call the gateway did not bill, even when the nested call has no usage of its own. The outer call then
+takes its cost from the calls nested in it.
+
+A call a gateway billed counts at the billed cost, without its nested calls' cost on top, and adds
+the bills of the calls nested in it, except a bill for its own generation. When it carries no usage
+of its own, it counts their tokens. A bill of $0 counts as $0 when the call has a cost of its own or
+calls nested in it.
+
+When a call nested in a billed call carries its generation id, as the response id of a call with
+usage or as a bill's, the bill is that call's, as when a gateway's generation id is on a wrapper and
+on its last step.
+
+Such a bill covers the call that carries its generation and the calls nested in it, and replaces
+the cost of each call between the two, as a bill nested in them would. The other nested calls keep
+their costs.
+
+Two calls that share a response id, directly or through other calls, are copies of one response: one
+counts, and the others are left out with the calls nested in them.
+
+A generation id a gateway billed a call for is one of its response ids, unless a billed call above
+it has that generation. So two calls billed for one generation are copies when no billed call above
+either of them has it.
+
+When one of two calls with one id is nested in the other, at any depth, they are one response seen at
+two levels, as when a gateway's generation id is on a wrapper and on its last step, and neither is a
+copy. Two calls where neither is nested in the other are copies, also when both are nested in a call
+with that id.
+
+Of two copies, the one checked first counts, unless the other ranks higher: a billed call, or one
+with a billed call nested in it at any depth, ranks first, then a call a bill above it covers, then
+a call whose cost such a bill replaces, then any other.
+
+A copy checked later that is nested in neither level of a response seen at two levels is left out,
+whatever its rank.
+
+Calls are checked in time order, but a nested call is checked after the call it is nested in,
+whatever their times, so one left out with a copy makes no later call a copy. Calls that came before
+the call they are nested in wait for it, and are checked right after it, in time order.
+
+A call is not checked for copies when the nearest model call above it that carries usage or a
+gateway bill has usage of its own. It counts within that call as above, or is left out with it, and
+its response id makes no later call a copy.
+
+A billed call with no usage of its own is not checked for copies by its ids, which are often its last
+step's, and makes no other call a copy: the calls nested in it are checked instead. With none, it has
+no tokens, and a gateway bill counts once per generation, as below.
+
+A gateway bill linked to two copies of one call, such as the proxy's copy and the agent's own
+record, counts once.
 
 Token totals (`stats.usage`, `stats.duplicateUsage` and a phase's `tokens` in `/outline`) skip a
 token count below 0 or not a finite number, as the estimate does. So do `stats.cacheBreaks`,
@@ -1554,7 +1613,7 @@ latency.
 
 | Field | Meaning |
 |---|---|
-| `failures` | Sessions with a flag that has no colon |
+| `failures` | Sessions with a failure flag: a flag with no colon, other than `compaction`, `step-retried` and `resumed` |
 | `failureRate` | Failures over sessions |
 | `toolErrorRate` | Tool errors over tool calls |
 | `llmP95Ms` | The 95th percentile (nearest rank) of the sessions' own p95 model-call time. `null` in a bucket with no such session |

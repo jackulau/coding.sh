@@ -34,9 +34,44 @@ export interface Knobs {
  * Each verify file's knobs on a nightly run, by file name without `.test.ts`. Every file in test/verify
  * has a row, `{}` when it reads no knob. The times are from one desk machine, one file at a time, and
  * are rough. A file with knobs and without a time takes under half a minute. Every file together: about
- * 17 minutes.
+ * 33 minutes.
  */
 export const NIGHTLY: Readonly<Record<string, Knobs>> = {
+  // At bound 2, every cut of every spool fixture payload, each also closed, and every payload with one byte
+  // deleted: 81,348 cuts, 48,002 closed cuts and 80,999 deletions. Then 200 seeded cases per fixture file.
+  // About 35 seconds.
+  "adapter-spool": { bound: 2, runs: 200 },
+  // At bound 2, every record of every transcript cut at k = 1, n/2 rounded down and up, and n-1, and closed
+  // at those cuts and at each top-level member's end, each distinct closed line once; then 40 seeded cases
+  // per transcript: 410 cuts, 1,708 closed cuts and 80 seeded cases over 118 records.
+  "adapter-transcript-1": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 320 cuts, 1,283 closed cuts and 200 seeded cases over 92
+  // records.
+  "adapter-transcript-2": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 409 cuts, 1,487 closed cuts and 160 seeded cases over 118
+  // records. About 35 seconds.
+  "adapter-transcript-3": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 418 cuts, 1,722 closed cuts and 200 seeded cases over 122
+  // records. About 30 seconds.
+  "adapter-transcript-4": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 467 cuts, 1,198 closed cuts and 240 seeded cases over 134
+  // records.
+  "adapter-transcript-5": { bound: 2 },
+  // As adapter-transcript-1, over its own homes: 729 cuts, 1,500 closed cuts and 680 seeded cases over 212
+  // records.
+  "adapter-transcript-6": { bound: 2 },
+  // At bound 1, every cut of every JSON file, and each distinct text those cuts close into: 1,674 cuts and
+  // 530 closed cuts over 7 files.
+  "adapter-transcript-json-1": { bound: 1 },
+  // As adapter-transcript-json-1, over its own homes: 3,075 cuts and 869 closed cuts over 11 files.
+  "adapter-transcript-json-2": { bound: 1 },
+  // At bound 2, the first two changes of each name (_values.ts): 8,964 changes in 506 records of 24 files.
+  // About 1 minute.
+  "adapter-values-1": { bound: 2 },
+  // As adapter-values-1, over its own homes: 8,152 changes in 144 records of 8 files. About 1.5 minutes.
+  "adapter-values-2": { bound: 2 },
+  // As adapter-values-1, over its own homes: 13,254 changes in 164 records of 25 files. About 35 seconds.
+  "adapter-values-3": { bound: 2 },
   // Each case spools real hook lines and runs the real ingest on them: about 2.5 minutes. 1000 runs take
   // about 9.
   "capture-code": { runs: 200 },
@@ -44,9 +79,29 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   // at bounds 3 and 6. About 20 seconds.
   "capture-model": { bound: 2 },
   "cost-prop": { runs: 10000 },
+  // Every prefix of 10,000 seeded JSON values.
+  cut: { runs: 10000 },
   // About 35 seconds.
   "fold-prop": { runs: 5000 },
+  // 1000 seeded cases for each of its two properties, then the fixed cases.
+  "hook-entry": { runs: 1000 },
   "hook-imports": {},
+  // At bound 2, every payload cut to its first k bytes for every k, and with each of its bytes deleted in
+  // turn: 49,071 calls. About 50 seconds.
+  "hook-truncate-1": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 49,871 calls. About 50 seconds.
+  "hook-truncate-2": { bound: 2 },
+  // As hook-truncate-1, over its own fixtures: 51,525 calls. About 35 seconds.
+  "hook-truncate-3": { bound: 2 },
+  // At bound 1, the fresh fragment at every cut on the day after the file's, and the other cases at five
+  // cuts and at three seeded (cut, day) pairs per fixture: 4,929 fresh fragments and 40 cases.
+  "ingest-torn-1": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 4,874 fresh fragments and 40 cases.
+  "ingest-torn-2": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 3,597 fresh fragments and 72 cases.
+  "ingest-torn-3": { bound: 1 },
+  // As ingest-torn-1, over its own fixtures: 3,592 fresh fragments and 72 cases.
+  "ingest-torn-4": { bound: 1 },
   "lock-code": {},
   // About 1 minute and 3 GB of heap.
   "lock-model": { bound: 2 },
@@ -96,6 +151,20 @@ export const NIGHTLY: Readonly<Record<string, Knobs>> = {
   "shell-models": {},
   // About 1 minute.
   "short-id-prop": { runs: 10000 },
+  // At bound 2, every case, each also aged and read in every chunk size, then 14 seeded ones: 216 cases.
+  // About 50 seconds.
+  "spool-glued-1": { bound: 2 },
+  // As spool-glued-1, over its own fixtures: 216 cases and 14 seeded ones. About 1 minute.
+  "spool-glued-2": { bound: 2 },
+  // As spool-glued-1, over its own fixtures: 240 cases and 14 seeded ones. About 1 minute.
+  "spool-glued-3": { bound: 2 },
+  // At bound 2, the segments at every cut in every chunk size and the torn file at every cut: 4,120 cuts.
+  // About 1 minute.
+  "spool-torn-1": { bound: 2 },
+  // As spool-torn-1, over its own fixtures: 4,313 cuts. About 1 minute.
+  "spool-torn-2": { bound: 2 },
+  // As spool-torn-1, over its own fixtures: 8,559 cuts. About 1 minute.
+  "spool-torn-3": { bound: 2 },
   // About 1.5 minutes and 2 GB of heap.
   "work-model": { bound: 1 },
   "work-snooze": {},

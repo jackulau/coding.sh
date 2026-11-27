@@ -1,7 +1,8 @@
 # Flags and derails
 
 A flag is a failure pattern coding.sh found in a session. A derail is the step where a long run went
-wrong. A name with a colon, such as `skill:pdf`, is a tag and not a failure.
+wrong. A name with a colon, such as `skill:pdf`, is a tag and not a failure. `compaction`,
+`step-retried` and `resumed` are notes, not failures.
 
 ## Flags
 
@@ -10,14 +11,14 @@ wrong. A name with a colon, such as `skill:pdf`, is a tag and not a failure.
 | `premature-completion` | Stopped while the last test run was failing, and the agent's last words did not say so. |
 | `repeated-tool-failure` | Had the same tool fail three times in a row with similar input. |
 | `no-verification` | Changed files, but no test, type check, lint or build ran. |
-| `compaction` | Had its context compacted. |
-| `test-tamper` | Edited a test or test config to hide failures. |
+| `compaction` | Had its context compacted. A note, not a failure. |
+| `test-tamper` | Edited a test, test config, theorem statement or spec to hide failures, added a proof escape hatch such as `sorry` and left it in, or passed a failed proof check with a flag that skips it. |
 | `duplicate-fetch` | Repeated three or more read-only calls in one context with the same result and no edit in between. |
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
 | `refusal` | Had a model call stop on a refusal. |
 | `text-tool-call` | Had the model write a tool call out as text, so it never ran. |
 | `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve. |
-| `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. |
+| `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
 
 A session's `flags` also lists the name of each derail below.
 

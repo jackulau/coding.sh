@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
+import { dateMs } from "../core/dates.ts";
 import { T3_AGENT, T3_ORIGINATOR } from "../spool/host.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -204,7 +205,7 @@ export function codexUsage(u: unknown): Usage | undefined {
 export interface RolloutOpts {
   /** "full" (backfill) or "assistant" (Stop window: assistant messages + llm.call only). */
   mode: "full" | "assistant";
-  /** Override the session id (default: session_meta.id, the thread id). */
+  /** Override the session id (default: session_meta.id, the thread id; without one, the thread id in the file name). */
   sessionId?: string;
   /** Only records of this turn (Stop window). */
   turnId?: string;
@@ -239,12 +240,13 @@ const LATE_WRITE_MS = 1_000;
  * tool output's or inter-agent message's `create_time` (seconds), an
  * item_completed event's `completed_at_ms`. Other items' create_time is when
  * streaming began, not when the line was due, so it says nothing about lateness.
+ * A time out of the Date range says nothing either.
  */
 function ownTime(type: unknown, p: Record<string, unknown>): number | undefined {
-  if (type === "event_msg") return p.type === "item_completed" ? num(p.completed_at_ms) : undefined;
+  if (type === "event_msg") return p.type === "item_completed" ? dateMs(num(p.completed_at_ms)) : undefined;
   if (type !== "response_item" || !(str(p.type)?.endsWith("_output") || p.type === "agent_message")) return undefined;
   const s = num(obj(p.internal_chat_message_metadata_passthrough).create_time);
-  return s !== undefined ? s * 1000 : undefined;
+  return s !== undefined ? dateMs(s * 1000) : undefined;
 }
 
 /** A backfilled rollout whose last record is older than this is treated as finished (gets a session.end). */
@@ -463,6 +465,8 @@ export class CodexRolloutConverter {
   turnId?: string;
   /** This thread's agent path in a multi-agent session ("/root" for the main thread). */
   agentPath = "/root";
+  /** The thread id in the rollout's file name, when it has one. */
+  private readonly nameId?: string;
   private historyStart?: number;
   private started = false;
   private lastInputTs?: number;
@@ -490,11 +494,12 @@ export class CodexRolloutConverter {
   private readonly seen = new Set<string>();
   readonly events: AgentEvent[] = [];
 
-  constructor(ctx: NormalizeContext, opts: RolloutOpts, flags: { items: boolean; usageRecords: boolean }, fallbackSessionId: string) {
+  constructor(ctx: NormalizeContext, opts: RolloutOpts, flags: { items: boolean; usageRecords: boolean }, fallbackSessionId: string, nameId?: string) {
     this.ctx = ctx;
     this.opts = opts;
     this.flags = flags;
     this.sessionId = opts.sessionId ?? fallbackSessionId;
+    this.nameId = nameId;
   }
 
   /** First pass: which rollout generation is this file? */
@@ -537,7 +542,8 @@ export class CodexRolloutConverter {
       if (this.started) return;
       this.started = true;
       const spawn = obj(obj(obj(p.source).subagent).thread_spawn);
-      this.sessionId = this.opts.sessionId ?? str(p.id) ?? str(p.session_id) ?? this.sessionId;
+      // A subagent thread's session_id is its root thread's id, so the thread id in the file name comes first.
+      this.sessionId = this.opts.sessionId ?? str(p.id) ?? this.nameId ?? str(p.session_id) ?? this.sessionId;
       this.cwd = str(p.cwd);
       this.version = str(p.cli_version);
       this.provider = str(p.model_provider);
@@ -876,8 +882,8 @@ export async function convertRollout(ctx: NormalizeContext, rawPath: string, opt
   } catch {
     return [];
   }
-  const fallback = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/.exec(path)?.[1] ?? basename(path).replace(/\.jsonl(?:\.zst)?$/, "");
-  const conv = new CodexRolloutConverter(ctx, opts, flags, fallback);
+  const nameId = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/.exec(path)?.[1];
+  const conv = new CodexRolloutConverter(ctx, opts, flags, nameId ?? basename(path).replace(/\.jsonl(?:\.zst)?$/, ""), nameId);
   try {
     for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
   } catch {
@@ -1146,7 +1152,10 @@ export const codex: Adapter = {
   // 12 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
   // 13 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 14 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
-  parseVersion: 14,
+  // 15 (0.1.8): a session record with no id takes the thread id in the rollout's file name before its session_id,
+  //    which a subagent thread shares with its root thread, so the subagent thread stays its own session.
+  // 16 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also an item's own time.
+  parseVersion: 16,
 
   detect() {
     const home = codexHome();

@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { parseSince } from "../cli/args.ts";
 import { which } from "../adapters/_shared/detect.ts";
+import { failureFlags } from "../core/failure-flags.ts";
 import { execFileSync } from "../core/spawn.ts";
 import type { IndexStore } from "../core/types.ts";
 import { caseFromSession, normalizeCase, slugify } from "../datasets/dataset.ts";
@@ -131,7 +132,7 @@ async function sessionCases(s: SessionsSource, ctx: SourceCtx): Promise<Case[]> 
   const sessions = await ctx.index.listSessions({ since, parentSessionId: null, runId: null, limit: s.limit ?? 500, ...(s.agent ? { agent: s.agent } : {}) });
   const out: Case[] = [];
   for (const ses of sessions) {
-    const flags = ses.flags.filter((f) => !f.includes(":"));
+    const flags = failureFlags(ses.flags);
     const failed = flags.length > 0 || ses.stats.toolErrors > 0 || (ses.stats.testsFailed ?? 0) > 0;
     if (select === "flagged" && !flags.length) continue;
     if (select === "failed" && !failed) continue;

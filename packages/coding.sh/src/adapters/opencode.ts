@@ -19,6 +19,7 @@ import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
+import { dateMs, durationBefore } from "../core/dates.ts";
 import type { Adapter, AgentRunOutput, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import {
@@ -334,11 +335,13 @@ export async function normalizeOpencodeLine(line: SpoolLine, ctx: NormalizeConte
     case "session.step.failed": {
       const usage = tokensUsage(data.tokens, data.cost);
       const ok = event === "session.step.ended";
-      const end = num(raw.created) ?? line.ts;
+      // A time out of the Date range is read as missing, and so is a duration whose start falls out of it.
+      const end = dateMs(num(raw.created)) ?? line.ts;
+      const took = durationBefore(end, durationMs);
       em.emit(
         "llm.call",
-        { ok, stopReason: str(data.finish) ?? str(obj(data.finish).reason), error: ok ? undefined : (str(data.error) ?? str(obj(data.error).message))?.slice(0, 500), messageId: str(data.assistantMessageID), tokensPerSec: usage?.outputTokens && durationMs ? Math.round((usage.outputTokens / (durationMs / 1000)) * 10) / 10 : undefined },
-        { key: [str(raw.id) ?? end], ts: durationMs !== undefined ? end - durationMs : end, durationMs, usage },
+        { ok, stopReason: str(data.finish) ?? str(obj(data.finish).reason), error: ok ? undefined : (str(data.error) ?? str(obj(data.error).message))?.slice(0, 500), messageId: str(data.assistantMessageID), tokensPerSec: usage?.outputTokens && took ? Math.round((usage.outputTokens / (took / 1000)) * 10) / 10 : undefined },
+        { key: [str(raw.id) ?? end], ts: took !== undefined ? end - took : end, durationMs: took, usage },
       );
       break;
     }
@@ -475,12 +478,17 @@ async function* backfillJsonStorage(ctx: NormalizeContext, storage: string, sinc
   } catch {
     return;
   }
+  // A session id that two session files name is read once, from the first file: its messages are under its id
+  // either way, and reading it again would give every event twice.
+  const seen = new Set<string>();
   for (const proj of projects) {
     for (const s of await readJsonDir(join(storage, "session", proj))) {
       const id = str(s.id);
       if (!id) continue;
       const updated = toMs(obj(s.time).updated, toMs(obj(s.time).created, 0));
       if (since !== undefined && updated < since) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
       const msgs: StoredMessage[] = [];
       for (const m of await readJsonDir(join(storage, "message", id))) {
         const mid = str(m.id);
@@ -616,7 +624,7 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
         });
         const events = await convertStoredSession(
           ctx,
-          { id, parentId: str(s.parent_id), title: str(s.title), directory: str(s.directory), version: str(s.version), created: toMs(s.time_created, 0), updated: num(s.time_updated), agent: str(s.agent) },
+          { id, parentId: str(s.parent_id), title: str(s.title), directory: str(s.directory), version: str(s.version), created: toMs(s.time_created, 0), updated: dateMs(num(s.time_updated)), agent: str(s.agent) },
           msgs,
           sessionTotals(s),
         );
@@ -731,7 +739,10 @@ export const opencode: Adapter = {
   // 4 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
   // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
   // 6 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
-  parseVersion: 6,
+  // 7 (0.1.8): a session id that two JSON session files name is read once, from the first.
+  // 8 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also a stored session's time_updated
+  //    and a step's created. A step's durationMs whose start falls out of that range is left out.
+  parseVersion: 8,
 
   async detect() {
     const r = await detectAgent({

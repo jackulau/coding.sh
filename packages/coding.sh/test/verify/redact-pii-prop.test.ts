@@ -12,8 +12,9 @@
 //   group or serial that is never issued, an NI prefix or suffix that is never issued, a SIN with a
 //   wrong check digit.
 // - phone: a + number (a country code, maybe an area code in parentheses, two to five groups), which is
-//   a value when it has 8 to 15 digits; a North American number. Lookalike: a North American number
-//   with two kinds of separator.
+//   a value when it has 8 to 15 digits; a North American number. Lookalikes: a + number with fewer or
+//   more digits, a North American number with two kinds of separator. A + number with more digits
+//   holds no North American number after a space or parenthesis, which the North American rule takes.
 // - email: an address. Lookalikes: a package version after an @, an image name, a decorator, a host
 //   with no dot.
 //
@@ -234,12 +235,24 @@ const PHONE_GROUPS: Gen<string[]> = gen.array(
   { minLength: 2, maxLength: 5 },
 );
 
-/** A + number: a value with 8 to 15 digits (E.164 allows 15), a lookalike with fewer or more. */
-const PLUS_PHONE: Gen<Item> = gen.map(gen.tuple(COUNTRY_CODE, AREA_CODE, PHONE_GROUPS), ([cc, area, groups]) => {
-  const s = `+${cc}${area}${groups.join("")}`;
-  const n = s.replace(/\D/g, "").length;
-  return n >= 8 && n <= 15 ? value(s) : kept(s);
-});
+/**
+ * A North American number in a + number where the North American rule takes one: after a space or a
+ * parenthesis, before a space or the end.
+ */
+const NORTH_AMERICAN_IN = /[ ()](?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?= |$)/;
+
+/**
+ * A + number: a value with 8 to 15 digits (E.164 allows 15), a lookalike with fewer or more. A lookalike
+ * with more is drawn again when it holds a North American number, which the North American rule takes.
+ */
+const PLUS_PHONE: Gen<Item> = gen.filter(
+  gen.map(gen.tuple(COUNTRY_CODE, AREA_CODE, PHONE_GROUPS), ([cc, area, groups]) => {
+    const s = `+${cc}${area}${groups.join("")}`;
+    const n = s.replace(/\D/g, "").length;
+    return n >= 8 && n <= 15 ? value(s) : kept(s);
+  }),
+  (it) => it.value || !NORTH_AMERICAN_IN.test(it.text),
+);
 
 const NANP_DIGITS = gen.tuple(digits(3), digits(3), digits(4));
 const NANP: Gen<Item> = gen.map(

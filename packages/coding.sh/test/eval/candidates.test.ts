@@ -138,13 +138,15 @@ describe("rankEvalCandidates", () => {
     }
   });
 
-  it("labels the compaction failure flag apart from the compacted-context penalty", () => {
+  it("scores compaction only as the compacted-context penalty: it is a note, not a failure flag", () => {
     const id = "cmp";
-    const s = session(id, { flags: ["compaction"] });
+    const s = session(id, { flags: ["compaction", "no-verification"] });
     const [c] = rankEvalCandidates([{ session: s, events: [...events(id), ev(id, "context.compact", { trigger: "auto" })] }], { now: NOW });
-    const labels = c!.reasons.map((r) => r.replace(/^[+-]\d+ /, ""));
-    assert.ok(c!.reasons.includes("+1 compaction"), c!.reasons.join(", "));
+    assert.deepEqual(c!.flags, ["no-verification"]);
+    assert.ok(c!.reasons.includes("+1 no-verification"), c!.reasons.join(", "));
+    assert.ok(!c!.reasons.some((r) => r.endsWith(" compaction")), c!.reasons.join(", "));
     assert.ok(c!.reasons.includes("-1 compacted context (harder to replay)"), c!.reasons.join(", "));
+    const labels = c!.reasons.map((r) => r.replace(/^[+-]\d+ /, ""));
     assert.equal(new Set(labels).size, labels.length, `a label repeats: ${c!.reasons.join(", ")}`);
   });
 

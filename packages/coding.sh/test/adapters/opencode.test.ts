@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -64,6 +64,22 @@ describe("opencode normalize", () => {
   it("is deterministic", async () => {
     assert.deepEqual(await normalizeAll("opencode/v2.spool.jsonl"), await normalizeAll("opencode/v2.spool.jsonl"));
   });
+
+  it("a step time out of the Date range is read as missing, and so is a duration whose start falls out of it", async () => {
+    const step = loadSpool("opencode/v2.spool.jsonl").find((l) => l.event === "session.step.ended")!;
+    const llmOf = async (raw: Record<string, unknown>) => {
+      const events = await opencode.normalize({ ...step, raw: { ...(step.raw as Record<string, unknown>), ...raw } }, testCtx().ctx);
+      assertWellFormed(events);
+      return events.find((e) => e.kind === "llm.call")!;
+    };
+    assert.equal(step.ts, T0 + 4000);
+    const late = await llmOf({ created: 1e300, durationMs: 1e308 });
+    assert.deepEqual([late.ts, late.durationMs, late.payload.tokensPerSec], [T0 + 4000, undefined, undefined]);
+    const long = await llmOf({ durationMs: 1e308 });
+    assert.deepEqual([long.ts, long.durationMs], [T0 + 4000, undefined]);
+    const fine = await llmOf({});
+    assert.deepEqual([fine.ts, fine.durationMs], [T0 + 4000 - 2400, 2400]);
+  });
 });
 
 describe("opencode backfill", () => {
@@ -88,6 +104,18 @@ describe("opencode backfill", () => {
     const later = await collect(opencode.backfill!(ctx, { since: T0 + 1000 }));
     assert.ok(later.length > 0 && later.every((e) => e.ts >= T0 + 1000));
     assert.ok(!later.some((e) => e.sessionId === "ses_v1c"), "sessions not updated since are skipped");
+  });
+
+  it("a session that a second JSON file names is read once, from the first", async () => {
+    const data = join(env.root, "two-files");
+    cpSync(join(FIXTURES, "opencode", "data"), data, { recursive: true });
+    process.env.XDG_DATA_HOME = data;
+    const want = await collect(opencode.backfill!(testCtx().ctx));
+    // A second file that names a session another file holds.
+    writeFile(join(data, "opencode", "storage", "session", "prj_2", "ses_v1.json"), JSON.stringify({ id: "ses_v1" }));
+    const events = await collect(opencode.backfill!(testCtx().ctx));
+    assertWellFormed(events);
+    assert.deepEqual(events, want);
   });
 
   it("2.x SQLite database (copied, read-only)", async () => {

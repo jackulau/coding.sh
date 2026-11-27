@@ -69,6 +69,37 @@ describe("simpleCommands", () => {
     assert.deepEqual(argv(cmd), [["cat", "x"]]);
     assert.deepEqual(argv("sudo env A=1 /bin/cat x"), [["/bin/cat", "x"]]);
   });
+
+  it("keeps the operator after each command", () => {
+    const seps = (cmd: string) => simpleCommands(cmd).map((c) => c.sep);
+    assert.deepEqual(seps("a && b | c; d"), ["&&", "|", ";", undefined]);
+    assert.deepEqual(seps("a & b\nc || d"), ["&", "\n", "||", undefined]);
+    assert.deepEqual(seps("lake build 2>&1 | tail -5"), ["|", undefined]);
+  });
+
+  it("drops each `>&N` of a chain, the one right after a digit too", () => {
+    assert.deepEqual(argv("cmd 1>&2>&1 x"), [["cmd", "x"]]);
+    assert.deepEqual(argv("cmd 2>&1 x 12>&3"), [["cmd", "x"]]);
+  });
+
+  it("with quotes, an operator inside quotes splits nothing and a word keeps its quoted parts", () => {
+    const quoted = (cmd: string) => simpleCommands(cmd, { quotes: true }).map((c) => [c.name, ...c.args]);
+    assert.deepEqual(quoted('make release GIT_FLAGS="--no-verify"'), [["make", "release", "GIT_FLAGS=--no-verify"]]);
+    assert.deepEqual(quoted('git commit -am "WIP; lake build still fails"'), [["git", "commit", "-am", "WIP; lake build still fails"]]);
+    assert.deepEqual(quoted("echo 'a|b' && lake build\\;x | tail -2"), [["echo", "a|b"], ["lake", "build;x"], ["tail", "-2"]]);
+    assert.deepEqual(quoted('echo "a \\"b\\" c" \'d'), [["echo", 'a "b" c', "d"]]);
+    assert.deepEqual(argv('git commit -am "WIP; lake build"'), [["git", "commit", "-am", "WIP"], ["lake", "build"]], "without quotes, as before");
+  });
+
+  it("drops a redirection to a descriptor, whatever digits name the descriptors", () => {
+    assert.deepEqual(argv("npm test 2>&1 | tail -5"), [["npm", "test"], ["tail", "-5"]]);
+    assert.deepEqual(argv("seq 100 >&2"), [["seq", "100"]]);
+    assert.deepEqual(argv("echo 12 10>&2 345"), [["echo", "12", "345"]]);
+    assert.deepEqual(argv("cmd 1>&2>&3 x"), [["cmd", "x"]]);
+    assert.deepEqual(argv("echo 2024-01-02 1>&22"), [["echo", "2024-01-02"]]);
+    assert.deepEqual(shellWrites("make 2>&1 > build.log"), [{ path: "build.log", op: "create" }]);
+    assert.deepEqual(shellWrites("make > build.log 12>&1"), [{ path: "build.log", op: "create" }]);
+  });
 });
 
 /** One command through each agent's shell tool, shaped as its adapter stores the call. */
@@ -101,6 +132,9 @@ describe("shellCommand and shellDiffOrigin read every shell tool", () => {
     assert.deepEqual(origin("sed -i 's/a/b/' tests/a.py", "tests/a.py"), all("named"));
     assert.deepEqual(origin("git -C /w reset --hard", "tests/a.py"), all("vcs"));
     assert.deepEqual(origin("npm test", "tests/a.py"), all("unattributed"));
+    // git's -C and -c options come before the subcommand; an option's value is not one.
+    for (const cmd of ["git -c x=y pull", "git status; git pull --rebase", "git -C repo -c a=b merge main", "git -C a -C b stash pop", "gh pr checkout 3"]) assert.deepEqual(origin(cmd, "tests/a.py"), all("vcs"), cmd);
+    for (const cmd of ["git status", "git log -5", "git -C pull status", "git -c pull"]) assert.deepEqual(origin(cmd, "tests/a.py"), all("unattributed"), cmd);
     // A Codex code-mode cell is an `exec` call whose input is JavaScript: not a shell.
     assert.equal(shellDiffOrigin(ev("file.change", { path: "tests/a.py", tool: "exec", toolUseId: "x" }), ev("tool.start", { tool: "exec", toolUseId: "x", input: "await tools.exec_command({cmd: 'ls'})" })), "edit");
   });
@@ -111,12 +145,16 @@ describe("normalizeTracePath", () => {
     const cases: [string, string | undefined, string][] = [
       ["/work/demo/src/a.ts", "/work/demo", "src/a.ts"],
       ["/work/demo/src/a.ts", "/work/demo/", "src/a.ts"],
+      ["/work/demo/src/a.ts", "/work/demo///", "src/a.ts"],
+      ["/work/demo", "/work/demo//", ""],
       ["/work/demo", "/work/demo", ""],
       ["/work/demox/a.ts", "/work/demo", "/work/demox/a.ts"],
       ["C:\\w\\src\\a.ts", "C:\\w\\", "src/a.ts"],
+      ["C:\\w\\src\\a.ts", "C:\\w\\\\/", "src/a.ts"],
       ["/private/var/x/a.ts", "/var/x", "a.ts"],
       ["/var/x/a.ts", "/private/var/x", "a.ts"],
       ["/private/a.ts", "/", "/private/a.ts"],
+      ["/work/demo/a.ts", "//", "/work/demo/a.ts"],
       ["././a.ts", undefined, "a.ts"],
       ["/work/demo/./a.ts", "/work/demo", "a.ts"],
       ["a\\b.ts", "", "a/b.ts"],

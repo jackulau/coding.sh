@@ -4,6 +4,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Transform } from "node:stream";
 import * as zlib from "node:zlib";
+import { dateMs } from "../../core/dates.ts";
 
 export interface JsonlRecord {
   value: unknown;
@@ -104,8 +105,8 @@ export async function* readJsonl(path: string): AsyncGenerator<JsonlRecord> {
   }
 }
 
-/** The first `maxBytes` of a file as text (the last line may be cut short); unreadable → undefined. */
-export async function readHeadText(path: string, maxBytes: number): Promise<string | undefined> {
+/** The first `maxBytes` of a file as text, and whether the file goes on past them (then its last line may be cut short); unreadable → undefined. */
+export async function readHead(path: string, maxBytes: number): Promise<{ text: string; more: boolean } | undefined> {
   let fh;
   try {
     fh = await open(path, "r");
@@ -113,14 +114,20 @@ export async function readHeadText(path: string, maxBytes: number): Promise<stri
     return undefined;
   }
   try {
-    const buf = Buffer.alloc(Math.min(maxBytes, (await fh.stat()).size));
+    const size = (await fh.stat()).size;
+    const buf = Buffer.alloc(Math.min(maxBytes, size));
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    return buf.subarray(0, bytesRead).toString("utf8");
+    return { text: buf.subarray(0, bytesRead).toString("utf8"), more: size > bytesRead };
   } catch {
     return undefined;
   } finally {
     await fh.close();
   }
+}
+
+/** The first `maxBytes` of a file as text (the last line may be cut short); unreadable → undefined. */
+export async function readHeadText(path: string, maxBytes: number): Promise<string | undefined> {
+  return (await readHead(path, maxBytes))?.text;
 }
 
 /** The file's first line, parsed, when it ends within `maxBytes`; else (or unreadable) undefined. */
@@ -279,9 +286,9 @@ export async function* walkFiles(root: string, opts: WalkOpts, depth = 0): Async
   }
 }
 
-/** Parses an ISO timestamp / epoch seconds / epoch ms into ms, else fallback. */
+/** Parses an ISO timestamp / epoch seconds / epoch ms into ms, else fallback (also for a time out of the Date range). */
 export function toMs(v: unknown, fallback: number): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+  if (typeof v === "number" && Number.isFinite(v)) return dateMs(v < 1e12 ? Math.round(v * 1000) : Math.round(v)) ?? fallback;
   if (typeof v === "string" && v) {
     const t = Date.parse(v);
     if (Number.isFinite(t)) return t;

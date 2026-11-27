@@ -3,7 +3,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSyn
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
-import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
+import { ClaudeTranscriptConverter, typedText } from "../../src/adapters/_shared/claude-transcript.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { FIRING_WINDOW_MS } from "../../src/adapters/_shared/normalize.ts";
 import { defaultConfig } from "../../src/core/config.ts";
@@ -107,6 +107,18 @@ describe("claude-code normalize", () => {
     for (const l of [...lines, agentCall("toolu_agent_abc", "abc123", "Explore", 1793527209000)[1]!]) hooked.push(...(await claudeCode.normalize(l, ctx)));
     const once = (kind: string, sid: string) => new Set(hooked.filter((e) => e.kind === kind && e.sessionId === sid).map((e) => e.id)).size;
     assert.deepEqual([once("subagent.start", SID), once("subagent.end", SID), once("session.start", `${SID}:sub:abc123`), once("session.end", `${SID}:sub:abc123`), once("user.message", `${SID}:sub:abc123`)], [1, 1, 1, 1, 1]);
+  });
+
+  it("a subagent's totalDurationMs whose start falls out of the Date range is left out", async () => {
+    const start = loadSpool("claude-code/hooks.spool.jsonl").find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStart")!;
+    const ts = 1793527500000;
+    const response = { status: "completed", agentId: "hg1", agentType: "general-purpose", content: [{ type: "text", text: "Done." }], totalDurationMs: 1e308 };
+    const raw = { ...(start.raw as Record<string, unknown>), agent_id: undefined, agent_type: undefined, hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: "toolu_agent_hg1", tool_input: { description: "Read docs", prompt: "Read these pages", subagent_type: "general-purpose" }, tool_response: response };
+    const events = await claudeCode.normalize({ ...start, event: "PostToolUse", ts, raw }, testCtx().ctx);
+    assertWellFormed(events);
+    const sub = events.filter((e) => e.sessionId === SID && e.kind.startsWith("subagent."));
+    assert.deepEqual(sub.map((e) => [e.kind, e.ts, e.durationMs]), [["subagent.start", ts, undefined], ["subagent.end", ts, undefined]]);
+    assert.equal(events.find((e) => e.kind === "session.start" && e.sessionId === `${SID}:sub:hg1`)!.ts, ts);
   });
 
   it("is deterministic (same line → same ids)", async () => {
@@ -1158,6 +1170,28 @@ describe("claude-code call timing", () => {
     assert.deepEqual(timing(calls[0]!), [T, 2000, 1000, 500]);
     const turn = events.find((e) => e.kind === "user.message" && e.payload.command === "/review")!;
     assert.equal(calls[0]!.turnId, turn.turnId);
+  });
+
+  it("a slash command's typed text is its name and arguments, each read up to the first closing tag after it", () => {
+    const typed = (content: string) => typedText({ type: "user", message: { role: "user", content } });
+    assert.equal(typed("<command-name>/review</command-name>\n<command-args>  src/  </command-args>"), "/review src/");
+    assert.equal(typed("<command-name>/clear</command-name>\n<command-args></command-args>"), "/clear");
+    assert.equal(typed("<command-name>/a</command-name><command-name>/b</command-name>"), "/a");
+    // An unclosed tag names nothing: no arguments, or no command at all.
+    assert.equal(typed("<command-name>/review</command-name>\n<command-args>src/"), "/review");
+    assert.equal(typed("<command-name>/review\n<command-args>src/</command-args>"), undefined);
+  });
+
+  it("a second prompt entry with the turn's promptId adds to that turn, which ends once", async () => {
+    const conv = new ClaudeTranscriptConverter(testCtx().ctx, { agent: "claude-code", mode: "full", sessionId: MAIN, source: `${MAIN}.jsonl` });
+    // A skill's text with no isMeta flag (a line cut short and closed): a user entry of the prompt the turn is for.
+    const entries = [prompt("u1", 0, "go"), block("m1", 1000, { type: "text", text: "on it" }), { ...prompt("u2", 1500, "Base directory for this skill: /work/demo"), promptId: "p-u1" }, block("m2", 2000, { type: "text", text: "done" })];
+    for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+    const events = await conv.finish(true);
+    assertWellFormed(events);
+    const ends = events.filter((e) => e.kind === "turn.end");
+    assert.deepEqual(ends.map((e) => e.durationMs), [2000], "one end, after the second call");
+    assert.equal(new Set(events.filter((e) => e.turnId).map((e) => e.turnId)).size, 1, "every call and message in the one turn");
   });
 
   describe("stored through ingest: the hook's copy first, then the transcript's", () => {

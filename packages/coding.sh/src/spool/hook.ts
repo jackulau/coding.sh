@@ -49,7 +49,10 @@
 // events the hook starts a detached, lock-guarded `coding.sh ingest
 // --background` and does not wait for it (./kick.ts).
 //
-// Built-in modules: node:fs and node:path only (here and in ./write.ts, ./kick.ts,
+// The work is in ./hook-run.ts (runHook), which tests call in-process; this file
+// runs it with the process's own stdin, stdout, argv and env.
+//
+// Built-in modules: node:fs and node:path only (in ./hook-run.ts, ./write.ts, ./kick.ts,
 // ./gate.ts, ./devin.ts and ../core/paths.ts, plus the pure
 // ../integrations/gateway/ids.ts), and node:os only when HOME and USERPROFILE are
 // unset or ../core/lock.ts checks a lock's holder.
@@ -63,210 +66,16 @@
 // for node:fs that loads Node's stream modules as well, several milliseconds of a hook
 // call. process.getBuiltinModule returns the module Node has already loaded. A node too old to
 // have it gets it from the first lines of hook.mjs (HOOK_BANNER in scripts/bundle.mjs).
-import type { SpoolLine } from "../core/types.ts";
-import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
-import { devinHookAgent } from "./devin.ts";
-import { needsRedaction } from "./gate.ts";
-import { hostOf } from "./host.ts";
-import { kickIngest, kickProxy } from "./kick.ts";
-import { spawnedByFromEnv } from "./spawned.ts";
-import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError, payloadSessionId, recordDisabledSession, type RedactLine } from "./write.ts";
-
-const fs = process.getBuiltinModule("node:fs");
-
-const MAX_STDIN_BYTES = 64 * 1024 * 1024;
-/** A paused call's payload up to this size is parsed for its session id; a larger one is searched. */
-const MAX_PARSE_BYTES = 1024 * 1024;
-/** Give up if stdin keeps returning EAGAIN (non-blocking pipe) with no data for this long. */
-const EAGAIN_IDLE_MS = 10_000;
-
-const sleeper = new Int32Array(new SharedArrayBuffer(4));
-
-function readStdin(): { text: string; truncated: boolean } {
-  let isChar = false;
-  try {
-    isChar = fs.fstatSync(0).isCharacterDevice();
-  } catch {
-    return { text: "", truncated: false }; // fd 0 closed
-  }
-  // TTY (or /dev/null): nobody is piping a payload; never block waiting for a human.
-  if (isChar) return { text: "", truncated: false };
-
-  const chunks: Buffer[] = [];
-  let total = 0;
-  let truncated = false;
-  const buf = Buffer.allocUnsafe(1 << 16);
-  let idleSince = 0;
-  for (;;) {
-    let n: number;
-    try {
-      n = fs.readSync(0, buf, 0, buf.length, null);
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "EAGAIN" || code === "EWOULDBLOCK") {
-        const now = Date.now();
-        if (!idleSince) idleSince = now;
-        else if (now - idleSince > EAGAIN_IDLE_MS) break;
-        Atomics.wait(sleeper, 0, 0, 2);
-        continue;
-      }
-      if (code === "EOF") break; // Windows pipes
-      throw e;
-    }
-    if (n === 0) break;
-    idleSince = 0;
-    if (truncated) continue; // keep draining so the writer never sees EPIPE
-    const room = MAX_STDIN_BYTES - total;
-    chunks.push(Buffer.from(buf.subarray(0, Math.min(n, room))));
-    total += Math.min(n, room);
-    if (n >= room) truncated = true;
-  }
-  let text = Buffer.concat(chunks, total).toString("utf8");
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  return { text, truncated };
-}
-
-/** Best-effort top-level-ish "cwd" from a payload too large to parse. */
-function sniffCwd(text: string): string | undefined {
-  const m = /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text.slice(0, 65536));
-  if (!m || !m[1]) return undefined;
-  try {
-    return JSON.parse(m[1]) as string;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The line as it is: what the redaction rules would return for a payload ./gate.ts passes. */
-const asIs: RedactLine = (line, rawText) => ({ line, rawText });
-
-/**
- * How to redact this payload: as it is when ./gate.ts finds nothing the rules would
- * replace, else with the rules of the user's config, imported now (hook-redact.mjs
- * beside the bundled hook, ./redact.ts from source). A failed import throws, and the
- * hook logs it and writes no line.
- */
-async function lineRedactor(text: string, env: NodeJS.ProcessEnv): Promise<RedactLine> {
-  if (!needsRedaction(text, env)) return asIs;
-  const engine = new URL(import.meta.url.endsWith(".ts") ? "./redact.ts" : "./hook-redact.mjs", import.meta.url);
-  const { spoolLineRedactor } = (await import(engine.href)) as typeof import("./redact.ts");
-  return spoolLineRedactor(env);
-}
-
-async function main(): Promise<void> {
-  const env = process.env;
-  const argv = process.argv.slice(2);
-  const echo = argv.includes("--echo-continue") || env.CODING_SH_ECHO_CONTINUE === "1";
-  let reply: string | undefined;
-  let pid = process.pid;
-  let ppid = process.ppid;
-  const pos: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === "--reply") reply = argv[++i] ?? "";
-    else if (a.startsWith("--reply=")) reply = a.slice("--reply=".length);
-    else if (a.startsWith("--sh-pids=")) {
-      const m = /^([1-9]\d{0,9}),([1-9]\d{0,9})$/.exec(a.slice("--sh-pids=".length));
-      if (m) [pid, ppid] = [Number(m[1]), Number(m[2])];
-    } else if (!a.startsWith("--")) pos.push(a);
-  }
-  const agent = pos[0] || "unknown";
-  const event = pos[1] || "unknown";
-  let captured = false;
-  try {
-    const { text, truncated } = readStdin();
-    if (isDisabled(env)) {
-      // Paused: no line. The session id is kept so ingest and backfill leave the session out.
-      let raw: unknown;
-      if (!truncated && Buffer.byteLength(text) <= MAX_PARSE_BYTES) {
-        try {
-          raw = JSON.parse(text);
-        } catch {
-          // not JSON: no session id to keep
-        }
-      }
-      const sid = payloadSessionId(raw, raw === undefined ? text : "");
-      if (sid) recordDisabledSession(sid, env);
-    } else {
-      // Payloads that can't fit inline anyway are not parsed: they go to a side
-      // file verbatim and ingest parses them later.
-      const inlineable = !truncated && Buffer.byteLength(text) <= MAX_INLINE_LINE_BYTES;
-      let raw: unknown = text;
-      if (inlineable && text) {
-        try {
-          raw = JSON.parse(text);
-        } catch {
-          raw = text;
-        }
-      }
-      const payloadCwd = raw && typeof raw === "object" ? (raw as { cwd?: unknown }).cwd : inlineable ? undefined : sniffCwd(text);
-      const line: SpoolLine = {
-        v: 0,
-        agent,
-        event,
-        ts: Date.now(),
-        pid,
-        ppid,
-        cwd: typeof payloadCwd === "string" && payloadCwd ? payloadCwd : process.cwd(),
-        raw: inlineable ? raw : undefined,
-      };
-      // Devin runs Claude Code's hooks too: the call is Devin's, or a copy of a line Devin's own hook writes.
-      const devin = agent === "claude-code" && env.DEVIN_PROJECT_DIR ? devinHookAgent(event, raw, text, env, line.cwd) : undefined;
-      if (devin === "devin") line.agent = "devin";
-      if (devin !== "drop") {
-        if (env.CODING_SH_RUN_ID) line.runId = env.CODING_SH_RUN_ID;
-        const host = hostOf(env);
-        if (host) line.host = host;
-        // Hooks inherit the agent's env (Claude Code settings env included).
-        const gateway = gatewayFromEnv(env);
-        if (gateway) line.gateway = gateway;
-        // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
-        if (line.agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
-        // Started from another agent's shell tool: that agent's session id is in the env (./spawned.ts).
-        const spawnedBy = spawnedByFromEnv(env);
-        if (spawnedBy) line.spawnedBy = spawnedBy;
-        appendSpool(line, env, { rawText: text, redact: await lineRedactor(text, env) });
-        if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent: line.agent, event }, env);
-        captured = true;
-      }
-    }
-  } catch (e) {
-    logSpoolError(e, { agent, event }, env);
-  }
-  let out: string | undefined = echo ? '{"continue":true}\n' : undefined;
-  if (reply !== undefined) {
-    try {
-      out = JSON.stringify(JSON.parse(reply)) + "\n";
-    } catch (e) {
-      logSpoolError(new Error(`--reply is not valid JSON: ${(e as Error).message}`), { agent, event }, env);
-    }
-  }
-  if (out) {
-    try {
-      fs.writeSync(1, out);
-    } catch {
-      // stdout closed: nothing to do.
-    }
-  }
-  // After the reply, so the agent is never kept waiting on the spawn.
-  if (captured) {
-    try {
-      kickIngest(event, env);
-    } catch (e) {
-      logSpoolError(e, { agent, event, where: "kickIngest" }, env);
-    }
-  }
-  // Even with capture off: an agent routed through the proxy needs it running.
-  try {
-    kickProxy(event, env);
-  } catch (e) {
-    logSpoolError(e, { agent, event, where: "kickProxy" }, env);
-  }
-  process.exitCode = 0;
-}
+import { processIO, runHook } from "./hook-run.ts";
+import { logSpoolError } from "./write.ts";
 
 process.on("uncaughtException", (e) => {
   logSpoolError(e, { where: "uncaughtException" });
   process.exit(0);
 });
-main().catch((e: unknown) => logSpoolError(e, { where: "main" }));
+runHook(process.argv.slice(2), processIO()).then(
+  () => {
+    process.exitCode = 0;
+  },
+  (e: unknown) => logSpoolError(e, { where: "main" }),
+);

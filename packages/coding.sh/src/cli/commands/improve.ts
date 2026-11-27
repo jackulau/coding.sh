@@ -13,7 +13,7 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import { shortener } from "../../core/session-ref.ts";
 import { HEADLESS_KINDS, type ChangeEffect, type GroupStats, type Verdict } from "../../improve/changes.ts";
-import type { Issue } from "../../improve/issues.ts";
+import { FLAG_TEXT, withRule, type Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, headlessAfter, modelProvider, NEEDS_MODEL, notReadLine, readScope, removalStep, stepsFor, targetFile, testCommandOf, withHeadless, type ChangeOptions, type ImproveScope, type ModelProvider, type ReadScope } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
@@ -308,9 +308,10 @@ async function fix(c: CommandContext): Promise<number> {
     const target = str(c.flags.target) ?? targetFile(root, agents);
     const abs = resolve(root, target);
     const before = existsSync(abs) ? readFileSync(abs, "utf8") : "";
-    const present = before.split("\n").some((l) => l.trim() === issue.rule);
+    const placed = withRule(before, issue.rule, issue.kind === "flag" ? FLAG_TEXT[issue.id.slice("flag:".length)]?.was : undefined);
+    const { present, replaced } = placed;
     const dryRun = c.flags["dry-run"] === true;
-    const after = present ? before : `${before}${before && !before.endsWith("\n") ? "\n" : ""}${before.trim() ? "\n" : ""}${issue.rule}\n`;
+    const after = placed.text;
     const behavior = issue.behavior;
     const provider = modelProvider(c.env);
     const hasKey = provider !== undefined;
@@ -318,7 +319,10 @@ async function fix(c: CommandContext): Promise<number> {
     const test = behavior ? abCommand(behavior, provider) : undefined;
     if (out.json) {
       if (!present && !dryRun) writeFileSync(abs, after);
-      out.data({ issue: { rank: n, id: issue.id, title: issue.title }, file: relative(root, abs) || target, line: issue.rule, changed: !present && !dryRun, alreadyPresent: present, dryRun, ...(test ? { test: out.command(test) } : {}), check: out.command("coding.sh improve check") });
+      const doc: Record<string, unknown> = { issue: { rank: n, id: issue.id, title: issue.title }, file: relative(root, abs) || target, line: issue.rule };
+      // The earlier wording the line replaces, when the file had one.
+      if (replaced) doc.replaced = replaced;
+      out.data({ ...doc, changed: !present && !dryRun, alreadyPresent: present, dryRun, ...(test ? { test: out.command(test) } : {}), check: out.command("coding.sh improve check") });
       return 0;
     }
     if (present) {
@@ -328,12 +332,14 @@ async function fix(c: CommandContext): Promise<number> {
       return 0;
     }
     if (dryRun) {
-      out.print(`Would add to ${target}:`);
+      out.print(replaced ? `Would replace a line in ${target}:` : `Would add to ${target}:`);
+      if (replaced) out.print(`- ${replaced}`);
       out.print(`+ ${issue.rule}`);
       return 0;
     }
     writeFileSync(abs, after);
-    out.ok(`Added to ${target} (not committed):`);
+    out.ok(replaced ? `Replaced a line in ${target} (not committed):` : `Added to ${target} (not committed):`);
+    if (replaced) out.print(`- ${replaced}`);
     out.print(`+ ${issue.rule}`);
     if (test) {
       if (hasKey) out.next(`Test it on the ${issue.sessions > 1 ? "moments" : "moment"} it went wrong (A = committed, B = your edit)${onPlan}`, test);

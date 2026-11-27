@@ -128,7 +128,7 @@ export interface Exposure {
 /** Repo-relative POSIX path, or the path as given when it is outside `cwd`. */
 function rel(p: string, cwd: string | undefined): string {
   const s = p.replace(/\\/g, "/").replace(/^\.\//, "");
-  const c = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const c = cwd?.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   return c && s.startsWith(`${c}/`) ? s.slice(c.length + 1) : s;
 }
 

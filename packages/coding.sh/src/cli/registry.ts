@@ -461,7 +461,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "uninstall",
     group: "Capture",
     summary: "Remove coding.sh hooks and MCP entries from every agent",
-    flags: [AGENT_LIST, SCOPE, { name: "proxy", type: "boolean", desc: "Only stop routing agents through the proxy (undo init --proxy)" }, YES, DRY_RUN],
+    flags: [AGENT_LIST, { ...SCOPE, desc: "Remove from user or project config" }, { name: "proxy", type: "boolean", desc: "Only stop routing agents through the proxy (undo init --proxy)" }, YES, DRY_RUN],
     examples: ["coding.sh uninstall --dry-run", "coding.sh uninstall --yes", "coding.sh uninstall --proxy"],
     notes: ["Captured data in ~/.coding.sh is kept.", "Also undoes init --proxy. The proxy itself keeps running until coding.sh proxy stop."],
     load: () => import("./commands/uninstall.ts"),
@@ -829,7 +829,7 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh stats --scorecard --by agent --where 'repo:coding.sh' --json",
     ],
     notes: [
-      "Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.",
+      "Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag: a flag with no colon, other than compaction, step-retried and resumed. TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.",
       "With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in \"other\". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.",
       "Without --all, a subagent's cost, tokens and tool calls count on its top-level session's day, agent, model and repo, so a subagent that ran under another agent or on a later day shows there; coding.sh usage books each subagent on its own.",
       "--json also prints waits: how often and how long the window's sessions waited on you, by kind, subagents included. GET /api/metrics does not have it. A store other than SQLite stops reading them at 100,000 sessions and sets waits.truncated.",
@@ -1445,7 +1445,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Show a stored experiment: pass rate, graders and failures",
         args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included), or latest", required: true }],
       },
-      { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
+      { name: "list", summary: "List experiments, then the runs that have stored none yet", flags: [LIMIT(20)] },
       {
         name: "status",
         summary: "Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them",

@@ -221,4 +221,13 @@ maxFiles = 50
     assert.ok(!isExcluded("/home/u/secretive", ["~/secret"], env));
     assert.ok(!isExcluded("/home/u/code", [], env));
   });
+
+  it("an exclude glob's trailing slashes are dropped", () => {
+    const env = { HOME: "/home/u" };
+    assert.ok(isExcluded("/home/u/secret/repo", ["~/secret/"], env));
+    assert.ok(isExcluded("/home/u/secret", ["~/secret///"], env));
+    assert.ok(isExcluded("/work/a/b/c", ["/work/**/b//"], env));
+    assert.ok(!isExcluded("/home/u/secretive", ["~/secret//"], env));
+    assert.ok(!isExcluded("/work/a/bc", ["/work/**/b/"], env));
+  });
 });

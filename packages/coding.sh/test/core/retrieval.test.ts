@@ -427,6 +427,9 @@ describe("Session.stats.retrieval", () => {
     // A search tool that reports "No files found" as a failure.
     assert.equal(empty(call("Glob", { pattern: "*.x" }, { ok: false, output: "No files found" })), 1);
     assert.equal(empty(bash("ls src", { output: "\n<shellId: 0 completed with exit code 0>" })), 1);
+    // The trailer comes off after a CRLF, before trailing space, or with no line break before it; a lookalike that does not end the text stays.
+    for (const output of ["\r\n<shellId: 0 completed with exit code 0>", "\n<shellId: 0 completed with exit code 0>\n  ", "<shellId: 0 completed with exit code 0>"]) assert.equal(empty(bash("ls src", { output })), 1, JSON.stringify(output));
+    for (const output of ["<shellId: 0 completed with exit code 0>>", "<shellId: 0\ncompleted with exit code 0>"]) assert.equal(empty(bash("ls src", { output })), 0, JSON.stringify(output));
     // grep's warnings on stderr are not output: a stray `\` in the pattern, egrep's notice that it is obsolescent.
     assert.equal(empty(bash("grep -rn 'a\\-b' src", { ok: false, output: "Exit code 1\ngrep: warning: stray \\ before -" })), 1);
     assert.equal(empty(bash("egrep -rn 'a|b' src", { ok: false, output: "Exit code 1\negrep: warning: egrep is obsolescent; using grep -E" })), 1);
@@ -489,6 +492,14 @@ describe("Session.stats.retrieval", () => {
     const at = { cwd: "C:\\work\\demo" };
     const r = retrieval(read("C:\\work\\demo\\a.ts", { at }), bash("cat /c/other/b.ts", { at }), edit("/c/work/demo/a.ts", at), edit("/c/other/b.ts", at));
     assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 });
+  });
+
+  it("a cwd that ends in slashes keys reads like the edits of the same files", () => {
+    for (const cwd of ["/work/demo/", "/work/demo///", "C:\\work\\demo\\\\"]) {
+      const at = { cwd };
+      const r = retrieval(read("a.ts", { at }), bash("cat src/b.ts", { at }), edit("a.ts", at), edit(`${cwd.startsWith("C:") ? "C:\\work\\demo\\src\\" : "/work/demo/src/"}b.ts`, at));
+      assert.deepEqual(r, { reads: 2, filesRead: 2, editedAfterRead: 2, searches: 0, beforeFirstEdit: 2 }, cwd);
+    }
   });
 
   it("a file a shell call reads and then writes the Git Bash way (`/c/x`) is a file changed after it was read", () => {

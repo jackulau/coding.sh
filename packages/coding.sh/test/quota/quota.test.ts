@@ -113,6 +113,18 @@ describe("Claude Code rate_limits", () => {
     writeFileSync(file, "{not json");
     assert.deepEqual(readClaudeQuota(file), []);
   });
+  test("a reset or read time out of the Date range is read as missing", () => {
+    const w = claudeRateLimits({ rate_limits: { five_hour: { used_percentage: 62, resets_at: 1e300 } } }, 5000);
+    assert.deepEqual(w, [{ agent: "claude-code", window: "5h", usedPercent: 62, readAt: 5000 }]);
+    const [row] = quotaJson({ windows: w, missing: [] }, 5000).windows;
+    assert.equal(row!.resetsAt, undefined);
+    assert.equal(row!.reset, false);
+    const file = join(tmp(), "quota.json");
+    writeFileSync(file, JSON.stringify({ agent: "claude-code", readAt: 5000, windows: [{ window: "5h", usedPercent: 62, resetsAt: 1e300 }] }));
+    assert.deepEqual(readClaudeQuota(file), [{ agent: "claude-code", window: "5h", usedPercent: 62, readAt: 5000 }]);
+    writeFileSync(file, JSON.stringify({ agent: "claude-code", readAt: 1e300, windows: [{ window: "5h", usedPercent: 62 }] }));
+    assert.deepEqual(readClaudeQuota(file), []);
+  });
 });
 
 describe("Codex rate_limits", () => {
@@ -139,6 +151,15 @@ describe("Codex rate_limits", () => {
   test("older Codex: resets_in_seconds counts from the event", () => {
     const [w] = codexRateLimits(tokenCount("2026-11-20T10:00:00.000Z", { used_percent: 3, window_minutes: 300, resets_in_seconds: 60 }, null));
     assert.equal(w!.resetsAt, Date.parse("2026-11-20T10:00:00.000Z") + 60_000);
+  });
+
+  test("a reset time out of the Date range is read as missing", () => {
+    const text = tokenCount("2026-11-20T10:00:00.000Z", { used_percent: 3, window_minutes: 300, resets_at: 1e300 }, { used_percent: 4, window_minutes: 10080, resets_in_seconds: 1e300 });
+    const at = Date.parse("2026-11-20T10:00:00.000Z");
+    assert.deepEqual(codexRateLimits(text), [
+      { agent: "codex", window: "5h", usedPercent: 3, readAt: at },
+      { agent: "codex", window: "7d", usedPercent: 4, readAt: at },
+    ]);
   });
 
   test("the recorded fixtures (null windows) have no reading", () => {
