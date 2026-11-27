@@ -557,6 +557,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** In JSON text held in a string, such as an OTLP log body, redaction finds a secret right after an escape such as `\n` and keeps each escape whole. Events stored earlier keep their text; `coding.sh ingest --rebuild` redacts a session again when its transcript or spool lines are still on disk. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **MCP.** session_replay is no longer marked read-only, since its fork argument sends a step's model call to the provider again. The MCP page lists score_add_batch with the tools that write and are marked destructive. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#fork-from-a-step))
 - **Docs.** The README says which hook redacts the spool. The REST API reference gives the 403 body serve sends for a host it does not allow, and says which session an OTLP log record with no session id joins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
+- **Capture.** Phone number redaction, which `phone` or `pii` in `capture.redact` turns on, reads the digits after a `+` in one pass and then checks how they are grouped, so it takes time in proportion to the text it reads. It redacts the same numbers. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 
 ## [0.1.7] - 2026-11-16
 
