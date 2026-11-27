@@ -33,7 +33,7 @@ import { checkProtected, type ProtectCheck } from "../../refine/protect.ts";
 import { gateHeadline } from "../../stats/gate.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, gateFlags, jsonArg, list, num, readIngest, str } from "../common.ts";
-import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
+import { infraStopNote, resumeField, resumeNote, trialTimeout } from "../jobs.ts";
 import { cliCommand, envLine } from "../next-steps.ts";
 import { infraKinds, infraKindsText } from "../../jobs/retry.ts";
 import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
@@ -707,6 +707,7 @@ export interface TrialSetup {
   trials: number;
   concurrency: number;
   cache: boolean;
+  timeoutMs?: number;
 }
 
 export function trialSetup(o: AbOptions, cases: readonly Case[], env: NodeJS.ProcessEnv): TrialSetup {
@@ -742,6 +743,7 @@ export function continuationTask(t: TrialSetup, arm: Arm, spend?: Spend, onSpend
       : {}),
   };
   if (t.apiKeyEnv) task.apiKeyEnv = t.apiKeyEnv;
+  if (t.timeoutMs !== undefined) task.timeoutMs = t.timeoutMs;
   return task;
 }
 
@@ -799,13 +801,17 @@ export async function runPair(
     if (o.maxCost !== undefined && spend.usd + spend.judgeUsd > o.maxCost && !cap.signal.aborted) cap.abort();
   };
   check();
-  const provider = metered(providerFromSpec(t.judge, { env: c.env }), spend, check);
+  const timeoutMs = trialTimeout(c);
+  const judgeDeps: { env: NodeJS.ProcessEnv; timeoutMs?: number } = { env: c.env };
+  if (timeoutMs !== undefined) judgeDeps.timeoutMs = timeoutMs;
+  const provider = metered(providerFromSpec(t.judge, judgeDeps), spend, check);
   const grader = turnOnly(await createGrader(t.judge, { env: c.env, provider, judgeCache: FileJudgeCache.forEnv(c.env) }));
   // A spent subscription stops scheduling like the spend cap does: what finished is kept for --resume.
   const limiter = isCliProvider(t.provider) ? cliLimiter(t.provider) : undefined;
   const drain = AbortSignal.any([...(c.drain ? [c.drain] : []), cap.signal, ...(limiter ? [limiter.stopped] : [])]);
   const loaded = { spec: { trials: t.trials, concurrency: t.concurrency }, dataset, graders: [grader], name: o.name ?? dataset.name };
-  const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: continuationTask(t, a, spend, check) }, { name: "b", task: continuationTask(t, b, spend, check) }], "exp ab", { drain });
+  const taskSetup = timeoutMs !== undefined ? { ...t, timeoutMs } : t;
+  const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: continuationTask(taskSetup, a, spend, check) }, { name: "b", task: continuationTask(taskSetup, b, spend, check) }], "exp ab", { drain });
   if (ab.a.status === "cancelled") return { ab, job, overBudget: cap.signal.aborted, ...(limiter?.spent ? { limited: limiter.spent } : {}) };
   const replay = replayNoise(ab.a, caseMap);
   const comparison = compareExperiments(ab.a, ab.b, { force: true, gate: o.gate, ...(replay ? { replay } : {}) });
