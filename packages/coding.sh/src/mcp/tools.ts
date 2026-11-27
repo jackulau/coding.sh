@@ -1695,9 +1695,14 @@ function toolDefs(): PagedTool[] {
         const spool = spoolStats(ctx.paths.spool);
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         // The work queue `coding.sh work` shows (core/work.ts), over its default window, with acks and snoozes applied.
+        // An old index judges waits and stalls as of its last ingest, as `coding.sh status` and the work tool do.
+        const age = storeIndexAge(ctx, now);
+        const asOf = age?.stale ? age.at : now;
         const short = await shortIds(ctx);
         const since = now - WORK_WINDOW_MS;
-        const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, now, overlay: readOverlay(ctx.paths.work), shortId: short });
+        const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, now: asOf, overlay: readOverlay(ctx.paths.work), shortId: short });
+        const shown = queue.items.slice(0, STATUS_WORK_ROWS);
+        await settleWorkFiles(ctx.index, shown, sessions, asOf);
         const hints: string[] = [];
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? update.command}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
@@ -1716,11 +1721,11 @@ function toolDefs(): PagedTool[] {
           latest: latest ? sessionSummary(latest, now) : undefined,
           spool,
           lastError,
-          ...indexField(storeIndexAge(ctx, now)),
+          ...indexField(age),
           work: {
             ...queue.counts,
             needYou: needYou(queue),
-            items: queue.items.slice(0, STATUS_WORK_ROWS).map((i) => workItemJson(forShell(i, ctx.env))),
+            items: shown.map((i) => workItemJson(forShell(i, ctx.env))),
             more: queue.items.length > STATUS_WORK_ROWS ? queue.items.length - STATUS_WORK_ROWS : undefined,
             rest: queue.items.length > STATUS_WORK_ROWS ? `${bin} work --json` : undefined,
             truncated: truncated || undefined,

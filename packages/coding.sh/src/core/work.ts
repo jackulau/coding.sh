@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentEvent, PullRequestRef, Session, Waiting } from "../schema/index.ts";
+import { shellQuote } from "../cli/args.ts";
 import { iso, isRunning, lastActivity, matchesPlace, type Place } from "../mcp/data.ts";
 import { worktreeRepo } from "../query/where.ts";
 import { DERAIL_THRESHOLDS } from "./derail.ts";
@@ -533,7 +534,7 @@ function describe(item: WorkItem, cause: WorkCause, members: readonly Session[],
       // Each session counts its own distinct paths, so a sum over several may count a path more than once.
       const changers = members.filter((m) => (m.stats.filesChanged ?? 0) > 0).length;
       const reason = reviewReason(age, item.filesChanged, changers > 1 ? changers : undefined);
-      const diff = item.repo ? `\`git -C ${item.repo} diff\`` : `\`coding.sh work show ${item.id}\``;
+      const diff = item.repo ? `\`git -C ${shellQuote(item.repo)} diff\`` : `\`coding.sh work show ${item.id}\``;
       return { reason, next: `review: ${diff}, then \`coding.sh work ack ${item.id}\`` };
     }
   }
