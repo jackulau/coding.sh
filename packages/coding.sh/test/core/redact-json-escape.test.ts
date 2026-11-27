@@ -376,6 +376,32 @@ describe("a redaction keeps JSON text valid", () => {
     }
   });
 
+  it("a value made only of its own backslashes is left as it is at every level, in quotes or not", () => {
+    // The run of backslashes a value ends before stays whole, so such a value leaves nothing to
+    // replace, as at the text's own level.
+    const NL = String.fromCharCode(10);
+    const QT = String.fromCharCode(34);
+    for (const own of [BS.repeat(8), BS.repeat(12)]) {
+      const forms: [string, number][] = [
+        [j("export API_KEY=", QT, own, QT, " ls"), 0],
+        [j("see {", QT, "api_key", QT, ": ", QT, own, QT, "} ls"), 0],
+        [j("echo hi", NL, "API_KEY=", own), 1],
+        [j("echo hi", NL, "API_KEY=", own, NL, "ls"), 1],
+      ];
+      for (const [inner, from] of forms) {
+        for (let depth = from; depth <= 5; depth++) {
+          let input = inner;
+          for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+          const ev = redactEventCounted(red, event(input));
+          assert.equal(ev.payload.redactions, undefined, input);
+          assert.equal(ev.payload.text, input, input);
+          assert.equal(red.string(input), input, input);
+          assert.equal(red.value({ body: input }).body, input, input);
+        }
+      }
+    }
+  });
+
   it("a match that ends inside the hex digits of an escape keeps the whole escape after the marker", () => {
     const pat = createRedactor({ redact: ["none"], patterns: [j("Zq8[A-Za-z0-9]+", BS, BS, "u00")] });
     assert.equal(pat.string(`{"a":"xZq8mK2pW7${BS}u00e9 tail"}`), `{"a":"x[redacted:pattern]${BS}u00e9 tail"}`);

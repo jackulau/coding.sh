@@ -424,7 +424,9 @@ function levelAssignments(s: string): string {
     }
     pos = end;
     const span = s.slice(vs, end);
-    if (ONLY_MARKER.test(span)) continue;
+    // The run of backslashes a value ends before stays whole, so a value made only of its own
+    // backslashes leaves nothing to replace.
+    if (span === "" || ONLY_MARKER.test(span)) continue;
     out += s.slice(copied, vs) + cutWhole(s, vs, end, levelMarker(span, "secret-assignment"));
     copied = end;
   }
@@ -449,7 +451,7 @@ function levelFields(s: string): string {
     if (end < 0) continue;
     pos = end;
     const span = s.slice(vs, end);
-    if (ONLY_MARKER.test(span)) continue;
+    if (span === "" || ONLY_MARKER.test(span)) continue;
     out += s.slice(copied, vs) + cutWhole(s, vs, end, levelMarker(span, "secret-field"));
     copied = end;
   }
