@@ -682,9 +682,12 @@ describe("token counts that are not a whole number from 0 to 2^53 - 1", () => {
     assert.deepEqual(next, { inputTokens: 120 });
   });
 
-  it("a 5-minute cache write of 12.5 is left out of the split's sum, and a cache-write total of 12.5 gives way to the split", async () => {
+  it("a 5-minute or 1-hour cache write of 12.5 is left out of the split's sum, and a cache-write total of 12.5 gives way to the split", async () => {
     let c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_5m_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_1h_tokens", 100)]);
     assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 100 }, 100]);
+    // A 1-hour count of 12.5 adds nothing to the sum and gives no 1-hour hint.
+    c = await callOfLog([iAttr("input_tokens", 15), iAttr("cache_creation_5m_tokens", 40), attr("cache_creation_1h_tokens", { doubleValue: 12.5 })]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 40 }, undefined]);
     c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_5m_tokens", 40), iAttr("cache_creation_1h_tokens", 100)]);
     assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 140 }, 100]);
   });
