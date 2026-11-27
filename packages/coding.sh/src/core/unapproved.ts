@@ -18,7 +18,7 @@
 // right after a commit or a stash is not one. Pure: no I/O.
 import { posix } from "node:path";
 import type { AgentEvent, UnapprovedActions, UnapprovedKind } from "../schema/index.ts";
-import { operandsOf, shellCommand, shellWrites, simpleCommands, type SimpleCommand } from "./shell-diff.ts";
+import { operandsOf, shellCommand, SHELLS, shellScript, shellWrites, simpleCommands, type SimpleCommand } from "./shell-diff.ts";
 // sessions.ts imports this module; isSyntheticPrompt is used inside functions only.
 import { isSyntheticPrompt } from "./sessions.ts";
 
@@ -110,7 +110,6 @@ const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "pip", "pip3", "
 const NOT_A_TOOL = new Set(["git", "rm", "unlink", "rmdir", "mv", "cp", "ln", "mkdir", "touch", "chmod", "chown", "cat", "echo", "printf", "ls", "grep", "rg", "find", "sed", "awk", "tar", "zip", "unzip", "head", "tail", "test", "[", "cd", "pushd", "xargs", "env", "true", "false"]);
 const RUNNERS = new Set(["npx", "bunx", "pnpx", "uvx"]);
 const INTERPRETERS = new Set(["node", "bun", "deno", "tsx", "ts-node", "python", "python3", "ruby", "php", "perl"]);
-const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 /** Flags that skip a tool's own confirmation. `-f` is not one (too many tools use it for a file). */
 const FORCE_FLAG = /^(?:--yes|-y|--force|--assume-yes|--yes-i-really-mean-it|--no-confirm|--noconfirm|--confirm|-auto-approve|--auto-approve|--force-reset|--accept-data-loss)(?:=(?:true|1|yes))?$/;
 /** Subcommand verbs a force flag makes destructive. */
@@ -276,9 +275,9 @@ export function scanCommand(command: string, ctx: RiskyContext = {}): CommandSca
     if (!c.cmd) continue;
     const at = (p: string) => resolvePath(p, ctx.cwd, c.dir);
     if (SHELLS.has(c.cmd)) {
-      const i = c.args.findIndex((a) => /^-\w*c$/.test(a));
-      if (i >= 0 && c.args[i + 1]) {
-        const inner = scanCommand(c.args[i + 1]!, { ...ctx, made: known, saved });
+      const script = shellScript(c);
+      if (script) {
+        const inner = scanCommand(script, { ...ctx, made: known, saved });
         take(inner.action);
         saved = inner.saved;
         made.push(...inner.made);

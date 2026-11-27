@@ -109,8 +109,9 @@ In PowerShell or cmd, the commit step is three separate lines: `git add`, `git c
 `coding.sh improve check`. Windows PowerShell 5.1 has no `&&`.
 
 `improve fix` appends the line to the repo's instructions file: AGENTS.md or the agent's own file,
-whichever the repo has. With both, it picks the one the issue's agents read. When the file already has the line, it adds nothing; a line that is there and still
-not followed needs rewording, or a place nearer the top.
+whichever the repo has. With both, it picks the one the issue's agents read. It rewrites an
+earlier wording of the line in place. When the file already has the line, it adds nothing; a line
+that is there and still not followed needs rewording, or a place nearer the top.
 
 | Flag | Default | What it does |
 |---|---|---|

@@ -136,6 +136,27 @@ export function stripHeredocs(command: string): string {
   return lines.join("\n");
 }
 
+/** One line of a unified diff hunk: context (" "), added ("+") or removed ("-"). */
+export type DiffLine = { t: " " | "+" | "-"; s: string };
+
+/** The hunks of a unified diff, lines in order (file headers skipped). */
+export function diffHunks(diff: string): DiffLine[][] {
+  const hunks: DiffLine[][] = [];
+  let h: DiffLine[] | undefined;
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ ") || l.startsWith("--- ")) continue;
+    if (l.startsWith("@@")) {
+      hunks.push((h = []));
+      continue;
+    }
+    const t = l[0];
+    if (t !== "+" && t !== "-" && t !== " ") continue;
+    if (!h) hunks.push((h = []));
+    h.push({ t, s: l.slice(1) });
+  }
+  return hunks;
+}
+
 export interface SimpleCommand {
   /** The command word as written (`./bin/tool`, `rm`), after env assignments and `sudo`, `env`, `time`, `nohup`, `command`. */
   name: string;
@@ -147,6 +168,8 @@ export interface SimpleCommand {
   redirects: { path: string; append: boolean }[];
   /** The directory an earlier `cd`/`pushd` in the same command moved to (relative paths are under it). */
   dir?: string;
+  /** The operator after the command (`|`, `&&`, `||`, `;`, `&` or a newline); absent for the last one. */
+  sep?: string;
 }
 
 /**
@@ -195,19 +218,99 @@ function cdChain(): (to: string) => string {
 }
 
 /**
+ * `text` split as `text.split(/(&&|\|\||[;|&\n])/)` splits it, but only at operators outside
+ * quotes: a `;` or `|` inside `'…'` or `"…"` stays in its segment. A backslash outside single
+ * quotes escapes the next character, so `\;` and a `\` line break split nothing. A quote that
+ * never closes runs to the end. One pass over the text.
+ */
+function splitQuoted(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") {
+      if (ch === "'") quote = "";
+      continue;
+    }
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === '"') quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    const op = ch === "&" || ch === "|" ? (text[i + 1] === ch ? ch + ch : ch) : ch === ";" || ch === "\n" ? ch : "";
+    if (!op) continue;
+    parts.push(text.slice(start, i), op);
+    i += op.length - 1;
+    start = i + 1;
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+/**
+ * The words of a segment as the shell reads them: quoted and unquoted parts next to each other
+ * make one word, and the quotes go (`A="x y"` is the one word `A=x y`). A backslash keeps the
+ * character after it, and a `\` line break joins the lines. One pass over the segment.
+ */
+function quotedWords(seg: string): string[] {
+  const out: string[] = [];
+  let w: string | undefined;
+  for (let i = 0; i < seg.length; i++) {
+    const ch = seg[i] as string;
+    if (ch === "'") {
+      const end = seg.indexOf("'", i + 1);
+      const stop = end < 0 ? seg.length : end;
+      w = (w ?? "") + seg.slice(i + 1, stop);
+      i = stop;
+    } else if (ch === '"') {
+      let j = i + 1;
+      let s = "";
+      for (; j < seg.length && seg[j] !== '"'; j++) {
+        if (seg[j] === "\\" && j + 1 < seg.length && '"\\$`'.includes(seg[j + 1] as string)) j++;
+        s += seg[j];
+      }
+      w = (w ?? "") + s;
+      i = j;
+    } else if (ch === "\\") {
+      if (i + 1 < seg.length && seg[i + 1] !== "\n") w = (w ?? "") + seg[i + 1];
+      i++;
+    } else if (/\s/.test(ch)) {
+      if (w !== undefined) out.push(w);
+      w = undefined;
+    } else w = (w ?? "") + ch;
+  }
+  if (w !== undefined) out.push(w);
+  return out;
+}
+
+/**
  * The simple commands of a shell command line: split on `&&`, `||`, `;`, `|`,
  * `&` and newlines, heredoc bodies skipped, each as its unquoted words.
- * Best effort: no subshells or quoting across segments.
+ * Best effort: no subshells. By default an operator inside quotes splits too;
+ * with `quotes` it does not, and a word's quoted and unquoted parts join as the
+ * shell joins them (`A="--x y"` is the one word `A=--x y`).
  */
-export function simpleCommands(command: string): SimpleCommand[] {
+export function simpleCommands(command: string, o: { quotes?: boolean } = {}): SimpleCommand[] {
   const out: SimpleCommand[] = [];
   let dir: string | undefined;
   let cd: ((to: string) => string) | undefined;
   // A redirection to a descriptor (`2>&1`, `>&2`) and a heredoc's marker become a space. The
   // descriptor before `>&` is read from its first digit, `(?<!\d)`, so the time is linear.
   const text = stripHeredocs(command).replace(/(?<!\d)\d+>&\d+|>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
-  for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
-    const words = wordsOf(seg).map(unquote);
+  // Odd entries are the operators between the segments.
+  const parts = o.quotes ? splitQuoted(text) : text.split(/(&&|\|\||[;|&\n])/);
+  for (let n = 0; n < parts.length; n += 2) {
+    const seg = parts[n] as string;
+    const sep = parts[n + 1];
+    const words = o.quotes ? quotedWords(seg) : wordsOf(seg).map(unquote);
     // Redirections write their target wherever they sit.
     const rest: string[] = [];
     const redirects: SimpleCommand["redirects"] = [];
@@ -224,10 +327,22 @@ export function simpleCommands(command: string): SimpleCommand[] {
     const name = rest[k] ?? "";
     const cmd = name.includes("/") ? name.replace(/^.*\//, "") : name;
     const args = rest.slice(k + 1);
-    out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
+    const c: SimpleCommand = { name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) };
+    if (sep !== undefined) c.sep = sep;
+    out.push(c);
     if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) dir = (cd ??= cdChain())(args[0].replace(/\\/g, "/"));
   }
   return out;
+}
+
+/** The shells whose `-c` option runs a script. */
+export const SHELLS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "dash"]);
+
+/** The script a shell command runs with `-c` (`bash -lc 'lake build'`); undefined for any other command. */
+export function shellScript(c: Pick<SimpleCommand, "cmd" | "args">): string | undefined {
+  if (!SHELLS.has(c.cmd)) return undefined;
+  const i = c.args.findIndex((a) => /^-\w*c$/.test(a));
+  return (i >= 0 && c.args[i + 1]) || undefined;
 }
 
 /** A command's operands: words that are not options, everything after `--`, skipping the value of each option in `skipValueOf`. */
