@@ -15,6 +15,7 @@ import { readSignals, type Signal, type SignalsDoc } from "../../refine/signals.
 import { catalogHash } from "../../refine/taxonomy.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { list, resolveSession, str, withContext } from "../common.ts";
+import { trialTimeout } from "../jobs.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { gitRoot, providerDefaultModel } from "./exp-ab.ts";
@@ -64,13 +65,16 @@ export async function refineDiagnose(c: CommandContext): Promise<number> {
   const maxSessions = positiveInt(c.flags["max-sessions"], "max-sessions") ?? 50;
   const tokenBudget = positiveInt(c.flags["budget-tokens"], "budget-tokens");
   const concurrency = positiveInt(c.flags.concurrency, "concurrency");
+  const timeoutMs = trialTimeout(c);
   const kind = diagnoseProvider({ ...(str(c.flags.provider) ? { provider: str(c.flags.provider)! } : {}), dryRun: c.flags["dry-run"] === true }, c.env);
   let provider: ChatProvider | undefined;
   if (kind) {
     // gemini: providerFromSpec picks Google's current model.
     const model = str(c.flags.model) ?? (kind === "gemini" ? undefined : providerDefaultModel(kind));
     const spec: LlmProviderSpec = { provider: kind, ...(model ? { model } : {}), maxTokens: 4000 };
-    provider = providerFromSpec(spec, { env: c.env });
+    const providerDeps: { env: NodeJS.ProcessEnv; timeoutMs?: number } = { env: c.env };
+    if (timeoutMs !== undefined) providerDeps.timeoutMs = timeoutMs;
+    provider = providerFromSpec(spec, providerDeps);
   }
   return withContext(c, async (ctx) => {
     // --session takes what `show` takes: an id, a unique prefix or latest. A miss is an error, never an empty plan.

@@ -586,7 +586,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
     if (r.stopped) {
       stopped = r.stopped;
       if (r.stopped === "infra") infra = r.run;
-      resume = `coding.sh refine run --suite ${o.suite}${o.objectives.length > 1 || o.primary !== "pass" ? ` --objective ${o.objectives.join(",")}` : ""}${untilPlateau ? " --until-plateau" : ""} --resume --yes`;
+      resume = `coding.sh refine run --suite ${o.suite}${o.objectives.length > 1 || o.primary !== "pass" ? ` --objective ${o.objectives.join(",")}` : ""}${untilPlateau ? " --until-plateau" : ""}${e.timeoutMs !== undefined ? ` --trial-timeout ${e.timeoutMs / 1000}` : ""} --resume --yes`;
       break;
     }
     const t = r.entry!;
