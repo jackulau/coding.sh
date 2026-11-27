@@ -12,7 +12,7 @@ wrong. A name with a colon, such as `skill:pdf`, is a tag and not a failure. `co
 | `repeated-tool-failure` | Had the same tool fail three times in a row with similar input. |
 | `no-verification` | Changed files, but no test, type check, lint or build ran. |
 | `compaction` | Had its context compacted. A note, not a failure. |
-| `test-tamper` | Edited a test or test config to hide failures. |
+| `test-tamper` | Edited a test, test config, theorem statement or spec to hide failures, added a proof escape hatch such as `sorry` and left it in, or passed a failed proof check with a flag that skips it. |
 | `duplicate-fetch` | Repeated three or more read-only calls in one context with the same result and no edit in between. |
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
 | `refusal` | Had a model call stop on a refusal. |

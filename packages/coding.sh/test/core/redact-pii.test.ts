@@ -102,6 +102,60 @@ const NEGATIVES: [string, string][] = [
   ["tsc position", "src/a.ts(3,1): error TS2304"],
 ];
 
+// [text, what the phone rules leave of it]: where a + number starts and ends.
+const PLUS_PHONE_EDGES: [string, string][] = [
+  ["+12345 678 901", "[redacted:phone]"], // three country digits, then the groups
+  ["+44(20) 7946 0958", "[redacted:phone]"],
+  ["+1-(415)-555-2671", "[redacted:phone]"],
+  ["+44 (0) 20 7946 0958", "[redacted:phone]"],
+  ["+1 (41555) 5552671", "+1 (41555) 5552671"], // an area code has at most 4 digits
+  ["+1 23 45 67 89 01 23", "[redacted:phone] 23"], // at most 5 groups
+  ["+1 23 45 67 89 01-23", "[redacted:phone] 01-23"], // no end before a dash: a group earlier
+  ["+1 23 45 67 89 01.5", "[redacted:phone] 01.5"], // nor before a dot and a digit
+  ["+44 20 7946 0958.5", "[redacted:phone]"], // a dot and a digit is a group
+  ["+44 20 7946 0958.", "[redacted:phone]."],
+  ["+1 415 555 2671 ext 12", "[redacted:phone] ext 12"],
+  ["+14155552671x", "+14155552671x"],
+  ["+14155552671_", "+14155552671_"],
+  ["+1 415 555 2671-x", "+1 415 555 2671-x"], // the end before the dash fails; 7 digits are left
+  ["+1 415 555 2671 +44 20 7946 0958", "[redacted:phone] [redacted:phone]"],
+  ["+1 415 555 2671+1 415 555 2671", "[redacted:phone]+1 415 555 2671"], // a + after a digit starts none
+  ["a+14155552671", "a+14155552671"],
+  ["++14155552671", "++14155552671"],
+  ["+1234567", "+1234567"],
+  ["+12345678", "[redacted:phone]"],
+  ["+123456789012345", "[redacted:phone]"],
+  ["+1234567890123456", "+1234567890123456"],
+];
+
+// The phone rules as they were before redactPhoneRun: the + rule was one regex, then the check for
+// 8 to 15 digits, and the North American rule ran after it, as createRedactor runs them. Frozen: the
+// phone rules must redact the same spans. Do not edit to follow changes in src; a change made on
+// purpose updates these and says so in the commit.
+const ORIGINAL_PLUS_PHONE = /(?<![\w+])\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d{1,5}){2,5}(?![\w-]|\.\d)/g;
+const ORIGINAL_NANP_PHONE = /(?<![\w.+-])(?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?![\w-]|\.\d)/g;
+const originalPhoneRedact = (s: string): string =>
+  s
+    .replace(ORIGINAL_PLUS_PHONE, (m) => {
+      const n = m.replace(/\D/g, "").length;
+      return n >= 8 && n <= 15 ? "[redacted:phone]" : m;
+    })
+    .replace(ORIGINAL_NANP_PHONE, "[redacted:phone]");
+
+const PHONE_EXAMPLES = [
+  ...POSITIVES.filter(([label]) => label.startsWith("phone")).map(([, text]) => text),
+  ...PLUS_PHONE_EDGES.map(([text]) => text),
+  "+1 23",
+  "+05:30",
+  "+1.2.3",
+  "(+44) 20 7946 0958",
+  "+1 415 (555) 2671",
+  "+33 (0)1 42 68 53 00",
+  "tel:+1-415-555-2671;ext=12",
+  "+1 415 555 2671 / +1 (415) 555-2672",
+  "415-555-2671.5",
+];
+
 const pii = createRedactor({ redact: ["secrets", "pii"] });
 
 describe("PII pack", () => {
@@ -125,6 +179,21 @@ describe("PII pack", () => {
     assert.equal(card.string(j("+1 415 555 2671 ", "4111111111111111")), "+1 415 555 2671 [redacted:card]");
     assert.equal(createRedactor({ redact: ["iban"] }).string(j("GB82WEST", "12345698765432")), "[redacted:iban]");
     assert.equal(createRedactor({ redact: ["national-id"] }).string("536-22-1234 jane@example.com"), "[redacted:national-id] jane@example.com");
+  });
+
+  it("finds where a + phone number starts and ends", () => {
+    const phone = createRedactor({ redact: ["phone"] });
+    for (const [text, expect] of PLUS_PHONE_EDGES) assert.equal(phone.string(text), expect, text);
+  });
+
+  it("redacts the same phone numbers as the original rules, on the examples and pairs of them", () => {
+    const phone = createRedactor({ redact: ["phone"] });
+    const check = (s: string) => assert.equal(phone.string(s), originalPhoneRedact(s), JSON.stringify(s));
+    for (const a of PHONE_EXAMPLES) {
+      check(a);
+      // Pairs, so one example's tail runs into the next one's head.
+      for (const b of PHONE_EXAMPLES) for (const sep of ["", " ", ".", "-", "(", "x"]) check(a + sep + b);
+    }
   });
 
   it("counts what it replaced by kind", () => {

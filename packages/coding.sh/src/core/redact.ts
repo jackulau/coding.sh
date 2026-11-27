@@ -712,8 +712,82 @@ export function ibanValid(m: string): boolean {
   return rem === 1;
 }
 
-/** A + phone number's digit count (E.164 allows at most 15). */
-const phoneDigits = (m: string): number => m.replace(/\D/g, "").length;
+const isDigitCode = (c: number): boolean => c >= 48 && c <= 57;
+/** A space, dot or dash: what may stand before a group of a + phone number. */
+const isPhoneSepCode = (c: number): boolean => c === 32 || c === 46 || c === 45;
+/** `(?![\w-]|\.\d)` at `i` in `s`: a + phone number may end there. */
+const phoneMayEndAt = (s: string, i: number): boolean => {
+  const c = s.charCodeAt(i);
+  return !isWordCode(c) && c !== 45 && !(c === 46 && isDigitCode(s.charCodeAt(i + 1)));
+};
+
+/**
+ * The end of the + phone number at the start of `run`, or -1. `run` is a match of the phone rule's
+ * regex: a + and the digits, spaces, dots, dashes and brackets after it, with the letter or `_`
+ * after them if there is one. The number is
+ * `\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d{1,5}){2,5}(?![\w-]|\.\d)`, which reads nothing past
+ * that, and this returns the end that regex finds: the most country digits first, an area code
+ * before none, then the farthest end its groups can reach. Each try reads a bounded part of `run`.
+ */
+function phoneEnd(run: string): number {
+  let country = 1;
+  while (country < 3 && isDigitCode(run.charCodeAt(1 + country))) country++;
+  for (let c = country; c >= 1; c--) {
+    const area = phoneAreaEnd(run, 1 + c);
+    const end = area < 0 ? -1 : phoneGroupsEnd(run, area);
+    if (end >= 0) return end;
+    const bare = phoneGroupsEnd(run, 1 + c);
+    if (bare >= 0) return bare;
+  }
+  return -1;
+}
+
+/** The end of the area code `[ .-]?\(\d{1,4}\)` at `i` in `run`, or -1. It matches in one way at most. */
+function phoneAreaEnd(run: string, i: number): number {
+  if (isPhoneSepCode(run.charCodeAt(i))) i++;
+  if (run.charCodeAt(i) !== 40) return -1; // (
+  const from = i + 1;
+  let j = from;
+  while (j - from < 5 && isDigitCode(run.charCodeAt(j))) j++;
+  return j > from && j - from <= 4 && run.charCodeAt(j) === 41 ? j + 1 : -1; // 1 to 4 digits, then )
+}
+
+/**
+ * The end of `(?:[ .-]?\d{1,5}){2,5}(?![\w-]|\.\d)` at `i` in `run`, or -1. The groups can end only
+ * where a run of digits ends, since a digit after them fails the check, and a run of n digits takes
+ * at least ceil(n / 5) groups and at most n. The regex takes the farthest run end that 2 to 5 groups
+ * reach and the check lets through.
+ */
+function phoneGroupsEnd(run: string, i: number): number {
+  if (isPhoneSepCode(run.charCodeAt(i)) && isDigitCode(run.charCodeAt(i + 1))) i++;
+  let fewest = 0;
+  let digits = 0;
+  let end = -1;
+  while (isDigitCode(run.charCodeAt(i))) {
+    const from = i;
+    // 26 digits take 6 groups, so a run is read no further.
+    while (i - from < 26 && isDigitCode(run.charCodeAt(i))) i++;
+    fewest += Math.ceil((i - from) / 5);
+    if (fewest > 5) break;
+    digits += i - from;
+    if (digits >= 2 && phoneMayEndAt(run, i)) end = i;
+    if (!isPhoneSepCode(run.charCodeAt(i))) break;
+    i++;
+  }
+  return end;
+}
+
+/**
+ * `run`, a match of the phone rule's regex, with the + phone number at its start redacted when it has
+ * 8 to 15 digits (E.164 allows at most 15).
+ */
+function redactPhoneRun(run: string): string {
+  const end = phoneEnd(run);
+  if (end < 0) return run;
+  let n = 0;
+  for (let i = 1; i < end; i++) if (isDigitCode(run.charCodeAt(i))) n++;
+  return n >= 8 && n <= 15 ? marker("phone") + run.slice(end) : run;
+}
 
 /** The rules of one PII kind. */
 export function piiRules(kinds: readonly string[] = PII_KINDS): RedactRule[] {
@@ -734,7 +808,10 @@ export function piiRules(kinds: readonly string[] = PII_KINDS): RedactRule[] {
   }
   if (want.has("phone")) {
     // +<country> then 7-14 more digits in groups; a "+05:30" offset or "+1.2.3" has too few digits.
-    rules.push(checked("phone", /(?<![\w+])\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d{1,5}){2,5}(?![\w-]|\.\d)/g, (m) => phoneDigits(m) >= 8 && phoneDigits(m) <= 15));
+    // The regex reads the + and the characters a number can hold after it in one pass, and
+    // redactPhoneRun finds the number in them, so the text is read in linear time. The rest of a
+    // match holds no +, so no other number starts in it.
+    rules.push({ kind: "phone", pattern: /(?<![\w+])\+\d[\d .()-]*[A-Za-z_]?/g, replace: redactPhoneRun });
     // North American: (555) 123-4567, 555-123-4567, 555.123.4567 (one separator throughout).
     rules.push({ kind: "phone", pattern: /(?<![\w.+-])(?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?![\w-]|\.\d)/g });
   }
