@@ -177,6 +177,14 @@ describe("t3code adapter", () => {
     assert.equal(turnUsage({ usageStatus: "unavailable" }), undefined);
   });
 
+  it("a T3 turn count that is not a whole number from 0 to 2^53 - 1 reads as missing before the cache counts are taken out", () => {
+    for (const cached of [600.5, -600, 2 ** 53]) {
+      const u = turnUsage({ usageStatus: "complete", inputTokens: 1000, cachedInputTokens: cached, cacheCreationTokens: 100, outputTokens: 50 });
+      assert.deepEqual(u, { inputTokens: 900, outputTokens: 50, cacheWriteTokens: 100 }, `cached ${cached}`);
+    }
+    assert.deepEqual(turnUsage({ usageStatus: "complete", inputTokens: 1000.5, outputTokens: 50 }), { outputTokens: 50 });
+  });
+
   it("imports one session per provider thread, attributed to the agent that ran with T3 Code as host", async () => {
     const { index } = await run([t3code]);
     const all = await index.listSessions({});
@@ -670,6 +678,35 @@ describe("t3code v1 usage snapshots", () => {
     assert.deepEqual([u.inputTokens, u.cacheReadTokens, u.outputTokens], [40_000, 50_000, 7000]);
     // gpt-5.4: 40K × $2.50 + 50K × $0.25 + 7K × $15 per 1M, the latest snapshot priced once.
     assert.ok(Math.abs(u.costUsd! - 0.2175) < 1e-9, String(u.costUsd));
+  });
+});
+
+describe("t3code v1 usage snapshot with a cached count that reads as missing", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("a cached count that is not a whole number is not taken out of the input", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    buildV1(dir);
+    const db = new DatabaseSync(join(dir, "state.sqlite"));
+    db.prepare("INSERT INTO projection_thread_activities VALUES ('a4', 'thr-old', 'turn-o1', 'info', 'context-window.updated', 'ctx', ?, ?, 4)").run(J({ inputTokens: 90_000, cachedInputTokens: 50_000.5, outputTokens: 7000 }), T(13));
+    db.close();
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    const u = (await index.getSession("v1-codex-thread-not-on-disk"))!.stats.usage!;
+    assert.deepEqual([u.inputTokens, u.cacheReadTokens, u.outputTokens], [90_000, undefined, 7000]);
   });
 });
 

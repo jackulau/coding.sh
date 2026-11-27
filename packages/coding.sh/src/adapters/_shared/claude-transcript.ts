@@ -348,7 +348,7 @@ export class ClaudeTranscriptConverter {
     const call = held.findLast((h) => isForkCall(h.entry, id));
     const m = obj(isObj(call?.entry) ? call.entry.message : undefined);
     const use = arr(m.content).map(obj).find((b) => b.type === "tool_use" && b.id === id);
-    // The counts as an estimate bills them: one below 0 or not a finite number adds nothing.
+    // The counts as an estimate bills them: one that is not a whole number from 0 to 2^53 - 1 adds nothing.
     const u = billableUsage(anthropicUsage(m.usage));
     // The context the fork starts with: that call's prompt and its output.
     const inherited = promptTokens(u) + (u.outputTokens ?? 0);

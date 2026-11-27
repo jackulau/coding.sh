@@ -244,6 +244,28 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       await store.close();
     });
 
+    it("prices again an estimate made from a token count that is not a whole number from 0 to 2^53 - 1, and keeps the counts as sent", async () => {
+      const store = await open();
+      // Estimates an earlier version stored: one from 2^53 input tokens, and one from a call whose only count is 12.5.
+      const evs = [
+        ev("start", { kind: "session.start", ts: 900 }),
+        ev("big", { model: "claude-opus-4-5", usage: { inputTokens: 2 ** 53, outputTokens: M, costUsd: 45_035_996_299 }, payload: { costEstimated: true } }),
+        ev("odd", { model: "claude-opus-4-5", usage: { inputTokens: 12.5, costUsd: 0.0000625 }, payload: { costEstimated: true } }),
+      ];
+      await store.putEvents(evs);
+      await store.upsertSession(buildSession(evs));
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 2, sessions: 1 });
+      const e = Object.fromEntries((await store.listEvents("s1")).map((x) => [x.id, x]));
+      // Only the output tokens bill: $25.
+      assert.deepEqual(e.big!.usage, { inputTokens: 2 ** 53, outputTokens: M, costUsd: 25 });
+      assert.deepEqual(e.big!.payload, { costEstimated: true, costByTokenType: { cacheRead: 0, cacheWrite: 0, input: 0, output: 25 } });
+      // No count bills, so there is no estimate.
+      assert.deepEqual([e.odd!.usage, e.odd!.payload], [{ inputTokens: 12.5 }, {}]);
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.inputTokens, u.outputTokens, u.costUsd, u.estimatedCostUsd], [undefined, M, 25, 25]);
+      await store.close();
+    });
+
     it("a pass stopped between a session's new costs and its totals: the next pass brings the totals in line with the costs", async () => {
       const store = await open();
       await seed(store);

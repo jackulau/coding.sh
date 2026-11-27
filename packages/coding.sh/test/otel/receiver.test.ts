@@ -110,6 +110,44 @@ describe("OTLP receiver over HTTP", () => {
     assert.equal(batches[0]!.sessions.length, 1);
   });
 
+  it("reads a token count that is not a whole number from 0 to 2^53 - 1 as not sent, and prices only the counts it kept", async () => {
+    // As an exporter sends them: 2^53 + 1 (which reads as 2^53), and counts below 0.
+    const chat = (trace: string, input: string, output: string) =>
+      otlpSpan(
+        trace,
+        "e000000000000001",
+        undefined,
+        "chat claude-opus-5-5",
+        [
+          sAttr("gen_ai.operation.name", "chat"),
+          sAttr("gen_ai.request.model", "claude-opus-5-5"),
+          { key: "gen_ai.usage.input_tokens", value: { intValue: input } },
+          { key: "gen_ai.usage.output_tokens", value: { intValue: output } },
+        ],
+        0,
+        1000,
+      );
+    const [big, negative, ok] = ["e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3"];
+    for (const span of [chat(big, "9007199254740993", "5"), chat(negative, "-500", "-7"), chat(ok, "1000", "5")]) {
+      const res = await send(rx.url, json("/v1/traces", otlpTraces("count-test", [span])));
+      assert.equal(res.status, 200);
+    }
+    const okUsage = (await store.getSession(ok))?.stats.usage;
+    assert.equal(okUsage?.inputTokens, 1000);
+    assert.equal(okUsage?.outputTokens, 5);
+    const output = okUsage?.estimatedCostByTokenType?.output;
+    assert.ok(output !== undefined && output > 0, `output cost ${output}`);
+    // Only the 5 output tokens are stored and priced.
+    assert.deepEqual((await store.getSession(big))?.stats.usage, {
+      outputTokens: 5,
+      costUsd: output,
+      estimatedCostUsd: output,
+      estimatedCostByTokenType: { cacheRead: 0, cacheWrite: 0, input: 0, output },
+    });
+    // No count is kept, so there is nothing to price.
+    assert.deepEqual((await store.getSession(negative))?.stats.usage, undefined);
+  });
+
   it("ingests protobuf traces with an empty ExportTraceServiceResponse and the same ids as JSON", async () => {
     const res = await send(rx.url, proto("/v1/traces", encodeTraces(fixture("genai-semconv.json"))));
     assert.equal(res.status, 200);

@@ -24,7 +24,7 @@
 // counts, at that model's list prices and at the list prices of the model the
 // switch left: the difference is what the switch cost (ModelSwitch.extraUsd).
 import type { AgentEvent, ModelSwitch } from "../schema/index.ts";
-import { cacheWrite1h, costFrom, pricesFor, resolvePrice, type Prices } from "./pricing.ts";
+import { cacheWrite1h, costFrom, pricesFor, resolvePrice, tokenCount, type Prices } from "./pricing.ts";
 
 /** A tag (namespaced, so failureFlags() leaves it out): a model changed mid-session. */
 export const MODEL_SWITCH = "model:switch";
@@ -55,7 +55,8 @@ const isModelCommand = (e: AgentEvent): boolean => {
 };
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+/** A token count as the totals take it (pricing.ts tokenCount), else 0. */
+const num = (v: unknown): number => tokenCount(v) ?? 0;
 
 /** Token totals of some calls, to price them at any model's rates. */
 interface Tokens {

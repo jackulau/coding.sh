@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { ampAdapter, ampPluginSource, ampStreamParser } from "../../../src/adapters/more/amp.ts";
+import type { AgentEvent } from "../../../src/schema/index.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeHook, fire, hookCalls, loadPlugin, waitFor } from "./_plugin-host.ts";
-import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, fakeBinary, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, writeFile } from "./_helpers.ts";
+import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, fakeBinary, FIXTURES, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
 
 const TID = "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 
@@ -29,6 +31,24 @@ describe("amp normalize", () => {
     const rejected = events.find((e) => e.kind === "tool.end" && e.payload.tool === "create_file")!;
     assert.equal(rejected.payload.ok, false);
     assert.ok(!events.some((e) => e.kind === "file.change" && e.payload.path === "secret.txt"), "no file.change for a rejected edit");
+  });
+
+  it("turn.end counts leave out a message's count that is not a whole number from 0 to 2^53 - 1", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-amp-counts-"));
+    try {
+      const text = readFileSync(join(FIXTURES, "amp", "plugin.spool.jsonl"), "utf8");
+      const key = `"inputTokens":900,`;
+      assert.equal(text.split(key).length, 2, "one message has this count");
+      const file = join(dir, "plugin.spool.jsonl");
+      writeFileSync(file, text.split(key).join(`"inputTokens":900.5,`));
+      const { ctx } = testCtx();
+      const events: AgentEvent[] = [];
+      for (const l of readFileSync(file, "utf8").split("\n").filter((x) => x.trim())) events.push(...(await ampAdapter.normalize(JSON.parse(l), ctx)));
+      const end = events.find((e) => e.kind === "turn.end")!;
+      assert.deepEqual([end.payload.inputTokens, end.payload.outputTokens], [1100, 65]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("parses stream-json usage (result wins over summed assistant usage)", () => {

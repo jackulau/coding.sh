@@ -49,6 +49,7 @@ import {
   spawnAgent,
   spoolIdParts,
   str,
+  tokens,
   toMs,
   toRunOutput,
   usageFrom,
@@ -167,7 +168,10 @@ function piInterrupted(isError: unknown, content: unknown, stopReason: unknown):
 
 function piUsage(u: unknown): Usage | undefined {
   if (!isObj(u)) return undefined;
-  return usageFrom({ input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: num(u.cacheWrite) !== undefined || num(u.cacheWrite1h) !== undefined ? (num(u.cacheWrite) ?? 0) + (num(u.cacheWrite1h) ?? 0) : undefined, costUsd: get(u, "cost", "total") });
+  // The cache writes are the sum of both counts, without one that reads as missing (tokens).
+  const write = tokens(u.cacheWrite);
+  const write1h = tokens(u.cacheWrite1h);
+  return usageFrom({ input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: write !== undefined || write1h !== undefined ? (write ?? 0) + (write1h ?? 0) : undefined, costUsd: get(u, "cost", "total") });
 }
 
 /**
@@ -341,7 +345,9 @@ export const piAdapter: Adapter = {
   // 7 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 8 (0.1.8): an extension line whose sessionFile names a folder, or a file that cannot be read, gives its events (jsonlTail).
   // 9 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing.
-  parseVersion: 9,
+  // 10 (0.1.8): a cache-write count (cacheWrite, cacheWrite1h) that is not a whole number from 0 to 2^53 - 1 reads as
+  //    missing before the two are summed.
+  parseVersion: 10,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["pi"]);
     const dir = piAgentDir();
