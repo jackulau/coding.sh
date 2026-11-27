@@ -215,6 +215,9 @@ tests run with `npm run lint:test`.
   request's Windows jobs restore. A manual run of the workflow runs every job but Site perf.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
+- In CI a test file still running after 5 minutes is stopped and fails under its own name, then
+  runs again alone like any failed file (`packages/coding.sh/scripts/test-file-limit.mjs`).
+  `CODING_SH_TEST_FILE_LIMIT_MS` sets another limit; 0 turns it off.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
