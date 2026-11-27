@@ -305,7 +305,7 @@ coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 -
         <tr><td><code>--retry-errors</code></td><td>off</td><td>With <code>--resume</code>: also runs its task errors again.</td></tr>
         <tr><td><code>--retries</code></td><td>3</td><td>Retries after a rate limit, 5xx or network error. Failed answers are never retried.</td></tr>
         <tr><td><code>--stop-after-infra</code></td><td>5</td><td>Stops after this many infrastructure failures in a row. The run then gives no verdict.</td></tr>
-        <tr><td><code>--trial-timeout</code></td><td>none</td><td>Seconds each attempt may run. A retry gets the full limit again. A trial over it fails and is not retried.</td></tr>
+        <tr><td><code>--trial-timeout</code></td><td>none</td><td>Seconds per attempt. An attempt over it fails the trial, with no retry.</td></tr>
       </tbody>
     </table>
   </div>
