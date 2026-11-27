@@ -4,6 +4,7 @@
 import { parsePlace, type Place } from "../../mcp/data.ts";
 import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
+import { dateMs, isoMs } from "../../core/dates.ts";
 import type { IndexStore } from "../../core/types.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
@@ -94,8 +95,8 @@ function staleIndex(ctx: Context): IndexAge | undefined {
 
 /** `indexUpdatedAt` and `asOf` (the time the queue was judged at) for --json, only while the index is old. */
 function staleIndexField(stale: IndexAge | undefined): { indexUpdatedAt?: string; asOf?: string } {
-  if (!stale) return {};
-  const at = new Date(stale.at).toISOString();
+  const at = stale ? isoMs(stale.at) : undefined;
+  if (!at) return {};
   return { indexUpdatedAt: at, asOf: at };
 }
 
@@ -300,7 +301,7 @@ function ambiguousItemError(ref: string, { ambiguous: shown, more }: { ambiguous
   return new CliError(`Work item id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
     reason: "ambiguous",
     next: ["Pass one of these ids, more of the id, or list work items:", `coding.sh work --all --since ${w.sinceText}`],
-    data: { candidates: shown.map((i) => ({ id: i.id, agent: i.agent, startedAt: new Date(i.startedAt).toISOString(), title: i.title ?? null })), more },
+    data: { candidates: shown.map((i) => ({ id: i.id, agent: i.agent, startedAt: isoMs(i.startedAt) ?? null, title: i.title ?? null })), more },
   });
 }
 
@@ -333,7 +334,7 @@ async function show(c: CommandContext): Promise<number> {
         // JSON.stringify drops an undefined field: no sessionFilesChanged without a count, and an item that is
         // no workflow run has no workflowAgents.
         sessionFilesChanged: own,
-        workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
+        workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: isoMs(startedAt) ?? null })) : undefined,
         files: [...files].slice(0, 200),
         sessions: [item.primaryId, ...children.map((s) => s.id)].map((id) => {
           const s = byId.get(id);
@@ -450,6 +451,7 @@ async function snooze(c: CommandContext): Promise<number> {
     const { item } = await findItem(c, ctx, ref, overlay);
     const now = Date.now();
     const until = now + ms;
+    if (dateMs(until) === undefined) throw new UsageError(`<DURATION> is outside the supported date range, got ${JSON.stringify(raw)}`, { reason: "invalid_argument" });
     const bucket = item.bucket ?? item.cause?.bucket ?? "review";
     snoozeItem(overlay, item, { until, bucket });
     writeOverlay(ctx.paths.work, overlay, now);

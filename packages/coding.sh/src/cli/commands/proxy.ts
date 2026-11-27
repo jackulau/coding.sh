@@ -7,6 +7,7 @@ import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { createServer } from "node:net";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { isoMs } from "../../core/dates.ts";
 import { runningCli } from "../../mcp/launch.ts";
 import { isLoopbackHost } from "../../otel/receiver.ts";
 import { budgetStatuses, readBudgets, type Budget } from "../../budget/index.ts";
@@ -337,7 +338,7 @@ async function status(c: CommandContext): Promise<number> {
   const alive = !!st && pidAlive(st.pid);
   const health = st && alive ? await probeProxy(st.url) : undefined;
   if (out.json) {
-    out.data({ running: !!health, ...(st ? { url: st.url, pid: st.pid, port: st.port, startedAt: new Date(st.startedAt).toISOString(), upstreams: st.upstreams } : {}) });
+    out.data({ running: !!health, ...(st ? { url: st.url, pid: st.pid, port: st.port, startedAt: isoMs(st.startedAt) ?? null, upstreams: st.upstreams } : {}) });
     return health ? 0 : 1;
   }
   if (!health) {

@@ -7,6 +7,7 @@
 // at (otherwise) and a new run starts. A config that changed refuses to resume:
 // finished trials of one config mixed with new trials of another would be a
 // result of neither.
+import { isoMs } from "../core/dates.ts";
 import { positiveInt, UsageError } from "./args.ts";
 import { num, str } from "./common.ts";
 import { ago, CliError, duration, plural, usd } from "./output.ts";
@@ -182,8 +183,8 @@ export function jobJson(v: JobView) {
     activeMs: p.activeMs,
     concurrency: h.concurrency,
     sessions: h.sessions.length,
-    createdAt: new Date(h.createdAt).toISOString(),
-    updatedAt: new Date(h.updatedAt).toISOString(),
+    createdAt: isoMs(h.createdAt) ?? null,
+    updatedAt: isoMs(h.updatedAt) ?? null,
     config: h.config.hash.slice(0, 12),
     records: h.refs,
     resume: open ? resumeCommand(h) : null,

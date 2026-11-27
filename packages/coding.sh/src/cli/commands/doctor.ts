@@ -15,6 +15,7 @@ import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
+import { dateMs, isoMs } from "../../core/dates.ts";
 import { shortener } from "../../core/session-ref.ts";
 import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -497,7 +498,8 @@ export async function run(c: CommandContext): Promise<number> {
       for (const { adapter } of detected) {
         const recent = await ctx.index.listSessions({ agent: adapter.id, limit: 5 });
         const s = recent[0];
-        if (s) lastByAgent[adapter.id] = s.endedAt ?? s.startedAt;
+        const at = s ? (dateMs(s.endedAt) ?? dateMs(s.startedAt)) : undefined;
+        if (at !== undefined) lastByAgent[adapter.id] = at;
         cwdsByAgent[adapter.id] = recent.map((r) => r.cwd).filter((d): d is string => !!d);
       }
       const tagged = new Set<string>();
@@ -571,8 +573,8 @@ export async function run(c: CommandContext): Promise<number> {
       store: adapter.tail !== undefined,
       // How this agent is captured: its hooks, its own store, or the `coding.sh run --` wrapper (tier C: nothing to install).
       capture,
-      lastEventAt: last !== undefined ? new Date(last).toISOString() : null,
-      lastEventAgeMs: last !== undefined ? Date.now() - last : null,
+      lastEventAt: isoMs(last) ?? null,
+      lastEventAgeMs: dateMs(last) !== undefined ? Date.now() - last! : null,
       notes: result.notes ?? [],
       // Hooks will not fire (agent too old, hooks disabled, not trusted yet):
       // "hooked" alone would read as working capture.

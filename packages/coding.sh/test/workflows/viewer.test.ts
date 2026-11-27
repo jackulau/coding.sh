@@ -50,6 +50,14 @@ describe("workflowsApi", () => {
     assert.equal(r.runs[0]!.costUsd, 3);
   });
 
+  it("reads out-of-range workflow run timestamps as null while keeping the other runs", () => {
+    const far = runSummary({ ...fx.run, id: "wf_far", startedAt: 8.64e15 + 1, endedAt: 1e300, stats: { ...fx.run.stats, wallMs: undefined } });
+    assert.equal(far.startedAt, null);
+    assert.equal(far.endedAt, null);
+    assert.equal(far.wallMs, null);
+    assert.equal(runSummary(fx.run).startedAt, new Date(fx.run.startedAt).toISOString());
+  });
+
   it("serves a run's gantt exactly as buildGantt builds it", async () => {
     const g = await workflowsApi(store, "wf_view01", "gantt", new URLSearchParams());
     const stored = (await store.getRun("wf_view01"))!;

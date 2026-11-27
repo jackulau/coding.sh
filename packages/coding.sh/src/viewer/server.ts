@@ -21,6 +21,7 @@ import { historyRuns, listRuns } from "../bench/store.ts";
 import type { BenchRun } from "../bench/types.ts";
 import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Score, Session, SessionFilter } from "../core/types.ts";
+import { MAX_DATE_MS } from "../core/dates.ts";
 import { isFailureFlag } from "../core/failure-flags.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
@@ -1758,7 +1759,7 @@ export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<Metric
     const raw = q.get(name);
     if (raw === null || raw === "") return undefined;
     const t = /^\d{1,16}$/.test(raw) ? Number(raw) : parseTime(raw, now, tz);
-    if (t === undefined || !Number.isFinite(t) || t < 0 || t > 8_640_000_000_000_000) throw new HttpError(400, `${name} must be epoch ms, a date or an age such as 30d`);
+    if (t === undefined || !Number.isFinite(t) || t < 0 || t > MAX_DATE_MS) throw new HttpError(400, `${name} must be epoch ms, a date or an age such as 30d`);
     return t;
   };
   const until = time("until") ?? now;
@@ -1783,7 +1784,7 @@ interface Facets {
   until?: number;
 }
 function facetParams(q: URLSearchParams): Facets {
-  const time = (name: string) => (q.get(name) ? intParam(q, name, 0, 0, 8_640_000_000_000_000) : undefined);
+  const time = (name: string) => (q.get(name) ? intParam(q, name, 0, 0, MAX_DATE_MS) : undefined);
   return {
     agent: q.get("agent") || undefined,
     flag: q.get("flag") || undefined,

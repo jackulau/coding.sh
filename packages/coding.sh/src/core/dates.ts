@@ -9,6 +9,12 @@ export function dateMs(ms: number | undefined): number | undefined {
   return ms !== undefined && Math.abs(ms) <= MAX_DATE_MS ? ms : undefined;
 }
 
+/** ISO 8601 instant when `ms` is in the Date range; undefined when it is past it, NaN, Infinity or undefined. */
+export function isoMs(ms: number | undefined): string | undefined {
+  const t = dateMs(ms);
+  return t !== undefined ? new Date(t).toISOString() : undefined;
+}
+
 /**
  * `durationMs` when the start it gives, `end` less it, is in the Date range; undefined when that
  * start is out of it, or when there is no duration. A caller then places the start at `end`.

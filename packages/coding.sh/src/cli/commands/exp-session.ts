@@ -6,6 +6,7 @@
 // previous run on the same dataset; `--no-session` skips both.
 import { relative } from "node:path";
 import { createInterface } from "node:readline";
+import { isoMs } from "../../core/dates.ts";
 import { sha256Hex } from "../../core/ids.ts";
 import { createRedactor, redactArgv } from "../../core/redact.ts";
 import type { FileEvalStore } from "../../datasets/store.ts";
@@ -114,7 +115,8 @@ export async function sessionCommand(c: CommandContext, store: FileEvalStore): P
       const session = findSession({ cwd: c.cwd, env: c.env });
       if (!session) throw noSession();
       const blocks = await readTimeline(store.root, session.id);
-      if (out.json) out.data({ session: { id: session.id, ...(session.name ? { name: session.name } : {}), ...(session.createdAt ? { createdAt: new Date(session.createdAt).toISOString() } : {}) }, blocks });
+      const createdAt = isoMs(session.createdAt);
+      if (out.json) out.data({ session: { id: session.id, ...(session.name ? { name: session.name } : {}), ...(createdAt ? { createdAt } : {}) }, blocks });
       else out.print(renderSessionSummary(session, blocks, { color: out.color }));
       return 0;
     }

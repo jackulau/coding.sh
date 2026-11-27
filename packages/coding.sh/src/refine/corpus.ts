@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isoMs } from "../core/dates.ts";
 import { isFailureFlag } from "../core/failure-flags.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { AgentEvent, IndexStore, RunResult, Session } from "../core/types.ts";
@@ -130,7 +131,8 @@ function transcript(header: string, events: readonly AgentEvent[], r: Redactor, 
   let text = `${header}\n`;
   for (const [i, e] of events.entries()) {
     const body = r.string(eventText({ id: e.id, kind: e.kind, payload: e.payload }));
-    const block = `\n### ${i + 1}. ${e.kind}${e.subagentId ? ` (subagent ${e.subagentId})` : ""} at ${new Date(e.ts).toISOString()}\n\n${body}\n`;
+    const at = isoMs(e.ts);
+    const block = `\n### ${i + 1}. ${e.kind}${e.subagentId ? ` (subagent ${e.subagentId})` : ""}${at ? ` at ${at}` : ""}\n\n${body}\n`;
     if (Buffer.byteLength(text) + Buffer.byteLength(block) > max) {
       return { text: `${text}\n…[truncated: ${events.length - i} more events]\n`, truncated: true };
     }

@@ -562,6 +562,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The README says which hook redacts the spool. The REST API reference gives the 403 body serve sends for a host it does not allow, and says which session an OTLP log record with no session id joins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Capture.** Phone number redaction, which `phone` or `pii` in `capture.redact` turns on, reads the digits after a `+` in one pass and then checks how they are grouped, so it takes time in proportion to the text it reads. It redacts the same numbers. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **CLI.** The --trial-timeout help and docs now say what the limit covers: each agent call, task run or workflow run. Each retry and repair round gets the full limit again, and a run over it is not retried. Before, they said one limit covered a trial and its retries. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#long-runs-resume-retries-status))
+- **Sessions.** A stored or external time outside the Date range (more than 8.64e15 ms from 1970) reads as missing in CLI output, exports, ATIF, MCP results, viewer pages, work items, refine reports, attribution, and benchmarks, keeping the rest of the output intact. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md))
 
 ## [0.1.7] - 2026-11-16
 

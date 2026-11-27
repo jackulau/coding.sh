@@ -7,6 +7,7 @@
 // way). Days are marked too, so a run that crosses midnight reads in order.
 // A fold over time-sorted events; `coding.sh show`, the viewer, MCP and ingest share it.
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
+import { dateMs } from "./dates.ts";
 import { failureState, foldFailure, type ToolFailure } from "./failures.ts";
 import { phasePromptTitle } from "./sessions.ts";
 import { isAgentPromptMark } from "./waiting.ts";
@@ -38,9 +39,11 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 /** A token count as the totals take it: a finite number above 0, else 0 (pricing bills such a count as 0). */
 const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 
-/** Local YYYY-MM-DD. */
+/** Local YYYY-MM-DD, or "" when `ts` is out of the Date range. */
 export function localDate(ts: number): string {
-  const d = new Date(ts);
+  const t = dateMs(ts);
+  if (t === undefined) return "";
+  const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
@@ -109,7 +112,7 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?:
   const mark = isAgentPromptMark(e);
   if (s.days && !mark) {
     const d = localDate(e.ts);
-    if (d !== s.day) {
+    if (d && d !== s.day) {
       if (s.day) s.days.push({ date: d, ts: e.ts, index: i, eventId: e.id });
       s.day = d;
     }
@@ -173,8 +176,8 @@ export function storedOutline(s: Pick<Session, "stats">): Outline | undefined {
   let day = localDate(phases[0]!.startTs);
   for (const p of phases) {
     const d = localDate(p.startTs);
-    if (d === day) continue;
-    days.push({ date: d, ts: p.startTs, index: p.from, eventId: p.eventId });
+    if (!d || d === day) continue;
+    if (day) days.push({ date: d, ts: p.startTs, index: p.from, eventId: p.eventId });
     day = d;
   }
   return { phases, days };

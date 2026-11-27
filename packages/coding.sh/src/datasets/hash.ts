@@ -1,6 +1,7 @@
 // Canonical JSON + content hashes. Every version id in the eval engine
 // (dataset, grader, judge) is a hash over canonical JSON, so key order and
 // whitespace never change an id while any value change always does.
+import { dateMs } from "../core/dates.ts";
 import { sha256Hex } from "../core/ids.ts";
 
 /**
@@ -24,7 +25,7 @@ function sortKeys(v: unknown, seen: Set<object>): unknown {
   seen.add(o);
   try {
     if (Array.isArray(o)) return o.map((x) => (x === undefined ? null : sortKeys(x, seen)));
-    if (o instanceof Date) return o.toISOString();
+    if (o instanceof Date) return dateMs(o.getTime()) !== undefined ? o.toISOString() : null;
     const out: Record<string, unknown> = {};
     for (const k of Object.keys(o).sort()) {
       const x = sortKeys((o as Record<string, unknown>)[k], seen);

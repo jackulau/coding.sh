@@ -6,6 +6,7 @@
 // cached, so a rerun on unchanged sessions makes no call and leaves
 // signals.json byte for byte the same. `signals` reads that file.
 import { resolve } from "node:path";
+import { isoMs } from "../../core/dates.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
 import { diagnoseRun, hintPrecision, signalsFile, type DiagnoseRunResult } from "../../refine/diagnose.ts";
@@ -36,7 +37,7 @@ export function diagnoseProvider(flags: { provider?: string; dryRun?: boolean },
 }
 
 const tokens = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+const day = (ms: number): string => isoMs(ms)?.slice(0, 10) ?? "-";
 
 function signalRow(s: Signal): string[] {
   return [s.id, `${s.severity.score} ${s.severity.level}`, s.title, s.typeIds[0] ?? "", `${s.population.affected}/${s.population.analyzed}`, s.status];

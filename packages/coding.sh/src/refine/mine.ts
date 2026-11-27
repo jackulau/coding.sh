@@ -27,6 +27,7 @@
 // then id. Ids are sha256(kind + signature)[:12], stable across runs.
 // Everything that leaves this module goes through the redactor.
 import { createHash } from "node:crypto";
+import { isoMs } from "../core/dates.ts";
 import { createRedactor } from "../core/redact.ts";
 import { isSyntheticPrompt } from "../core/sessions.ts";
 import type { AgentEvent, IndexStore, RunResult } from "../core/types.ts";
@@ -73,7 +74,7 @@ export interface MinSupport {
 export const DEFAULT_MIN_SUPPORT: MinSupport = Object.freeze({ sessions: 3, days: 2 });
 export const MAX_EXAMPLES = 10;
 
-const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+const day = (ms: number): string | undefined => isoMs(ms)?.slice(0, 10);
 export const findingId = (kind: MinedKind, signature: string): string => createHash("sha256").update(`${kind}\u0000${signature}`).digest("hex").slice(0, 12);
 
 /** One sighting of a pattern. */
@@ -105,7 +106,7 @@ function group(kind: MinedKind, signature: string, label: string, hits: readonly
     label,
     count: hits.length,
     agents: [...new Set(ss.map((x) => String(x.s.agent)))].sort(),
-    support: { sessions: ss.length, days: new Set(ss.map((x) => day(x.s.startedAt))).size, repos: new Set(ss.map((x) => repoOf(x.s))).size },
+    support: { sessions: ss.length, days: new Set(ss.map((x) => day(x.s.startedAt)).filter((d): d is string => d !== undefined)).size, repos: new Set(ss.map((x) => repoOf(x.s))).size },
     impact: extra.impact ?? {},
     examples,
     surface: extra.surface,

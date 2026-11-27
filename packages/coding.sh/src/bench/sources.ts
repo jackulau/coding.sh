@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { parseSince } from "../cli/args.ts";
 import { which } from "../adapters/_shared/detect.ts";
+import { isoMs } from "../core/dates.ts";
 import { failureFlags } from "../core/failure-flags.ts";
 import { execFileSync } from "../core/spawn.ts";
 import type { IndexStore } from "../core/types.ts";
@@ -138,7 +139,10 @@ async function sessionCases(s: SessionsSource, ctx: SourceCtx): Promise<Case[]> 
     if (select === "failed" && !failed) continue;
     try {
       const c = caseFromSession(ses, await ctx.index.listEvents(ses.id));
-      c.metadata = { ...(c.metadata ?? {}), flags, toolErrors: ses.stats.toolErrors, ...(ses.repo?.root ? { repo: ses.repo.root } : {}), createdAt: new Date(ses.startedAt).toISOString() };
+      const createdAt = isoMs(ses.startedAt);
+      const meta: Record<string, unknown> = { ...(c.metadata ?? {}), flags, toolErrors: ses.stats.toolErrors, ...(ses.repo?.root ? { repo: ses.repo.root } : {}) };
+      if (createdAt) meta.createdAt = createdAt;
+      c.metadata = meta;
       out.push(c);
     } catch {
       // a session with no user prompt can't be a case

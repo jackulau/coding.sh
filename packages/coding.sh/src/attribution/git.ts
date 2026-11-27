@@ -4,6 +4,7 @@
 // core/snapshot.ts only when it already exists.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { isoMs } from "../core/dates.ts";
 import { run } from "../core/git.ts";
 import { shadowRepoPath } from "../core/snapshot.ts";
 import { parseUnifiedDiff, unquoteGitPath, type FilePatch } from "./lines.ts";
@@ -106,7 +107,8 @@ export async function readCommits(root: string, opts: LogOptions = {}): Promise<
     return parseLog(r.stdout, notes);
   }
   const args = [...base, "log", "--reverse", "--topo-order", "--no-merges", "-p", ...DIFF_FLAGS, ...noteArgs, `--format=${format}`];
-  if (opts.since !== undefined) args.push(`--since=${new Date(opts.since).toISOString()}`);
+  const since = isoMs(opts.since);
+  if (since !== undefined) args.push(`--since=${since}`);
   args.push(opts.rev ?? "HEAD", "--");
   const r = await run(args, { cwd: root, timeoutMs, maxBuffer: MAX_LOG_BYTES });
   return parseLog(r.stdout, notes);

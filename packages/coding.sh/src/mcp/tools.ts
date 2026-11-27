@@ -1274,7 +1274,7 @@ function toolDefs(): PagedTool[] {
           if (n) rejectedBy[r] = n;
         }
         return {
-          candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: new Date(x.startedAt).toISOString() })),
+          candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: iso(x.startedAt) })),
           considered: ranked.length,
           eligible: eligible.length,
           // As eval candidates --json names it.

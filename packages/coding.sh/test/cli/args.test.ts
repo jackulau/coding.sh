@@ -61,6 +61,16 @@ describe("parseWhen", () => {
     assert.equal(utcOffset(-330), "+05:30");
     assert.equal(utcOffset(0), "+00:00");
     assert.equal(wallText(ms("2026-11-09T06:00:00Z"), 360), "2026-11-09 00:00");
+    assert.equal(wallText(8.64e15 + 1, 0), "");
+    assert.equal(wallText(-8.64e15 - 1, 0), "");
+    assert.equal(wallText(8.64e15, -60), "");
+  });
+
+  test("parseWhen reads an age or epoch ms outside the Date range as missing", () => {
+    assert.equal(parseWhen("8640000000000001", CST), undefined);
+    assert.equal(parseWhen("99999999999999999", CST), undefined);
+    assert.equal(parseWhen("99999999999999999d", CST), undefined);
+    assert.equal(parseWhen("8640000000000000", CST)?.ms, 8.64e15);
   });
 
   test("--where since: and until: use the same reader", () => {

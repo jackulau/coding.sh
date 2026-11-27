@@ -6,6 +6,7 @@
 // shows that call: system prompt, tools, cache and usage (diff-calls.ts).
 import { setTimeout as sleep } from "node:timers/promises";
 import { callCopies } from "../../core/call-copies.ts";
+import { dateMs } from "../../core/dates.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
 import { shortener } from "../../core/session-ref.ts";
@@ -695,8 +696,8 @@ function phaseCounts(o: Outline): string {
 
 /** "+2h38m" from the session start ("+0s" at it). */
 const rel = (ms: number) => (ms < 1000 ? "+0s" : `+${duration(ms)}`);
-const clock = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
-const dayLine = (ts: number) => `── ${new Date(ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} ──`;
+const clock = (ts: number) => (dateMs(ts) !== undefined ? new Date(ts).toTimeString().slice(0, 5) : "-".padEnd(5));
+const dayLine = (ts: number) => (dateMs(ts) !== undefined ? `── ${new Date(ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} ──` : undefined);
 const derailLine = (s: Session, d: SessionDerail) => `⚠ ${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}: ${d.detail}`;
 
 /** One line per phase, day lines between them, derails under the phase they started in. */
@@ -704,7 +705,10 @@ function printPhases(out: Output, s: Session, o: Outline): void {
   out.print(out.style("Phases", "bold"));
   let day = 0;
   for (const p of o.phases) {
-    while (day < o.days.length && o.days[day]!.index <= p.from) out.print(`  ${out.style(dayLine(o.days[day++]!.ts), "faint")}`);
+    while (day < o.days.length && o.days[day]!.index <= p.from) {
+      const line = dayLine(o.days[day++]!.ts);
+      if (line) out.print(`  ${out.style(line, "faint")}`);
+    }
     const stats = [
       `${p.prompts} ${p.prompts === 1 ? "prompt" : "prompts"}`,
       `${p.toolCalls} tools${p.toolErrors ? ` (${p.toolErrors} failed)` : ""}`,
@@ -775,7 +779,8 @@ function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline |
   const placed = new Set<ShowComment>();
   events.forEach((e, i) => {
     const day = dayAt.get(i);
-    if (day) out.print(out.style(dayLine(day.ts), "faint"));
+    const dline = day ? dayLine(day.ts) : undefined;
+    if (dline) out.print(out.style(dline, "faint"));
     const p = phaseAt.get(i);
     if (p) out.print(out.style(`── phase ${p.n}: ${phaseLabel(p)} at ${clock(p.startTs)} ──`, "faint"));
     for (const d of derailAt.get(e.id) ?? []) out.print(out.style(`${"".padStart(8)}  ${derailLine(s, d)}`, "yellow"));

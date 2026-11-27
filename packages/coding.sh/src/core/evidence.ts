@@ -20,6 +20,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, IndexStore } from "./types.ts";
 import type { Redactor } from "./redact.ts";
+import { isoMs } from "./dates.ts";
 import { byTime } from "./sessions.ts";
 
 /** Per tool-call file. */
@@ -78,7 +79,7 @@ function capped(text: string, max: number): { text: string; cut: boolean } {
   return { text: `${head}\n… cut: ${bytes.length - end} more bytes\n`, cut: true };
 }
 
-const iso = (ms: number | undefined): string => (typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : "");
+const iso = (ms: number | undefined): string => isoMs(ms) ?? "";
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const oneLine = (s: string, max = 120): string => {
   const t = s.replace(/\s+/g, " ").trim();

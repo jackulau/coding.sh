@@ -2,6 +2,7 @@
 // session that wrote each line (src/attribution/blame.ts). Read-only on git.
 import { resolve } from "node:path";
 import { blameFile, parseBlameTarget } from "../../attribution/blame.ts";
+import { isoMs } from "../../core/dates.ts";
 import { printedRefs } from "../../core/session-ref.ts";
 import { str, withContext } from "../common.ts";
 import { cliCommand } from "../next-steps.ts";
@@ -26,7 +27,7 @@ export async function run(c: CommandContext): Promise<number> {
       throw attributionCliError(e, "blame", c.env);
     }
     if (out.json) {
-      out.data({ root: b.root, rev: b.rev, path: b.path, unattributed: b.unattributed, sessions: b.sessions.map((s) => ({ ...s, startedAt: new Date(s.startedAt).toISOString() })), lines: b.rows });
+      out.data({ root: b.root, rev: b.rev, path: b.path, unattributed: b.unattributed, sessions: b.sessions.map((s) => ({ ...s, startedAt: isoMs(s.startedAt) ?? null })), lines: b.rows });
       return 0;
     }
     const by = b.rows.length - b.unattributed;
