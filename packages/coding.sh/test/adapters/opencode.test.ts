@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -8,7 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { parseVersion } from "../../src/adapters/_shared/detect.ts";
 import { apiForVersion, opencode, opencodeDbNotes, opencodeDbPath, pluginPath, pluginSource, PLUGIN_MARKER } from "../../src/adapters/opencode.ts";
 import { blockingNotes, staleNotes } from "../../src/cli/commands/init.ts";
-import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, local, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
 import { nodeBin } from "../_bin.ts";
 
@@ -63,6 +64,24 @@ describe("opencode normalize", () => {
 
   it("is deterministic", async () => {
     assert.deepEqual(await normalizeAll("opencode/v2.spool.jsonl"), await normalizeAll("opencode/v2.spool.jsonl"));
+  });
+
+  it("a step's output count that is not a whole number from 0 to 2^53 - 1 reads as missing, so its reasoning count is still output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-opencode-counts-"));
+    try {
+      const text = readFileSync(join(FIXTURES, "opencode", "v2.spool.jsonl"), "utf8");
+      const key = `"output": 200, "reasoning": 50,`;
+      assert.equal(text.split(key).length, 2, "one step has these counts");
+      const file = join(dir, "v2.spool.jsonl");
+      writeFileSync(file, text.split(key).join(`"output": 200.5, "reasoning": 50,`));
+      const { ctx } = testCtx();
+      const events: AgentEvent[] = [];
+      for (const l of readFileSync(file, "utf8").split("\n").filter((x) => x.trim())) events.push(...(await opencode.normalize(JSON.parse(local(l)), ctx)));
+      const llm = events.find((e) => e.kind === "llm.call")!;
+      assert.deepEqual(llm.usage, { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 3000, cacheWriteTokens: 0, costUsd: 0.0123 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a step time out of the Date range is read as missing, and so is a duration whose start falls out of it", async () => {
@@ -356,9 +375,10 @@ describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", 
   after(() => env.restore());
 
   /** The real 1.x database (session/message/part tables with JSON data), rebuilt from its dump. */
-  async function realDb(path: string): Promise<void> {
+  async function realDb(path: string, edit?: (dump: { rows: Record<string, Record<string, unknown>[]> }) => void): Promise<void> {
     const { DatabaseSync } = await import("node:sqlite");
     const dump = JSON.parse(readFileSync(join(FIXTURES, "opencode", "real", "opencode.db.json"), "utf8")) as { schema: string[]; rows: Record<string, Record<string, unknown>[]> };
+    edit?.(dump);
     mkdirSync(dirname(path), { recursive: true });
     const db = new DatabaseSync(path, { enableForeignKeyConstraints: false });
     for (const sql of dump.schema) db.exec(sql);
@@ -409,6 +429,24 @@ describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", 
     await realDb(join(dir, "opencode.db"));
     assert.deepEqual(opencodeDbPath(), { path: join(dir, "opencode.db") });
     assert.deepEqual(await opencodeDbNotes(), []);
+  });
+
+  it("session totals: a token count that is not a whole number from 0 to 2^53 - 1 reads as missing, so the output sum skips it", async () => {
+    const dir = dataDir("bad-totals");
+    await realDb(join(dir, "opencode.db"), (dump) => {
+      // No per-call usage, so the session's own totals count: its input count is below 0 and its output count is a fraction.
+      for (const m of dump.rows.message!) {
+        const data = JSON.parse(String(m.data)) as Record<string, unknown>;
+        delete data.tokens;
+        delete data.cost;
+        m.data = JSON.stringify(data);
+      }
+      Object.assign(dump.rows.session![0]!, { tokens_input: -1, tokens_output: 60.5, tokens_reasoning: 10 });
+    });
+    const events = await collect(opencode.backfill!(testCtx().ctx));
+    assert.equal(events.filter((e) => e.usage).length, 1);
+    const totals = events.find((e) => e.kind === "notification" && e.payload.type === "usage-summary")!;
+    assert.deepEqual(totals.usage, { outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 });
   });
 
   it("a database with no session tables imports nothing and doctor names its tables", async () => {

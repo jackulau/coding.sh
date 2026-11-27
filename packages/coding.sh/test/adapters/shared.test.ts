@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { parseToml } from "../../src/core/toml.ts";
 import {
+  addUsage,
   buildHookCommand,
   editStats,
   ensureTomlKey,
@@ -16,6 +17,7 @@ import {
   mergeFlatHooks,
   mergeNestedHooks,
   openaiUsage,
+  anthropicPriceHints,
   anthropicUsage,
   parseHookCommand,
   parsePatch,
@@ -182,8 +184,37 @@ describe("usage mapping", () => {
     assert.deepEqual(openaiUsage({ input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50 }), { inputTokens: 200, cacheReadTokens: 800, outputTokens: 50 });
     assert.deepEqual(openaiUsage({ prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 4 } }), { inputTokens: 6, cacheReadTokens: 4, outputTokens: 2 });
   });
+  it("OpenAI usage reads a count that is not a whole number from 0 to 2^53 - 1 as absent", () => {
+    // A bad cached count is not taken off the input.
+    assert.deepEqual(openaiUsage({ input_tokens: 1000, cached_input_tokens: -800, output_tokens: 12.5 }), { inputTokens: 1000 });
+    assert.deepEqual(openaiUsage({ prompt_tokens: 2 ** 53, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 4 } }), { cacheReadTokens: 4, outputTokens: 2 });
+    // A bad count gives way to the other name for it.
+    assert.deepEqual(openaiUsage({ input_tokens: -5, prompt_tokens: 10, output_tokens: 1e20, completion_tokens: 2 }), { inputTokens: 10, outputTokens: 2 });
+    assert.equal(openaiUsage({ input_tokens: Number.NaN, output_tokens: -1 }), undefined);
+  });
   it("Anthropic usage maps cache fields", () => {
     assert.deepEqual(anthropicUsage({ input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }), { inputTokens: 5, outputTokens: 7, cacheReadTokens: 100, cacheWriteTokens: 20 });
+  });
+  it("Anthropic usage sums the cache-write split without a count that is not a whole number from 0 to 2^53 - 1", () => {
+    assert.deepEqual(anthropicUsage({ input_tokens: 5, cache_creation: { ephemeral_5m_input_tokens: 12.5, ephemeral_1h_input_tokens: 100 } }), { inputTokens: 5, cacheWriteTokens: 100 });
+    assert.deepEqual(anthropicUsage({ input_tokens: 5, cache_creation: { ephemeral_5m_input_tokens: -1, ephemeral_1h_input_tokens: 2 ** 53 } }), { inputTokens: 5 });
+    assert.deepEqual(anthropicPriceHints({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 100.5 } }), {});
+    assert.deepEqual(anthropicPriceHints({ cache_creation: { ephemeral_5m_input_tokens: 12.5, ephemeral_1h_input_tokens: 100 } }), { cacheWrite1hTokens: 100 });
+  });
+  it("Anthropic usage reads a cache-write total that is not a whole number from 0 to 2^53 - 1 as missing and sums the split instead", () => {
+    const cache_creation = { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 100 };
+    assert.deepEqual(anthropicUsage({ input_tokens: 10, cache_creation_input_tokens: 12.5, cache_creation }), { inputTokens: 10, cacheWriteTokens: 140 });
+    assert.deepEqual(anthropicUsage({ input_tokens: 10, cache_creation_input_tokens: -1, cache_creation }), { inputTokens: 10, cacheWriteTokens: 140 });
+    assert.deepEqual(anthropicUsage({ input_tokens: 10, cache_creation_input_tokens: 2 ** 53 }), { inputTokens: 10 });
+    // A total that is a whole number in range is kept, even next to a split that sums to more.
+    assert.deepEqual(anthropicUsage({ input_tokens: 10, cache_creation_input_tokens: 0, cache_creation }), { inputTokens: 10, cacheWriteTokens: 0 });
+    assert.deepEqual(anthropicUsage({ input_tokens: 10, cache_creation_input_tokens: 2 ** 53 - 1, cache_creation }), { inputTokens: 10, cacheWriteTokens: 2 ** 53 - 1 });
+  });
+  it("addUsage skips a count that is not a whole number from 0 to 2^53 - 1 and keeps the rest of the sum", () => {
+    assert.deepEqual(addUsage({ inputTokens: 100, outputTokens: 12.5 }, { inputTokens: -1, outputTokens: 20, cacheReadTokens: 2 ** 53 }), { inputTokens: 100, outputTokens: 20 });
+    assert.deepEqual(addUsage(undefined, { inputTokens: 10.5, outputTokens: 3, costUsd: 0.5 }), { outputTokens: 3, costUsd: 0.5 });
+    assert.deepEqual(addUsage({ inputTokens: 1, costUsd: 0.1 }, { inputTokens: 2, costUsd: 0.2 }), { inputTokens: 3, costUsd: 0.3 });
+    assert.equal(addUsage(undefined, undefined), undefined);
   });
 });
 

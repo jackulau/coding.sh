@@ -273,6 +273,14 @@ describe("devinExport", () => {
   it("prompt tokens include the cached ones: input never goes below zero", () => {
     assert.deepEqual(exported("cached.json", JSON.stringify({ final_metrics: { total_prompt_tokens: 10, total_cached_tokens: 30 } })), { usage: { inputTokens: 0, cacheReadTokens: 30 } });
   });
+
+  it("a cached count that is not a whole number from 0 to 2^53 - 1 reads as missing, so all the prompt tokens are input", () => {
+    for (const [i, cached] of [1000.5, -1000, 2 ** 53].entries()) {
+      const metrics = { total_prompt_tokens: 1200, total_completion_tokens: 80, total_cached_tokens: cached, total_cost_usd: 0.0123 };
+      const x = exported(`cached-${i}.json`, JSON.stringify({ session_id: "brave-otter", final_metrics: metrics }));
+      assert.deepEqual(x.usage, { inputTokens: 1200, outputTokens: 80, costUsd: 0.0123 }, `cached ${cached}`);
+    }
+  });
 });
 
 describe("devin overlay", () => {

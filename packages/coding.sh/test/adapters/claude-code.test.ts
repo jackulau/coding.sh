@@ -595,27 +595,30 @@ describe("claude-code fork subagents", () => {
     assertGolden("claude-code/golden/fork.golden.json", summarize(events.filter((e) => e.sessionId === CHILD)));
   });
 
-  it("inheritedTokens skips a token count below 0 in the parent's Agent call, as an estimate does", async () => {
-    const dir = join(env.home, "fork-bad-count");
-    cpSync(CONFIG, dir, { recursive: true });
-    const sub = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
-    // The copy of the parent's Agent call in the fork's transcript reports a cache read of -10 instead of 20,000.
-    const edited = readFileSync(sub, "utf8")
-      .split("\n")
-      .map((l) => {
-        const e = l ? JSON.parse(l) : undefined;
-        if (e?.type !== "assistant" || !e.message.content.some((b: { id?: string }) => b.id === "toolu_mw9alcc13")) return l;
-        e.message.usage.cache_read_input_tokens = -10;
-        return JSON.stringify(e);
-      });
-    writeFile(sub, edited.join("\n"));
-    process.env.CLAUDE_CONFIG_DIR = dir;
-    try {
-      const child = buildSession((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
-      // 40 input, 400 cache-write and 30 output tokens. Before, the -10 was added in: 460.
-      assert.equal(child.stats.inheritedTokens, 40 + 400 + 30);
-    } finally {
-      process.env.CLAUDE_CONFIG_DIR = CONFIG;
+  it("inheritedTokens skips a token count that is not a whole number from 0 to 2^53 - 1 in the parent's Agent call, as an estimate does", async () => {
+    // The copy of the parent's Agent call in the fork's transcript reports a cache read of -10, 12.5 or
+    // 9007199254740993 (2^53 + 1, which reads as 2^53) instead of 20,000, written into the JSON as is.
+    for (const [i, bad] of ["-10", "12.5", "9007199254740993"].entries()) {
+      const dir = join(env.home, `fork-bad-count-${i}`);
+      cpSync(CONFIG, dir, { recursive: true });
+      const sub = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
+      const edited = readFileSync(sub, "utf8")
+        .split("\n")
+        .map((l) => {
+          const e = l ? JSON.parse(l) : undefined;
+          if (e?.type !== "assistant" || !e.message.content.some((b: { id?: string }) => b.id === "toolu_mw9alcc13")) return l;
+          e.message.usage.cache_read_input_tokens = "<count>";
+          return JSON.stringify(e).replace('"<count>"', () => bad);
+        });
+      writeFile(sub, edited.join("\n"));
+      process.env.CLAUDE_CONFIG_DIR = dir;
+      try {
+        const child = buildSession((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
+        // 40 input, 400 cache-write and 30 output tokens; the bad cache read adds nothing.
+        assert.equal(child.stats.inheritedTokens, 40 + 400 + 30, bad);
+      } finally {
+        process.env.CLAUDE_CONFIG_DIR = CONFIG;
+      }
     }
   });
 
@@ -802,6 +805,39 @@ describe("claude-code transcript service tier", () => {
     const split = await callFor({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 0 } });
     assert.equal(split.usage?.cacheWriteTokens, 40);
     assert.ok(!("cacheWrite1hTokens" in split.payload));
+  });
+});
+
+describe("claude-code cache-write split with a count that reads as missing", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("leaves a split count that is not a whole number from 0 to 2^53 - 1 out of the cache writes and the 1-hour hint", async () => {
+    // Copies of a real capture (scripts/e2e/claude-edge-capture.mjs) whose first call gives only the 5-minute / 1-hour split.
+    const rel = join("projects", "-work-demo", "f3205161-efab-4b61-bb5e-4f1195467e35.jsonl");
+    const text = readFileSync(join(FIXTURES, "claude-code", "edge", "config", rel), "utf8");
+    assert.equal(text.split(`"msg_mw7hl1ic0"`).length, 2, "one line holds this call");
+    const cases = [
+      { m5: 12.5, h1: 100, write: 100, hint: 100 },
+      { m5: 40, h1: 100.5, write: 40, hint: undefined },
+    ];
+    for (const [i, c] of cases.entries()) {
+      const lines = text.split("\n").map((l) => {
+        if (!l.includes(`"msg_mw7hl1ic0"`)) return l;
+        const e = JSON.parse(l);
+        delete e.message.usage.cache_creation_input_tokens;
+        e.message.usage.cache_creation = { ephemeral_1h_input_tokens: c.h1, ephemeral_5m_input_tokens: c.m5 };
+        return JSON.stringify(e);
+      });
+      process.env.CLAUDE_CONFIG_DIR = join(env.root, `config-${i}`);
+      writeFile(join(env.root, `config-${i}`, rel), lines.join("\n"));
+      const { ctx } = testCtx();
+      const call = (await collect(claudeCode.backfill!(ctx))).find((e) => e.kind === "llm.call" && e.payload.messageId === "msg_mw7hl1ic0")!;
+      assert.deepEqual([call.usage?.cacheWriteTokens, call.payload.cacheWrite1hTokens], [c.write, c.hint], `5m ${c.m5}, 1h ${c.h1}`);
+    }
   });
 });
 

@@ -494,6 +494,20 @@ console.log(JSON.stringify({ type: "thread.started", thread_id: "th_1" }));`);
     assert.deepEqual(codexUsage({ input_tokens: 6000, cached_input_tokens: 5000, cache_write_input_tokens: 200, output_tokens: 80 }), { inputTokens: 800, cacheReadTokens: 5000, cacheWriteTokens: 200, outputTokens: 80 });
   });
 
+  it("usage: a cached count that is not a whole number from 0 to 2^53 - 1 reads as missing, so the whole input is uncached", async () => {
+    const name = `rollout-2026-11-01T10-00-00-${SID}.jsonl`;
+    const text = readFileSync(join(FIXTURES, "codex", "home", "sessions", "2026", "11", "01", name), "utf8");
+    const key = `"input_tokens": 6000, "cached_input_tokens": 5000,`;
+    assert.equal(text.split(key).length, 2, "one usage record has these counts");
+    for (const cached of ["900.5", "-500", "9007199254740993"]) {
+      const file = join(rolloutDir("csh-codex-cached-"), name);
+      writeFileSync(file, text.split(key).join(`"input_tokens": 6000, "cached_input_tokens": ${cached},`));
+      const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+      const call = events.find((e) => e.kind === "llm.call" && e.payload.responseId === "resp_2")!;
+      assert.deepEqual(call.usage, { inputTokens: 5800, cacheWriteTokens: 200, outputTokens: 80 }, `cached ${cached}`);
+    }
+  });
+
   it("overlay isolates CODEX_HOME with our hooks", async () => {
     const env = tmpEnv();
     try {

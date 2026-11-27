@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { DROID_HOOK_EVENTS, droidAdapter, droidHookTarget } from "../../../src/adapters/more/droid.ts";
@@ -55,6 +55,24 @@ describe("droid backfill", () => {
     assert.deepEqual(withUsage[0]!.usage, { inputTokens: 4200, outputTokens: 350, cacheReadTokens: 2600, cacheWriteTokens: 800 });
     assert.equal(withUsage[0]!.payload.kind, "usage.total");
     assert.ok(events.every((e) => e.model === "claude-opus-4-1" && e.cwd === "/work/demo"));
+  });
+});
+
+describe("droid backfill: a sidecar count that reads as missing", () => {
+  let env: TmpEnv;
+  before(() => (env = moreEnv()));
+  after(() => env.restore());
+
+  it("an output count that is not a whole number from 0 to 2^53 - 1 is skipped, so the thinking count is still output", async () => {
+    const home = join(env.root, "droid-home");
+    cpSync(join(FIXTURES, "droid", "home"), home, { recursive: true });
+    const sidecar = join(home, ".factory", "sessions", "-work-demo", "droid-sess-1.settings.json");
+    const text = readFileSync(sidecar, "utf8");
+    assert.equal(text.split(`"outputTokens":310,`).length, 2, "the sidecar has this count once");
+    writeFileSync(sidecar, text.split(`"outputTokens":310,`).join(`"outputTokens":310.5,`));
+    process.env.HOME = home;
+    const events = await collect(droidAdapter.backfill!(testCtx().ctx));
+    assert.deepEqual(events.filter((e) => e.usage).map((e) => e.usage), [{ inputTokens: 4200, outputTokens: 40, cacheReadTokens: 2600, cacheWriteTokens: 800 }]);
   });
 });
 

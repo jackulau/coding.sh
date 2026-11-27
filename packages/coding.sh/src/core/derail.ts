@@ -348,8 +348,9 @@ const shortPath = (p: string): string => p.split(/[\\/]/).slice(-2).join("/");
 const PROMPT_COUNTS = ["inputTokens", "cacheReadTokens", "cacheWriteTokens"] as const;
 
 /**
- * Tokens the model saw on one call: fresh input plus cache reads and writes. A count below 0 or not a
- * finite number (null once stored) adds nothing, and makes the size partial: it can be too low.
+ * Tokens the model saw on one call: fresh input plus cache reads and writes. A count that is not
+ * a whole number from 0 to 2^53 - 1 (tokenCount; one that is not finite is null once stored) adds
+ * nothing, and makes the size partial: it can be too low.
  */
 const contextOf = (e: AgentEvent): { tokens?: number; partial: boolean } => {
   const u = e.usage;

@@ -560,7 +560,7 @@ describe("session usage rollup", () => {
     assert.equal(est.usage.estimatedCostUsd, undefined);
   });
 
-  it("token totals skip a count below 0 or not a finite number, as pricing bills it as 0", () => {
+  it("token totals skip a count that is not a whole number from 0 to 2^53 - 1, as pricing bills it as 0", () => {
     const bad = { inputTokens: -50_000, outputTokens: Number.NaN, cacheReadTokens: Number.POSITIVE_INFINITY, cacheWriteTokens: -1 };
     // No spans: the session folds each call as it comes (the simple fold).
     const plain = buildSession([ev("llm.call", {}, { usage: { ...bad, costUsd: 0.5 } }), ev("llm.call", {}, { usage: { inputTokens: 2000, outputTokens: 100 } })]);
@@ -577,13 +577,26 @@ describe("session usage rollup", () => {
     const snap = ev("notification", { type: "usage-summary" }, { usage: { inputTokens: -1, outputTokens: 40 } });
     assert.deepEqual(rollupUsage([snap]).usage, { outputTokens: 40 });
     assert.deepEqual(buildSession([snap]).stats.usage, { outputTokens: 40 });
+    // A fraction, or a count too large to read exactly (2^53 + 1 reads as 2^53), is skipped the same way.
+    const odd = { inputTokens: 12.5, outputTokens: 2 ** 53, cacheReadTokens: 1e20, cacheWriteTokens: 2 ** 53 + 2 };
+    const oddPlain = buildSession([ev("llm.call", {}, { usage: odd }), ev("llm.call", {}, { usage: { inputTokens: 2000, outputTokens: 100 } })]);
+    assert.deepEqual(oddPlain.stats.usage, { inputTokens: 2000, outputTokens: 100 });
+    // A wrapper with only such counts carries no usage, so the call nested in it counts as itself.
+    const oddWrapper = ev("llm.call", {}, { traceId: "t", spanId: "w", usage: odd });
+    const nested = ev("llm.call", {}, { traceId: "t", spanId: "k", parentSpanId: "w", usage: { inputTokens: 2000, outputTokens: 100 } });
+    const n = buildSession([oddWrapper, nested]);
+    assert.deepEqual(n.stats.usage, { inputTokens: 2000, outputTokens: 100 });
+    assert.equal(n.stats.duplicateUsage, undefined);
+    // The largest exact count is kept as it is.
+    const max = buildSession([ev("llm.call", {}, { usage: { outputTokens: Number.MAX_SAFE_INTEGER } })]);
+    assert.deepEqual(max.stats.usage, { outputTokens: Number.MAX_SAFE_INTEGER });
   });
 
-  it("stats.inheritedTokens skips a count below 0 or not a finite number", () => {
+  it("stats.inheritedTokens skips a count that is not a whole number from 0 to 2^53 - 1", () => {
     const fork = (inheritedTokens: number) => ev("notification", { kind: "fork", toolUseId: "tu1", inheritedTokens });
-    for (const bad of [-5, Number.POSITIVE_INFINITY, Number.NaN]) assert.equal(buildSession([fork(bad)]).stats.inheritedTokens, undefined, String(bad));
+    for (const bad of [-5, 12.5, 2 ** 53, 1e20, Number.POSITIVE_INFINITY, Number.NaN]) assert.equal(buildSession([fork(bad)]).stats.inheritedTokens, undefined, String(bad));
     // A bad count or 0 leaves room for a valid one; the first valid one stays.
-    assert.equal(buildSession([fork(-5), fork(0), fork(20_470), fork(30_000)]).stats.inheritedTokens, 20_470);
+    assert.equal(buildSession([fork(-5), fork(12.5), fork(0), fork(20_470), fork(30_000)]).stats.inheritedTokens, 20_470);
   });
 
   it("a nested call that reports a cost of 0 beats the wrapper's estimate, as does a reported part too small to change the sum", () => {

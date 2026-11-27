@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { COPILOT_HOOK_EVENTS, copilotCliAdapter, copilotHookFile } from "../../../src/adapters/more/copilot-cli.ts";
@@ -60,6 +60,26 @@ describe("copilot-cli backfill", () => {
     assert.equal(t2.durationMs, 2000);
     const tr = events.find((e) => e.kind === "test.result")!;
     assert.deepEqual([tr.payload.runner, tr.payload.passed, tr.payload.failed], ["mocha", 2, 1]);
+  });
+});
+
+describe("copilot-cli backfill: a shutdown count that reads as missing", () => {
+  let env: TmpEnv;
+  before(() => (env = moreEnv()));
+  after(() => env.restore());
+
+  it("the shutdown totals leave out a model's count that is not a whole number from 0 to 2^53 - 1", async () => {
+    const home = join(env.root, "copilot-home");
+    cpSync(join(FIXTURES, "copilot-cli", "home", ".copilot"), home, { recursive: true });
+    const file = join(home, "session-state", "cop-sess-1", "events.jsonl");
+    const text = readFileSync(file, "utf8");
+    const key = `"inputTokens":500,"outputTokens":20`;
+    assert.equal(text.split(key).length, 2, "one model has these counts");
+    writeFileSync(file, text.split(key).join(`"inputTokens":500.5,"outputTokens":20`));
+    process.env.COPILOT_HOME = home;
+    const events = await collect(copilotCliAdapter.backfill!(testCtx().ctx));
+    const end = events.find((e) => e.kind === "session.end")!;
+    assert.deepEqual(end.usage, { inputTokens: 3000, outputTokens: 220, cacheReadTokens: 1500, cacheWriteTokens: 100, costUsd: 0.03 });
   });
 });
 
