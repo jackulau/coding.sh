@@ -1,4 +1,5 @@
 // coding.sh search <text> [--where <query>]
+import { isoMs } from "../../core/dates.ts";
 import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { searchWhere } from "../../query/run.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -35,7 +36,7 @@ export async function run(c: CommandContext): Promise<number> {
         const s = await ctx.index.getSession(id);
         if (s) agentOf.set(id, s.agent);
       }
-      out.data({ query: text, hits: hits.map((h) => ({ sessionId: h.event.sessionId, eventId: h.event.id, agent: agentOf.get(h.event.sessionId) ?? h.event.agent, kind: h.event.kind, ts: new Date(h.event.ts).toISOString(), snippet: h.snippet })), ...pendingField(backlog) });
+      out.data({ query: text, hits: hits.map((h) => ({ sessionId: h.event.sessionId, eventId: h.event.id, agent: agentOf.get(h.event.sessionId) ?? h.event.agent, kind: h.event.kind, ts: isoMs(h.event.ts) ?? null, snippet: h.snippet })), ...pendingField(backlog) });
       return 0;
     }
     if (!hits.length) {

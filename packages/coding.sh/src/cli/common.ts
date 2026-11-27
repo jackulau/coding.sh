@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ConfigEnvError, ConfigError } from "../core/config.ts";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
+import { dateMs, isoMs } from "../core/dates.ts";
 import type { IngestError } from "../core/ingest.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX } from "../core/session-ref.ts";
 import type { EvalTask, IndexStore, Session } from "../core/types.ts";
@@ -467,7 +468,7 @@ function ambiguousError(e: AmbiguousRef): CliError {
   return new CliError(`Session id prefix ${JSON.stringify(e.ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
     reason: "ambiguous",
     next: ["Pass one of these ids, more of the id, or list sessions:", "coding.sh sessions"],
-    data: { candidates: e.candidates.map((x) => ({ id: x.id, shortId: x.shortId, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: e.more },
+    data: { candidates: e.candidates.map((x) => ({ id: x.id, shortId: x.shortId, agent: x.agent, startedAt: isoMs(x.startedAt) ?? null, title: x.title ?? null })), more: e.more },
   });
 }
 
@@ -511,16 +512,20 @@ export function timeWindow(flags: { since?: When | undefined; until?: When | und
 /** `window` in --json: the bounds as instants, and the UTC offset a date without a zone was read in. */
 export function windowJson(w: TimeWindow, now = Date.now()): { since?: string; until?: string; utcOffset: string } {
   const bounds: { since?: string; until?: string } = {};
-  if (w.since !== undefined) bounds.since = new Date(w.since).toISOString();
-  if (w.until !== undefined) bounds.until = new Date(w.until).toISOString();
-  return { ...bounds, utcOffset: utcOffset(new Date(w.since ?? w.until ?? now).getTimezoneOffset()) };
+  const since = isoMs(w.since);
+  const until = isoMs(w.until);
+  if (since !== undefined) bounds.since = since;
+  if (until !== undefined) bounds.until = until;
+  return { ...bounds, utcOffset: utcOffset(new Date(dateMs(w.since) ?? dateMs(w.until) ?? now).getTimezoneOffset()) };
 }
 
 /** One line on stderr saying which instants a day word or a date without a zone became; silent for ages (7d). */
 export function windowNote(out: Output, w: TimeWindow): void {
-  if (!w.local || (w.since === undefined && w.until === undefined)) return;
+  const since = dateMs(w.since);
+  const until = dateMs(w.until);
+  if (!w.local || (since === undefined && until === undefined)) return;
   const at = (ms: number) => `${wallText(ms)} (UTC${utcOffset(new Date(ms).getTimezoneOffset())})`;
-  out.note(w.since === undefined ? `Window: before ${at(w.until!)}, local time` : `Window: ${at(w.since)} to ${w.until === undefined ? "now" : at(w.until)}, local time`);
+  out.note(since === undefined ? `Window: before ${at(until!)}, local time` : `Window: ${at(since)} to ${until === undefined ? "now" : at(until)}, local time`);
 }
 
 /** QueryError → exit 2 with reason, offset and a hint; QueryUnsupported → exit 1 (unsupported_store); anything else as is. */
@@ -758,11 +763,13 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
   });
   // A linked worktree's session: the main checkout's root (RepoState.main). Absent elsewhere.
   if (s.repo?.main) out.repoMain = s.repo.main;
+  const start = dateMs(s.startedAt);
+  const end = dateMs(s.endedAt);
   return Object.assign(out, {
     branch: s.repo?.branch ?? null,
-    startedAt: new Date(s.startedAt).toISOString(),
-    endedAt: s.endedAt !== undefined ? new Date(s.endedAt).toISOString() : null,
-    durationMs: s.endedAt !== undefined ? Math.round(s.endedAt - s.startedAt) : null,
+    startedAt: start !== undefined ? new Date(start).toISOString() : null,
+    endedAt: end !== undefined ? new Date(end).toISOString() : null,
+    durationMs: start !== undefined && end !== undefined ? Math.round(end - start) : null,
     parentSessionId: s.parent?.sessionId ?? null,
     flags: s.flags,
     stats,

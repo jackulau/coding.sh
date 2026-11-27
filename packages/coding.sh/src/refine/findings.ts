@@ -11,6 +11,7 @@
 //
 // Tag flags (with a colon) and context-only flags are not findings. Findings
 // rank by severity score, then sessions, then id. Pure.
+import { isoMs } from "../core/dates.ts";
 import type { Session } from "../schema/index.ts";
 import { defaultConsequence, defaultWasteFactor, natureScore, signalSeverity, type Diagnosis } from "./severity.ts";
 import { FLAG_DIAGNOSIS } from "./taxonomy.ts";
@@ -35,7 +36,7 @@ export interface Finding {
   examples: FindingExample[];
 }
 
-const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+const day = (ms: number): string | undefined => isoMs(ms)?.slice(0, 10);
 
 function factorFor(nature: Diagnosis["nature"], s: Session): number {
   if (nature === "inefficiency") {
@@ -70,7 +71,7 @@ export function flagFindings(sessions: readonly Session[], opts: { limit?: numbe
       kind: "flag",
       flag,
       diagnosis: { typeIds: [...d.typeIds], nature: d.nature, severity: signalSeverity([part]) },
-      support: { sessions: list.length, days: new Set(list.map((s) => day(s.startedAt))).size },
+      support: { sessions: list.length, days: new Set(list.map((s) => day(s.startedAt)).filter((x): x is string => x !== undefined)).size },
       analyzed,
       examples: newest.slice(0, opts.maxExamples ?? 3).map((s) => ({ sessionId: s.id, startedAt: s.startedAt, ...(s.title ? { title: s.title } : {}) })),
     });

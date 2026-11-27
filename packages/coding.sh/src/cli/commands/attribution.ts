@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { AttributionError, attributeRepo, type AttributeOptions, type AttributionReport } from "../../attribution/index.ts";
 import { agentTraceRecords, AGENT_TRACE_VERSION } from "../../attribution/export.ts";
 import type { Context } from "../../core/context.ts";
+import { isoMs } from "../../core/dates.ts";
 import { version } from "../meta.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { printedRefs } from "../../core/session-ref.ts";
@@ -75,11 +76,11 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
     out.data({
       root: r.root,
       rev: r.rev,
-      since: new Date(r.since).toISOString(),
+      since: isoMs(r.since) ?? null,
       gitAi: r.gitAi,
       totals: { commits: r.commits.length, linesAdded: added, linesAttributed: attributed },
-      sessions: r.sessions.map((s) => ({ ...s, startedAt: new Date(s.startedAt).toISOString() })),
-      commits: shown.slice(0, limit).map((x) => ({ ...x, committedAt: new Date(x.committedAt).toISOString(), authoredAt: new Date(x.authoredAt).toISOString() })),
+      sessions: r.sessions.map((s) => ({ ...s, startedAt: isoMs(s.startedAt) ?? null })),
+      commits: shown.slice(0, limit).map((x) => ({ ...x, committedAt: isoMs(x.committedAt) ?? null, authoredAt: isoMs(x.authoredAt) ?? null })),
     });
     return 0;
   }

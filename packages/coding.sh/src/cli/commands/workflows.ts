@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { median } from "../../stats/index.ts";
 import { loadConfig } from "../../core/config.ts";
+import { isoMs } from "../../core/dates.ts";
 import { profileCache } from "../../core/ingest.ts";
 import { claudeWorkflowDriver } from "../../workflows/drivers/claude-workflow.ts";
 import { commandDriver } from "../../workflows/drivers/command.ts";
@@ -108,7 +109,7 @@ function ambiguousRunError(ref: string, runs: WorkflowRun[]): CliError {
   return new CliError(`Workflow run id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
     reason: "ambiguous",
     next: ["Pass one of these ids, more of the id, or list workflow runs:", "coding.sh workflows list"],
-    data: { candidates: shown.map((r) => ({ id: r.id, name: r.name, status: r.status, startedAt: new Date(r.startedAt).toISOString() })), more: runs.length > shown.length },
+    data: { candidates: shown.map((r) => ({ id: r.id, name: r.name, status: r.status, startedAt: isoMs(r.startedAt) ?? null })), more: runs.length > shown.length },
   });
 }
 

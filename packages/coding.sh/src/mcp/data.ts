@@ -8,6 +8,7 @@ import type { CacheBreakCause, CostByTokenType } from "../schema/index.ts";
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
+import { dateMs, isoMs } from "../core/dates.ts";
 import { apportion, splitOf, TOKEN_TYPES } from "../core/pricing.ts";
 import { isPushback } from "../core/pushback.ts";
 import { failureFlags, isBackfillEvent } from "../core/sessions.ts";
@@ -41,7 +42,7 @@ export function clip(s: unknown, n = 160): string | undefined {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
-export const iso = (ms: number | undefined): string | undefined => (ms === undefined || !Number.isFinite(ms) ? undefined : new Date(ms).toISOString());
+export const iso = (ms: number | undefined): string | undefined => isoMs(ms);
 
 /**
  * 850ms, 4.2s, 42s, 3m07s, 2h05m, as the CLI prints a duration (cli/output.ts duration()). It
@@ -59,9 +60,11 @@ export function fmtMs(ms: number | undefined): string {
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 }
 
-/** Local calendar day (YYYY-MM-DD) of an instant, in the server's time zone. */
+/** Local calendar day (YYYY-MM-DD) of an instant, in the server's time zone; "unknown" when out of the Date range. */
 export function localDay(ms: number): string {
-  const d = new Date(ms);
+  const t = dateMs(ms);
+  if (t === undefined) return "unknown";
+  const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 

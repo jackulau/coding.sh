@@ -4,6 +4,7 @@
 // call, b is that call and a the model call before it in its session.
 // Also printCall, the one-call view `coding.sh show <call>` prints.
 import { CallRefError, diffCalls, loadCall, previousCall, resolveCall, type CallDiff, type LoadedCall } from "../../proxy/calls.ts";
+import { dateMs } from "../../core/dates.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { oneLine, withContext } from "../common.ts";
@@ -26,8 +27,8 @@ export async function callOrFail(index: IndexStore, ref: string): Promise<AgentE
 }
 
 const short = (id: string) => id.slice(0, 12);
-/** Local wall-clock time with seconds, as `show` prints times (`--json` keeps the ISO instant). */
-export const clock = (ts: number) => new Date(ts).toTimeString().slice(0, 8);
+/** Local wall-clock time with seconds, as `show` prints times (`--json` keeps the ISO instant); "-" when out of the Date range. */
+export const clock = (ts: number) => (dateMs(ts) !== undefined ? new Date(ts).toTimeString().slice(0, 8) : "-");
 const val = (v: unknown) => (v === undefined ? "-" : typeof v === "string" ? v : JSON.stringify(v));
 
 function cacheText(u: AgentEvent["usage"]): string {

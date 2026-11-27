@@ -130,4 +130,38 @@ describe("exportRows", () => {
     assert.ok(bytes > 40e6, `exported ${bytes} bytes`);
     assert.ok(growth < 64 * 1024 * 1024, `RSS grew ${Math.round(growth / 1048576)} MB`);
   });
+
+  test("CSV leaves out-of-range times blank and keeps the other rows", async () => {
+    const store = new MemoryIndexStore();
+    await store.upsertSession(session("ok-s", { startedAt: T0, endedAt: T0 + 5_000 }));
+    await store.upsertSession(session("far-s", { startedAt: 8.64e15 + 1, endedAt: 1e300 }));
+    await store.putEvents([
+      event("ok-s", 1, { ts: T0 + 1_000 }),
+      event("far-s", 1, { ts: -8.64e15 - 1 }),
+    ]);
+    await store.putLabel({ id: "l-ok", sessionId: "ok-s", criterion: "outcome", value: "pass", by: "me", ts: T0 });
+    await store.putLabel({ id: "l-far", sessionId: "far-s", criterion: "outcome", value: "fail", by: "me", ts: 1e300 });
+
+    const csvOf = async (kind: "sessions" | "events" | "labels") => {
+      let out = "";
+      await exportRows(store, kind, { filter: {}, format: "csv", write: (c) => void (out += c) });
+      return out.trim().split("\r\n");
+    };
+    const sRows = await csvOf("sessions");
+    assert.equal(sRows.length, 3);
+    const farS = sRows.find((l) => l.startsWith("far-s,"))!.split(",");
+    assert.deepEqual([farS[4], farS[5], farS[6]], ["", "", ""]);
+    const okS = sRows.find((l) => l.startsWith("ok-s,"))!.split(",");
+    assert.equal(okS[4], new Date(T0).toISOString());
+
+    const eRows = await csvOf("events");
+    assert.equal(eRows.length, 3);
+    assert.equal(eRows.find((l) => l.startsWith("far-s-e1,"))!.split(",")[2], "");
+    assert.equal(eRows.find((l) => l.startsWith("ok-s-e1,"))!.split(",")[2], new Date(T0 + 1_000).toISOString());
+
+    const lRows = await csvOf("labels");
+    assert.equal(lRows.length, 3);
+    assert.equal(lRows.find((l) => l.startsWith("l-far,"))!.split(",")[7], "");
+    assert.equal(lRows.find((l) => l.startsWith("l-ok,"))!.split(",")[7], new Date(T0).toISOString());
+  });
 });

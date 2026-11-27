@@ -7,6 +7,7 @@
 // - Glyphs: ✓ done, ! warning, ✗ error, ? prompt. Plain mode keeps the glyphs
 //   (they are text, not color) and drops color and spinners.
 // - Color precedence: --no-color, NO_COLOR, FORCE_COLOR, then per-stream TTY.
+import { dateMs } from "../core/dates.ts";
 import { cutToWidth, padToWidth, textWidth } from "../core/width.ts";
 import { UsageError } from "./args.ts";
 import { codeSpansForShell, nextStepBin } from "./next-steps.ts";
@@ -420,9 +421,11 @@ export function plural(n: number, one: string, many = `${one}s`): string {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Local wall-clock time: "Nov 6 14:02"; "Nov 6 2025" outside the current year. */
+/** Local wall-clock time: "Nov 6 14:02"; "Nov 6 2025" outside the current year; "-" when out of the Date range. */
 export function localTime(ts: number, now = Date.now()): string {
-  const d = new Date(ts);
+  const t = dateMs(ts);
+  if (t === undefined) return "-";
+  const d = new Date(t);
   const day = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
   if (d.getFullYear() !== new Date(now).getFullYear()) return `${day} ${d.getFullYear()}`;
   return `${day} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -434,14 +437,15 @@ export function localTime(ts: number, now = Date.now()): string {
  * full ISO timestamp; this is for people, piped or not.
  */
 export function ago(ts: number | undefined, opts: { now?: number } = {}): string {
-  if (ts === undefined || !Number.isFinite(ts)) return "-";
+  const t = dateMs(ts);
+  if (t === undefined) return "-";
   const now = opts.now ?? Date.now();
-  const d = now - ts;
+  const d = now - t;
   if (d < 1e3) return "0s ago"; // includes small clock skew (a timestamp slightly in the future)
   if (d < 60e3) return `${Math.floor(d / 1e3)}s ago`;
   if (d < 3600e3) return `${Math.floor(d / 60e3)}m ago`;
   if (d < 86400e3) return `${Math.floor(d / 3600e3)}h ago`;
-  return localTime(ts, now);
+  return localTime(t, now);
 }
 
 /**

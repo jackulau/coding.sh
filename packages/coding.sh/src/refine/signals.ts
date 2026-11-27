@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isoMs } from "../core/dates.ts";
 import type { Citation } from "../datasets/types.ts";
 import { normalizeComponentName, type Component } from "./match.ts";
 import type { MinedFinding } from "./mine.ts";
@@ -385,7 +386,7 @@ export function checkSessions(s: Signal, all: ReadonlyMap<string, Signal>, sessi
 
 /** Signals as R2-5 findings (kind 'diagnosis'), most severe first. */
 export function signalFindings(doc: SignalsDoc): MinedFinding[] {
-  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const day = (ms: number) => isoMs(ms)?.slice(0, 10);
   return doc.signals
     .map((s): MinedFinding => {
       const ids = [...new Set(s.occurrences.map((o) => o.sessionId))].sort((a, b) => (doc.sessions[b]?.startedAt ?? 0) - (doc.sessions[a]?.startedAt ?? 0) || (a < b ? -1 : 1));
@@ -396,7 +397,7 @@ export function signalFindings(doc: SignalsDoc): MinedFinding[] {
         label: s.title,
         count: s.occurrences.length,
         agents: [...new Set(ids.map((id) => doc.sessions[id]?.agent ?? "unknown"))].sort(),
-        support: { sessions: ids.length, days: new Set(ids.map((id) => day(doc.sessions[id]?.startedAt ?? 0))).size, repos: new Set(ids.map((id) => doc.sessions[id]?.repo ?? "")).size },
+        support: { sessions: ids.length, days: new Set(ids.map((id) => day(doc.sessions[id]?.startedAt ?? 0)).filter((d): d is string => d !== undefined)).size, repos: new Set(ids.map((id) => doc.sessions[id]?.repo ?? "")).size },
         impact: {},
         examples: ids.slice(0, 10).map((id) => ({ sessionId: id, eventIds: s.occurrences.filter((o) => o.sessionId === id).flatMap((o) => o.evidence.map((c) => c.eventId ?? "").filter(Boolean)).slice(0, 5), startedAt: doc.sessions[id]?.startedAt ?? 0 })),
         surface: s.remediation?.surface === "tool" ? "tool-description" : "context-file",

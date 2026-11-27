@@ -59,7 +59,7 @@ keep tokens out of the file.
 |---|---|---|---|
 | `capture.mode` | `"full"` | yes | `full` keeps prompts, replies and tool input and output. `metadata` keeps ids, times, kinds, durations, token counts and short labels only. |
 | `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets`, `env`, `pii` (all of `email`, `phone`, `card`, `iban` and `national-id`), each of those five alone, and `none` (clears the list in your user config). [Privacy](https://coding.sh/docs/privacy#redaction) says what each one replaces. |
-| `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. In a repo's file, each entry is literal text. |
+| `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`, and a quote at either end of a match stays. In a repo's file, each entry is literal text. |
 | `capture.exclude` | `[]` | yes | Path globs (`*`, `**`, `?`, `~`). Sessions whose working directory, or a parent of it, matches are dropped at ingest. |
 | `capture.maxInlineBytes` | `4096` | yes | Payloads larger than this go to the blob store. Minimum 256. |
 

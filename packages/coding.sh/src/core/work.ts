@@ -855,7 +855,10 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
     item.next = "nothing to do";
   }
   if (item.hidden === "acked") item.next = "acknowledged: it comes back when something new happens";
-  if (item.hidden === "snoozed" && snooze) item.next = `snoozed until ${new Date(snooze.until).toISOString()}`;
+  if (item.hidden === "snoozed" && snooze) {
+    const until = iso(snooze.until);
+    item.next = until ? `snoozed until ${until}` : "snoozed";
+  }
   return { item, causes, ended: !item.running && members.every((s) => s.endedAt !== undefined) };
 }
 

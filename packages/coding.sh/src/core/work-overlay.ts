@@ -7,6 +7,7 @@
 // written to a temp file and renamed; a missing or corrupt file reads as empty.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { dateMs } from "./dates.ts";
 import type { Bucket } from "./work.ts";
 
 export interface WorkSnooze {
@@ -56,7 +57,7 @@ export function readOverlay(path: string): WorkOverlay {
   if (r.snoozes && typeof r.snoozes === "object") {
     for (const [id, s] of Object.entries(r.snoozes as Record<string, unknown>)) {
       const z = s as { until?: unknown; bucket?: unknown; item?: unknown } | null;
-      if (z && typeof z.until === "number" && Number.isFinite(z.until) && typeof z.bucket === "string" && BUCKET_NAMES.has(z.bucket)) {
+      if (z && typeof z.until === "number" && dateMs(z.until) !== undefined && typeof z.bucket === "string" && BUCKET_NAMES.has(z.bucket)) {
         const snooze: WorkSnooze = { until: z.until, bucket: z.bucket as Bucket };
         if (typeof z.item === "string") snooze.item = z.item;
         out.snoozes[id] = snooze;

@@ -1,5 +1,6 @@
 // coding.sh collector (alias: otel): local OTLP/HTTP receiver. stdout gets the
 // environment that points an agent's OpenTelemetry exporter here.
+import { isoMs } from "../../core/dates.ts";
 import { pricesFor } from "../../core/pricing.ts";
 import { createRedactor } from "../../core/redact.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
@@ -133,7 +134,8 @@ async function importRun(c: CommandContext): Promise<number> {
     out.row("Events", dryRun ? `${verb} ${plural(r.events, "event")}` : `${verb} ${plural(r.events, "event")}, stored ${r.inserted} new`, "ok");
     out.row("Sessions", `${dryRun ? "would write" : "wrote"} ${plural(r.sessions.length, "session")}`, "ok");
     if (r.rejected) out.row("Rejected", `${plural(r.rejected, "span")}: ${r.errors.slice(0, 3).join("; ")}`, "warn");
-    if (r.cursor && !dryRun) out.note(`Next run starts after ${new Date(Number(BigInt(r.cursor.ts) / 1_000_000n)).toISOString()}`);
+    const nextAt = r.cursor && !dryRun ? isoMs(Number(BigInt(r.cursor.ts) / 1_000_000n)) : undefined;
+    if (nextAt) out.note(`Next run starts after ${nextAt}`);
     if (!r.spans) out.note(c.flags.all === true ? "No spans in that range" : "No agent traces in that range (--all reads every span)");
     return r.errors.length ? 1 : 0;
   });

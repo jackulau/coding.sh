@@ -4,6 +4,7 @@
 // read a page at a time with the `sessions` filters, events a page at a time per
 // session, so memory stays flat however large the store is. Rows are what the store
 // holds, which is already redacted at ingest.
+import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore, Label, SessionFilter } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { csvRow } from "./csv.ts";
@@ -29,7 +30,7 @@ export interface ExportOptions {
   pageSize?: number;
 }
 
-const iso = (ms: number | undefined): string | null => (ms === undefined ? null : new Date(ms).toISOString());
+const iso = (ms: number | undefined): string | null => isoMs(ms) ?? null;
 
 export const CSV_COLUMNS: Record<ExportKind, readonly string[]> = {
   sessions: ["id", "agent", "model", "title", "started_at", "ended_at", "duration_ms", "repo_root", "branch", "parent_session_id", "project", "events", "turns", "tool_calls", "tool_errors", "files_changed", "input_tokens", "output_tokens", "cost_usd", "flags"],
@@ -39,8 +40,10 @@ export const CSV_COLUMNS: Record<ExportKind, readonly string[]> = {
 
 function sessionCells(s: Session): unknown[] {
   const u = s.stats.usage;
+  const start = dateMs(s.startedAt);
+  const end = dateMs(s.endedAt);
   return [
-    s.id, s.agent, s.model ?? null, s.title ?? null, iso(s.startedAt), iso(s.endedAt), s.endedAt !== undefined ? s.endedAt - s.startedAt : null,
+    s.id, s.agent, s.model ?? null, s.title ?? null, iso(start), iso(end), start !== undefined && end !== undefined ? end - start : null,
     s.repo?.root ?? null, s.repo?.branch ?? null, s.parent?.sessionId ?? null, s.project ?? null, s.stats.events, s.stats.turns, s.stats.toolCalls,
     s.stats.toolErrors, s.stats.filesChanged, u?.inputTokens ?? null, u?.outputTokens ?? null, u?.costUsd ?? null, s.flags.join(" "),
   ];

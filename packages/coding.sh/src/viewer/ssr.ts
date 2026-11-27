@@ -2,6 +2,7 @@
 // plain rows (visible with JavaScript off), and the JSON the page would fetch
 // first, embedded so the script reads it instead of asking again. The script
 // takes each embedded response once (see preloadTake in ui/index.html).
+import { dateMs } from "../core/dates.ts";
 import type { Session } from "../schema/index.ts";
 
 /** What the sessions page fetches first, by the exact path its script builds (qs() in ui/index.html). */
@@ -100,6 +101,7 @@ function repoLabel(s: Session): string {
 }
 
 function rel(ts: number, now: number): string {
+  if (dateMs(ts) === undefined) return "";
   const d = now - ts;
   if (Math.abs(d) < 60e3) return "just now";
   const year = (t: number) => new Date(t).getFullYear();

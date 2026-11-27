@@ -17,6 +17,7 @@
 // Everything coding.sh knows that ATIF has no field for goes under extra.coding_sh.
 // Strings go through the secrets redactor (src/core/redact.ts); `mode: "metadata"`
 // drops text, tool input and output as capture.mode="metadata" does.
+import { isoMs } from "../core/dates.ts";
 import { createRedactor, toMetadata, type Redactor } from "../core/redact.ts";
 import type { AgentEvent, Session } from "../core/types.ts";
 
@@ -90,7 +91,7 @@ export interface AtifOpts {
   depth?: number;
 }
 
-const iso = (ts: number): string => new Date(ts).toISOString();
+const iso = (ts: number): string | undefined => isoMs(ts);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const clip = (s: string, n = OBS_MAX): string => (s.length > n ? `${s.slice(0, n)}\n[cut at ${n} chars]` : s);
@@ -194,7 +195,7 @@ export function toAtif(session: Session, events: readonly AgentEvent[], opts: At
     switch (e.kind) {
       case "user.message": {
         agentStep = undefined;
-        steps.push({ step_id: steps.length + 1, timestamp: iso(e.ts), source: "user", message: r(str(e.payload.text) ?? ""), extra: { coding_sh: { event_id: e.id } } });
+        steps.push(compact({ step_id: steps.length + 1, timestamp: iso(e.ts), source: "user" as const, message: r(str(e.payload.text) ?? ""), extra: { coding_sh: { event_id: e.id } } }));
         break;
       }
       case "llm.call":
@@ -241,13 +242,13 @@ export function toAtif(session: Session, events: readonly AgentEvent[], opts: At
       case "context.compact": {
         agentStep = undefined;
         const before = e.payload.tokensBefore;
-        steps.push({
+        steps.push(compact({
           step_id: steps.length + 1,
           timestamp: iso(e.ts),
-          source: "system",
+          source: "system" as const,
           message: `Context compacted (${str(e.payload.trigger) ?? "auto"}${typeof before === "number" ? `, ${before} tokens before` : ""})`,
           extra: { coding_sh: compact({ event_id: e.id, kind: "context.compact", trigger: e.payload.trigger, tokensBefore: before, tokensAfter: e.payload.tokensAfter }) },
-        });
+        }));
         break;
       }
       default:
