@@ -287,6 +287,10 @@ instead. The uncached input is worked out without it: a cache read that is not s
 from the input total. A call is read once, as it arrives, so one that an older coding.sh stored
 keeps the counts it worked out.
 
+A model call's reported cost comes from the first of `gen_ai.usage.cost`, `llm.cost.total`,
+`coding_sh.cost_usd` and `cost_usd` that holds a finite number from 0 up, as a number or as numeric
+text. A cost below 0 is read as not sent, and the next of these attributes is read instead.
+
 A model call's time to first token (`ttftMs`) comes from the first of these on its span:
 
 - `ai.response.msToFirstChunk`, `ai.stream.msToFirstChunk` or `ttft_ms`, in milliseconds.

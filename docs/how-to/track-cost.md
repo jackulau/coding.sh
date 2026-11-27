@@ -135,13 +135,9 @@ from the first of these that exists:
    ([LLM gateways](https://coding.sh/docs/ai-gateway)).
 2. **Provider-reported.** A cost the agent or app records: Claude Code runs that coding.sh starts
    in evals and experiments (`total_cost_usd`), OpenCode, Pi, or a span with `gen_ai.usage.cost`
-   or `cost_usd`. A span's cost below 0 is read as not sent.
-3. **Estimate.** Each kind of token times the model's list price, marked `~`.
-
-A token count that is not a whole number from 0 to 2^53 - 1 counts as none: one below 0, a
-fraction, or one too large to read exactly. Adapters, the proxy and OTLP read it as missing before
-working out other counts, such as the uncached input. Proxy and OTLP calls are not read again, so
-one an older coding.sh stored keeps the counts it worked out.
+   or `cost_usd`.
+3. **Estimate.** Each kind of token times the model's list price, marked `~`. Only whole token
+   counts from 0 to 2^53 - 1 are priced.
 
 A model with no price keeps no cost, never $0. `usage` names it under the table, with the fix: a
 `[prices."<model>"]` table in config.toml ([Configuration](https://coding.sh/docs/config#prices)).
