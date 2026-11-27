@@ -6,6 +6,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
+import { durationBefore } from "../core/dates.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import {
@@ -326,7 +327,8 @@ async function subagentFromResult(ctx: NormalizeContext, em: Emitter, raw: Recor
   const description = str(input.description);
   const tp = str(raw.transcript_path);
   const w = await windowEvents(ctx, tp && join(dirname(tp), basename(tp, ".jsonl"), "subagents", `agent-${agentId}.jsonl`), line.ts, child, agentId, line.runId, true);
-  const durationMs = num(res.totalDurationMs);
+  // A duration whose start falls out of the Date range is left out, as when the result gives none.
+  const durationMs = durationBefore(line.ts, num(res.totalDurationMs));
   const startTs = durationMs !== undefined ? line.ts - durationMs : (w.events[0]?.ts ?? line.ts);
   const parentId = em.ctx.id(em.base.agent, parentSid, "tool.start", toolUseId);
   const childBase = { sessionId: child, subagentId: agentId, ts: startTs };
@@ -910,7 +912,9 @@ export const claudeCode: Adapter = {
   //    found to be a copy (its owner is read from the next entry), so it is stored once.
   // 24 (0.1.8): a user entry with the promptId of the turn it is in, other than a stop prompt (such as a skill's text
   //    with no isMeta flag), adds to that turn, which ends once: one turn.end, with the turn's own duration.
-  parseVersion: 24,
+  // 25 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also an API error's resetsAt.
+  //    A subagent's totalDurationMs whose start falls out of that range is left out.
+  parseVersion: 25,
 
   detect() {
     const dir = claudeConfigDir();

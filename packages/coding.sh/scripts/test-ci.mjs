@@ -11,6 +11,11 @@
 // A run whose report lost results fails too, even when every result that arrived passed
 // (scripts/report-complete.mjs).
 //
+// A test file still running after FILE_LIMIT_MS (CODING_SH_TEST_FILE_LIMIT_MS sets another limit,
+// 0 none) is stopped and fails under its own name (scripts/test-file-limit.mjs). A file that hangs
+// is then rerun alone like any failed file, instead of holding the job until the job's time limit
+// cancels it with no file named.
+//
 // SHARD=i/n picks the files of shard i by their recorded run time (scripts/test-shards.ts), so
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
 //
@@ -28,6 +33,11 @@ import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 import { removeSync } from "../src/core/remove.ts";
 
 const MAX_RERUN = 5;
+// The slowest test files take about 3 minutes on CI's Windows runners. A file stopped at the limit
+// runs again alone, so one that is slow but passes alone is a warning, not a failure.
+const FILE_LIMIT_MS = 5 * 60_000;
+const fileLimitMs = process.env.CODING_SH_TEST_FILE_LIMIT_MS || String(FILE_LIMIT_MS);
+if (!/^\d+$/.test(fileLimitMs)) throw new Error(`CODING_SH_TEST_FILE_LIMIT_MS must be a whole number of milliseconds (0 for no limit), got ${fileLimitMs}`);
 const shard = process.env.SHARD;
 // --test-force-exit: a file whose tests are done exits even if a handle (a browser's pipe) is
 // still open, so a leak can't hold the job until its time limit cancels it.
@@ -37,7 +47,9 @@ const blocking = new URL("./test-blocking-stdout.mjs", import.meta.url).href;
 // --import test-temp-root.mjs: each test file gets a temp folder of its own under this run's
 // folder, removed when the file exits. What a file left in it is printed at the end of the run.
 const tempRoot = new URL("./test-temp-root.mjs", import.meta.url).href;
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--import", tempRoot, "--test", "--test-force-exit", ...args], { stdio: "inherit", env: fileEnv() }).status ?? 1;
+// --import test-file-limit.mjs: a test file still running after its limit is stopped.
+const fileLimit = new URL("./test-file-limit.mjs", import.meta.url).href;
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--import", tempRoot, "--import", fileLimit, "--test", "--test-force-exit", ...args], { stdio: "inherit", env: fileEnv() }).status ?? 1;
 
 /** The test files to split into shards, of `all`: `{ files, narrowed, log }`. */
 async function pick(all) {
@@ -53,8 +65,11 @@ const name = (file) => relative(process.cwd(), file) || file;
 /** The environment of a run of test files, read when the run starts: the run's temp folder in it. */
 function fileEnv() {
   const env = { ...process.env, TMPDIR: tempBase, TMP: tempBase, TEMP: tempBase, CODING_SH_TEST_TEMP: tempBase };
-  // A runner started by a test file must not hand its files that file's folder as theirs.
+  // A runner started by a test file must not hand its files that file's folder as theirs, and its
+  // files get a clock of their own.
   delete env.CODING_SH_TEST_TEMP_ROOT;
+  delete env.CODING_SH_TEST_FILE_LIMITED;
+  env.CODING_SH_TEST_FILE_LIMIT_MS = fileLimitMs;
   return env;
 }
 

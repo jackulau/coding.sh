@@ -24,6 +24,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
+import { dateMs } from "../core/dates.ts";
 import { T3_AGENT, T3_ORIGINATOR } from "../spool/host.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -239,12 +240,13 @@ const LATE_WRITE_MS = 1_000;
  * tool output's or inter-agent message's `create_time` (seconds), an
  * item_completed event's `completed_at_ms`. Other items' create_time is when
  * streaming began, not when the line was due, so it says nothing about lateness.
+ * A time out of the Date range says nothing either.
  */
 function ownTime(type: unknown, p: Record<string, unknown>): number | undefined {
-  if (type === "event_msg") return p.type === "item_completed" ? num(p.completed_at_ms) : undefined;
+  if (type === "event_msg") return p.type === "item_completed" ? dateMs(num(p.completed_at_ms)) : undefined;
   if (type !== "response_item" || !(str(p.type)?.endsWith("_output") || p.type === "agent_message")) return undefined;
   const s = num(obj(p.internal_chat_message_metadata_passthrough).create_time);
-  return s !== undefined ? s * 1000 : undefined;
+  return s !== undefined ? dateMs(s * 1000) : undefined;
 }
 
 /** A backfilled rollout whose last record is older than this is treated as finished (gets a session.end). */
@@ -1152,7 +1154,8 @@ export const codex: Adapter = {
   // 14 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests.
   // 15 (0.1.8): a session record with no id takes the thread id in the rollout's file name before its session_id,
   //    which a subagent thread shares with its root thread, so the subagent thread stays its own session.
-  parseVersion: 15,
+  // 16 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also an item's own time.
+  parseVersion: 16,
 
   detect() {
     const home = codexHome();

@@ -2,7 +2,7 @@
 // gained a line, with synthetic sessions recorded before and after it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -175,6 +175,39 @@ describe("cli improve", () => {
     const missing = cli(w, ["improve", "fix", "9"]);
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /No issue "9"/);
+  });
+
+  it("improve fix rewrites an earlier wording of the line in place; --dry-run and --json name the line it replaces", async () => {
+    const w = await world("fix-was", { afterFlagged: 0, plan: { before: [], after: [] } });
+    const old = "Never skip, delete or weaken a test to make it pass.";
+    const file = join(w.repo, "CLAUDE.md");
+    writeFileSync(file, `${old}\nKeep answers short.\n`);
+    // A failing run, an edit that only weakens the test's assertion, then a green run: test-tamper.
+    const events = sessionEvents("tamper-1", { cwd: w.repo, startedAt: Date.now() - 86_400_000 }, [
+      ["user.message", { text: "Fix the sum test." }],
+      ["test.result", { passed: 1, failed: 1 }],
+      ["tool.start", { tool: "Edit", toolUseId: "tx", input: { file_path: join(w.repo, "tests", "sum.test.js") } }],
+      ["file.change", { path: "tests/sum.test.js", op: "modify", toolUseId: "tx", diff: "-  assert.equal(sum(2, 2), 4);\n+  assert.ok(true);" }],
+      ["tool.end", { tool: "Edit", toolUseId: "tx", ok: true }],
+      ["test.result", { passed: 2, failed: 0 }],
+      ["assistant.message", { text: "Done." }],
+    ]);
+    const { openContext } = await import("../../src/core/context.ts");
+    const ctx = await openContext({ env: w.env, cwd: w.repo });
+    try {
+      await putSession(ctx.index, events.map((e) => ({ ...e, repo: { root: w.repo, head: w.commits.rule! } })));
+    } finally {
+      await ctx.close();
+    }
+
+    const dry = cli(w, ["improve", "fix", "flag:test-tamper", "--dry-run"]);
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /Would replace a line in CLAUDE\.md:\n- Never skip, delete or weaken a test to make it pass\.\n\+ Never skip, delete or weaken a test or a theorem statement/);
+    const r = cli(w, ["improve", "fix", "flag:test-tamper", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout) as { line: string; replaced: string; changed: boolean };
+    assert.deepEqual([j.replaced, j.changed], [old, true]);
+    assert.equal(readFileSync(file, "utf8"), `${j.line}\nKeep answers short.\n`, "in the old line's place, not added beside it");
   });
 
   it("improve fix on a file it just created: the printed commit step commits it", async () => {

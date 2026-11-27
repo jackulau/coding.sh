@@ -20,6 +20,7 @@ import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "..
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { sha256Hex } from "../../core/ids.ts";
+import { dateMs } from "../../core/dates.ts";
 import { supervise } from "../../core/children.ts";
 import { teeFile } from "../../core/tee.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
@@ -66,7 +67,7 @@ export function pickStr(o: unknown, ...keys: string[]): string | undefined {
   return undefined;
 }
 
-/** Parse ISO strings, epoch seconds or epoch ms into epoch ms. */
+/** Parse ISO strings, epoch seconds or epoch ms into epoch ms; undefined for anything else, or a time out of the Date range. */
 export function toMs(v: unknown): number | undefined {
   if (typeof v === "string") {
     if (/^\d+(\.\d+)?$/.test(v)) return toMs(Number(v));
@@ -75,7 +76,7 @@ export function toMs(v: unknown): number | undefined {
   }
   const n = num(v);
   if (n === undefined) return undefined;
-  return n < 1e11 ? Math.round(n * 1000) : Math.round(n);
+  return dateMs(n < 1e11 ? Math.round(n * 1000) : Math.round(n));
 }
 
 export function home(env: NodeJS.ProcessEnv = process.env): string {

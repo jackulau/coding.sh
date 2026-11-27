@@ -4,6 +4,7 @@
 // events of its rollouts: we read the tail of the newest ones. Nothing here touches the index.
 import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { dateMs } from "../core/dates.ts";
 
 export type QuotaAgent = "claude-code" | "codex";
 export const QUOTA_AGENTS: readonly QuotaAgent[] = ["claude-code", "codex"];
@@ -58,7 +59,9 @@ function spendFields(usedUsd: unknown, limitUsd: unknown, period: unknown): Pick
 
 function reading(agent: QuotaAgent, window: string, usedPercent: number, resetsAt: number | undefined, readAt: number): QuotaReading {
   const r: QuotaReading = { agent, window, usedPercent, readAt };
-  if (resetsAt !== undefined) r.resetsAt = resetsAt;
+  // A reset time out of the Date range is left out, as when the agent gives none.
+  const at = dateMs(resetsAt);
+  if (at !== undefined) r.resetsAt = at;
   return r;
 }
 
@@ -118,7 +121,7 @@ export function readClaudeQuota(file: string): QuotaReading[] {
     return [];
   }
   if (!isObj(doc) || !Array.isArray(doc.windows)) return [];
-  const readAt = num(doc.readAt);
+  const readAt = dateMs(num(doc.readAt));
   if (readAt === undefined) return [];
   const out: QuotaReading[] = [];
   for (const w of doc.windows) {
