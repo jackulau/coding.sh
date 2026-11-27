@@ -696,7 +696,7 @@ test("each check fails on a redactor with a secret rule taken out or a pattern t
     ["payload, no private-key rule", without("private-key"), PAYLOAD, checkPayload, /the private-key secret is left/],
     ["blob, no bearer rule", without("bearer"), BLOB, checkBlob, /the bearer secret is left/],
     ["text, a pattern for ]", createRedactor({ patterns: ["\\]"] }), TEXT, checkText, /again changed it/],
-    ['blob, a pattern for "', createRedactor({ patterns: ['"'] }), BLOB, checkBlob, /does not parse/],
+    ["blob, a pattern for } and ]", createRedactor({ patterns: ["[}\\]]"] }), BLOB, checkBlob, /does not parse/],
     ["text, a pattern for 40 hex digits", createRedactor({ patterns: ["[0-9a-f]{40}"] }), TEXT, checkText, /no longer holds/],
   ];
   for (const [label, r, g, check, why] of mutants) {

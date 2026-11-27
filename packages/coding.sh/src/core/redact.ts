@@ -1278,8 +1278,10 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
       return marker(r.kind);
     };
   }
-  // A match can start or end inside a JSON escape: keepEscapes keeps that escape whole.
-  if (s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind))));
+  // A match can start or end inside a JSON escape: keepEscapes keeps that escape whole. A custom
+  // pattern can also match the quote that opens or closes a string: keepEscapes keeps that too.
+  const quotes = r.kind === "pattern" && s.includes('"');
+  if (quotes || s.includes("\\")) return s.replace(r.pattern, keepEscapes(s, replace ?? (() => marker(r.kind)), quotes));
   return replace ? s.replace(r.pattern, replace) : s.replace(r.pattern, marker(r.kind));
 }
 
@@ -1289,8 +1291,13 @@ function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
  * runs to the backslash of `\"`. Replacing the match alone leaves text that no longer parses as
  * JSON, at its own level or, for JSON text held in a string, at a level below. Only the part of
  * the match that the replacement changes is cut (cutWhole).
+ *
+ * With `quotes`, a quote at either end of that part stays too, with the run of backslashes before
+ * it: in `{"id":"x1y2z3w4"}` a custom pattern for `"x1[a-z0-9]+"` gives `{"id":"[redacted:pattern]"}`.
+ * The quote opens or closes a string of JSON text, at its own level or a level below, so the text
+ * still parses. A part made only of such quotes stays as it is.
  */
-function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): (m: string, ...rest: unknown[]) => string {
+function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string, quotes = false): (m: string, ...rest: unknown[]) => string {
   return (m, ...rest) => {
     const out = fn(m, ...rest);
     if (out === m) return out;
@@ -1306,7 +1313,24 @@ function keepEscapes(s: string, fn: (m: string, ...rest: unknown[]) => string): 
     while (a < headMost && m.charCodeAt(a) === out.charCodeAt(a)) a++;
     let b = 0;
     while (b < tailMost && b < most - a && m.charCodeAt(m.length - 1 - b) === out.charCodeAt(out.length - 1 - b)) b++;
-    return out.slice(0, a) + cutWhole(s, at + a, at + m.length - b, out.slice(a, out.length - b)) + out.slice(out.length - b);
+    let from = at + a;
+    let to = at + m.length - b;
+    if (quotes) {
+      // A part that starts inside a run of backslashes is cutWhole's: it keeps that escape whole.
+      if (s.charCodeAt(from - 1) !== 92) {
+        let q = from;
+        while (q < to && s.charCodeAt(q) === 92) q++;
+        if (q < to && s.charCodeAt(q) === 34) from = q + 1;
+      }
+      if (to > from && s.charCodeAt(to - 1) === 34) {
+        to--;
+        while (to > from && s.charCodeAt(to - 1) === 92) to--;
+      }
+      if (from >= to) return m;
+    }
+    const keptHead = s.slice(at + a, from);
+    const keptTail = s.slice(to, at + m.length - b);
+    return out.slice(0, a) + keptHead + cutWhole(s, from, to, out.slice(a, out.length - b)) + keptTail + out.slice(out.length - b);
   };
 }
 

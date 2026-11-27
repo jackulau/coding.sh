@@ -66,6 +66,8 @@ match becomes `[redacted:<kind>]`.
   of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
 - In JSON text held in a string, such as an OTLP log body, the rules also match right after an
   escape such as `\n`, and the escape stays whole.
+- When a match of a `redactPatterns` entry starts or ends with a quote, the quote stays, with the
+  backslashes before it, so JSON text still parses.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

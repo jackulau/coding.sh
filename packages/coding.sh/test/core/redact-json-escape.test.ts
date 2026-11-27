@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { createRedactor, piiRules, redactEventCounted, secretRules, type Redactor } from "../../src/core/redact.ts";
+import { createRedactor, piiRules, redactBlobValue, redactEventCounted, redactForBlob, redactionTally, secretRules, type Redactor } from "../../src/core/redact.ts";
 import { mulberry32 } from "../../src/stats/prng.ts";
 
 const BS = String.fromCharCode(92);
@@ -490,6 +490,40 @@ describe("a redaction keeps JSON text held in JSON text valid", () => {
     for (const [r, doc, want] of cases) {
       const out = r.string(JSON.stringify({ t: JSON.stringify(doc) }));
       assert.deepEqual(JSON.parse((JSON.parse(out) as { t: string }).t), want, out);
+    }
+  });
+
+  it("a custom pattern that starts or ends with a quote keeps the quote, and each level still parses, in a blob too", () => {
+    const doc = { id: secret, n: 1, note: j("say ", QT, secret, QT, " now") };
+    const want = { id: "[redacted:pattern]", n: 1, note: j("say ", QT, "[redacted:pattern]", QT, " now") };
+    /** The document `depth` levels down in `s`. */
+    const inner = (s: string, depth: number): unknown => {
+      let v: unknown = JSON.parse(s);
+      for (let d = 1; d < depth; d++) v = JSON.parse((v as { t: string }).t);
+      return v;
+    };
+    // The last one is written for any level: a run of backslashes before each quote.
+    const anyLevel = j(BS, BS, "*", QT, "Zq8[A-Za-z0-9]+", BS, BS, "*", QT);
+    for (const pattern of [j(QT, "Zq8[A-Za-z0-9]+", QT), j(QT, "Zq8[A-Za-z0-9]+"), j("Zq8[A-Za-z0-9]+", QT), anyLevel]) {
+      const red = createRedactor({ redact: ["none"], patterns: [pattern] });
+      for (const depth of [1, 2, 3]) {
+        const input = nest(JSON.stringify(doc), depth);
+        assert.equal(levels(input), depth, input);
+        const at = `${pattern}, ${depth} levels`;
+        const text = red.string(input);
+        assert.equal(levels(text), depth, `${at}, string: ${text}`);
+        if (pattern === anyLevel) assert.deepEqual(inner(text, depth), want, `${at}, string: ${text}`);
+        const blob = (redactForBlob(red, { body: input }, redactionTally()) as { body: string }).body;
+        assert.deepEqual(inner(blob, depth), want, `${at}, redactForBlob: ${blob}`);
+        const blobText = redactBlobValue(red, { body: input }, redactionTally());
+        assert.deepEqual(inner((JSON.parse(blobText) as { body: string }).body, depth), want, `${at}, redactBlobValue: ${blobText}`);
+      }
+    }
+    // A match made only of quotes and their backslashes leaves the text as it is.
+    const quote = createRedactor({ redact: ["none"], patterns: [j(BS, BS, "*", QT)] });
+    for (const depth of [1, 2, 3]) {
+      const input = nest(JSON.stringify(doc), depth);
+      assert.equal(quote.string(input), input);
     }
   });
 });

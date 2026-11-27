@@ -502,6 +502,15 @@ describe("redact: linear time on long input", () => {
     it(`redacts 1 MB of ${name} in linear time (under 500 ms, else linear growth)`, () => assertLinear(name, make));
   }
 
+  // A custom pattern's match keeps a quote at either end, with the run of backslashes before it.
+  const quoted = createRedactor({ redact: ["none"], patterns: [`${BS}${BS}*"Zq8[A-Za-z0-9]+${BS}${BS}*"`] });
+  for (const unit of [`{"id":"Zq8x1y2z3"},`, `${BS.repeat(1000)}"Zq8x1y2z3${BS.repeat(1000)}" `]) {
+    const name = unit.length > 100 ? `repeated 1000 backslashes + '"Zq8x1y2z3' + 1000 backslashes + '" '` : `repeated '${unit}'`;
+    it(`redacts 1 MB of ${name} with a custom pattern in linear time and keeps each quote`, () => {
+      assertLinear(name, (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => assert.equal(out, input.split("Zq8x1y2z3").join("[redacted:pattern]")), quoted);
+    });
+  }
+
   it("redacts 1 MB of keys, each right after an escape, in linear time and keeps each escape whole", () => {
     const unit = `${BS}n${GITHUB_CLASSIC}`;
     assertLinear("keys after escapes", (n) => unit.repeat(Math.floor(n / unit.length)), 500, (input, out) => {
