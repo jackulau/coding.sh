@@ -1089,7 +1089,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/refine-distill.ts",
-      "max": 11,
+      "max": 9,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -1485,7 +1485,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/experiments/continuation.ts",
-      "max": 23,
+      "max": 18,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -1611,7 +1611,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/graders/index.ts",
-      "max": 48,
+      "max": 46,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
