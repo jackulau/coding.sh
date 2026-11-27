@@ -28,12 +28,16 @@ const KINDS = [
   "password", "url-secret", "secret-assignment", "secret-field", "prose-secret", "netrc", "secret-value",
 ];
 
-/** sha256 of the secret rules and of the lines in src/core/redact.ts that name secret keys and flags. */
-const RULES_HASH = "2d7600d3083ced6b686cb3f5df05887b0ac22f0aa3d940917281f234e3c3ed89";
+/**
+ * sha256 of the secret rules and of the lines in src/core/redact.ts that name secret keys and
+ * flags or start a match of a rule's level pass.
+ */
+const RULES_HASH = "2bcc34743fa0034138167f7e8a9f814f53f7d0f1fd441d7f58a9de83e94eea95";
 
 function rulesHash(): string {
   const source = readFileSync(join(PKG_ROOT, "src", "core", "redact.ts"), "utf8").split(/\r?\n/);
-  const names = ["const SECRET_NAME =", "const ENV_SECRET_NAME =", "const SECRET_KEY =", "const SECRET_FLAG ="].map((start) => {
+  const starts = ["const SECRET_NAME =", "const ENV_SECRET_NAME =", "const SECRET_KEY =", "const SECRET_FLAG =", "const LEVEL_ASSIGNMENT =", "const LEVEL_FIELD =", "const LEVEL_VALUE ="];
+  const names = starts.map((start) => {
     const line = source.find((l) => l.startsWith(start));
     assert.ok(line, `src/core/redact.ts has a line that starts with ${start}`);
     return line;
@@ -327,6 +331,22 @@ describe("mayHoldSecret on payloads the default rules change", () => {
     // A rule with the `i` flag takes an upper-case escape letter too, and so does WORDS.
     for (const [kind, text] of [["prose-secret", `a${BS}NPAT: ${v()}`], ["basic-auth", `a${BS}U0041Authorization: Basic ${draw(r, ALNUM + "+/", 20)}==`]] as const) {
       assert.ok(check(JSON.stringify({ prompt: text })).includes(kind), `${kind} in ${text}`);
+    }
+    // A value in escaped quotes, in JSON text held in a string that is not JSON itself (it starts
+    // with "see"), one to three levels down.
+    const quoted: [string, string][] = [
+      ["secret-assignment", `export API_KEY="${v()}" && run`],
+      ["secret-value", `api_key = "${v()}"\nx = 1`],
+      ["secret-field", `password: "${v()}"\nx: 1`],
+      ["secret-field", `{"api_key": "${v()}", "x": 1}`],
+    ];
+    for (const [kind, inner] of quoted) {
+      let s = inner;
+      for (let depth = 1; depth <= 3; depth++) {
+        s = `see ${JSON.stringify({ t: s })}`;
+        const text = JSON.stringify({ prompt: s });
+        assert.ok(check(text).includes(kind), `${kind}, ${depth} deep, in ${text}`);
+      }
     }
   });
 

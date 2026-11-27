@@ -424,3 +424,39 @@ describe("a redaction keeps JSON text held in JSON text valid", () => {
     }
   });
 });
+
+describe("a value in double quotes inside JSON text held in a string", () => {
+  // JSON text writes the quotes around a value as a backslash and a quote, JSON text held in JSON
+  // text as three backslashes and a quote, and so on. Read back level by level, each form reads as
+  // the plain text redacted on its own.
+  const red = createRedactor();
+  const NL = String.fromCharCode(10);
+  const value = j("Kq9m", "Z2xR", "w0rd", "99xy");
+  const forms: [string, string][] = [
+    ["secret-assignment", `export API_KEY="${value}" && run`],
+    ["secret-assignment", j("echo hi", NL, `DB_PASSWORD="${value}"`, NL, "ls")],
+    ["secret-value", j(`api_key = "${value}"`, NL, "x = 1")],
+    ["secret-field", j(`password: "${value}"`, NL, "x: 1")],
+    ["secret-field", `{"api_key":"${value}","x":1}`],
+    ["secret-field", `{"api_key": "${value}", "x": 1}`],
+  ];
+  for (const depth of [1, 2, 3, 4]) {
+    it(`is redacted ${depth} ${depth === 1 ? "level" : "levels"} down, as an assignment, a value or a field, and every level still parses`, () => {
+      for (const [kind, inner] of forms) {
+        const alone = redactEventCounted(red, event(inner));
+        assert.deepEqual(alone.payload.redactions, { [kind]: 1 }, inner);
+        let input = inner;
+        for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+        const ev = redactEventCounted(red, event(input));
+        assert.deepEqual(ev.payload.redactions, alone.payload.redactions, input);
+        for (const out of [red.string(input), red.value({ body: input }).body, ev.payload.text as string]) {
+          assert.ok(!out.includes(value), out);
+          assert.equal(levels(out), levels(input), out);
+          let text = out;
+          for (let d = 0; d < depth; d++) text = (JSON.parse(text) as { t: string }).t;
+          assert.equal(text, alone.payload.text, out);
+        }
+      }
+    });
+  }
+});

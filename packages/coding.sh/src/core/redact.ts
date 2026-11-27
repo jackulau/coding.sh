@@ -224,6 +224,176 @@ function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) =
   return rule;
 }
 
+/**
+ * Passes that createRedactor runs once every rule has run, for the rules whose regex reads a value
+ * at one level of JSON text: secret-assignment, secret-field and secret-value. A pass reads each
+ * value at the level its opening quote is written at and replaces it whole, escapes and all. It
+ * works on the text the rules wrote, so it only adds markers. Keyed by rule identity, as fastApply
+ * is.
+ */
+const levelPass = new WeakMap<RedactRule, (s: string) => string>();
+
+function withLevelPass(rule: RedactRule, pass: (s: string) => string): RedactRule {
+  levelPass.set(rule, pass);
+  return rule;
+}
+
+// Levels of JSON text: the string a rule sees is level 0, and the text held in a string of JSON
+// text at level k - 1 is level k, one level below it. The string a rule sees writes a quote of
+// level k as 2^k - 1 backslashes and `"`, and a backslash of level k as 2^k backslashes. So a run
+// of r backslashes before a quote, read at level k, is r / 2^k (rounded down) backslashes of level
+// k and then a quote of level k when r + 1 is a multiple of 2^k, else a quote of a level above k.
+// An escape that a string of level k - 1 holds (b, f, n, r, t, or u and four hex digits) has
+// 2^(k - 1) times an odd number of backslashes before its letter: one character of level k.
+
+/** Where the secret-assignment rule's regex can start a match: the name, then "=". */
+const LEVEL_ASSIGNMENT = new RegExp(String.raw`(?=[A-Z0-9_])(?:\b|${AFTER_ESCAPE})(${ENV_SECRET_NAME})=`, "g");
+/** A secret name, the closing quote of its key if any (escaped or not), ":" and the escaped quote that opens the value. */
+const LEVEL_FIELD = new RegExp(String.raw`${SECRET_NAME}(?:["']|(\\+)")?\s*:\s*(\\+)"`, "gi");
+/** The secret-value rule's regex with the value after an escaped quote, and the key in escaped quotes too. */
+const LEVEL_VALUE = new RegExp(String.raw`(${SECRET_NAME}(?:["']|(?:\\\\)*\\")?[ \t]*[:=][ \t]*)((?:\\\\)*\\")([^\s"'${"`"},;)\\]{8,})`, "gi");
+const ONLY_MARKER = /^\[redacted:[a-z0-9-]+\]$/;
+
+const isEscapeLetter = (c: number): boolean => c === 98 || c === 102 || c === 110 || c === 114 || c === 116;
+
+/** True when `r` is a power of two. */
+function isPow2(r: number): boolean {
+  while (r > 1 && r % 2 === 0) r /= 2;
+  return r === 1;
+}
+
+/** The marker for `span`: of the first vendor token a rule marked in it, so it still counts as one, else of `kind`. */
+function levelMarker(span: string, kind: string): string {
+  if (span.includes("[redacted:")) for (const m of span.matchAll(MARKER_RE)) if (HIGH_CONFIDENCE_KINDS.has(m[1]!)) return marker(m[1]!);
+  return marker(kind);
+}
+
+/** The assignment rule's checks where a value starts: not a `$` reference, and not a number. */
+function assignableAt(s: string, i: number): boolean {
+  const c = s.charCodeAt(i);
+  if (c === 36) return false;
+  if (!(c >= 48 && c <= 57)) return true;
+  while (i < s.length && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) i++;
+  return i < s.length && isWordCode(s.charCodeAt(i));
+}
+
+/**
+ * Where a value in quotes ends, read from `i`, just after its opening quote, at the level whose
+ * quote is `pow - 1` backslashes and `"`. A quote of that level ends the value before the quote's
+ * run of backslashes, which stays whole (cutWhole), so a backslash of the value's own just before
+ * the quote shows after the marker. A backslash of that level, an escape of a deeper level and a
+ * `u` escape each count as one character. Returns -1 for a value of fewer than 8 characters, and
+ * for one that meets any of these first: a space, a b, f, n, r or t escape of that level or a
+ * level above, a quote of a level above, `'`, a backtick, `;`, `|`, `&` or the end of the text.
+ * For a field, `'` ends the value as its quote does, and a backtick, `;`, `|` and `&` are part of
+ * it.
+ */
+function readQuoted(s: string, i: number, pow: number, field: boolean): number {
+  const n = s.length;
+  let units = 0;
+  while (i < n) {
+    const c = s.charCodeAt(i);
+    if (c === 92) {
+      let e = i + 1;
+      while (e < n && s.charCodeAt(e) === 92) e++;
+      if (e === n) return -1;
+      const r = e - i;
+      const own = Math.floor(r / pow);
+      const d = s.charCodeAt(e);
+      if (d === 34) {
+        if ((r + 1) % pow !== 0) return -1;
+        return units + (r + 1) / pow - 1 >= 8 ? i : -1;
+      }
+      if (isEscapeLetter(d)) {
+        if (r % pow !== 0) return -1;
+        units += own + 1;
+        i = e + 1;
+      } else if (d === 117 && r % pow !== 0 && hex4(s, e + 1)) {
+        units += own + 1;
+        i = e + 5;
+      } else {
+        units += own;
+        i = e;
+      }
+      continue;
+    }
+    if (c === 34 || isSpaceAt(s, i)) return -1;
+    if (c === 39) return field && units >= 8 ? i : -1;
+    if (!field && (c === 96 || c === 59 || c === 124 || c === 38)) return -1;
+    units++;
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * The secret-assignment rule's level pass: a value in escaped quotes (`\"` in JSON text, `\\\"` in
+ * JSON text held in JSON text), read at the level of its opening quote. Each value read is passed
+ * over, so the pass takes time linear in the text.
+ */
+function levelAssignments(s: string): string {
+  const n = s.length;
+  let out = "";
+  let copied = 0;
+  let pos = 0;
+  while (pos < n) {
+    LEVEL_ASSIGNMENT.lastIndex = pos;
+    const m = LEVEL_ASSIGNMENT.exec(s);
+    if (!m) break;
+    const eq = m.index + m[1]!.length;
+    pos = eq + 1;
+    let r = 0;
+    while (s.charCodeAt(eq + 1 + r) === 92) r++;
+    if (r === 0 || s.charCodeAt(eq + 1 + r) !== 34 || !isPow2(r + 1)) continue;
+    const vs = eq + 2 + r;
+    if (!assignableAt(s, vs)) continue;
+    const end = readQuoted(s, vs, r + 1, false);
+    if (end < 0) continue;
+    pos = end;
+    const span = s.slice(vs, end);
+    if (ONLY_MARKER.test(span)) continue;
+    out += s.slice(copied, vs) + cutWhole(s, vs, end, levelMarker(span, "secret-assignment"));
+    copied = end;
+  }
+  return copied === 0 ? s : out + s.slice(copied);
+}
+
+/** The secret-field rule's level pass: `\"api_key\": \"value\"`, read at the level of the value's opening quote. */
+function levelFields(s: string): string {
+  const n = s.length;
+  let out = "";
+  let copied = 0;
+  let pos = 0;
+  while (pos < n) {
+    LEVEL_FIELD.lastIndex = pos;
+    const m = LEVEL_FIELD.exec(s);
+    if (!m) break;
+    pos = m.index + 1;
+    // The key's escaped quote has an odd run of backslashes; the value's is a quote of one level.
+    if ((m[1] !== undefined && m[1].length % 2 === 0) || !isPow2(m[2]!.length + 1)) continue;
+    const vs = m.index + m[0].length;
+    const end = readQuoted(s, vs, m[2]!.length + 1, true);
+    if (end < 0) continue;
+    pos = end;
+    const span = s.slice(vs, end);
+    if (ONLY_MARKER.test(span)) continue;
+    out += s.slice(copied, vs) + cutWhole(s, vs, end, levelMarker(span, "secret-field"));
+    copied = end;
+  }
+  return copied === 0 ? s : out + s.slice(copied);
+}
+
+/** The secret-value rule's level pass: a value written by hand after a quote of one level, `\"` or `\\\"`. */
+function levelValues(s: string): string {
+  return s.replace(
+    LEVEL_VALUE,
+    keepEscapes(s, (m, ...g) => {
+      const [pre, q, v] = g as [string, string, string];
+      return isPow2(q.length) && isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m;
+    }),
+  );
+}
+
 /** Text that every match of a rule's regex holds. */
 export interface RuleNeedles {
   /** The regex can only match a string that holds one of these. */
@@ -413,7 +583,8 @@ function builtInSecretRules(): RedactRule[] {
     },
     // FOO_API_KEY=value / export DB_PASSWORD="value" (shell, .env). No spaces
     // around "=" (that's code, not env), value isn't a $reference or a number.
-    {
+    // A value in escaped quotes (\" in JSON text) is read by its level pass (levelAssignments).
+    withLevelPass({
       kind: "secret-assignment",
       // Right after an escape (JSON text held in a string) the value is read at that escape's
       // level. After an escape at the text's own level (AFTER_ESCAPE_1), the value ends at the next
@@ -443,16 +614,17 @@ function builtInSecretRules(): RedactRule[] {
         }
         return m;
       },
-    },
+    }, levelAssignments),
     // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
     // word: the name it suffixes ("client_api_key", "x-api-key") is left as is, so
     // there is no need for a `(?:[A-Za-z0-9]+[_-])*` prefix loop, which rescans the
     // whole identifier from every start position (quadratic on long words).
-    {
+    // A field in escaped quotes (\"api_key\": \"value\") is read by its level pass (levelFields).
+    withLevelPass({
       kind: "secret-field",
       pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])(?!\\[redacted:[a-z0-9-]+\\]["'])([^"'\\s]{8,})(["'])`, "gi"),
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
-    },
+    }, levelFields),
     withFastApply(proseSecret, redactProseSecrets),
     // A .netrc entry: machine <host> login <user> password <value>, on one line or several. The
     // value also ends at a quote that ends a JSON string: one followed by a space, ",", ":", "}",
@@ -469,12 +641,13 @@ function builtInSecretRules(): RedactRule[] {
     // The value after a secret name and ":" or "=", quoted or not, with spaces or not: .env
     // (DB_PASSWORD = …), YAML (client_secret: …), TOML (api_key = "…"), INI, connection strings
     // (Password=…;) and headers (X-Api-Key: …). Only a value written by hand (isLiteralSecret),
-    // so `token: string`, `password = os.environ[...]` and `$SECRET` stay.
-    {
+    // so `token: string`, `password = os.environ[...]` and `$SECRET` stay. A value after an escaped
+    // quote (\" in JSON text) is read by its level pass (levelValues).
+    withLevelPass({
       kind: "secret-value",
       pattern: new RegExp(`(${SECRET_NAME}["']?[ \\t]*[:=][ \\t]*)(["']?)([^\\s"'\`,;)\\\\]{8,})`, "gi"),
       replace: (m, pre, q, v) => (isLiteralSecret(v) ? `${pre}${q}${marker("secret-value")}` : m),
-    },
+    }, levelValues),
   ];
   // Set on the rule itself: fastApply and the needles are keyed by the rule object. The
   // secret-assignment rule has its own alternative after an escape; its source starts with a
@@ -860,6 +1033,8 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
     let exact = live !== undefined && only!.text === s;
     // The mark of `out`'s scan in `marks`; 0 until the first rule with needles scans it.
     let scanned = 0;
+    // The level passes of the rules that ran, run in rule order once every rule has.
+    let after: ((s: string) => string)[] | undefined;
     for (let i = 0; i < rules.length; i++) {
       const r = rules[i]!;
       if (r !== ix.rules[i]) reindex();
@@ -878,6 +1053,8 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
           if (marks[i] !== scanned) continue;
         }
       }
+      const pass = levelPass.get(r);
+      if (pass) (after ??= []).push(pass);
       const next = applyRule(r, out, onMatch);
       // A callback that redacted another text marked that text's needles: scan `out` again.
       if (mark !== scanned) scanned = 0;
@@ -887,6 +1064,8 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
       exact = false;
       scanned = 0;
     }
+    // A value a pass reads starts after a quote written with backslashes.
+    if (after && out.includes("\\")) for (const pass of after) out = pass(out);
     return out;
   };
 
