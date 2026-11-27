@@ -78,6 +78,7 @@ import {
   textOf,
   toJson,
   toRunOutput,
+  tokens,
 } from "./_util.ts";
 import type { Json, PlannedWrite } from "./_util.ts";
 import { isWrapperLine, normalizeWrapperLine } from "./wrapper.ts";
@@ -193,7 +194,9 @@ export async function normalizeDevin(line: SpoolLine, ctx: NormalizeContext): Pr
 /**
  * Session id and usage from an `--export` file (ATIF: session_id, final_metrics with
  * total_prompt_tokens, total_completion_tokens, total_cached_tokens and total_cost_usd).
- * Prompt tokens include the cached ones; Usage.inputTokens does not.
+ * Prompt tokens include the cached ones; Usage.inputTokens does not. A token count that is not a
+ * whole number from 0 to 2^53 - 1 (tokens) reads as missing before the cached count is taken out:
+ * with no cached count, all of the prompt tokens are uncached input.
  */
 export function devinExport(path: string): { sessionId?: string; usage?: Usage } {
   let v: unknown;
@@ -207,12 +210,12 @@ export function devinExport(path: string): { sessionId?: string; usage?: Usage }
   const sid = str(v.session_id);
   if (sid) out.sessionId = sid;
   const m = isObj(v.final_metrics) ? v.final_metrics : {};
-  const prompt = num(m.total_prompt_tokens);
-  const cached = num(m.total_cached_tokens);
+  const prompt = tokens(m.total_prompt_tokens);
+  const cached = tokens(m.total_cached_tokens);
   const u: Usage = {};
   if (prompt !== undefined) u.inputTokens = Math.max(0, prompt - (cached ?? 0));
   if (cached !== undefined) u.cacheReadTokens = cached;
-  const output = num(m.total_completion_tokens);
+  const output = tokens(m.total_completion_tokens);
   if (output !== undefined) u.outputTokens = output;
   const cost = num(m.total_cost_usd);
   if (cost !== undefined) u.costUsd = cost;

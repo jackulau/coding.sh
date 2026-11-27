@@ -3,7 +3,7 @@
 // and small type guards for untyped agent JSON.
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage } from "../../schema/index.ts";
 import { SCHEMA_VERSION } from "../../schema/index.ts";
-import { geoValue } from "../../core/pricing.ts";
+import { geoValue, tokenCount } from "../../core/pricing.ts";
 import type { BackfillFile, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import { resolveRaw } from "../../spool/write.ts";
 // (tools.ts imports this module too: skillFieldsOf is only called at emit time.)
@@ -157,9 +157,10 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   if (num(u.input_tokens) !== undefined) out.inputTokens = u.input_tokens as number;
   if (num(u.output_tokens) !== undefined) out.outputTokens = u.output_tokens as number;
   if (num(u.cache_read_input_tokens) !== undefined) out.cacheReadTokens = u.cache_read_input_tokens as number;
-  if (num(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
+  if (tokenCount(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
   else {
-    // Only the 5-minute / 1-hour split: its sum is the total.
+    // No total, or one that is not a whole number from 0 to 2^53 - 1 (read as missing, as OTLP does): the 5-minute /
+    // 1-hour split's sum is the total, without a count cacheSplit reads as missing.
     const { m5, h1 } = cacheSplit(u);
     if (m5 !== undefined || h1 !== undefined) out.cacheWriteTokens = (m5 ?? 0) + (h1 ?? 0);
   }
@@ -168,9 +169,10 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** The 5-minute and 1-hour cache writes; a count that is not a whole number from 0 to 2^53 - 1 reads as missing. */
 const cacheSplit = (u: Record<string, unknown>): { m5?: number; h1?: number } => {
   const c = isObj(u.cache_creation) ? u.cache_creation : {};
-  return { m5: num(c.ephemeral_5m_input_tokens), h1: num(c.ephemeral_1h_input_tokens) };
+  return { m5: tokenCount(c.ephemeral_5m_input_tokens), h1: tokenCount(c.ephemeral_1h_input_tokens) };
 };
 
 /**
@@ -190,13 +192,14 @@ export function anthropicPriceHints(u: unknown): { cacheWrite1hTokens?: number; 
 /**
  * OpenAI-style usage (input_tokens INCLUDES cached tokens). Normalized so that
  * inputTokens is the uncached part, matching the Anthropic convention:
- * total input = inputTokens + cacheReadTokens (+ cacheWriteTokens).
+ * total input = inputTokens + cacheReadTokens (+ cacheWriteTokens). A count that is not a whole
+ * number from 0 to 2^53 - 1 (pricing.ts tokenCount) is absent, so it is not subtracted either.
  */
 export function openaiUsage(u: unknown): Usage | undefined {
   if (!isObj(u)) return undefined;
-  const input = num(u.input_tokens) ?? num(u.prompt_tokens);
-  const cached = num(u.cached_input_tokens) ?? num(obj(u.input_tokens_details).cached_tokens) ?? num(obj(u.prompt_tokens_details).cached_tokens);
-  const output = num(u.output_tokens) ?? num(u.completion_tokens);
+  const input = tokenCount(u.input_tokens) ?? tokenCount(u.prompt_tokens);
+  const cached = tokenCount(u.cached_input_tokens) ?? tokenCount(obj(u.input_tokens_details).cached_tokens) ?? tokenCount(obj(u.prompt_tokens_details).cached_tokens);
+  const output = tokenCount(u.output_tokens) ?? tokenCount(u.completion_tokens);
   const out: Usage = {};
   if (input !== undefined) out.inputTokens = Math.max(0, input - (cached ?? 0));
   if (cached !== undefined) out.cacheReadTokens = cached;
@@ -204,13 +207,22 @@ export function openaiUsage(u: unknown): Usage | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+/**
+ * `a` plus `b`, field by field. A token count that is not a whole number from 0 to 2^53 - 1
+ * (pricing.ts tokenCount) is skipped, so the sum keeps the counts that are; a field neither one
+ * counts is left out. A sum of two costs is rounded to the millionth of a dollar.
+ */
 export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | undefined {
-  if (!a) return b ? { ...b } : undefined;
-  if (!b) return { ...a };
+  if (!a && !b) return undefined;
   const out: Usage = {};
-  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd"] as const) {
-    const s = (a[k] ?? 0) + (b[k] ?? 0);
-    if (a[k] !== undefined || b[k] !== undefined) out[k] = k === "costUsd" ? Math.round(s * 1e6) / 1e6 : s;
+  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+    const x = tokenCount(a?.[k]);
+    const y = tokenCount(b?.[k]);
+    if (x !== undefined || y !== undefined) out[k] = (x ?? 0) + (y ?? 0);
+  }
+  if (a?.costUsd !== undefined || b?.costUsd !== undefined) {
+    const s = (a?.costUsd ?? 0) + (b?.costUsd ?? 0);
+    out.costUsd = a && b ? Math.round(s * 1e6) / 1e6 : s;
   }
   return out;
 }

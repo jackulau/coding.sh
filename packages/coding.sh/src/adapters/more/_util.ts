@@ -19,6 +19,7 @@ import { spawnFailure } from "../_shared/run.ts";
 import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
+import { tokenCount } from "../../core/pricing.ts";
 import { sha256Hex } from "../../core/ids.ts";
 import { dateMs } from "../../core/dates.ts";
 import { supervise } from "../../core/children.ts";
@@ -45,6 +46,8 @@ export const num = (v: unknown): number | undefined => {
   if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
   return undefined;
 };
+/** A token count (num, then pricing.ts tokenCount): a whole number from 0 to 2^53 - 1, else undefined, so it reads as missing. */
+export const tokens = (v: unknown): number | undefined => tokenCount(num(v));
 export const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined);
 
 /** Nested lookup: get(o, "a", "b") === o.a?.b. */
@@ -516,13 +519,19 @@ export function usageFrom(o: unknown): Usage | undefined {
   return Object.keys(u).length ? u : undefined;
 }
 
+/**
+ * `a` plus `b`, field by field. A token count that is not a whole number from 0 to 2^53 - 1
+ * (tokens) is skipped, so the sum keeps the counts that are; a field neither one counts is left out.
+ */
 export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | undefined {
   if (!b) return a;
-  const out: Usage = { ...(a ?? {}) };
-  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd"] as const) {
-    const v = b[k];
-    if (v !== undefined) out[k] = (out[k] ?? 0) + v;
+  const out: Usage = {};
+  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+    const x = tokens(a?.[k]);
+    const y = tokens(b[k]);
+    if (x !== undefined || y !== undefined) out[k] = (x ?? 0) + (y ?? 0);
   }
+  if (a?.costUsd !== undefined || b.costUsd !== undefined) out.costUsd = (a?.costUsd ?? 0) + (b.costUsd ?? 0);
   return out;
 }
 

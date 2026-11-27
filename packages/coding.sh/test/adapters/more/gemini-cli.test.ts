@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -100,6 +100,29 @@ describe("gemini-cli chats", () => {
     const again = await run();
     assert.deepEqual(again.errors, []);
     assert.deepEqual([again.events, again.sessions], [0, 0]);
+  });
+});
+
+describe("gemini-cli backfill: an output count that reads as missing", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = moreEnv();
+  });
+  after(() => env.restore());
+
+  it("an output count that is not a whole number from 0 to 2^53 - 1 is left out, so the thought count is still output", async () => {
+    // A copy of the fixture home: the last record of the first model message (m2) gets a fractional output count.
+    const home = join(env.root, "gemini-home");
+    cpSync(join(FIXTURES, "gemini-cli", "home"), home, { recursive: true });
+    const file = join(home, ".gemini", "tmp", "demo", "chats", "session-2026-09-21T10-00-gemsess1.jsonl");
+    const key = `"output":50,"cached":200,"thoughts":10`;
+    const text = readFileSync(file, "utf8");
+    assert.equal(text.split(key).length, 2, "one record has these counts");
+    writeFile(file, text.split(key).join(`"output":50.5,"cached":200,"thoughts":10`));
+    process.env.GEMINI_CLI_HOME = home;
+    const { ctx } = testCtx();
+    const calls = (await collect(geminiCliAdapter.backfill!(ctx))).filter((e) => e.kind === "llm.call" && e.sessionId === "gem-sess-1");
+    assert.deepEqual(calls[0]!.usage, { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 200 });
   });
 });
 

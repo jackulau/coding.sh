@@ -34,8 +34,8 @@
 // - A session reports what its own events say: its last test run's counts (a count that is no finite
 //   number reads 0; none without a test run), how the agent was launched (a host's launch wins over
 //   the first session.start that says), and a fork's inherited tokens (the first count a fork notice
-//   gives that is above 0: one of 0, below 0 or not finite is skipped). A gateway's copy of an event
-//   reports nothing.
+//   gives that is a whole number from 1 to 2^53 - 1: any other is skipped). A gateway's copy of an
+//   event reports nothing.
 // - A row's trace ids are those of its own events, first seen first, after the stored row's when a fold
 //   resumes one, and at most 256 (Session.traceIds). A gateway's copy adds none.
 // - A session ends at its last session.end, unless activity stamped more than 5 s after it reopened
@@ -528,8 +528,9 @@ const reportEventGen: Gen<ReportEvent> = gen.record<ReportEvent>({
   failed: gen.pick<unknown>([undefined, 0, 1, 5, "2", NaN]),
   start: gen.pick(STARTS),
   note: gen.pick(["fork", "fork", "host-link", "host-link", "usage-summary"] as const),
-  // A count the session keeps (above 0), one it skips (0, below 0 or not finite), or none that is a number.
-  inherited: gen.frequency<unknown>([3, gen.pick<unknown>([1200, 54000])], [3, gen.pick<unknown>([0, -300, NaN, Infinity])], [2, gen.pick<unknown>([undefined, "800"])]),
+  // A count the session keeps (a whole number above 0), one it skips (0, below 0, a fraction, one too
+  // large to read exactly, or not finite), or none that is a number.
+  inherited: gen.frequency<unknown>([3, gen.pick<unknown>([1200, 54000])], [3, gen.pick<unknown>([0, -300, 12.5, 2 ** 53, NaN, Infinity])], [2, gen.pick<unknown>([undefined, "800"])]),
   launch: gen.pick<unknown>([undefined, "interactive", "headless", "batch"]),
 });
 
@@ -561,14 +562,14 @@ const isCount = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 const hostLaunchOf = (r: ReportEvent) => (r.kind === "notification" && r.note === "host-link" && (r.launch === "interactive" || r.launch === "headless") ? r.launch : undefined);
 /** A fork notice's tokens, when it gives a number. */
 const forkTokensOf = (r: ReportEvent) => (r.kind === "notification" && r.note === "fork" && typeof r.inherited === "number" ? r.inherited : undefined);
-/** A fork notice's count that the session keeps: a finite number above 0. */
-const isKeptCount = (n: number | undefined) => n !== undefined && Number.isFinite(n) && n > 0;
+/** A fork notice's count that the session keeps: a whole number from 1 to 2^53 - 1. */
+const isKeptCount = (n: number | undefined) => n !== undefined && Number.isSafeInteger(n) && n > 0;
 
 /**
  * What a session's events report, in time order, from the docs of Session.stats and the test.result
  * payload: the last test run's counts (one that is no finite number reads 0), how the agent was
  * launched (a host-link's launch wins over the first session.start that says), and the first count a
- * fork notice gives that is above 0 (one of 0, below 0 or not finite is skipped).
+ * fork notice gives that is a whole number from 1 to 2^53 - 1 (any other is skipped).
  */
 function reportsOf(rs: ReportEvent[]): Reports {
   const run = rs.findLast((r) => r.kind === "test.result");

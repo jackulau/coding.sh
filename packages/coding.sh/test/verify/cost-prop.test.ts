@@ -11,11 +11,12 @@
 //   has. A cost the agent reported is kept, and a call with no tokens or no price is left as it was.
 // - A call's cost never falls when its input, output, cache reads, cache writes or 1-hour cache writes
 //   rise, whether or not its prompt crosses a long-context threshold.
-// - A token count below 0 or not a finite number bills nothing: the call costs what it would without
-//   it, and a call with no other count gets no estimate. The count is kept as it was sent. An estimate
-//   that would not be a finite number is not made. estimateCost and costParts, which reports and evals
-//   price usage with, bill such a count as nothing too, and a tool eval (toolevals computeMetrics),
-//   which adds up a model's calls before it prices them, costs what it would without it.
+// - A token count that is not a whole number from 0 to 2^53 - 1 bills nothing: one below 0, a
+//   fraction, or one too large to read exactly. The call costs what it would without it, and a call
+//   with no other count gets no estimate. The count is kept as it was sent. An estimate that would
+//   not be a finite number is not made. estimateCost and costParts, which reports and evals price
+//   usage with, bill such a count as nothing too, and a tool eval (toolevals computeMetrics), which
+//   adds up a model's calls before it prices them, costs what it would without it.
 // - A session's token counts and cost are the sums over the calls it counts, plus its latest usage
 //   snapshot. A call that repeats an earlier call's responseId, or replays one, counts once. A wrapper
 //   span over a call with the same tokens counts once, with its own values, except that a cost the
@@ -281,8 +282,11 @@ function checkRaise(s: Subject, { call, field, by }: RaiseCase): void {
   assert.ok(after >= floor, `the cost fell from ${before} to ${after} when ${field} rose by ${by}`);
 }
 
-/** Token counts no source should send: below 0, or not a finite number. */
-const BAD_COUNTS = [-1, -1_000, -1_000_000, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+/**
+ * Token counts no source should send: below 0, a fraction, one too large to read exactly (2^53 and
+ * up: 2^53 + 1 reads as 2^53), or not a finite number.
+ */
+const BAD_COUNTS = [-1, -1_000, -1_000_000, -0.5, 0.5, 12.5, 2 ** 53, 2 ** 53 + 2, 1e20, Number.MAX_VALUE, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
 const COUNT_FIELDS = ["input", "output", "cacheRead", "cacheWrite"] as const;
 const USAGE_KEY = { input: "inputTokens", output: "outputTokens", cacheRead: "cacheReadTokens", cacheWrite: "cacheWriteTokens" } as const;
 
@@ -823,7 +827,7 @@ test("a call's cost never falls when one of its token counts rises, across a lon
   t.diagnostic(`${crossed} raises crossed a threshold`);
 });
 
-test("a token count below 0 or not a finite number bills nothing", async () => {
+test("a token count that is not a whole number from 0 to 2^53 - 1 bills nothing", async () => {
   await forAll(badGen(REAL), (b) => checkBad(REAL, b), { runs: CALL_RUNS, label: "bad counts" });
 });
 
@@ -845,8 +849,10 @@ test("a tool eval's cost bills a bad token count as nothing, and takes nothing o
 });
 
 test("a call whose estimate would not be a finite number gets none", () => {
-  const e = callEvent({ model: "claude-opus-5-5", input: Number.MAX_VALUE, output: Number.MAX_VALUE });
-  assert.equal(REAL.price(e, REAL.prices), e);
+  // The largest counts that bill, at a rate no table has: the estimate overflows.
+  const prices: Prices = { ...REAL.prices, "huge-model": { input: Number.MAX_VALUE, output: Number.MAX_VALUE } };
+  const e = callEvent({ model: "huge-model", input: Number.MAX_SAFE_INTEGER, output: Number.MAX_SAFE_INTEGER });
+  assert.equal(REAL.price(e, prices), e);
 });
 
 test("a session's tokens and cost are the sums over the calls it counts, and what it left out is the duplicate", async (t) => {

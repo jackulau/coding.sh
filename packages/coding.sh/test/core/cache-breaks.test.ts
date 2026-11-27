@@ -151,15 +151,17 @@ describe("cache breaks", () => {
     assert.equal(findCacheBreaks(events).length, 0);
   });
 
-  it("a token count below 0 or not a finite number is absent, as in stats.usage", () => {
+  it("a token count that is not a whole number from 0 to 2^53 - 1 is absent, as in stats.usage", () => {
     const fresh = (inputTokens: number, cacheReadTokens: number, o: Partial<AgentEvent> = {}) => call(0, 0, { usage: { inputTokens, outputTokens: 200, cacheReadTokens }, ...o });
     const lost = (events: AgentEvent[]) => findCacheBreaks(events).map((b) => [b.eventId, b.lostTokens]);
     // A 100,000-token cached prompt, then 100,000 fresh input tokens and cache reads of -50,000:
     // one break sized by the valid counts, and the bad read is no cache field for the next call to lose.
     reset();
     assert.deepEqual(lost([call(0, 99_960), fresh(100_000, -50_000), call(0, 60_000)]), [["e2", 100_000]]);
-    reset();
-    assert.deepEqual(lost([call(0, 99_960), fresh(100_000, Number.NaN)]), [["e2", 100_000]]);
+    for (const bad of [Number.NaN, 12.5, 2 ** 53, 1e20]) {
+      reset();
+      assert.deepEqual(lost([call(0, 99_960), fresh(100_000, bad)]), [["e2", 100_000]], String(bad));
+    }
     // With 120,000 fresh input tokens the break loses at most the 100,000 tokens cached before.
     // Before, the -50,000 read made the loss larger than that: 120,000.
     reset();

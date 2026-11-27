@@ -6,6 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { normalizePi, piAdapter, piExtensionSource, piSessionEvents } from "../../../src/adapters/more/pi.ts";
 import { buildSession } from "../../../src/core/sessions.ts";
 import type { SpoolLine } from "../../../src/core/types.ts";
+import type { AgentEvent } from "../../../src/schema/index.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeHook, fire, hookCalls, loadPlugin, waitFor } from "./_plugin-host.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, FIXTURES, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
@@ -28,6 +29,24 @@ describe("pi normalize", () => {
       events.filter((e) => ["context.compact", "turn.end", "session.end"].includes(e.kind)).map((e) => e.kind),
       ["context.compact", "turn.end", "session.end"],
     );
+  });
+
+  it("the cache writes leave out a count that is not a whole number from 0 to 2^53 - 1 before the two counts are summed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-pi-cache-"));
+    try {
+      const text = readFileSync(join(FIXTURES, "pi", "extension.spool.jsonl"), "utf8");
+      const key = `"cacheWrite":200,`;
+      assert.equal(text.split(key).length, 2, "one message has this count");
+      const file = join(dir, "extension.spool.jsonl");
+      writeFileSync(file, text.split(key).join(`"cacheWrite":200.5,"cacheWrite1h":100,`));
+      const { ctx } = testCtx();
+      const events: AgentEvent[] = [];
+      for (const l of readFileSync(file, "utf8").split("\n").filter((x) => x.trim())) events.push(...(await piAdapter.normalize(JSON.parse(l) as SpoolLine, ctx)));
+      const call = events.find((e) => e.kind === "llm.call")!;
+      assert.deepEqual(call.usage, { inputTokens: 2100, outputTokens: 60, cacheReadTokens: 1800, cacheWriteTokens: 100, costUsd: 0.0085 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

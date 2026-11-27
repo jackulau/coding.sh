@@ -57,11 +57,15 @@ export interface Price extends Rates {
 /** Prices in USD per million tokens, keyed by model id. */
 export type Prices = Record<string, Price>;
 
-/** A token count as an estimate bills it: a finite number above 0, else 0. */
-const billable = (v: number | undefined): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+/**
+ * A token count as session stats take it: a whole number from 0 to 2^53 - 1
+ * (Number.MAX_SAFE_INTEGER), else undefined, so it is skipped (an estimate bills it as 0).
+ * A number past that is no longer exact (9007199254740993 reads as 9007199254740992).
+ */
+export const tokenCount = (v: unknown): number | undefined => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined);
 
-/** A token count as session stats take it: a finite number not below 0, else undefined, so it is skipped (an estimate bills it as 0). */
-export const tokenCount = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+/** A token count as an estimate bills it: a tokenCount, else 0. */
+const billable = (v: number | undefined): number => tokenCount(v) ?? 0;
 
 /** A usage record's four token counts as an estimate bills them (each billable); its cost is left out. */
 export const billableUsage = (u: Usage | undefined): Usage => ({
@@ -81,7 +85,7 @@ export function estimateCost(u: Usage, model: string | undefined, prices: Prices
 /**
  * USD for one usage record at one set of rates. `inputTokens` counts uncached input.
  * `cacheWrite1h` is the part of `cacheWriteTokens` written to a 1-hour cache.
- * A token count below 0 or not a finite number bills nothing.
+ * A token count that is not a whole number from 0 to 2^53 - 1 bills nothing (tokenCount).
  */
 export function costFrom(u: Usage, p: Rates, cacheWrite1h = 0): number {
   const write = billable(u.cacheWriteTokens);
@@ -168,8 +172,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * 6: `-orchestrator` names, and aliases for names that share no id with their row (`ALIASES`).
  * 7: a token count below 0 or not a finite number bills nothing, and no estimate is made that is not a finite number.
  * 8: an estimate that no price makes any more is removed (reprice.ts), not kept.
+ * 9: a token count that is not a whole number from 0 to 2^53 - 1 bills nothing (tokenCount): a fraction, or a number too large to be exact.
  */
-export const PRICING_RULES_VERSION = 8;
+export const PRICING_RULES_VERSION = 9;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({
@@ -552,10 +557,7 @@ export function geoValue(v: unknown): string | undefined {
 }
 
 /** `payload.cacheWrite1hTokens`: the part of a call's cache writes that went to a 1-hour cache. */
-export const cacheWrite1h = (payload: Record<string, unknown> | undefined): number => {
-  const v = payload?.cacheWrite1hTokens;
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
-};
+export const cacheWrite1h = (payload: Record<string, unknown> | undefined): number => tokenCount(payload?.cacheWrite1hTokens) ?? 0;
 
 const isTier = (v: unknown): v is PriceTier => typeof v === "string" && (PRICE_TIERS as readonly string[]).includes(v);
 const tierName = (v: unknown): PriceTier | undefined => {
@@ -626,8 +628,8 @@ export function eventPrice(e: AgentEvent, prices: Prices): ResolvedPrice | undef
  * A model call is priced on its own: its tier, its own prompt size, its 1-hour cache
  * writes and its inference geography. A usage snapshot holds running session
  * totals, so it is priced at standard short-context rates.
- * A token count below 0 or not a finite number bills nothing (it stays as sent), and an
- * estimate that would not be a finite number is not made.
+ * A token count that is not a whole number from 0 to 2^53 - 1 bills nothing (it stays as
+ * sent), and an estimate that would not be a finite number is not made.
  * A cost the agent or gateway reported always wins. Returns `e` itself when unchanged, else a copy.
  */
 export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {

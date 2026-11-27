@@ -285,12 +285,13 @@ describe("llm.call timing", () => {
     assert.equal((await call(llmSpan(both, [], "strands.telemetry.tracer"))).payload.ttftMs, 840);
   });
 
-  it("leaves out a time to first token or a token rate past what a number holds", async () => {
-    // 1e303 s times 1e6 is Infinity, as is 1e307 tokens over 1.5 s: neither is a JSON number.
+  it("leaves out a time to first token past what a number holds, and a token rate from a count it does not read", async () => {
+    // 1e303 s times 1e6 is Infinity, which is not a JSON number.
     const ttft = await call(llmSpan([{ key: "gen_ai.response.time_to_first_chunk", value: { doubleValue: 1e303 } }]));
     assert.equal(ttft.payload.ttftMs, undefined);
+    // 1e307 tokens is past 2^53 - 1, so it is no count and gives no rate.
     const rate = await call(llmSpan([{ key: "gen_ai.usage.output_tokens", value: { doubleValue: 1e307 } }]));
-    assert.equal(rate.usage?.outputTokens, 1e307);
+    assert.equal(rate.usage?.outputTokens, undefined);
     assert.equal(rate.payload.tokensPerSec, undefined);
   });
 });
@@ -644,6 +645,84 @@ describe("token usage: cached input is not counted twice", () => {
     };
     const call = ofKind((await mapLogs(decodeLogsJson(log), ctx())).events, "llm.call")[0]!;
     assert.deepEqual(call.usage, { inputTokens: 15, outputTokens: 9, cacheReadTokens: 40500 });
+  });
+});
+
+// otel/map.ts tokens(): a token count that is not a whole number from 0 to 2^53 - 1 is read as not sent.
+describe("token counts that are not a whole number from 0 to 2^53 - 1", () => {
+  const T = "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2";
+  const attr = (key: string, value: Record<string, unknown>) => ({ key, value });
+  const callOfSpan = async (attrs: ReturnType<typeof iAttr>[]) => {
+    const req = otlpTraces("count-test", [otlpSpan(T, "d000000000000002", "d000000000000000", "chat", [sAttr("gen_ai.operation.name", "chat"), ...attrs], 0, 1000)]);
+    return ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+  };
+  const usageOf = async (attrs: ReturnType<typeof iAttr>[]) => (await callOfSpan(attrs)).usage;
+  // A Claude Code api_request log record with these attributes.
+  const callOfLog = async (attrs: ReturnType<typeof iAttr>[]) => {
+    const record = { timeUnixNano: "1767225600000000000", body: { stringValue: "claude_code.api_request" }, attributes: [sAttr("event.name", "api_request"), sAttr("session.id", "cc-4"), sAttr("model", "claude-opus-5-5"), ...attrs] };
+    const log = { resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: [record] }] }] };
+    return ofKind((await mapLogs(decodeLogsJson(log), ctx())).events, "llm.call")[0]!;
+  };
+
+  it("reads one as not sent, so it is neither stored nor taken off the cached input", async () => {
+    // 2^53 + 1 (which reads as 2^53), a count below 0 and a fraction, as numbers and as text.
+    const bad = [{ intValue: "9007199254740993" }, { intValue: "-500" }, { doubleValue: 12.5 }, { stringValue: "9007199254740993" }, { stringValue: "-5" }, { stringValue: "12.5" }];
+    for (const value of bad) {
+      const u = await usageOf([attr("gen_ai.usage.input_tokens", value), attr("gen_ai.usage.output_tokens", value), iAttr("gen_ai.usage.cache_read.input_tokens", 40)]);
+      assert.deepEqual(u, { cacheReadTokens: 40 }, JSON.stringify(value));
+    }
+  });
+
+  it("keeps a whole number sent as a number or as text, and reads the next key past a bad one", async () => {
+    const text = await usageOf([sAttr("gen_ai.usage.input_tokens", "120"), attr("gen_ai.usage.output_tokens", { doubleValue: 9 }), iAttr("gen_ai.usage.cache_read.input_tokens", 20)]);
+    assert.deepEqual(text, { inputTokens: 100, outputTokens: 9, cacheReadTokens: 20 });
+    const max = await usageOf([attr("gen_ai.usage.output_tokens", { intValue: "9007199254740991" })]);
+    assert.deepEqual(max, { outputTokens: Number.MAX_SAFE_INTEGER });
+    const next = await usageOf([attr("gen_ai.usage.input_tokens", { intValue: "-500" }), iAttr("gen_ai.usage.prompt_tokens", 120)]);
+    assert.deepEqual(next, { inputTokens: 120 });
+  });
+
+  it("a 5-minute or 1-hour cache write of 12.5 is left out of the split's sum, and a cache-write total of 12.5 gives way to the split", async () => {
+    let c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_5m_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_1h_tokens", 100)]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 100 }, 100]);
+    // A 1-hour count of 12.5 adds nothing to the sum and gives no 1-hour hint.
+    c = await callOfLog([iAttr("input_tokens", 15), iAttr("cache_creation_5m_tokens", 40), attr("cache_creation_1h_tokens", { doubleValue: 12.5 })]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 40 }, undefined]);
+    c = await callOfLog([iAttr("input_tokens", 15), attr("cache_creation_tokens", { doubleValue: 12.5 }), iAttr("cache_creation_5m_tokens", 40), iAttr("cache_creation_1h_tokens", 100)]);
+    assert.deepEqual([c.usage, c.payload.cacheWrite1hTokens], [{ inputTokens: 15, cacheWriteTokens: 140 }, 100]);
+  });
+
+  it("a log's input count of -1 or cache read of 12.5 reads as missing, so the next key gives the count", async () => {
+    const c = await callOfLog([iAttr("input_tokens", -1), iAttr("input_token_count", 40), attr("cache_read_tokens", { doubleValue: 12.5 }), iAttr("cached_content_token_count", 30)]);
+    assert.deepEqual(c.usage, { inputTokens: 40, cacheReadTokens: 30 });
+  });
+
+  it("an AI SDK noCacheTokens of 12.5 reads as missing, so the input is the total less the cache read and write", async () => {
+    const u = await usageOf([
+      iAttr("ai.usage.inputTokens", 1000),
+      attr("ai.usage.inputTokenDetails.noCacheTokens", { doubleValue: 12.5 }),
+      iAttr("ai.usage.inputTokenDetails.cacheReadTokens", 300),
+      iAttr("ai.usage.inputTokenDetails.cacheWriteTokens", 200),
+    ]);
+    assert.deepEqual(u, { inputTokens: 500, cacheReadTokens: 300, cacheWriteTokens: 200 });
+  });
+
+  it("a reasoning count of 12.5 is left out, and the next reasoning key is read past it", async () => {
+    let c = await callOfSpan([iAttr("gen_ai.usage.output_tokens", 50), attr("gen_ai.usage.reasoning.output_tokens", { doubleValue: 12.5 })]);
+    assert.equal(c.payload.reasoningTokens, undefined);
+    c = await callOfSpan([iAttr("gen_ai.usage.output_tokens", 50), attr("gen_ai.usage.reasoning.output_tokens", { doubleValue: 12.5 }), iAttr("ai.usage.reasoningTokens", 30)]);
+    assert.equal(c.payload.reasoningTokens, 30);
+  });
+});
+
+// otel/map.ts usd(): a reported cost is a finite number from 0 up; any other value is read as not sent.
+describe("a reported cost below 0", () => {
+  const T = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+  it("reads as not sent, so the next cost key gives the cost", async () => {
+    const attrs = [sAttr("gen_ai.operation.name", "chat"), iAttr("gen_ai.usage.input_tokens", 10), { key: "gen_ai.usage.cost", value: { doubleValue: -1 } }, { key: "cost_usd", value: { doubleValue: 0.25 } }];
+    const req = otlpTraces("cost-test", [otlpSpan(T, "d000000000000003", "d000000000000000", "chat", attrs, 0, 1000)]);
+    const call = ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+    assert.deepEqual(call.usage, { inputTokens: 10, costUsd: 0.25 });
   });
 });
 

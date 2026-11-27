@@ -617,8 +617,11 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
  *    ends once, at its end.
  * 7: a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also an API error's
  *    resetsAt, as in the claude-code adapter (25).
+ * 8: a 5-minute or 1-hour cache-write count (cache_creation) that is not a whole number from 0 to 2^53 - 1 reads as
+ *    missing before the two are summed, and so does a cache-write total, which the two then replace, as in the
+ *    claude-code adapter (26).
  */
-const IMPORT_VERSION = 7;
+const IMPORT_VERSION = 8;
 
 /** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {

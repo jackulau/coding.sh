@@ -9,6 +9,7 @@
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
 import { dateMs } from "./dates.ts";
 import { failureState, foldFailure, type ToolFailure } from "./failures.ts";
+import { tokenCount } from "./pricing.ts";
 import { phasePromptTitle } from "./sessions.ts";
 import { isAgentPromptMark } from "./waiting.ts";
 
@@ -36,8 +37,8 @@ export interface Outline {
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-/** A token count as the totals take it: a finite number above 0, else 0 (pricing bills such a count as 0). */
-const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+/** A token count as the totals take it (pricing.ts tokenCount), else 0: pricing bills such a count as 0. */
+const count = (v: unknown): number => tokenCount(v) ?? 0;
 
 /** Local YYYY-MM-DD, or "" when `ts` is out of the Date range. */
 export function localDate(ts: number): string {

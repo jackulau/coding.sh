@@ -914,7 +914,12 @@ export const claudeCode: Adapter = {
   //    with no isMeta flag), adds to that turn, which ends once: one turn.end, with the turn's own duration.
   // 25 (0.1.8): a time out of the Date range (more than 8.64e15 ms from 1970) is read as missing, also an API error's resetsAt.
   //    A subagent's totalDurationMs whose start falls out of that range is left out.
-  parseVersion: 25,
+  // 26 (0.1.8): a fork's inheritedTokens skips a token count that is not a whole number from 0 to 2^53 - 1 in the parent's Agent
+  //    call (a fraction, or a number too large to be exact), as an estimate does. A 5-minute or 1-hour cache-write
+  //    count (cache_creation) that is not such a whole number reads as missing before the two are summed, and gives
+  //    no 1-hour hint. A cache-write total (cache_creation_input_tokens) that is not one reads as missing too, so
+  //    the two are summed in its place, as OTLP does.
+  parseVersion: 26,
 
   detect() {
     const dir = claudeConfigDir();
