@@ -60,12 +60,14 @@ tool calls with their input and output, file changes, errors, model names, token
 Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
 match becomes `[redacted:<kind>]`.
 
-- A value nested deeper than 64 levels is redacted with the same rules. Past the depth the stack
-  allows, the rest is stored as `[redacted:too-deep]`, also in the spool.
-- A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
-  of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
-- In JSON text held in a string, such as an OTLP log body, the rules also match right after an
-  escape such as `\n`, and the escape stays whole.
+- Values nested past 64 levels use the same rules. Past stack depth, the rest becomes
+  `[redacted:too-deep]`, including in the spool.
+- A private key's `BEGIN` line without `END` is redacted to the end when key data follows it. A
+  `BEGIN` line in prose stays as is.
+- In JSON text inside a string, such as an OTLP log body, rules also match after escapes such as
+  `\n` and keep each escape whole.
+- A quote at either end of a `redactPatterns` match stays, with its leading backslashes, so JSON
+  still parses.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

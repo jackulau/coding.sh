@@ -563,6 +563,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The README says which hook redacts the spool. The REST API reference gives the 403 body serve sends for a host it does not allow, and says which session an OTLP log record with no session id joins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#the-raw-spool))
 - **Capture.** Phone number redaction, which `phone` or `pii` in `capture.redact` turns on, reads the digits after a `+` in one pass and then checks how they are grouped, so it takes time in proportion to the text it reads. It redacts the same numbers. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 - **CLI.** The --trial-timeout help and docs now say what the limit covers: each agent call, task run or workflow run. Each retry and repair round gets the full limit again, and a run over it is not retried. Before, they said one limit covered a trial and its retries. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#long-runs-resume-retries-status))
+- **Capture.** In JSON text held in a string, a value in double quotes after a secret name, as in `export API_KEY="..."`, `api_key = "..."` or `"api_key": "..."`, and an assignment's value that holds a backslash are redacted whole at every level. A quote at either end of a `redactPatterns` match stays. Each level still parses. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction))
 
 ## [0.1.7] - 2026-11-16
 

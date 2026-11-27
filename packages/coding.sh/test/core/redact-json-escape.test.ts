@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { createRedactor, piiRules, redactEventCounted, secretRules, type Redactor } from "../../src/core/redact.ts";
+import { createRedactor, piiRules, redactBlobValue, redactEventCounted, redactForBlob, redactionTally, secretRules, type Redactor } from "../../src/core/redact.ts";
 import { mulberry32 } from "../../src/stats/prng.ts";
 
 const BS = String.fromCharCode(92);
@@ -333,6 +333,75 @@ describe("a redaction keeps JSON text valid", () => {
     }
   });
 
+  it("after an escape one to five levels deep, a value that holds a backslash is redacted whole, in single quotes or not", () => {
+    // Read at the level of the escape before its name, the value's own backslash is 2^k backslashes
+    // and stays in the value before b, f, n, r, t or another backslash. A quote ends the value, and
+    // the rest of the line follows the marker.
+    const NL = String.fromCharCode(10);
+    const QT = String.fromCharCode(34);
+    const head = j("Kq9m", "Z2xR");
+    const rest = j("w0rd", "99xy");
+    for (const depth of [1, 2, 3, 4, 5]) {
+      for (const x of ["b", "f", "n", "r", "t", QT, BS, j(BS, "n")]) {
+        for (const q of x === QT ? [""] : ["", "'"]) {
+          const marked = j("echo hi", NL, "DB_PASSWORD=", q, "[redacted:secret-assignment]", q);
+          let input = j("echo hi", NL, "DB_PASSWORD=", q, head, BS, x, rest, q, NL, "ls");
+          for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+          const label = `${JSON.stringify(x)} in ${input}`;
+          const ev = redactEventCounted(red, event(input));
+          assert.deepEqual(ev.payload.redactions, { "secret-assignment": 1 }, label);
+          for (const out of [red.string(input), red.value({ body: input }).body, ev.payload.text as string]) {
+            assert.equal(levels(out), depth, label);
+            let text = out;
+            for (let d = 0; d < depth; d++) text = (JSON.parse(text) as { t: string }).t;
+            if (x !== QT) assert.equal(text, j(marked, NL, "ls"), label);
+            else assert.ok(text.startsWith(marked) && text.endsWith(j(QT, rest, NL, "ls")) && !text.includes(head), label);
+          }
+        }
+      }
+    }
+  });
+
+  it("three levels deep, a value cut before an escape keeps the escape's run of backslashes whole, so each level still parses", () => {
+    // Seven characters, the value's own backslash, then an escaped newline: the backslash counts
+    // toward the value's eight characters, and stays with the newline's run of backslashes.
+    const NL = String.fromCharCode(10);
+    let input = j("echo hi", NL, "DB_PASSWORD=", j("Kq9m", "Z2x"), BS, NL, "ls");
+    for (let d = 0; d < 3; d++) input = JSON.stringify({ t: input });
+    for (const out of [red.string(input), red.value({ body: input }).body, redactEventCounted(red, event(input)).payload.text as string]) {
+      assert.equal(levels(out), 3, out);
+      let text = out;
+      for (let d = 0; d < 3; d++) text = (JSON.parse(text) as { t: string }).t;
+      assert.equal(text, j("echo hi", NL, "DB_PASSWORD=[redacted:secret-assignment]", BS, NL, "ls"));
+    }
+  });
+
+  it("a value made only of its own backslashes is left as it is at every level, in quotes or not", () => {
+    // The run of backslashes a value ends before stays whole, so such a value leaves nothing to
+    // replace, as at the text's own level.
+    const NL = String.fromCharCode(10);
+    const QT = String.fromCharCode(34);
+    for (const own of [BS.repeat(8), BS.repeat(12)]) {
+      const forms: [string, number][] = [
+        [j("export API_KEY=", QT, own, QT, " ls"), 0],
+        [j("see {", QT, "api_key", QT, ": ", QT, own, QT, "} ls"), 0],
+        [j("echo hi", NL, "API_KEY=", own), 1],
+        [j("echo hi", NL, "API_KEY=", own, NL, "ls"), 1],
+      ];
+      for (const [inner, from] of forms) {
+        for (let depth = from; depth <= 5; depth++) {
+          let input = inner;
+          for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+          const ev = redactEventCounted(red, event(input));
+          assert.equal(ev.payload.redactions, undefined, input);
+          assert.equal(ev.payload.text, input, input);
+          assert.equal(red.string(input), input, input);
+          assert.equal(red.value({ body: input }).body, input, input);
+        }
+      }
+    }
+  });
+
   it("a match that ends inside the hex digits of an escape keeps the whole escape after the marker", () => {
     const pat = createRedactor({ redact: ["none"], patterns: [j("Zq8[A-Za-z0-9]+", BS, BS, "u00")] });
     assert.equal(pat.string(`{"a":"xZq8mK2pW7${BS}u00e9 tail"}`), `{"a":"x[redacted:pattern]${BS}u00e9 tail"}`);
@@ -423,4 +492,74 @@ describe("a redaction keeps JSON text held in JSON text valid", () => {
       assert.deepEqual(JSON.parse((JSON.parse(out) as { t: string }).t), want, out);
     }
   });
+
+  it("a custom pattern that starts or ends with a quote keeps the quote, and each level still parses, in a blob too", () => {
+    const doc = { id: secret, n: 1, note: j("say ", QT, secret, QT, " now") };
+    const want = { id: "[redacted:pattern]", n: 1, note: j("say ", QT, "[redacted:pattern]", QT, " now") };
+    /** The document `depth` levels down in `s`. */
+    const inner = (s: string, depth: number): unknown => {
+      let v: unknown = JSON.parse(s);
+      for (let d = 1; d < depth; d++) v = JSON.parse((v as { t: string }).t);
+      return v;
+    };
+    // The last one is written for any level: a run of backslashes before each quote.
+    const anyLevel = j(BS, BS, "*", QT, "Zq8[A-Za-z0-9]+", BS, BS, "*", QT);
+    for (const pattern of [j(QT, "Zq8[A-Za-z0-9]+", QT), j(QT, "Zq8[A-Za-z0-9]+"), j("Zq8[A-Za-z0-9]+", QT), anyLevel]) {
+      const red = createRedactor({ redact: ["none"], patterns: [pattern] });
+      for (const depth of [1, 2, 3]) {
+        const input = nest(JSON.stringify(doc), depth);
+        assert.equal(levels(input), depth, input);
+        const at = `${pattern}, ${depth} levels`;
+        const text = red.string(input);
+        assert.equal(levels(text), depth, `${at}, string: ${text}`);
+        if (pattern === anyLevel) assert.deepEqual(inner(text, depth), want, `${at}, string: ${text}`);
+        const blob = (redactForBlob(red, { body: input }, redactionTally()) as { body: string }).body;
+        assert.deepEqual(inner(blob, depth), want, `${at}, redactForBlob: ${blob}`);
+        const blobText = redactBlobValue(red, { body: input }, redactionTally());
+        assert.deepEqual(inner((JSON.parse(blobText) as { body: string }).body, depth), want, `${at}, redactBlobValue: ${blobText}`);
+      }
+    }
+    // A match made only of quotes and their backslashes leaves the text as it is.
+    const quote = createRedactor({ redact: ["none"], patterns: [j(BS, BS, "*", QT)] });
+    for (const depth of [1, 2, 3]) {
+      const input = nest(JSON.stringify(doc), depth);
+      assert.equal(quote.string(input), input);
+    }
+  });
+});
+
+describe("a value in double quotes inside JSON text held in a string", () => {
+  // JSON text writes the quotes around a value as a backslash and a quote, JSON text held in JSON
+  // text as three backslashes and a quote, and so on. Read back level by level, each form reads as
+  // the plain text redacted on its own.
+  const red = createRedactor();
+  const NL = String.fromCharCode(10);
+  const value = j("Kq9m", "Z2xR", "w0rd", "99xy");
+  const forms: [string, string][] = [
+    ["secret-assignment", `export API_KEY="${value}" && run`],
+    ["secret-assignment", j("echo hi", NL, `DB_PASSWORD="${value}"`, NL, "ls")],
+    ["secret-value", j(`api_key = "${value}"`, NL, "x = 1")],
+    ["secret-field", j(`password: "${value}"`, NL, "x: 1")],
+    ["secret-field", `{"api_key":"${value}","x":1}`],
+    ["secret-field", `{"api_key": "${value}", "x": 1}`],
+  ];
+  for (const depth of [1, 2, 3, 4]) {
+    it(`is redacted ${depth} ${depth === 1 ? "level" : "levels"} down, as an assignment, a value or a field, and every level still parses`, () => {
+      for (const [kind, inner] of forms) {
+        const alone = redactEventCounted(red, event(inner));
+        assert.deepEqual(alone.payload.redactions, { [kind]: 1 }, inner);
+        let input = inner;
+        for (let d = 0; d < depth; d++) input = JSON.stringify({ t: input });
+        const ev = redactEventCounted(red, event(input));
+        assert.deepEqual(ev.payload.redactions, alone.payload.redactions, input);
+        for (const out of [red.string(input), red.value({ body: input }).body, ev.payload.text as string]) {
+          assert.ok(!out.includes(value), out);
+          assert.equal(levels(out), levels(input), out);
+          let text = out;
+          for (let d = 0; d < depth; d++) text = (JSON.parse(text) as { t: string }).t;
+          assert.equal(text, alone.payload.text, out);
+        }
+      }
+    });
+  }
 });
