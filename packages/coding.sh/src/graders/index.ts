@@ -8,7 +8,7 @@ import { createJudge, judgeGrader } from "../judge/judge.ts";
 import { nextActionGrader, type NextActionGraderSpec } from "./next-action.ts";
 import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
 import { createPanel, PANEL_KIND, panelGrader } from "../judge/panel.ts";
-import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
+import { anthropicProvider, openAICompatibleProvider, withCallTimeout, type ChatProvider } from "../judge/providers.ts";
 import { claudeCodeProvider, codexProvider } from "../judge/subscription.ts";
 import {
   agentSlopGrader,
@@ -161,6 +161,8 @@ export interface GraderDeps {
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
   retry?: RetryOpts;
+  /** Per-call timeout in ms (e.g. from --trial-timeout): forwarded to HTTP and CLI providers and enforced per call. */
+  timeoutMs?: number;
   judgeCache?: JudgeCache;
   /** Override provider construction entirely (tests, custom gateways). */
   provider?: ChatProvider;
@@ -176,10 +178,16 @@ export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): 
     throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})${close ? `. Did you mean ${JSON.stringify(close)}?` : ""}`);
   }
   if (kind === "mock") return mockProvider(spec.mockAnswer ? { answer: spec.mockAnswer } : {});
+  const timeoutMs = deps.timeoutMs;
   if (kind === "claude-code" || kind === "codex") {
-    const o = { ...(spec.model ? { model: spec.model } : {}), ...(deps.env ? { env: deps.env } : {}) };
-    return kind === "codex" ? codexProvider(o) : claudeCodeProvider(o);
+    const cliTimeout = timeoutMs ?? deps.retry?.timeoutMs;
+    const o: { model?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {};
+    if (spec.model) o.model = spec.model;
+    if (deps.env) o.env = deps.env;
+    if (cliTimeout !== undefined) o.timeoutMs = cliTimeout;
+    return withCallTimeout(kind === "codex" ? codexProvider(o) : claudeCodeProvider(o), timeoutMs);
   }
+  const retry = timeoutMs !== undefined ? { timeoutMs, ...deps.retry } : deps.retry;
   const common = {
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.baseURL ? { baseURL: spec.baseURL } : {}),
@@ -187,21 +195,24 @@ export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): 
     ...(spec.maxTokens ? { maxTokens: spec.maxTokens } : {}),
     ...(deps.env ? { env: deps.env } : {}),
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
-    ...(deps.retry ? { retry: deps.retry } : {}),
+    ...(retry ? { retry } : {}),
   };
-  if (kind === "anthropic") return anthropicProvider({ ...common, ...(spec.effort ? { effort: spec.effort } : {}) });
+  if (kind === "anthropic") return withCallTimeout(anthropicProvider({ ...common, ...(spec.effort ? { effort: spec.effort } : {}) }), timeoutMs);
   const named =
     kind === "gateway"
       ? { name: "gateway", baseURL: spec.baseURL ?? GATEWAY_API_BASE, apiKeyEnv: spec.apiKeyEnv ?? DEFAULT_KEY_ENV }
       : kind === "gemini"
         ? { name: "gemini", baseURL: spec.baseURL ?? GEMINI_API_BASE, apiKeyEnv: spec.apiKeyEnv ?? "GEMINI_API_KEY", model: spec.model ?? DEFAULT_GEMINI_MODEL }
         : {};
-  return openAICompatibleProvider({
-    ...common,
-    ...named,
-    ...(spec.temperature !== undefined ? { temperature: spec.temperature } : {}),
-    ...(spec.requireKey !== undefined ? { requireKey: spec.requireKey } : {}),
-  });
+  return withCallTimeout(
+    openAICompatibleProvider({
+      ...common,
+      ...named,
+      ...(spec.temperature !== undefined ? { temperature: spec.temperature } : {}),
+      ...(spec.requireKey !== undefined ? { requireKey: spec.requireKey } : {}),
+    }),
+    timeoutMs,
+  );
 }
 
 /** Mock verdicts are free and instant: never write them to the shared on-disk verdict cache. */

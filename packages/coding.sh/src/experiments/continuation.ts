@@ -247,6 +247,8 @@ export interface ContinuationTask {
   env?: NodeJS.ProcessEnv;
   fetch?: FetchLike;
   retry?: RetryOpts;
+  /** Per-call timeout in ms (e.g. from --trial-timeout): forwarded to HTTP and CLI calls. */
+  timeoutMs?: number;
   /** Price table for usage.costUsd. Default the built-in one. */
   prices?: Prices;
   /** claude-code and codex: the CLI's shared limiter (default the process-wide one). */
@@ -677,8 +679,11 @@ export function planContinuation(spec: ContinuationTask): (input: unknown, trial
 type CliTurnBody = { model: string; system: string; user: string; effort?: string; tools?: string[] };
 
 /** One next turn through a subscription CLI, stored the way parseResponse reads it. */
-async function cliTurn(kind: CliProvider, req: CliTurnBody, o: { env: NodeJS.ProcessEnv; limiter?: CliLimiter; signal?: AbortSignal }): Promise<Record<string, unknown>> {
-  const r = await cliComplete(kind, { ...req, ...(req.tools?.length ? {} : { jsonSchema: CLI_TURN_SCHEMA }), ...(o.signal ? { signal: o.signal } : {}) }, { env: o.env, ...(o.limiter ? { limiter: o.limiter } : {}) }).catch((e: unknown) => {
+async function cliTurn(kind: CliProvider, req: CliTurnBody, o: { env: NodeJS.ProcessEnv; limiter?: CliLimiter; signal?: AbortSignal; timeoutMs?: number }): Promise<Record<string, unknown>> {
+  const cliOpts: { env: NodeJS.ProcessEnv; limiter?: CliLimiter; timeoutMs?: number } = { env: o.env };
+  if (o.limiter) cliOpts.limiter = o.limiter;
+  if (o.timeoutMs !== undefined) cliOpts.timeoutMs = o.timeoutMs;
+  const r = await cliComplete(kind, { ...req, ...(req.tools?.length ? {} : { jsonSchema: CLI_TURN_SCHEMA }), ...(o.signal ? { signal: o.signal } : {}) }, cliOpts).catch((e: unknown) => {
     throw new TaskError(e instanceof Error ? e.message : String(e));
   });
   if (r.toolCalls) {
@@ -730,7 +735,11 @@ export function continuationTask(spec: ContinuationTask): ResolvedTask {
         }
       }
       if (json === undefined && isCliProvider(spec.provider)) {
-        json = await cliTurn(spec.provider, body as CliTurnBody, { env, ...(spec.limiter ? { limiter: spec.limiter } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        const turnOpts: { env: NodeJS.ProcessEnv; limiter?: CliLimiter; signal?: AbortSignal; timeoutMs?: number } = { env };
+        if (spec.limiter) turnOpts.limiter = spec.limiter;
+        if (spec.timeoutMs !== undefined) turnOpts.timeoutMs = spec.timeoutMs;
+        if (ctx.signal) turnOpts.signal = ctx.signal;
+        json = await cliTurn(spec.provider, body as CliTurnBody, turnOpts);
         if (p.useCache) {
           await mkdir(dirname(file), { recursive: true });
           await writeFileAtomic(file, JSON.stringify(json));
@@ -746,7 +755,11 @@ export function continuationTask(spec: ContinuationTask): ResolvedTask {
           headers["anthropic-version"] = ANTHROPIC_API_VERSION;
           if (apiKey) headers["x-api-key"] = apiKey;
         } else if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-        json = await fetchJson(p.url, { method: "POST", headers, body: JSON.stringify(body) }, { ...spec.retry, ...(spec.fetch ? { fetch: spec.fetch } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}), secrets: [apiKey], label: spec.provider });
+        const fetchOpts: Parameters<typeof fetchJson>[2] = { ...spec.retry, secrets: [apiKey], label: spec.provider };
+        if (spec.timeoutMs !== undefined && fetchOpts.timeoutMs === undefined) fetchOpts.timeoutMs = spec.timeoutMs;
+        if (spec.fetch) fetchOpts.fetch = spec.fetch;
+        if (ctx.signal) fetchOpts.signal = ctx.signal;
+        json = await fetchJson(p.url, { method: "POST", headers, body: JSON.stringify(body) }, fetchOpts);
         if (isObj(json) && json.stop_reason === "refusal") throw new TaskError(`${spec.provider}: the model declined this prefix`);
         if (p.useCache) {
           await mkdir(dirname(file), { recursive: true });

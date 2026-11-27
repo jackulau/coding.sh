@@ -12,6 +12,7 @@ import { distill, ledgerDraws, preflight, MIN_EPISODES, MIN_FAILURES } from "../
 import { ledgerFile, refineDir } from "../../refine/ledger.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { list, num, requireConsent, str, withContext } from "../common.ts";
+import { trialTimeout } from "../jobs.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { gitRoot, harnessFilesIn, money } from "./exp-ab.ts";
@@ -41,6 +42,7 @@ export async function refineDistill(c: CommandContext): Promise<number> {
   const maxCost = num(c.flags["max-cost"]) ?? 5;
   if (!(maxCost >= 0)) throw new UsageError("--max-cost must be a dollar amount of at least 0", { reason: "invalid_argument" });
   const min = { episodes: count(c.flags["min-episodes"], "min-episodes", MIN_EPISODES), failures: count(c.flags["min-failures"], "min-failures", MIN_FAILURES) };
+  const timeoutMs = trialTimeout(c);
   const keep = str(c.flags["keep-corpus"]);
   const dryRun = c.flags["dry-run"] === true;
   return withContext(c, async (ctx) => {
@@ -85,7 +87,11 @@ export async function refineDistill(c: CommandContext): Promise<number> {
       if (!adapter?.run) throw new CliError(`Agent ${distiller} has no headless driver here`, { reason: "unsupported_agent" });
       await requireConsent(c, `Start ${plural(n, `${distiller} session`)} on ${plural(corpus.episodes, "episode")} (up to ${money(maxCost)})?`, `coding.sh refine distill${experiment ? ` --experiment ${experiment}` : ""}${n > 1 ? ` --n ${n}` : ""} --yes`);
       const spin = out.spin(`Distilling from ${plural(corpus.episodes, "episode")}…`);
-      const r = await distill({ corpusDir, adapter, ...(model ? { model } : {}), n, maxCostUsd: maxCost, workRoot: join(work, "draws"), base: prompt, skillsDir, ...(c.signal ? { signal: c.signal } : {}) }).finally(() => spin.stop());
+      const distillOpts: Parameters<typeof distill>[0] = { corpusDir, adapter, n, maxCostUsd: maxCost, workRoot: join(work, "draws"), base: prompt, skillsDir };
+      if (model) distillOpts.model = model;
+      if (timeoutMs !== undefined) distillOpts.timeoutMs = timeoutMs;
+      if (c.signal) distillOpts.signal = c.signal;
+      const r = await distill(distillOpts).finally(() => spin.stop());
       const entries = ledgerDraws(dir, r.draws, { corpus, source: sourceLabel, distiller, ...(model ? { model } : {}) });
       const proposed = entries.filter((e) => e.verdict === "proposed");
       if (out.json) {
