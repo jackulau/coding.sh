@@ -23,9 +23,9 @@ something here is out of date, open an issue.
 | Datasets, experiments, LLM judges | Yes | Yes |
 | Compare two experiments | Paired bootstrap interval and a ship-or-hold gate | Side-by-side diffs and score deltas |
 | Replay a coding session step by step, with files | Yes, `coding.sh replay` | No |
-| Online scoring of live traffic | No | Yes |
-| Human review queues | No | Yes |
-| Prompt management and playground | No | Yes |
+| Online scoring of live traffic | Yes, `coding.sh monitor` scores new sessions after they end | Yes |
+| Human review queues | Yes, `coding.sh review` and `#/review` | Yes |
+| Prompt management and playground | Playground for a model call in `coding.sh ui`; no prompt management | Yes |
 | PR comments with eval results | No (exit code only) | Yes, a GitHub Action |
 | SSO and audit logs | No | Enterprise |
 | MCP server | Yes, local | Yes, hosted |
@@ -34,7 +34,7 @@ something here is out of date, open an issue.
 
 - **The experiment UI.** A polished hosted interface to browse experiments, diff outputs and score
   them, with a playground to try prompts and models.
-- **Production.** Online scoring of live traffic, review queues for people, and LLM-based
+- **Production.** Hosted online scoring of live traffic, hosted team review queues, and LLM-based
   clustering of traces into topics.
 - **Team reporting for coding agents.** A dashboard that breaks coding-agent cost down by user,
   model, tool and branch across a team.
@@ -62,8 +62,8 @@ coding.sh.
 
 ### Is there an open-source Braintrust alternative?
 
-For evals of agents and coding agents, coding.sh is one: MIT licensed and local. It has no
-playground, prompt management, review queues or hosted UI.
+For evals of agents and coding agents, coding.sh is one: MIT licensed and local. It has no prompt
+management, hosted UI or SSO.
 
 ### How does coding.sh decide that a change helped?
 
