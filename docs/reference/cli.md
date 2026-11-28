@@ -2002,6 +2002,9 @@ coding.sh dataset mine <NAME> [options]
 | `--dedupe-near <0..1>` |  | Drop near-duplicate inputs at or above this 5-shingle Jaccard similarity, e.g. 0.8 (in addition to exact dedup) |
 | `--split <SPLIT>` |  | Split for the mined cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
 | `--tag <TAG>` |  | Extra tag for every mined case (repeatable, or a comma list: a,b) |
+| `--proof-steps` |  | Mine formal-verification proof-step cases (failing proof goals with winning diffs or stuck goals) instead of whole-session cases. |
+| `--proof-lang <LANG>` |  | With --proof-steps: only these proof languages (repeatable, or a comma list: lean,rocq) One of: `lean`, `rocq`, `dafny`, `verus`, `isabelle`, `tla`, `tlc`. |
+| `--proof-outcome <OUTCOME>` | `all` | With --proof-steps: mine only solved transitions, only stuck goals, or all. One of: `solved`, `stuck`, `all`. |
 | `--note <TEXT>` |  | Version note. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -2009,6 +2012,8 @@ coding.sh dataset mine <NAME> [options]
 ```sh
 coding.sh dataset mine clean --where 'agent:claude-code' --min-turns 2 --exclude-flagged --dedupe-near 0.8
 coding.sh dataset mine high-score --min-score quality>=0.8 --limit 50 --dry-run
+coding.sh dataset mine proof-bench --proof-steps --proof-lang lean,rocq
+coding.sh dataset mine stuck-proofs --proof-steps --proof-outcome stuck --dry-run
 ```
 
 ### `coding.sh dataset stats`

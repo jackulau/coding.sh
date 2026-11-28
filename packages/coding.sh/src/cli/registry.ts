@@ -1266,6 +1266,9 @@ export const COMMANDS: CommandSpec[] = [
           { name: "dedupe-near", type: "number", value: "<0..1>", desc: "Drop near-duplicate inputs at or above this 5-shingle Jaccard similarity, e.g. 0.8 (in addition to exact dedup)" },
           { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split for the mined cases (default: stable hash of the case id, 60/20/20)" },
           { name: "tag", type: "list", commas: true, value: "<TAG>", desc: "Extra tag for every mined case (repeatable, or a comma list: a,b)" },
+          { name: "proof-steps", type: "boolean", desc: "Mine formal-verification proof-step cases (failing proof goals with winning diffs or stuck goals) instead of whole-session cases" },
+          { name: "proof-lang", type: "list", commas: true, value: "<LANG>", choices: ["lean", "rocq", "dafny", "verus", "isabelle", "tla", "tlc"], desc: "With --proof-steps: only these proof languages (repeatable, or a comma list: lean,rocq)" },
+          { name: "proof-outcome", type: "string", value: "<OUTCOME>", choices: ["solved", "stuck", "all"], default: "all", desc: "With --proof-steps: mine only solved transitions, only stuck goals, or all" },
           { name: "note", type: "string", value: "<TEXT>", desc: "Version note" },
           DRY_RUN,
           FRESH,
@@ -1273,6 +1276,8 @@ export const COMMANDS: CommandSpec[] = [
         examples: [
           "coding.sh dataset mine clean --where 'agent:claude-code' --min-turns 2 --exclude-flagged --dedupe-near 0.8",
           "coding.sh dataset mine high-score --min-score quality>=0.8 --limit 50 --dry-run",
+          "coding.sh dataset mine proof-bench --proof-steps --proof-lang lean,rocq",
+          "coding.sh dataset mine stuck-proofs --proof-steps --proof-outcome stuck --dry-run",
         ],
       },
       {

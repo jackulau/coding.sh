@@ -482,6 +482,19 @@ Mined cases carry deterministic `difficulty` (`easy`, `medium`, or `hard`), `tur
 
 `coding.sh dataset stats <name>` reports version, case counts by split, kind, tag, and difficulty, input length min/median/max, and near-duplicate pair count at `--near-threshold` (default `0.8`). `coding.sh dataset filter <src> --out <dst>` writes a new immutable child dataset filtered by `--split`, `--tag`, `--difficulty`, `--min-chars`, `--max-chars`, `--dedupe-near`, and `--limit`.
 
+#### Mining formal proof steps
+
+`coding.sh dataset mine <name> --proof-steps` mines formal-verification proof-step cases from Lean, Rocq, Dafny, Verus, Isabelle, and TLA+/TLC checker runs instead of whole-session prompts.
+
+```sh
+coding.sh dataset mine proof-bench --proof-steps --proof-lang lean,rocq
+coding.sh dataset mine stuck-proofs --proof-steps --proof-outcome stuck --dry-run
+```
+
+- **Solved transitions** (`outcome: "solved"`): a failing proof check followed by proof-file edits and a clean passing check with no net new escape hatches.
+- **Stuck goals** (`outcome: "stuck"`): a failing proof check that repeats or remains unresolved at session end, giving eval suites a benchmark of real unresolved proof goals.
+- **Filtering and safety**: pass `--proof-lang` to limit languages and `--proof-outcome solved|stuck|all` to pick outcomes. Every error, goal snippet, command, path, and winning diff is redacted and deduplicated before storage.
+
 ### Case kinds: bad, guard, control
 
 When a dataset tests a change (a new prompt, new tool text, a new model), give its cases a `kind`.
