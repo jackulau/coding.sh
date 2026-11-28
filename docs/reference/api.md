@@ -2303,19 +2303,22 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
 | `kind` | only `research` or `change` items, like `--kind`: repeated, or a comma list |
 | `bucket` | only active items in these buckets, like `--bucket`: repeated, or a comma list (`blocked,failed`) |
+| `risk` | only items with this supervision risk (`medium` or `high`), including running items, like `--risk`: repeated, or a comma list |
 | `q` | trimmed case-insensitive substring match against title, repo, branch, id, workflow name or reason |
 | `all=1` | show hidden items, like `--all` |
 | `limit` | default 20, at most 1000 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, plus `members` (each listed item's session ids, main first, up to 50) and `hiddenBy` (hidden counts by `running`, `done`, `acked` or `snoozed`). A bad `since`, `limit`, `stage`, `kind` or `bucket` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, plus `members` (each listed item's session ids, main first, up to 50) and `hiddenBy` (hidden counts by `running`, `done`, `acked` or `snoozed`). A bad `since`, `limit`, `stage`, `kind`, `bucket` or `risk` answers 400.
 
-`totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1` or `stage` lists them). The page's headings read "20 of 671" from it.
+`totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1`, `stage` or `risk` lists them). The page's headings read "20 of 671" from it.
 
-Item fields for workflow runs, replaced failures and linked worktrees:
+Item fields for workflow runs, replaced failures, linked worktrees, supervision risk and proofs:
 
 - A workflow run's item has `workflow`: the run's `id`, its `name` when known, and `phases`. Each phase has its `name` (absent if none), `agents`, `running`, `failed`, `done`, and `costUsd` when known.
 - A failed item that a later item on the same branch replaced has `supersededBy`, that item's id.
 - An item whose main session ran in a linked worktree has `repoMain`, the root of the repo's main checkout. `repo` stays the worktree. It is absent in a main checkout.
+- An item whose sessions carry context degradation risk has `supervisionRisk` (`medium` or `high`) and sorted unique `riskReasons`. Both are absent when risk is low.
+- An item with formal-verification activity has `proof` (`langs`, `checks`, `passed`, `failed`, and non-zero `escapeRemaining` or `oscillatingChecks`), aggregated across member sessions. Absent otherwise.
 - The top-level `needYou` counts blocked and failed items that are neither probably closed nor superseded.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.

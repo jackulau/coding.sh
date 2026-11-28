@@ -13,7 +13,7 @@ import { CliError } from "../../src/cli/output.ts";
 import { findCommand } from "../../src/cli/registry.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { readOverlay } from "../../src/core/work-overlay.ts";
-import { BUCKETS, STAGES, WORK_KINDS, workItemId } from "../../src/core/work.ts";
+import { BUCKETS, STAGES, SUPERVISION_RISKS, WORK_KINDS, workItemId } from "../../src/core/work.ts";
 import { FLAGS } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { CLI } from "../_cli.ts";
@@ -569,5 +569,99 @@ describe("work high-scale filters and batch ack", () => {
     // Remaining review items should be the 4 backend ones.
     const left = await runCmd(work, sb, { json: true, flags: { bucket: "review", limit: 100 } });
     assert.equal(left.json.items.length, 4);
+  });
+});
+
+describe("work --risk and proof status", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const runHigh = sess("run-high", 5 * MIN, {
+      endedAt: undefined,
+      title: "long refactor drifting",
+      stats: {
+        filesChanged: 2,
+        latency: { wallMs: 4 * MIN },
+        contextHygiene: { supervisionRisk: "high", riskReasons: ["unverified-edits", "tactic-oscillation"] },
+        verification: {
+          checks: 3,
+          passed: 2,
+          failed: 1,
+          maxUnverifiedEdits: 5,
+          proof: { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 },
+        },
+      } as Extra["stats"],
+    });
+    const revMed = sess("rev-med", 15 * MIN, {
+      title: "prove helper lemma",
+      stats: {
+        filesChanged: 1,
+        contextHygiene: { supervisionRisk: "medium", riskReasons: ["dead-end-loop"] },
+        verification: {
+          checks: 2,
+          passed: 2,
+          failed: 0,
+          maxUnverifiedEdits: 1,
+          proof: { langs: ["lean"], checks: 2, passed: 2, failed: 0 },
+        },
+      } as Extra["stats"],
+    });
+    const clean = sess("clean-rev", 25 * MIN, {
+      title: "plain docs tweak",
+      stats: { filesChanged: 1 },
+    });
+    await sb.seed([runHigh, revMed, clean]);
+  });
+  after(() => sb.cleanup());
+
+  test("--risk filters high and medium,high including running items, and exits 2 on invalid values", async () => {
+    const high = await runCmd(work, sb, { json: true, flags: { risk: ["high"] } });
+    assert.equal(high.error, undefined, high.error?.stack);
+    assert.deepEqual(high.json.items.map((i: { id: string }) => i.id), [workItemId("run-high")]);
+    assert.equal(high.json.items[0].supervisionRisk, "high");
+    assert.deepEqual(high.json.items[0].riskReasons, ["tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(high.json.items[0].proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 });
+
+    const medHigh = await runCmd(work, sb, { json: true, flags: { risk: "medium,high" } });
+    assert.equal(medHigh.error, undefined, medHigh.error?.stack);
+    assert.deepEqual(medHigh.json.items.map((i: { id: string }) => i.id).sort(), [workItemId("rev-med"), workItemId("run-high")].sort());
+
+    const bad = await runCmd(work, sb, { json: true, flags: { risk: "hihg" } });
+    assert.ok(bad.error instanceof UsageError);
+    assert.equal(bad.error.reason, "invalid_argument");
+    assert.equal(bad.error.suggestion, "--risk high");
+
+    const cliBad = spawnSync(process.execPath, ["--no-warnings", CLI, "work", "--risk", "hihg"], { env: sb.env, encoding: "utf8" });
+    assert.equal(cliBad.status, 2);
+    assert.match(cliBad.stderr, /--risk must be one of medium, high/);
+
+    const cmd = findCommand("work")!;
+    assert.deepEqual(cmd.flags!.find((f) => f.name === "risk")?.choices, [...SUPERVISION_RISKS]);
+  });
+
+  test("text list renders risk and proof badges when present and leaves clean rows unchanged", async () => {
+    const r = await runCmd(work, sb, { flags: { all: true } });
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.match(r.stdout, /risk:high \(tactic-oscillation\)/);
+    assert.match(r.stdout, /lean 2 sorry/);
+    assert.match(r.stdout, /risk:medium \(dead-end-loop\)/);
+    assert.match(r.stdout, /lean 0 sorry/);
+    // Clean row has neither badge between indent and its finished reason.
+    const cleanBlock = r.stdout.slice(r.stdout.indexOf("plain docs tweak")).split("\n").slice(0, 3).join("\n");
+    assert.doesNotMatch(cleanBlock, /risk:|sorry|escape/);
+    assert.match(cleanBlock, /\n {10}finished \d+[smhd] ago with 1 file changed\n/);
+  });
+
+  test("work show prints Risk and Proof rows and coding.sh proof hint when present", async () => {
+    const shown = await runCmd(work, sb, { action: "show", positionals: [workItemId("run-high")] });
+    assert.equal(shown.error, undefined, shown.error?.stack);
+    assert.match(shown.stdout, /Risk +high \(tactic-oscillation, unverified-edits\)/);
+    assert.match(shown.stdout, /Proof +lean · 3 checks \(2 passed, 1 failed\), 2 escapes remaining/);
+    assert.match(shown.stderr, /(?:coding\.sh|codingsh) proof run-high/);
+
+    const cleanShown = await runCmd(work, sb, { action: "show", positionals: [workItemId("clean-rev")] });
+    assert.equal(cleanShown.error, undefined, cleanShown.error?.stack);
+    assert.doesNotMatch(cleanShown.stdout, /\bRisk\b|\bProof\b/);
+    assert.doesNotMatch(cleanShown.stderr, /proof /);
   });
 });

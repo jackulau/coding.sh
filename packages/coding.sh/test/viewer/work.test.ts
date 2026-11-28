@@ -671,3 +671,101 @@ describe("viewer /api/work filters and POST /api/work/ack-batch", () => {
     assert.equal(cliAfter.json.items.length, 0, "CLI sees every batch ack written by the viewer");
   });
 });
+
+describe("viewer /api/work supervisionRisk and proof status", () => {
+  const MIN = 60e3;
+  const now = Date.now();
+  let sb: Sandbox;
+  let index: SqliteIndexStore;
+  let v: Viewer;
+  const get = (path: string) => req(v.port, path, { token: v.token });
+
+  before(async () => {
+    sb = sandbox();
+    const sessions: Session[] = [
+      mkSession("run-high", now - 5 * MIN, {
+        endedAt: undefined,
+        cwd: "/work/proofs",
+        title: "long proof search",
+        stats: {
+          filesChanged: 2,
+          latency: { wallMs: 4 * MIN },
+          contextHygiene: { supervisionRisk: "high", riskReasons: ["unverified-edits", "tactic-oscillation"] },
+          verification: {
+            checks: 3,
+            passed: 2,
+            failed: 1,
+            maxUnverifiedEdits: 4,
+            proof: { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 },
+          },
+        } as never,
+      }),
+      mkSession("rev-med", now - 20 * MIN, {
+        endedAt: now - 15 * MIN,
+        cwd: "/work/proofs",
+        title: "helper lemma",
+        stats: {
+          filesChanged: 1,
+          contextHygiene: { supervisionRisk: "medium", riskReasons: ["dead-end-loop"] },
+          verification: {
+            checks: 2,
+            passed: 2,
+            failed: 0,
+            maxUnverifiedEdits: 1,
+            proof: { langs: ["lean"], checks: 2, passed: 2, failed: 0 },
+          },
+        } as never,
+      }),
+      mkSession("clean-item", now - 30 * MIN, {
+        endedAt: now - 25 * MIN,
+        cwd: "/work/web",
+        title: "clean tweak",
+        stats: { filesChanged: 1 },
+      }),
+    ];
+    await sb.seed(sessions);
+    const home = sb.env.CODING_SH_HOME!;
+    index = await SqliteIndexStore.open(join(home, "index.db"));
+    await index.migrate();
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      updateStatus: async () => ({ disabled: "test" }) as any,
+      work: { overlay: join(home, "work.json"), home: sb.env.HOME!, cwd: sb.env.HOME! },
+    });
+  });
+  after(async () => {
+    await v?.close();
+    await index?.close();
+    sb?.cleanup();
+  });
+
+  test("GET /api/work filters by risk (including running items), exposes risk and proof fields, and returns 400 on invalid risk", async () => {
+    const high = await get("/api/work?risk=high");
+    assert.equal(high.status, 200, high.body);
+    assert.deepEqual(high.json().items.map((i: { id: string }) => i.id), [workItemId("run-high")]);
+    assert.equal(high.json().items[0].supervisionRisk, "high");
+    assert.deepEqual(high.json().items[0].riskReasons, ["tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(high.json().items[0].proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 });
+
+    const medHigh = await get("/api/work?risk=medium,high");
+    assert.equal(medHigh.status, 200, medHigh.body);
+    assert.deepEqual(medHigh.json().items.map((i: { id: string }) => i.id).sort(), [workItemId("rev-med"), workItemId("run-high")].sort());
+
+    const detail = await get(`/api/work/${workItemId("run-high")}`);
+    assert.equal(detail.status, 200, detail.body);
+    assert.equal(detail.json().supervisionRisk, "high");
+    assert.deepEqual(detail.json().proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 });
+
+    const clean = await get(`/api/work/${workItemId("clean-item")}`);
+    assert.equal(clean.status, 200, clean.body);
+    assert.equal("supervisionRisk" in clean.json(), false);
+    assert.equal("riskReasons" in clean.json(), false);
+    assert.equal("proof" in clean.json(), false);
+
+    const bad = await get("/api/work?risk=bogus");
+    assert.equal(bad.status, 400);
+    assert.match(bad.json().error, /--risk must be one of medium, high/);
+  });
+});

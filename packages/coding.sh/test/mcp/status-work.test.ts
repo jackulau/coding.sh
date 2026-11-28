@@ -72,6 +72,24 @@ describe("MCP status work parity", () => {
         title: "outside repo edit",
         stats: { filesChanged: 1 },
       }),
+      // Running high-risk session with proof telemetry (active 5 min before lastIngest).
+      mkSession("drift", lastIngest - 12 * MIN, {
+        endedAt: undefined,
+        cwd: "/work/proofs",
+        title: "lean proof loop",
+        stats: {
+          filesChanged: 1,
+          latency: { wallMs: 7 * MIN },
+          contextHygiene: { supervisionRisk: "high", riskReasons: ["tactic-oscillation", "unverified-edits"] },
+          verification: {
+            checks: 3,
+            passed: 2,
+            failed: 1,
+            maxUnverifiedEdits: 4,
+            proof: { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 1 },
+          },
+        } as Extra["stats"],
+      }),
     ];
     const events: AgentEvent[] = [
       fc("e1", "multi", "a.ts", lastIngest - 38 * MIN),
@@ -151,5 +169,19 @@ describe("MCP status work parity", () => {
 
     const badBucket = await mcp.server.handle({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "work", arguments: { bucket: "invalid" } } });
     assert.equal((badBucket!.result as { isError?: boolean }).isError, true);
+
+    const byRisk = await callTool(mcp, "work", { risk: "high", limit: 20 });
+    const riskItems = byRisk.items as Record<string, unknown>[];
+    assert.deepEqual(riskItems.map((i) => i.id), [workItemId("drift")]);
+    assert.equal(riskItems[0]!.supervisionRisk, "high");
+    assert.deepEqual(riskItems[0]!.riskReasons, ["tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(riskItems[0]!.proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 1 });
+
+    const cleanItem = (byKind.items as Record<string, unknown>[]).find((i) => i.id === workItemId("outside"))!;
+    assert.equal("supervisionRisk" in cleanItem, false);
+    assert.equal("proof" in cleanItem, false);
+
+    const badRisk = await mcp.server.handle({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "work", arguments: { risk: "invalid" } } });
+    assert.equal((badRisk!.result as { isError?: boolean }).isError, true);
   });
 });

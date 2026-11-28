@@ -1,4 +1,4 @@
-// coding.sh work [--all] [--stage <list>] [--kind <list>] [--bucket <list>] [--q <text>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
+// coding.sh work [--all] [--stage <list>] [--kind <list>] [--bucket <list>] [--risk <list>] [--q <text>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace, type Place } from "../../mcp/data.ts";
@@ -19,15 +19,18 @@ import {
   settleWorkFiles,
   STAGES,
   stagesLine,
+  SUPERVISION_RISKS,
   WORK_KINDS,
   workFiles,
   workItemJson,
   workJson,
   type Bucket,
   type Stage,
+  type SupervisionRisk,
   type WorkItem,
   type WorkKind,
   type WorkPhase,
+  type WorkProof,
   type WorkQueue,
 } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
@@ -102,6 +105,21 @@ export function bucketsFlag(c: Pick<CommandContext, "flags">): Bucket[] {
   return out;
 }
 
+/** `--risk`: the supervision risk levels named, repeated or as a comma list, each once. An unknown one is a usage error (exit 2). */
+export function risksFlag(c: Pick<CommandContext, "flags">): SupervisionRisk[] {
+  const out: SupervisionRisk[] = [];
+  for (const raw of listFlag(c.flags.risk).flatMap((v) => v.split(","))) {
+    const v = raw.trim().toLowerCase();
+    if (!v) continue;
+    if (!(SUPERVISION_RISKS as readonly string[]).includes(v)) {
+      const near = suggest(v, SUPERVISION_RISKS);
+      throw new UsageError(`--risk must be one of ${SUPERVISION_RISKS.join(", ")}, got ${JSON.stringify(raw.trim())}`, { reason: "invalid_argument", suggestion: near ? `--risk ${near}` : undefined });
+    }
+    if (!out.includes(v as SupervisionRisk)) out.push(v as SupervisionRisk);
+  }
+  return out;
+}
+
 async function list(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
@@ -112,6 +130,7 @@ async function list(c: CommandContext): Promise<number> {
   const stages = stagesFlag(c);
   const kinds = kindsFlag(c);
   const buckets = bucketsFlag(c);
+  const risks = risksFlag(c);
   const qText = str(c.flags.q)?.trim() || undefined;
   // A stage filter lists hidden items too: --stage done lists what the queue hides.
   const all = c.flags.all === true || stages.length > 0;
@@ -121,7 +140,7 @@ async function list(c: CommandContext): Promise<number> {
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
     // Next steps name sessions by the shortest id that resolves (core/session-ref.ts).
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, kinds, buckets, q: qText, now: stale?.at, shortId: await shortener(ctx.index) });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, kinds, buckets, risks, q: qText, now: stale?.at, shortId: await shortener(ctx.index) });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
     await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
@@ -130,7 +149,7 @@ async function list(c: CommandContext): Promise<number> {
       out.data({ ...workJson(shown, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    await printQueue(c, ctx.index, shown, { limit, all, stages, kinds, buckets, q: qText, window: w, place, truncated, backlog, stale });
+    await printQueue(c, ctx.index, shown, { limit, all, stages, kinds, buckets, risks, q: qText, window: w, place, truncated, backlog, stale });
     return 0;
   });
 }
@@ -163,7 +182,7 @@ async function printQueue(
   c: CommandContext,
   index: IndexStore,
   q: WorkQueue,
-  o: { limit: number; all: boolean; stages: readonly Stage[]; kinds: readonly WorkKind[]; buckets: readonly Bucket[]; q?: string; window: Window; place?: Place; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge },
+  o: { limit: number; all: boolean; stages: readonly Stage[]; kinds: readonly WorkKind[]; buckets: readonly Bucket[]; risks: readonly SupervisionRisk[]; q?: string; window: Window; place?: Place; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge },
 ): Promise<void> {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
@@ -185,7 +204,7 @@ async function printQueue(
   }
   for (const g of q.groups) out.print(out.style(`  ${g.cause} x${g.count}: ${g.items.join(", ")}`, "faint"));
   if (q.items.length > o.limit) out.note(`${q.items.length - o.limit} more: --limit ${q.items.length}`);
-  if (!shown.length && o.stages.length && !o.buckets.length && !o.kinds.length && !o.q) {
+  if (!shown.length && o.stages.length && !o.buckets.length && !o.kinds.length && !o.risks.length && !o.q) {
     out.print("");
     out.print(`No items in ${o.stages.join(" or ")} since ${o.window.sinceText}.`);
     return;
@@ -206,6 +225,7 @@ async function printQueue(
     const filters = [...repoFlag];
     if (agents.length) filters.push("--agent", agents.join(","));
     if (o.kinds.length) filters.push("--kind", o.kinds.join(","));
+    if (o.risks.length) filters.push("--risk", o.risks.join(","));
     if (o.q) filters.push("--q", o.q);
     if (q.hidden) {
       out.print(`Nothing needs you. ${plural(q.hidden, "item")} running, done, acknowledged or snoozed.`);
@@ -215,7 +235,7 @@ async function printQueue(
     // An --agent with no session at all emptied it, not the window: drop it rather than look further back.
     const noneAtAll = agents.length > 0 && (await agentsWithoutSessions(index, agents)).length === agents.length;
     const where = `${agents.length ? ` from ${agents.join(" or ")}` : ""}${o.place ? ` in ${o.place.path ?? o.place.name ?? repo}` : ""}`;
-    const narrowed = o.stages.length || o.kinds.length || o.q;
+    const narrowed = o.stages.length || o.kinds.length || o.risks.length || o.q;
     out.print(noneAtAll ? `No sessions from ${agents.join(" or ")} in the store.` : narrowed ? `No work items match the filters since ${o.window.sinceText}.` : where ? `No work items${where} since ${o.window.sinceText}.` : `No agent sessions since ${o.window.sinceText}.`);
     const next = noneAtAll
       ? { label: "See every agent's items", command: cliCommand(c.env, ["work", ...typedSince, ...repoFlag]) }
@@ -228,9 +248,32 @@ async function printQueue(
   if (first) out.next("See what the first item needs", `coding.sh work show ${first.id}`);
 }
 
+/** Compact proof hint for a `work` list row: "lean 0 sorry", "lean 2 sorry", "rocq 1 escape". */
+export function proofHint(p: WorkProof): string {
+  const langs = p.langs.length ? p.langs.join(",") : "proof";
+  const esc = p.escapeRemaining ?? 0;
+  if (p.langs.length === 1 && p.langs[0] === "lean") return `lean ${esc} sorry`;
+  return `${langs} ${esc} ${esc === 1 ? "escape" : "escapes"}`;
+}
+
+/** One-line proof summary for `work show`: "lean · 3 checks (2 passed, 1 failed), 2 escapes remaining". */
+export function proofSummary(p: WorkProof): string {
+  const langs = p.langs.length ? p.langs.join(", ") : "proof";
+  const checks = p.checks > 0 ? `${plural(p.checks, "check")} (${p.passed} passed, ${p.failed} failed)` : "0 checks";
+  const parts = [checks];
+  if (p.escapeRemaining) parts.push(`${plural(p.escapeRemaining, "escape")} remaining`);
+  if (p.oscillatingChecks) parts.push(`${plural(p.oscillatingChecks, "oscillating check")}`);
+  return `${langs} · ${parts.join(", ")}`;
+}
+
 function printRow(c: CommandContext, i: WorkItem): void {
   const { out } = c;
-  const badge = i.probablyClosed ? `${out.style("probably closed", "yellow")}  ` : "";
+  const badges = [
+    i.probablyClosed ? out.style("probably closed", "yellow") : "",
+    i.supervisionRisk ? out.style(`risk:${i.supervisionRisk}${i.riskReasons?.length ? ` (${i.riskReasons[0]})` : ""}`, i.supervisionRisk === "high" ? "red" : "yellow") : "",
+    i.proof ? out.style(proofHint(i.proof), i.proof.escapeRemaining || i.proof.failed ? "yellow" : "green") : "",
+  ].filter(Boolean);
+  const badge = badges.length ? `${badges.join("  ")}  ` : "";
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
   const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repoMain ?? i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
@@ -420,6 +463,13 @@ async function show(c: CommandContext): Promise<number> {
     out.row("State", item.bucket ? BUCKET_LABELS[item.bucket] : `hidden (${item.hidden})`, item.bucket === "blocked" || item.bucket === "failed" ? "warn" : "none", true);
     out.row("Why", `${item.probablyClosed ? "probably closed: " : ""}${item.reason}`, "none", true);
     out.row("Stage", `${stageTag(item)}: ${item.stageWhy}`, "none", true);
+    if (item.supervisionRisk) {
+      const reasons = item.riskReasons?.length ? ` (${item.riskReasons.join(", ")})` : "";
+      out.row("Risk", `${item.supervisionRisk}${reasons}`, item.supervisionRisk === "high" ? "fail" : "warn", true);
+    }
+    if (item.proof) {
+      out.row("Proof", proofSummary(item.proof), item.proof.escapeRemaining || item.proof.failed ? "warn" : "ok", true);
+    }
     const w = item.cause?.waiting;
     if (w?.text) out.row("Prompt", oneLine(w.text, 200), "none", true);
     if (w) out.row("Waiting", `${w.kind} since ${ago(w.at)}`, "none", true);
@@ -462,6 +512,7 @@ async function show(c: CommandContext): Promise<number> {
       if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: ${out.command(`coding.sh tree ${shortId(item.primaryId)}`)}`, "faint"));
     }
     out.row("Next", nextText(item.next), "none", true);
+    if (item.proof) out.next("Review proof integrity", `coding.sh proof ${shortId(item.primaryId)}`);
     return 0;
   });
 }

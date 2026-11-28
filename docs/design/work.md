@@ -48,6 +48,11 @@ are derived from those sessions on read. Nothing is filed.
   as `#12` and one of another repo as `owner/name#12`. In a linked worktree the main checkout's
   folder names the item's repo, and `work --json` and the MCP `work` tool give that checkout's
   root as `repoMain`, absent in a main checkout.
+- `supervisionRisk` is the highest supervision risk (`medium` or `high`) across member sessions,
+  with sorted unique `riskReasons`. Both are absent when risk is low.
+- `proof` aggregates member sessions' `stats.verification.proof` (`langs`, `checks`, `passed`,
+  `failed`, and non-zero `escapeRemaining` or `oscillatingChecks`). Absent when no session has
+  proof activity.
 
 ## Workflow runs
 
@@ -344,6 +349,17 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 
 The new stats and fields are optional. One existing field changed: a session whose events stop on a
 tool call with no result, with no session end, has no `endedAt`.
+
+### Supervision risk and proof status
+
+`coding.sh work --risk <level>`, `GET /api/work?risk=`, and the MCP `work` tool filter by `medium`
+or `high` supervision risk. When a risk filter is active, still-running items with matching risk
+appear alongside bucketed items so drifting long-horizon sessions surface before stalling or
+failing.
+
+List rows display compact risk and proof badges when present. `work show` prints `Risk` and `Proof`
+rows plus a `coding.sh proof <session>` hint. The Work page (`#/work` and `#/w/<id>`) renders risk
+and proof chips and adds a `Risk` filter synced with `risk=` in the URL hash.
 
 ## Cost
 

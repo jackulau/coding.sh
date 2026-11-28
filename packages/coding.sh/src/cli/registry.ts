@@ -1935,6 +1935,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "stage", type: "list", commas: true, value: "<STAGES>", choices: ["planning", "executing", "review", "approval", "done"], desc: "Only items in these stages, hidden ones too (repeatable, or a comma list: review,approval)" },
       { name: "kind", type: "list", commas: true, value: "<KINDS>", choices: ["research", "change"], desc: "Only items of these kinds: research or change (repeatable, or a comma list)" },
       { name: "bucket", type: "list", commas: true, value: "<BUCKETS>", choices: ["blocked", "failed", "stalled", "turn", "review"], desc: "Only active items in these buckets (repeatable, or a comma list: blocked,failed)" },
+      { name: "risk", type: "list", commas: true, value: "<LEVELS>", choices: ["medium", "high"], desc: "Only items with this supervision risk (medium or high, including running items; repeatable, or a comma list)" },
       { name: "q", type: "string", value: "<TEXT>", desc: "Only items matching this text in title, repo, branch, id, workflow name or reason" },
       { name: "repo", short: "r", type: "string", value: "<PATH>", desc: "Only items whose root session ran under this directory, or in a repo with this name (default: every repo)" },
       AGENT_ONE,
@@ -1979,7 +1980,7 @@ export const COMMANDS: CommandSpec[] = [
         examples: ["coding.sh work snooze w3f9a1c 2h"],
       },
     ],
-    examples: ["coding.sh work", "coding.sh work --agent claude-code --since 24h", "coding.sh work --repo . --json", "coding.sh work --stage approval", "coding.sh work show w3f9a1c", "coding.sh work ack w3f9a1c"],
+    examples: ["coding.sh work", "coding.sh work --agent claude-code --since 24h", "coding.sh work --repo . --json", "coding.sh work --stage approval", "coding.sh work --risk high", "coding.sh work show w3f9a1c", "coding.sh work ack w3f9a1c"],
     notes: [
       "A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.",
       "Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.",
