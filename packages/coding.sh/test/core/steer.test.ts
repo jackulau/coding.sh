@@ -83,9 +83,11 @@ describe("core/steer buildSteerAdvice", () => {
     assert.ok(kinds.includes("break-oscillation"), `expected break-oscillation in ${kinds.join(", ")}`);
     assert.ok(kinds.includes("target-single-file"), `expected target-single-file in ${kinds.join(", ")}`);
     assert.ok(kinds.includes("resolve-escapes"), `expected resolve-escapes in ${kinds.join(", ")}`);
+    assert.equal(kinds.includes("audit-tamper"), false, `standing sorry alone must not emit test-tamper audit-tamper: ${kinds.join(", ")}`);
 
     assert.ok(advice.suggestedSteer, "expected actionable suggestedSteer");
     assert.match(advice.suggestedSteer, /Proof\/Lemma\.lean/);
+    assert.doesNotMatch(advice.suggestedSteer, /Stop modifying or weakening tests/);
     const singleFile = advice.directives.find((d) => d.kind === "target-single-file")!;
     assert.match(singleFile.steerText, /lake env lean Proof\/Lemma\.lean/);
     assert.deepEqual(advice.telemetry.proofLangs, ["lean"]);
@@ -200,5 +202,105 @@ describe("core/steer buildSteerAdvice", () => {
     const serialized = JSON.stringify(advice);
     assert.equal(serialized.includes(fakeToken), false, "secret token must not appear in SteerAdvice");
     assert.match(serialized, /\[redacted:/, "redaction marker should replace secret");
+  });
+
+  it("emits high-priority resolve-escapes (not test-tamper audit-tamper) on standing Lean sorry with zero test edits", () => {
+    const events = sessionEvents("steer-lean-sorry-only", { cwd: CWD, startedAt: T0 }, [
+      ["session.start", {}],
+      ["user.message", { text: "Prove helper in Proof/Bound.lean." }],
+      [
+        "file.change",
+        {
+          path: "Proof/Bound.lean",
+          op: "modify",
+          diff: diff("Proof/Bound.lean", " theorem bound (n : Nat) : n <= n := by", "+  sorry"),
+        },
+      ],
+      ["tool.start", { tool: "Bash", toolUseId: "l1", input: { command: "lake env lean Proof/Bound.lean" } }],
+      ["tool.end", { tool: "Bash", toolUseId: "l1", ok: true, output: "warning: declaration uses 'sorry'" }],
+    ]);
+    const session = buildSession(events);
+    assert.ok(session.flags.includes("test-tamper"), "precondition: standing sorry sets test-tamper flag");
+
+    const advice = buildSteerAdvice(session, events);
+    assert.equal(advice.status, "intervene");
+    assert.equal(advice.risk, "high");
+    assert.equal(advice.directives.some((d) => d.kind === "audit-tamper"), false);
+    const resolve = advice.directives.find((d) => d.kind === "resolve-escapes");
+    assert.ok(resolve, "expected resolve-escapes directive");
+    assert.equal(resolve.priority, "high");
+    assert.ok(advice.suggestedSteer);
+    assert.doesNotMatch(advice.suggestedSteer, /Stop modifying or weakening tests/);
+    assert.match(advice.suggestedSteer, /sorry/);
+  });
+
+  it("still emits audit-tamper when a proof session with sorry also tampers with a real JS/TS test file or theorem statement", () => {
+    const withJsTestTamper = adviceOf("steer-lean-plus-test-tamper", [
+      ["session.start", {}],
+      ["user.message", { text: "Prove lemma and fix parser tests." }],
+      [
+        "file.change",
+        {
+          path: "Proof/Bound.lean",
+          op: "modify",
+          diff: diff("Proof/Bound.lean", " theorem bound (n : Nat) : n <= n := by", "+  sorry"),
+        },
+      ],
+      ["test.result", { runner: "node:test", passed: 3, failed: 1 }],
+      [
+        "file.change",
+        {
+          path: "test/parser.test.ts",
+          op: "modify",
+          diff: diff("test/parser.test.ts", ' it("parses tokens", () => {', '-  assert.equal(parse("a"), 1);', '+  // skipped', '+  it.skip("parses tokens", () => {});'),
+        },
+      ],
+      ["test.result", { runner: "node:test", passed: 4, failed: 0 }],
+    ]);
+    assert.equal(withJsTestTamper.status, "intervene");
+    const testAudit = withJsTestTamper.directives.find((d) => d.kind === "audit-tamper");
+    assert.ok(testAudit, "expected audit-tamper for real test-file skip");
+    assert.match(testAudit.steerText, /Stop modifying or weakening tests/);
+
+    const withStmtTamper = adviceOf("steer-lean-stmt-tamper", [
+      ["session.start", {}],
+      ["user.message", { text: "Prove add_pos in Proof/Pos.lean." }],
+      ["tool.start", { tool: "Bash", toolUseId: "l1", input: { command: "lake env lean Proof/Pos.lean" } }],
+      ["tool.end", { tool: "Bash", toolUseId: "l1", ok: false, output: "Proof/Pos.lean:1:0: error: unsolved goals" }],
+      [
+        "file.change",
+        {
+          path: "Proof/Pos.lean",
+          op: "modify",
+          diff: diff("Proof/Pos.lean", "-theorem add_pos (n : Nat) : n > 0 := by", "+theorem add_pos (n : Nat) : n = n := by", "+  sorry"),
+        },
+      ],
+      ["tool.start", { tool: "Bash", toolUseId: "l2", input: { command: "lake env lean Proof/Pos.lean" } }],
+      ["tool.end", { tool: "Bash", toolUseId: "l2", ok: true, output: "warning: declaration uses 'sorry'" }],
+    ]);
+    assert.equal(withStmtTamper.status, "intervene");
+    const proofAudit = withStmtTamper.directives.find((d) => d.kind === "audit-tamper");
+    assert.ok(proofAudit, "expected proof audit-tamper for theorem statement tamper");
+    assert.match(proofAudit.steerText, /Proof\/Pos\.lean/);
+  });
+
+  it("still emits test-tamper audit-tamper on non-proof sessions with test-tamper flag", () => {
+    const advice = adviceOf("steer-nonproof-tamper", [
+      ["session.start", {}],
+      ["user.message", { text: "Fix failing unit test." }],
+      ["test.result", { runner: "vitest", passed: 5, failed: 1 }],
+      [
+        "file.change",
+        {
+          path: "test/calc.test.ts",
+          op: "modify",
+          diff: diff("test/calc.test.ts", ' test("adds", () => {', "-  expect(add(1, 2)).toBe(3);", "+  expect(add(1, 2)).toBeGreaterThan(0);"),
+        },
+      ],
+      ["test.result", { runner: "vitest", passed: 6, failed: 0 }],
+    ]);
+    assert.equal(advice.status, "intervene");
+    assert.equal(advice.directives[0]?.kind, "audit-tamper");
+    assert.match(advice.directives[0]!.steerText, /Stop modifying or weakening tests/);
   });
 });

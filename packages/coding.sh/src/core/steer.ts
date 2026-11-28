@@ -6,6 +6,7 @@ import type { AgentEvent, ProofLang, Session } from "../schema/index.ts";
 import { isFileEditTool, isShellCall } from "../adapters/_shared/tools.ts";
 import { contextHygieneOf, contextHygieneState, foldContextHygiene } from "./context-hygiene.ts";
 import { failureState, foldFailure } from "./failures.ts";
+import { detectTestTamperTrace } from "./intent.ts";
 import { buildProofReport } from "./proof-report.ts";
 import {
   checkOutcome,
@@ -473,6 +474,7 @@ export function buildSteerAdvice(
   // 1. audit-tamper
   const hasTestTamperFlag = session.flags.includes("test-tamper");
   const hasProofTamper = proofReport.verdict === "tampered" || proofReport.tamperFindings.length > 0;
+  let standingEscapeTamper = false;
   if (hasTestTamperFlag || hasProofTamper) {
     if (hasProofTamper) {
       const top = proofReport.tamperFindings.slice(0, 2);
@@ -487,13 +489,23 @@ export function buildSteerAdvice(
         evidence: summary,
       });
     } else {
-      pushDirective({
-        kind: "audit-tamper",
-        priority: "high",
-        reason: "The test-tamper flag is active on this session.",
-        steerText: "Stop modifying or weakening tests and assertions to make checks pass. Revert test edits and fix the implementation against the original test suite.",
-        evidence: "session flag: test-tamper",
-      });
+      const hasNonProofTestTamper =
+        sorted.length === 0 ||
+        escapeRemaining === 0 ||
+        detectTestTamperTrace(sorted, baseCwd ? { cwd: baseCwd } : {}).some(
+          (f) => f.severity === "high" && f.kind === undefined,
+        );
+      if (hasNonProofTestTamper) {
+        pushDirective({
+          kind: "audit-tamper",
+          priority: "high",
+          reason: "The test-tamper flag is active on this session.",
+          steerText: "Stop modifying or weakening tests and assertions to make checks pass. Revert test edits and fix the implementation against the original test suite.",
+          evidence: "session flag: test-tamper",
+        });
+      } else {
+        standingEscapeTamper = true;
+      }
     }
   }
 
@@ -601,7 +613,7 @@ export function buildSteerAdvice(
     const where = filesText ? ` in ${filesText}` : "";
     pushDirective({
       kind: "resolve-escapes",
-      priority: "medium",
+      priority: standingEscapeTamper ? "high" : "medium",
       reason: `${escapeRemaining} proof escape hatch${escapeRemaining === 1 ? "" : "es"} (${kinds}) remain unresolved.`,
       steerText: `Replace the ${escapeRemaining} remaining proof escape${escapeRemaining === 1 ? "" : "s"} (${kinds})${where} with complete proofs before concluding.`,
       evidence: `${escapeRemaining} remaining (${kinds})${filesText ? ` across ${filesText}` : ""}`,
