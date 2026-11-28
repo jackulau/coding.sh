@@ -3165,6 +3165,7 @@ coding.sh steer latest --strict --json
 - Pass `--prompt` to print only `suggestedSteer` on stdout (nothing with exit 0 on `continue`), ready for scripts and orchestrators.
 - Pass `--strict` to exit 1 when `status` is `intervene`, and `--fresh` to ingest pending captures before advising.
 - The viewer and `coding.sh serve` expose the same pure report at `GET /api/sessions/{id}/steer`.
+- At-risk sessions (`#/s/<id>`) and work items (`#/w/<id>`) show a Live Steer card with directives and a copyable steer prompt; healthy items make no `/steer` requests.
 
 ### Diagnosing sessions into Signals
 
