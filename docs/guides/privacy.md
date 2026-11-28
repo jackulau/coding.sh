@@ -68,8 +68,7 @@ match becomes `[redacted:<kind>]`.
   `\n` and keep each escape whole.
 - A quote at either end of a `redactPatterns` match stays, with its leading backslashes, so JSON
   still parses.
-- `coding.sh export scores` redacts string score values and comments with your `[capture]` rules
-  (secrets always on); the scorer identity (`by`) stays as recorded.
+- `export scores` redacts text values and comments (`[capture]` rules, secrets on); `by` stays unchanged.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

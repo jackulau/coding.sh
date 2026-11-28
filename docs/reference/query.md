@@ -347,13 +347,14 @@ coding.sh export labels --format csv
 coding.sh export scores --name helpfulness --source judge --format csv --out scores.csv
 ```
 
-The filters `--agent`, `--repo`, `--since`, `--until`, `--flag`, `--project`, `--where`, `--subagents` and
-`--limit` (the N newest sessions) pick sessions, as they do for `coding.sh sessions` (`--repo` takes
-a path or a repo name); `events`, `labels` and `scores` export the rows of those
-sessions. For `scores`, `--name` and `--source` narrow by score name and source; with no session filter,
-`export scores` exports every matching score, including event, case and run scores, and redacts string
-values and comments with your `[capture]` rules (secrets always on). With no filter, `export labels`
-exports every label, including labels on eval cases.
+The filters `--agent`, `--repo`, `--since`, `--until`, `--flag`, `--project`, `--where`, `--subagents`
+and `--limit` (the N newest sessions) pick sessions, as for `coding.sh sessions` (`--repo` takes a path
+or repo name); `events`, `labels` and `scores` export their rows. With no filter, `export labels` exports
+every label, including eval cases.
+
+For `scores`, `--name` and `--source` narrow by score name and source. With no session filter, `export
+scores` exports every matching score, including event, case and run scores, and redacts text values and
+comments with your `[capture]` rules (secrets always on).
 
 JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label`, `Score` in the
 [trace format](https://coding.sh/docs/trace-format)). CSV has these columns. A text cell that starts
