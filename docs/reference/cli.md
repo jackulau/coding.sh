@@ -78,6 +78,7 @@ Every command accepts these.
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
+| [`impact`](#codingsh-impact) | Evaluate | Validate workflow impact and local overhead: store footprint, surfaced issues, eval artifacts and before/after refinement results |
 | [`improve`](#codingsh-improve) | Harness | What to fix first in your sessions, the line that fixes it, and whether your last AGENTS.md changes helped |
 | [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles; audit which memory and instruction files agents use |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
@@ -3597,6 +3598,32 @@ coding.sh bench schedule answers
 coding.sh bench schedule answers --install-cron --yes
 coding.sh bench schedule answers --workflow-out .github/workflows/bench-answers.yml
 ```
+
+## `coding.sh impact`
+
+Validate workflow impact and local overhead: store footprint, surfaced issues, eval artifacts and before/after refinement results.
+
+```text
+coding.sh impact [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `-r, --repo <DIR|NAME>` |  | Only sessions and refine ledgers for this repo: a directory path or a repo name. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh impact
+coding.sh impact --since 90d --repo .
+coding.sh impact --agent claude-code --json
+```
+
+- Local overhead sums index.db (including WAL and SHM files), blobs/ and spool/ under CODING_SH_HOME, and counts recorded hook errors in spool/errors.log.
+- Flagged sessions count real failure flags only (colon tags and context-only flags such as compaction, step-retried and resumed are left out). Wasted spend adds the cost of flagged sessions and the cache-break extra USD of unflagged sessions.
+- Applied refinements come from live entries in the refine ledger (up to the 5 most recent), comparing organic sessions in the 14 days before and after appliedAt. Either side with fewer than 5 organic sessions is marked insufficient-data.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh improve`
 
