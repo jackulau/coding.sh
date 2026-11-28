@@ -26,6 +26,7 @@ const BUDGET = {
   // /docs/api/read is 30.3KB with the weight edit and checkpoint fields, so 33KB.
   // It is 33.0KB with stats.waiting and stats.endInferred and the star count in the header, so 36KB.
   // It is 37.2KB with stats.waits, so 40KB.
+  // It is 40.6KB with stats.verification and stats.contextHygiene, so 45KB.
   // The front page names its translations (hreflang links, og:locale alternates and the
   // language switcher in its footer): 0.3KB, so / went from 24.5 to 25.5KB.
   // Its install box offers the agent prompt, npx and the script, in the hero and at the
@@ -35,7 +36,7 @@ const BUDGET = {
     "/": 26.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
-    "/docs/api/read/": 40 * KB,
+    "/docs/api/read/": 45 * KB,
     "/docs/api/read/search/": 30 * KB,
     "/docs/troubleshooting/": 36 * KB,
     // The config reference gains rows with each setting, like the CLI and API references. It
