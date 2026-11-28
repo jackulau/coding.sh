@@ -534,6 +534,25 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/proof.ts"),
   },
   {
+    name: "handoff",
+    group: "Explore",
+    summary: "Build a deterministic $0 context-reset handoff brief for starting a fresh session",
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'", required: true }],
+    flags: [
+      { name: "out", short: "o", type: "string", value: "<FILE>", desc: "Write the handoff Markdown (or JSON with --json) to FILE and print its path" },
+      { name: "max-dead-ends", type: "number", value: "<N>", desc: "Maximum unresolved failed approaches listed under Do Not Repeat", default: "8" },
+      FRESH,
+    ],
+    examples: ["coding.sh handoff latest", "coding.sh handoff 9f1c2e --out handoff.md", "coding.sh handoff latest --max-dead-ends 5 --json"],
+    notes: [
+      "Deterministic and $0: runs locally over stored events with secret redaction and makes no model call.",
+      "Prints copy-paste-ready Markdown on stdout and status notes on stderr, so `coding.sh handoff latest > handoff.md` writes a clean brief.",
+      "Includes the original goal, changed files, passing checks, unresolved failed approaches under Do Not Repeat, supervision risk signals when medium or high, and formal-verification status when the session has proof activity.",
+      PENDING_NOTE,
+    ],
+    load: () => import("./commands/handoff.ts"),
+  },
+  {
     name: "steer",
     group: "Explore",
     summary: "Advise whether to continue, nudge or intervene in a session, with a paste-ready steer",
