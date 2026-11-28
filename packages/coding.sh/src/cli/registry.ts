@@ -515,6 +515,25 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/views.ts"),
   },
   {
+    name: "proof",
+    group: "Explore",
+    summary: "Review a session's formal-verification integrity (escapes, checks, spec changes)",
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'", required: true }],
+    flags: [
+      { name: "check-disk", type: "boolean", desc: "Statically scan touched proof files on disk for remaining escape hatches (read-only)" },
+      { name: "strict", type: "boolean", desc: "Exit 1 when the verdict is tampered or incomplete, for CI and review gates" },
+      FRESH,
+    ],
+    examples: ["coding.sh proof latest", "coding.sh proof 9f1c2e --check-disk", "coding.sh proof latest --strict --json"],
+    notes: [
+      "Verdicts: verified (proof files touched, at least one passing check, last check passed, zero remaining escapes and zero tamper findings), incomplete (remaining escapes, failing last check or zero passing checks), tampered (statement, spec or config tampered, or checker bypass flag used), or no-proof.",
+      "--check-disk scans touched proof files on disk with comments and strings blanked and executes no external checker.",
+      "--strict exits 1 on tampered or incomplete and 0 on verified or no-proof.",
+      PENDING_NOTE,
+    ],
+    load: () => import("./commands/proof.ts"),
+  },
+  {
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
@@ -2254,7 +2273,7 @@ export const COMMANDS: CommandSpec[] = [
       },
       {
         name: "mine",
-        summary: "Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags and failed eval runs, with counts and example sessions ($0)",
+        summary: "Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags, failed eval runs and recurring proof-checker failures, with counts and example sessions ($0)",
         flags: [
           { name: "since", type: "string", value: "<DURATION|DATE>", desc: "Sessions started since", default: "30d" },
           { name: "agent", type: "list", commas: true, value: "<AGENT>", desc: "Only sessions of this agent (repeatable, or a comma list)" },
