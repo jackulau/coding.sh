@@ -482,6 +482,19 @@ Mined cases carry deterministic `difficulty` (`easy`, `medium`, or `hard`), `tur
 
 `coding.sh dataset stats <name>` reports version, case counts by split, kind, tag, and difficulty, input length min/median/max, and near-duplicate pair count at `--near-threshold` (default `0.8`). `coding.sh dataset filter <src> --out <dst>` writes a new immutable child dataset filtered by `--split`, `--tag`, `--difficulty`, `--min-chars`, `--max-chars`, `--dedupe-near`, and `--limit`.
 
+#### Mining formal proof steps
+
+`coding.sh dataset mine <name> --proof-steps` mines formal-verification proof-step cases from Lean, Rocq, Dafny, Verus, Isabelle, and TLA+/TLC checker runs instead of whole-session prompts.
+
+```sh
+coding.sh dataset mine proof-bench --proof-steps --proof-lang lean,rocq
+coding.sh dataset mine stuck-proofs --proof-steps --proof-outcome stuck --dry-run
+```
+
+- **Solved transitions** (`outcome: "solved"`): a failing proof check followed by proof-file edits and a clean passing check with no net new escape hatches.
+- **Stuck goals** (`outcome: "stuck"`): a failing proof check that repeats or remains unresolved at session end, giving eval suites a benchmark of real unresolved proof goals.
+- **Filtering and safety**: pass `--proof-lang` to limit languages and `--proof-outcome solved|stuck|all` to pick outcomes. Every error, goal snippet, command, path, and winning diff is redacted and deduplicated before storage.
+
 ### Case kinds: bad, guard, control
 
 When a dataset tests a change (a new prompt, new tool text, a new model), give its cases a `kind`.
@@ -1632,6 +1645,15 @@ Saying why doesn't make it pass: the change decides the answer, and the words on
 `disclosed` or `stealth`. The item cites the change and the test runs before and after it.
 `args.severity: "info"` also fails any non-additive test edit, and `args.pattern` (a regex) protects
 more paths, such as a verifier script: `{"name": "no-test-tamper", "args": {"pattern": "^check\\.sh$"}}`.
+
+When a genuine human `user.message` explicitly redirects scope or asks to update, relax, skip, or
+delete tests, assertions, snapshots, CI checks, or formal theorem statements and specs, matching
+post-steer edits are recorded at `severity: "info"` with `steeredBy` set to that message's event
+id instead of raising `test-tamper`.
+
+Generic prompts such as "fix it", "keep going", "make the tests pass", or "finish the proof",
+assistant messages, synthetic harness prompts, unrequested bypass flags such as `--no-verify` or
+`debug.skipKernelTC`, and unsteered edits after a later failing check stay `severity: "high"`.
 
 It reads proofs too: Rocq (`.v`), Lean (`.lean`), Dafny (`.dfy`), Verus (Rust), TLA+ (`.tla` and
 TLC `.cfg`) and Isabelle (`.thy`). It answers no for:
@@ -3142,12 +3164,39 @@ model call.
 ```sh
 coding.sh handoff latest > handoff.md
 coding.sh handoff 9f1c2e --out handoff.md --max-dead-ends 5
+coding.sh handoff --work w3f9a1c --out handoff.md
 coding.sh handoff latest --json
 ```
 
 The brief keeps the original goal, changed files, passing checks, unresolved failed approaches under
 Do Not Repeat, supervision risk signals when medium or high, and formal-proof status when present.
-`coding.sh work show` suggests `coding.sh handoff` on high-risk items.
+
+For multi-day work spanning several sessions, `coding.sh handoff --work <id>` stitches every session
+in that work item chronologically (`--since 30d` by default, `--max-sessions 20`). It preserves the
+original goal, notes any latest direction pivot, unions changed files, deduplicates Do Not Repeat
+dead ends, and rolls up proof status and context resets.
+
+`coding.sh work show <id>` prints a chronological `Timeline` section for multi-session work items
+(`timeline` in `--json`) and suggests `coding.sh handoff --work <id>` on multi-session high-risk
+items (or `coding.sh handoff <session>` on single-session high-risk items).
+
+### Live session steering
+
+`coding.sh steer <session>` reads live verification, formal proof loop, context hygiene, tamper, and
+wait telemetry to advise whether to `continue`, `nudge`, or `intervene`. When action is needed, it
+lists prioritized directives and a paste-ready `suggestedSteer` grounded in the session's files,
+failing commands, and proof goals.
+
+```sh
+coding.sh steer latest --fresh
+coding.sh steer latest --prompt
+coding.sh steer latest --strict --json
+```
+
+- Pass `--prompt` to print only `suggestedSteer` on stdout (nothing with exit 0 on `continue`), ready for scripts and orchestrators.
+- Pass `--strict` to exit 1 when `status` is `intervene`, and `--fresh` to ingest pending captures before advising.
+- The viewer and `coding.sh serve` expose the same pure report at `GET /api/sessions/{id}/steer`.
+- At-risk sessions (`#/s/<id>`) and work items (`#/w/<id>`) show a Live Steer card with directives and a copyable steer prompt; healthy items make no `/steer` requests.
 
 ### Diagnosing sessions into Signals
 
@@ -3411,3 +3460,21 @@ run again. Compare it against a control variant that resumes the unedited script
 runs, not against fresh baseline runs: `workflows compare` notes "no control fork" otherwise. With
 a control, it reports how often the control's outcome changed from its source run as the replay
 noise floor (`control.drift` in `--json`). Treat differences below that as replay drift.
+
+## Workflow impact
+
+`coding.sh impact` measures local store overhead alongside concrete catches, eval artifacts, and applied refinement outcomes across captured sessions.
+
+```sh
+coding.sh impact
+coding.sh impact --since 90d --repo .
+coding.sh impact --agent claude-code --json
+```
+
+The report covers three areas:
+
+- **Coverage and overhead**: session counts, active agents, disk footprint of `index.db`, `blobs/`, and `spool/`, and hook error counts from `spool/errors.log`.
+- **Issues surfaced**: test tampering catches, high and medium supervision risk sessions, unverified edit streaks (5 or more edits before a check), formal proof issues, and wasted spend.
+- **Applied refinements**: 14-day before and after comparisons over organic sessions for up to the 5 most recent live applies in the refine ledger.
+
+Each applied refinement compares failure rate, pushback rate, unverified edit streaks, median cost, and tool error rate before and after `appliedAt`. Either side with fewer than 5 organic sessions reports `insufficient-data` with no delta so small samples stay honest.

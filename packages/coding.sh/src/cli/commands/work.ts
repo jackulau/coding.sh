@@ -2,9 +2,11 @@
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace, type Place } from "../../mcp/data.ts";
-import type { PullRequestRef, Session } from "../../schema/index.ts";
+import type { AgentEvent, PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { dateMs, isoMs } from "../../core/dates.ts";
+import { buildWorkTimeline, DEFAULT_MAX_WORK_SESSIONS, type WorkTimeline } from "../../core/handoff.ts";
+import { createRedactor } from "../../core/redact.ts";
 import type { IndexStore } from "../../core/types.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
@@ -21,6 +23,7 @@ import {
   stagesLine,
   SUPERVISION_RISKS,
   WORK_KINDS,
+  workAsOf,
   workFiles,
   workItemJson,
   workJson,
@@ -55,9 +58,9 @@ interface Window {
   sinceText: string;
 }
 
-function windowOf(c: CommandContext): Window {
+function windowOf(c: CommandContext, now?: number): Window {
   const sinceText = str(c.flags.since) ?? WORK_SINCE;
-  return { since: parseSinceWhen(sinceText).ms, sinceText };
+  return { since: parseSinceWhen(sinceText, now).ms, sinceText };
 }
 
 /** `--stage`: the stages named, repeated or as a comma list, each once. An unknown one is a usage error (exit 2). */
@@ -123,7 +126,7 @@ export function risksFlag(c: Pick<CommandContext, "flags">): SupervisionRisk[] {
 async function list(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
-  const w = windowOf(c);
+  windowOf(c);
   const agents = agentsFlag(c);
   const repo = str(c.flags.repo);
   const place = repo ? parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/") : undefined;
@@ -137,13 +140,15 @@ async function list(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const stale = staleIndex(ctx);
+    const asOf = workAsOf(stale);
+    const w = windowOf(c, asOf);
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
     // Next steps name sessions by the shortest id that resolves (core/session-ref.ts).
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, kinds, buckets, risks, q: qText, now: stale?.at, shortId: await shortener(ctx.index) });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, kinds, buckets, risks, q: qText, now: asOf, shortId: await shortener(ctx.index) });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
-    await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
+    await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, asOf);
     const shown: WorkQueue = { ...q, items: q.items.map((i) => forShell(out, i)) };
     if (out.json) {
       out.data({ ...workJson(shown, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
@@ -194,7 +199,7 @@ async function printQueue(
   const shown = q.items.slice(0, o.limit);
   let bucket: string | undefined | null = null;
   for (const i of shown) {
-    const head = i.bucket ? BUCKET_LABELS[i.bucket] : "Hidden";
+    const head = i.bucket ? BUCKET_LABELS[i.bucket] : !o.all && o.risks.length > 0 && i.hidden === "running" ? "Running" : "Hidden";
     if (head !== bucket) {
       out.print("");
       out.print(out.style(head, "bold"));
@@ -239,7 +244,7 @@ async function printQueue(
     out.print(noneAtAll ? `No sessions from ${agents.join(" or ")} in the store.` : narrowed ? `No work items match the filters since ${o.window.sinceText}.` : where ? `No work items${where} since ${o.window.sinceText}.` : `No agent sessions since ${o.window.sinceText}.`);
     const next = noneAtAll
       ? { label: "See every agent's items", command: cliCommand(c.env, ["work", ...typedSince, ...repoFlag]) }
-      : { label: "Widen the window", command: cliCommand(c.env, ["work", "--since", widerWindow(o.window.since), ...filters]) };
+      : { label: "Widen the window", command: cliCommand(c.env, ["work", "--since", widerWindow(o.window.since, o.stale?.at), ...filters]) };
     // On a store with no session at all, the step is how the first one gets here instead.
     await emptyStateNext(out, c.env, index, next);
     return;
@@ -386,9 +391,14 @@ export async function matchItem(ctx: Context, ref: string, since: number, overla
   return item && { item, sessions, shortId };
 }
 
-/** matchItem in the window of --since. Unknown: exit 1; an ambiguous prefix lists its candidates. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
-  const w = windowOf(c);
+/** matchItem in `w`. Unknown: exit 1; an ambiguous prefix lists its candidates. */
+export async function findWorkItem(
+  ctx: Context,
+  ref: string,
+  w: Window,
+  overlay: WorkOverlay,
+  now?: number,
+): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
   const found = await matchItem(ctx, ref, w.since, overlay, now, (r) =>
     resolveSession(ctx, r).catch((e: unknown) => {
       if (e instanceof CliError && e.reason === "not_found") return undefined;
@@ -402,6 +412,11 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
     throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
   return found;
+}
+
+/** matchItem in the window of --since. Unknown: exit 1; an ambiguous prefix lists its candidates. */
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
+  return findWorkItem(ctx, ref, windowOf(c, now), overlay, now);
 }
 
 /** A prefix several items' ids share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
@@ -438,6 +453,22 @@ async function show(c: CommandContext): Promise<number> {
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
     const own = mainFilesChanged(item, byId);
+    let timeline: WorkTimeline | undefined;
+    if (item.sessionIds.length > 1) {
+      const memberSessions = item.sessionIds
+        .map((id) => byId.get(id))
+        .filter((s): s is Session => !!s)
+        .sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const eventsBySession = new Map<string, AgentEvent[]>();
+      for (const s of memberSessions.slice(-DEFAULT_MAX_WORK_SESSIONS)) {
+        eventsBySession.set(s.id, await ctx.index.listEvents(s.id));
+      }
+      const redactor = createRedactor({
+        redact: [...new Set(["secrets", ...ctx.config.capture.redact])],
+        patterns: ctx.config.capture.redactPatterns,
+      });
+      timeline = buildWorkTimeline(item, memberSessions, eventsBySession, { shortId, redact: redactor });
+    }
     if (out.json) {
       out.data({
         ...workItemJson(item),
@@ -453,6 +484,8 @@ async function show(c: CommandContext): Promise<number> {
           if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
           return row;
         }),
+        spanDays: timeline ? timeline.spanDays : undefined,
+        timeline: timeline ? timeline.entries : undefined,
         ...staleIndexField(stale),
         ...pendingField(backlog),
       });
@@ -511,9 +544,36 @@ async function show(c: CommandContext): Promise<number> {
       for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
       if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: ${out.command(`coding.sh tree ${shortId(item.primaryId)}`)}`, "faint"));
     }
+    if (timeline && timeline.entries.length > 0) {
+      const firstDay = timeline.firstStartedAt?.slice(0, 10);
+      const lastDay = timeline.lastEndedAt?.slice(0, 10);
+      const span =
+        timeline.spanDays > 1 && firstDay && lastDay
+          ? `${plural(timeline.totalSessions, "session")} across ${plural(timeline.spanDays, "day")} (${firstDay} to ${lastDay})`
+          : firstDay
+            ? `${plural(timeline.totalSessions, "session")} on ${firstDay}`
+            : plural(timeline.totalSessions, "session");
+      out.row("Timeline", span, "none", true);
+      if (timeline.omittedSessions) {
+        out.print(out.style(`    (${plural(timeline.omittedSessions, "older session")} omitted)`, "faint"));
+      }
+      for (const e of timeline.entries) {
+        const meta: string[] = [plural(e.verificationChecks, "check")];
+        if (e.compactions > 0) meta.push(plural(e.compactions, "compaction"));
+        if (e.risk) meta.push(`risk:${e.risk}`);
+        if (e.proofVerdict) meta.push(`proof:${e.proofVerdict}`);
+        if (e.deadEnds > 0) meta.push(plural(e.deadEnds, "dead end"));
+        out.print(`    ${e.day}  ${e.shortId ?? e.sessionId}  ${e.agent}  ${meta.join(", ")}  ${oneLine(e.title, 48)}`);
+      }
+    }
     out.row("Next", nextText(item.next), "none", true);
     if (item.proof) out.next("Review proof integrity", `coding.sh proof ${shortId(item.primaryId)}`);
-    if (item.supervisionRisk === "high") out.next("Reset context with a clean handoff brief", `coding.sh handoff ${shortId(item.primaryId)}`);
+    if (item.supervisionRisk === "high") {
+      const handoffCmd = item.sessionIds.length > 1
+        ? `coding.sh handoff --work ${item.id}`
+        : `coding.sh handoff ${shortId(item.cause?.sessionId ?? item.primaryId)}`;
+      out.next("Reset context with a clean handoff brief", handoffCmd);
+    }
     return 0;
   });
 }
@@ -552,24 +612,26 @@ async function ack(c: CommandContext): Promise<number> {
   const agents = agentsFlag(c);
   const repo = str(c.flags.repo);
   const kinds = kindsFlag(c);
+  const risks = risksFlag(c);
   const qText = str(c.flags.q)?.trim() || undefined;
   const hasBatchSelector = probablyClosed || group !== undefined || bucket !== undefined;
-  const hasNarrowing = agents.length > 0 || repo !== undefined || kinds.length > 0 || qText !== undefined;
+  const hasNarrowing = agents.length > 0 || repo !== undefined || kinds.length > 0 || risks.length > 0 || qText !== undefined;
   if (ref && (hasBatchSelector || hasNarrowing || dryRun)) {
     throw new UsageError("Pass either <id> or batch flags (--probably-closed, --group, --bucket), not both", { reason: "invalid_argument" });
   }
   if (!ref && !hasBatchSelector) {
     throw new UsageError(`Missing argument <ID>. Pass <id> or a batch selector (--probably-closed, --group, --bucket). Usage: ${out.command("coding.sh work ack <id>")}`, { reason: "missing_argument" });
   }
-  const w = windowOf(c);
+  windowOf(c);
   if (hasBatchSelector) {
     const place = repo ? parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/") : undefined;
     return withContext(c, async (ctx) => {
       await autoIngest(ctx, readIngest(c));
-      const asOf = staleIndex(ctx)?.at;
+      const asOf = workAsOf(staleIndex(ctx));
+      const w = windowOf(c, asOf);
       const overlay = readOverlay(ctx.paths.work);
       const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
-      const queue = buildWorkQueue(sessions, { overlay, agents, place, kinds, q: qText, now: asOf });
+      const queue = buildWorkQueue(sessions, { overlay, agents, place, kinds, risks, q: qText, now: asOf });
       if (!queue.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
       const targets = selectBatchAckTargets(queue.items, { probablyClosed: probablyClosed || undefined, group, bucket });
       if (!dryRun && targets.length) {

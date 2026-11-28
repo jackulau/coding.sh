@@ -1,9 +1,10 @@
 // Formal-verification proof review report for a single session.
 // Pure over (session, events) with an optional read-only disk scanner that
 // checks touched proof files statically using core/proof.ts scanners.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { readUserSteer, toProofSteer } from "./intent.ts";
 import { createRedactor } from "./redact.ts";
 import {
   checkOutcome,
@@ -13,7 +14,8 @@ import {
   isProofTestPath,
   isRocqOutput,
   isSpecNamed,
-  isWholeProjectCheck,
+  isWholeProjectProofCheck,
+  KERNEL_BYPASS_HATCHES,
   outText,
   proofChange,
   proofCheck,
@@ -21,12 +23,15 @@ import {
   proofLang,
   proofLog,
   proofStart,
+  proofSteer,
   proofWrite,
   readProofDiff,
   scanProofEscapes,
+  steerCoversBypass,
   type HasProof,
   type ProofCheck,
   type ProofLang,
+  type ProofSteer,
 } from "./proof.ts";
 import { normalizeTracePath, shellCommand, shellDiffOrigin, shellWrites } from "./shell-diff.ts";
 import { isShellCall } from "./shell-tools.ts";
@@ -67,6 +72,20 @@ export interface ProofDiskCheck {
   remainingEscapes: ProofDiskEscape[];
 }
 
+export interface ProofMilestone {
+  eventId: string;
+  ts: number;
+  ok: boolean;
+  lang: string;
+  wholeProject: boolean;
+  durationMs?: number;
+}
+
+export interface ProofReportOptions {
+  /** Include ordered proof-check `tool.end` milestones for timeline navigation. */
+  includeMilestones?: boolean;
+}
+
 export interface ProofReport {
   sessionId: string;
   langs: ProofLang[];
@@ -76,24 +95,13 @@ export interface ProofReport {
   escapes: ProofEscapes;
   checks: ProofChecks;
   tamperFindings: ProofTamperFinding[];
+  /** Count of statement, spec, escape, or bypass changes explicitly authorized by a human user steer; omitted when 0. */
+  userSteeredChanges?: number;
   verdict: ProofVerdict;
   verifyHints: string[];
   diskCheck?: ProofDiskCheck;
+  milestones?: ProofMilestone[];
 }
-
-/** Escape tokens that disable kernel or verifier checking rather than leaving a proof hole. */
-const KERNEL_BYPASS_HATCHES = new Set([
-  "debug.skipKernelTC",
-  "Unset Guard Checking",
-  "Unset Universe Checking",
-  "Unset Positivity Checking",
-  "bypass_check",
-  "{:verify false}",
-  "quick_and_dirty",
-  "skip_proofs",
-  "-type-in-type",
-  "no-verify",
-]);
 
 /** A `spec/` or `specs/` folder holding formal-verification files. */
 const PROOF_SPEC_DIR = /(?:^|\/)specs?\//i;
@@ -102,6 +110,12 @@ const MAX_DISK_FILE_BYTES = 5 * 1024 * 1024;
 const TIMED_OUT_TEXT = /\b(?:exec )?command timed out\b/i;
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const queueKey = (e: AgentEvent): string => `${e.subagentId ?? ""}\u0000${typeof e.payload?.tool === "string" ? e.payload.tool.toLowerCase() : ""}`;
+
+function isOutsideRoot(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel);
+}
 
 function isSpecFile(path: string): boolean {
   return isProofConfig(path) || isSpecNamed(path) || PROOF_SPEC_DIR.test(path);
@@ -177,7 +191,11 @@ function buildVerifyHints(langs: readonly ProofLang[], proofFiles: readonly stri
  * Summarize a session's formal-verification integrity from its recorded events.
  * Pure: performs no disk or process I/O.
  */
-export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, events: readonly AgentEvent[]): ProofReport {
+export function buildProofReport(
+  session: Pick<Session, "id" | "cwd" | "repo">,
+  events: readonly AgentEvent[],
+  opts?: ProofReportOptions,
+): ProofReport {
   const sorted = events.map((e, i) => ({ e, i })).sort((a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || a.i - b.i).map((x) => x.e);
   const redactor = createRedactor();
   const redact = (s: string) => redactor.string(s);
@@ -186,6 +204,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   const log = proofLog();
   const starts = new Map<string, AgentEvent>();
   const activeChecks = new Map<string, { check: ProofCheck; cmd: string; startTs: number }>();
+  const idlessChecks = new Map<string, ({ check: ProofCheck; cmd: string; startTs: number } | null)[]>();
   const seenBuildChecks = new Set<string>();
 
   const langs = new Set<ProofLang>();
@@ -193,6 +212,9 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   const specFiles = new Set<string>();
   const bypassCalls: { flag: string; lang: string }[] = [];
   const durations: number[] = [];
+  let activeProofSteer: ProofSteer | undefined;
+  let steeredBypassCalls = 0;
+  const milestones: ProofMilestone[] = [];
 
   let escapesAdded = 0;
   let escapesRemoved = 0;
@@ -207,7 +229,13 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   for (const e of sorted) {
     const p = e.payload ?? {};
     const cwd = baseCwd ?? e.cwd;
-    if (e.kind === "tool.start") {
+    if (e.kind === "user.message") {
+      const u = readUserSteer(e);
+      if (u.human) {
+        activeProofSteer = toProofSteer(u.steer);
+        proofSteer(proof, activeProofSteer);
+      }
+    } else if (e.kind === "tool.start") {
       const id = str(p.toolUseId);
       if (id) starts.set(id, e);
       const tool = str(p.tool);
@@ -216,9 +244,18 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       if (isShellCall(tool ?? "", p.input)) {
         proofStart(proof, id, cmd, p.input);
         const check = proofCheck(cmd, p.input);
-        if (check) {
-          if (isProofLang(check.lang)) langs.add(check.lang);
-          if (id) activeChecks.set(id, { check, cmd, startTs: e.ts });
+        if (check && isProofLang(check.lang)) langs.add(check.lang);
+        const entry = check ? { check, cmd, startTs: e.ts } : null;
+        if (id) {
+          if (entry) activeChecks.set(id, entry);
+        } else {
+          const k = queueKey(e);
+          let q = idlessChecks.get(k);
+          if (!q) {
+            q = [];
+            idlessChecks.set(k, q);
+          }
+          q.push(entry);
         }
       }
       for (const w of shellWrites(cmd)) {
@@ -276,11 +313,34 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
         specFiles.add(finalPath);
       }
     } else if (e.kind === "tool.end") {
+      const preSteer = activeProofSteer;
       proofEnd(proof, e, log.note);
       const id = str(p.toolUseId);
-      const active = id ? activeChecks.get(id) : undefined;
+      let active: { check: ProofCheck; cmd: string; startTs: number } | undefined;
+      if (id) {
+        active = activeChecks.get(id);
+        if (active) activeChecks.delete(id);
+      } else {
+        const k = queueKey(e);
+        const q = idlessChecks.get(k);
+        if (q) {
+          const head = q.shift();
+          if (!q.length) idlessChecks.delete(k);
+          if (head) active = head;
+        }
+      }
+      if (!active && p.input !== undefined) {
+        const tool = str(p.tool);
+        const cmd = shellCommand(tool, p.input);
+        if (cmd !== undefined && isShellCall(tool ?? "", p.input)) {
+          const check = proofCheck(cmd, p.input);
+          if (check) {
+            if (isProofLang(check.lang)) langs.add(check.lang);
+            active = { check, cmd, startTs: e.ts };
+          }
+        }
+      }
       if (!active) continue;
-      activeChecks.delete(id!);
 
       const { check, cmd, startTs } = active;
       const text = outText(p.output);
@@ -294,18 +354,25 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       const outcome = checkOutcome(check, p);
       const timedOut = p.timedOut === true || (p.ok === false && TIMED_OUT_TEXT.test(text));
       if (outcome === undefined && !timedOut) continue;
+      if (outcome !== undefined) activeProofSteer = undefined;
 
       checksTotal++;
-      if (isWholeProjectCheck(check, cmd)) checksWholeProject++;
+      const wholeProject = isWholeProjectProofCheck(cmd);
+      if (wholeProject) checksWholeProject++;
 
+      let durationMs: number | undefined;
       if (typeof e.durationMs === "number" && Number.isFinite(e.durationMs) && e.durationMs >= 0) {
-        durations.push(e.durationMs);
+        durationMs = e.durationMs;
+        durations.push(durationMs);
       } else if (e.ts > startTs) {
-        durations.push(e.ts - startTs);
+        durationMs = e.ts - startTs;
+        durations.push(durationMs);
       }
 
+      let checkOk = false;
       if (check.bypass) {
-        bypassCalls.push({ flag: check.bypass, lang: check.lang });
+        if (steerCoversBypass(preSteer, check.bypass)) steeredBypassCalls++;
+        else bypassCalls.push({ flag: check.bypass, lang: check.lang });
         if (outcome === "red" || timedOut) {
           checksFailed++;
           lastOk = false;
@@ -313,9 +380,23 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       } else if (outcome === "green") {
         checksPassed++;
         lastOk = true;
+        checkOk = true;
       } else {
         checksFailed++;
         lastOk = false;
+      }
+
+      if (opts?.includeMilestones) {
+        const milestoneLang = isProofLang(check.lang) ? check.lang : isRocqOutput(text) ? "rocq" : check.lang;
+        const milestone: ProofMilestone = {
+          eventId: e.id,
+          ts: e.ts,
+          ok: checkOk,
+          lang: milestoneLang,
+          wholeProject,
+        };
+        if (durationMs !== undefined) milestone.durationMs = durationMs;
+        milestones.push(milestone);
       }
     }
   }
@@ -334,10 +415,16 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
 
   const tamperFindings: ProofTamperFinding[] = [];
   const seenBypass = new Set<string>();
+  let userSteeredChanges = 0;
+  let steeredLogBypasses = 0;
 
   for (const f of log.findings(proof.proof)) {
     if (f.kind === "statement") {
       if (f.path) specFiles.add(f.path);
+      if (f.steeredBy) {
+        userSteeredChanges++;
+        continue;
+      }
       const verb = f.shape === "weaken" ? "weakened" : f.shape === "delete" ? "deleted" : "changed";
       const target = f.theorem ? `statement ${f.theorem}` : "statement";
       const flip = f.flippedGreen ? " (turned failing check green)" : "";
@@ -346,6 +433,10 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       tamperFindings.push(item);
     } else if (f.kind === "spec") {
       if (f.path) specFiles.add(f.path);
+      if (f.steeredBy) {
+        userSteeredChanges++;
+        continue;
+      }
       const label = isProofConfig(f.path) ? "proof config" : "spec";
       const verb = f.shape === "weaken" ? "weakened" : f.shape === "delete" ? "deleted" : "changed";
       const flip = f.flippedGreen ? " (turned failing check green)" : "";
@@ -356,15 +447,27 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       if (f.path === "") {
         const flag = f.hatch ?? "bypass";
         seenBypass.add(flag);
+        if (f.steeredBy) {
+          userSteeredChanges++;
+          steeredLogBypasses++;
+          continue;
+        }
         tamperFindings.push({ kind: "bypass", detail: redact(`checker bypass flag ${flag} passed after failure`) });
       } else if (isProofConfig(f.path) || (f.hatch !== undefined && KERNEL_BYPASS_HATCHES.has(f.hatch))) {
         if (isProofConfig(f.path)) specFiles.add(f.path);
+        if (f.steeredBy) {
+          userSteeredChanges++;
+          continue;
+        }
         const item: ProofTamperFinding = { kind: "bypass", detail: redact(`verification bypass ${f.hatch ?? "unknown"} added`) };
         if (f.path) item.file = redact(f.path);
         tamperFindings.push(item);
+      } else if (f.steeredBy) {
+        userSteeredChanges++;
       }
     }
   }
+  if (steeredBypassCalls > steeredLogBypasses) userSteeredChanges += steeredBypassCalls - steeredLogBypasses;
 
   for (const b of bypassCalls) {
     if (seenBypass.has(b.flag)) continue;
@@ -405,7 +508,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict = "verified";
   }
 
-  return {
+  const report: ProofReport = {
     sessionId: session.id,
     langs: sortedLangs,
     proofFiles: sortedProofFiles,
@@ -417,6 +520,9 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict,
     verifyHints: buildVerifyHints(sortedLangs, sortedProofFiles, redact),
   };
+  if (userSteeredChanges > 0) report.userSteeredChanges = userSteeredChanges;
+  if (opts?.includeMilestones && milestones.length > 0) report.milestones = milestones;
+  return report;
 }
 
 /**
@@ -426,7 +532,10 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
 export function verifyProofFilesOnDisk(repoRoot: string, proofFiles: readonly string[]): ProofDiskCheck {
   const redactor = createRedactor();
   const rootAbs = resolve(repoRoot);
-  if (!existsSync(rootAbs)) {
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(rootAbs);
+  } catch {
     return { scanned: 0, missing: proofFiles.length, remainingEscapes: [] };
   }
   let scanned = 0;
@@ -435,19 +544,23 @@ export function verifyProofFilesOnDisk(repoRoot: string, proofFiles: readonly st
 
   for (const file of proofFiles) {
     const abs = resolve(rootAbs, file);
-    const rel = relative(rootAbs, abs);
-    if (rel.startsWith("..") || isAbsolute(rel) || !existsSync(abs)) {
+    if (isOutsideRoot(rootAbs, abs)) {
       missing++;
       continue;
     }
     let text: string;
     try {
-      const st = statSync(abs);
+      const fileReal = realpathSync(abs);
+      if (isOutsideRoot(rootReal, fileReal)) {
+        missing++;
+        continue;
+      }
+      const st = statSync(fileReal);
       if (!st.isFile() || st.size > MAX_DISK_FILE_BYTES) {
         missing++;
         continue;
       }
-      text = readFileSync(abs, "utf8");
+      text = readFileSync(fileReal, "utf8");
     } catch {
       missing++;
       continue;
@@ -464,9 +577,12 @@ export function verifyProofFilesOnDisk(repoRoot: string, proofFiles: readonly st
   return { scanned, missing, remainingEscapes };
 }
 
-/** Attach a read-only disk scan result to a report, downgrading `verified` to `incomplete` if escapes remain on disk. */
+/** Attach a read-only disk scan result to a report, escalating to `tampered` on kernel-bypass hatches or downgrading `verified` to `incomplete` on other remaining escapes. */
 export function attachDiskCheck(report: ProofReport, repoRoot: string | undefined): ProofReport {
   const diskCheck = repoRoot ? verifyProofFilesOnDisk(repoRoot, report.proofFiles) : { scanned: 0, missing: report.proofFiles.length, remainingEscapes: [] };
-  const verdict: ProofVerdict = report.verdict === "verified" && diskCheck.remainingEscapes.length > 0 ? "incomplete" : report.verdict;
+  const hasKernelBypass = diskCheck.remainingEscapes.some((e) => KERNEL_BYPASS_HATCHES.has(e.token));
+  let verdict: ProofVerdict = report.verdict;
+  if (hasKernelBypass && verdict !== "no-proof") verdict = "tampered";
+  else if (verdict === "verified" && diskCheck.remainingEscapes.length > 0) verdict = "incomplete";
   return { ...report, verdict, diskCheck };
 }

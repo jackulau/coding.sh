@@ -4,6 +4,8 @@ import {
   checkOutcome,
   compareStatements,
   isProofConfig,
+  isWholeProjectCheck,
+  isWholeProjectProofCheck,
   outText,
   proofChange,
   proofCheck,
@@ -505,5 +507,53 @@ describe("proofWrite", () => {
     assert.equal(files.filter((f) => /^[HF]/.test(f)).length, 997);
     for (const gone of ["H200.lean", "H300.lean", "F100.lean"]) assert.ok(!files.includes(gone), gone);
     assert.deepEqual(files.slice(-4), ["N4999.lean", "X.lean", "Y.lean", "Z.lean"]);
+  });
+});
+
+describe("isWholeProjectProofCheck and isWholeProjectCheck", () => {
+  it("agrees across both exports and distinguishes whole-project builds from targeted checks", () => {
+    const whole = [
+      "lake build",
+      "lake test",
+      "dafny verify",
+      "isabelle build -D .",
+      "isabelle build -a",
+      "make",
+      "make -j4",
+      "make all",
+      "dune build",
+      "dune runtest",
+      "cargo verus",
+      "cargo verus --workspace",
+      "cargo verus verify --workspace",
+    ];
+    for (const cmd of whole) {
+      const check = proofCheck(cmd);
+      assert.ok(check, `expected proofCheck for ${cmd}`);
+      assert.equal(isWholeProjectProofCheck(cmd), true, `isWholeProjectProofCheck(${cmd})`);
+      assert.equal(isWholeProjectCheck(check, cmd), true, `isWholeProjectCheck(${cmd})`);
+    }
+
+    const targeted = [
+      "lake build MyModule",
+      "lake env lean Proof/Add.lean",
+      "make ProofTarget",
+      "make theories/Add.vo",
+      "dune build @check",
+      "dune build path/to/file.vo",
+      "cargo verus -p mycrate",
+      "cargo verus --package mycrate",
+      "cargo verus --verify-module foo",
+      "dafny verify src/Sort.dfy",
+      "isabelle build -d . Main",
+      "verus src/lib.rs",
+      "coqc theories/Add.v",
+    ];
+    for (const cmd of targeted) {
+      const check = proofCheck(cmd);
+      assert.ok(check, `expected proofCheck for ${cmd}`);
+      assert.equal(isWholeProjectProofCheck(cmd), false, `isWholeProjectProofCheck(${cmd})`);
+      assert.equal(isWholeProjectCheck(check, cmd), false, `isWholeProjectCheck(${cmd})`);
+    }
   });
 });
