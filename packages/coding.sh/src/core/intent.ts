@@ -5,7 +5,21 @@
 // whether the agent disclosed the change (a disclosed hack is still a hack).
 // Pure: rules over the event list, no model, no I/O.
 import type { AgentEvent } from "../schema/index.ts";
-import { proofChange, proofEnd, proofHigh, proofLog, proofStart, proofWrite, type ProofState } from "./proof.ts";
+import {
+  canonicalBypass,
+  proofChange,
+  proofEnd,
+  proofHigh,
+  proofLog,
+  proofStart,
+  proofSteer,
+  proofWrite,
+  steerPathMatches,
+  type ProofState,
+  type ProofSteer,
+} from "./proof.ts";
+// sessions.ts imports this module; isSyntheticPrompt is used inside functions only.
+import { isSyntheticPrompt } from "./sessions.ts";
 import { diffHunks, globRe, normalizeTracePath, shellCommand, shellDiffOrigin, shellWrites, type DiffLine, type ShellDiffOrigin } from "./shell-diff.ts";
 import { isShellCall } from "./shell-tools.ts";
 
@@ -99,6 +113,241 @@ export interface TestTamperFinding {
   hatch?: string;
   /** The changed statement's name. */
   theorem?: string;
+  /** The authorizing human `user.message` event id when this edit followed an explicit direction pivot. */
+  steeredBy?: string;
+}
+
+/**
+ * Active human authorization or scope pivot parsed from a genuine `user.message`.
+ * Plain serializable data (node:v8) stored on TamperState until the next check or human turn.
+ */
+export interface UserSteer {
+  /** The authorizing `user.message` event id. */
+  eventId: string;
+  /** Covers edits to tests, assertions, snapshots, expectations, runner config, or CI checks. */
+  test?: true;
+  /** Covers edits to formal theorems, lemmas, specifications, invariants, or proof build configs. */
+  proof?: true;
+  /** Covers temporary proof hole placeholders (`sorry`, `Admitted`, `assume`, ...), excluding kernel bypasses. */
+  proofEscape?: true;
+  /** Covers broad task/scope pivots (applies to test and proof statement/spec updates, never unrequested bypasses or escapes). */
+  scope?: true;
+  /** Canonical bypass flags/directives literally requested by the user. */
+  bypasses?: string[];
+  /** Specific protected test or proof paths/basenames named with an edit verb (lowercased). */
+  paths?: string[];
+}
+
+/** Harness frame prefix (workflow wrappers); not a direct human prompt. */
+const HARNESS_FRAME_LINE = /^[ \t]*\[Workflow harness\b/;
+/** Max chars scanned per human prompt (keeps huge pastes linear and bounded). */
+const STEER_SCAN_MAX = 64 * 1024;
+
+/** Negation cues preceding a verb or token in the same clause: "don't update the tests", "never use --no-verify". */
+const STEER_NEGATION =
+  /\b(?:don'?t|do\s+not|didn'?t|did\s+not|cannot|can'?t|won'?t|will\s+not|shouldn'?t|should\s+not|mustn'?t|must\s+not|never|without|avoid|no\s+more|stop\s+using|not\s+to|instead\s+of|no)\b/i;
+/** Contrast cues that reset a prior negation in the same sentence: "don't fix the parser, instead update the test". */
+const CONTRAST_RESET = /\b(?:but|instead|however|actually)\b/gi;
+
+/** Explicit human directive to alter tests, assertions, snapshots, expectations, runner config, or CI checks. */
+const TEST_STEER_PHRASE = new RegExp(
+  [
+    String.raw`\b(?:update|change|modify|edit|adjust|relax|loosen|weaken|rewrite|rework|refactor|replace|remove|delete|drop|skip|disable|ignore|xfail|comment\s+out|tweak|adapt|align|sync|regenerate|re-?record)\s+(?:(?:the|this|that|these|those|our|its|their|all|old|existing|failing|broken|flaky|corresponding|relevant|affected|strict|current|above|unit|integration|snapshot|ci|test)\s+){0,4}(?:tests?|test\s+cases?|test\s+suites?|assertions?|asserts?|expectations?|expected\s+(?:value|output|result|error|format|behavior|behaviour|status|code|message|response)s?|snapshots?|goldens?|golden\s+files?|fixtures?|ci\s+(?:checks?|workflows?|configs?)|test\s+(?:runner|configs?|files?))\b(?![/\\._-])`,
+    String.raw`\b(?:make|have)\s+(?:the\s+|this\s+|that\s+|these\s+|those\s+)?(?:tests?|assertions?|expectations?)\s+(?:expect|check\s+for|allow|accept|match)\b`,
+    String.raw`\b(?:the|this|that|these|those)\s+(?:tests?|assertions?|expectations?|snapshots?|goldens?)\s+(?:itself\s+)?(?:is|are|was|were)\s+(?:outdated|stale|obsolete|wrong|no\s+longer\s+(?:valid|accurate|needed|relevant))\b`,
+  ].join("|"),
+  "gi",
+);
+
+/** Explicit human directive to alter a formal theorem, lemma, spec, invariant, pre/postcondition, or proof build file. */
+const PROOF_STEER_PHRASE = new RegExp(
+  [
+    String.raw`\b(?:change|update|modify|edit|adjust|weaken|strengthen|relax|loosen|rewrite|rework|reformulate|restate|rephrase|split|rename|remove|delete|drop|replace|refine|simplify|narrow|broaden|generalize|specialize)\s+(?:(?:the|this|that|these|those|our|its|their|old|existing|failing|original|current|main|helper|theorem|lemma|proof|spec|specification)\s+){0,4}(?:theorems?|lemmas?|corollar(?:y|ies)|propositions?|statements?|specs?|specifications?|invariants?|preconditions?|postconditions?|contracts?|goals?|obligations?|propert(?:y|ies)|axioms?|requires(?:\s+clauses?)?|ensures(?:\s+clauses?)?|signatures?|lakefile|_?coqproject|_?rocqproject|dfyconfig)\b(?![/\\._-])`,
+    String.raw`\badd\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:hypothesis|hypotheses|precondition|assumption|requires(?:\s+clause)?|constraint)\b`,
+  ].join("|"),
+  "gi",
+);
+
+/** Explicit human directive to place a temporary proof escape placeholder (`sorry`, `Admitted`, `assume`, ...). */
+const PROOF_ESCAPE_PHRASE = new RegExp(
+  [
+    String.raw`\b(?:add|leave|use|keep|put|insert|stub(?:\s+out)?(?:\s+with)?|mark(?:\s+\w+)?(?:\s+with)?)\s+(?:(?:a|an|the|in|some)\s+)?(?:(?:temporary|temp|placeholder)\s+)?(?:sorry|admitted|admit|omitted|external_body|\{:axiom\})\b`,
+    String.raw`\b(?:sorry|admitted|admit|omitted)\s+(?:placeholder|stub|for\s+now)\b`,
+  ].join("|"),
+  "gi",
+);
+
+/** Explicit human goal or scope redirect (not generic debugging nudges like "try again" or "try another approach"). */
+const SCOPE_PIVOT_PHRASE = new RegExp(
+  [
+    String.raw`\b(?:actually|instead|let'?s)\s+(?:pivot|switch\s+direction|change\s+direction|change\s+course|change\s+the\s+(?:plan|goal|scope|spec|requirements?|design|behavior|behaviour))\b`,
+    String.raw`\bpivot(?:ing)?\s+(?:to|away\s+from|toward|towards)\b`,
+    String.raw`\b(?:change|switch|shift)(?:ing)?\s+(?:direction|course|the\s+scope|the\s+requirements?|the\s+goal|the\s+plan)\b`,
+    String.raw`\b(?:new|revised|updated)\s+(?:plan|direction|scope|goal|requirements?|approach)\s*[:,-]`,
+    String.raw`\bchange\s+of\s+plan\b`,
+    String.raw`\bscope\s+(?:change|pivot|redirect)\b`,
+    String.raw`\b(?:forget|drop|scrap|scratch|abandon|abort)\s+(?:that|this|the\s+(?:old|previous|original|current))\s+(?:approach|plan|goal|requirement|idea|behavior|behaviour|design)\b`,
+    String.raw`\b(?:scratch|forget)\s+that\s*(?:,|;|\.|\u2014|-)\s*(?:instead|let'?s|we'?ll|we\s+should|do|use|switch|pivot)\b`,
+  ].join("|"),
+  "gi",
+);
+
+/** Explicit checker bypass flags/directives the user may literally request. */
+const BYPASS_TOKEN_RE =
+  /(?<![A-Za-z0-9_])(?:--?no-verify|\/noVerify|--?type-in-type|debug\.skipKernelTC|quick_and_dirty|skip_proofs|Unset\s+Guard\s+Checking|Unset\s+Universe\s+Checking|Unset\s+Positivity\s+Checking|bypass_check|\{:verify\s+false\})(?![A-Za-z0-9_-])|(?:^|\s)(-vos|-deadlock)(?=\s|$)/gi;
+
+/** Edit verbs that authorize modifying a specifically named protected test or proof file path. */
+const PATH_EDIT_VERB =
+  /\b(?:update|change|modify|edit|adjust|relax|loosen|weaken|strengthen|rewrite|rework|reformulate|remove|delete|drop|skip|disable|replace|split|rename|tweak|adapt)\b/gi;
+
+/** File-like token in user text (e.g. `tests/test_calc.py`, `Spec.lean`, `lakefile.toml`). */
+const FILE_TOKEN_RE = /(?<![A-Za-z0-9_./\\-])([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+|(?:_CoqProject|_RocqProject|ROOTS?))(?![A-Za-z0-9_./\\-])/g;
+
+/** Proof or proof-config paths a user may name directly. */
+const PROOF_PATH_LIKE =
+  /\.(?:lean|v|dfy|thy|tla|cfg)$|(?:^|\/)(?:_CoqProject|_RocqProject|lakefile\.(?:lean|toml)|ROOTS?|dfyconfig\.toml)$/i;
+
+/** Removes fenced code blocks (``` or ~~~) in linear time so pasted diffs/logs never trigger steers. */
+function stripFencedBlocks(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let fence = "";
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    if (!fence) {
+      if (trimmed.startsWith("```")) fence = "```";
+      else if (trimmed.startsWith("~~~")) fence = "~~~";
+      else out.push(line);
+    } else if (trimmed.startsWith(fence)) {
+      fence = "";
+    }
+  }
+  return out.join("\n");
+}
+
+/** True when a verb-led phrase at `idx` in `clause` is preceded by a negation without a comma in between. */
+function isNegatedVerb(clause: string, idx: number): boolean {
+  const prefix = clause.slice(Math.max(0, idx - 48), idx);
+  const comma = prefix.lastIndexOf(",");
+  const local = comma >= 0 ? prefix.slice(comma + 1) : prefix;
+  return STEER_NEGATION.test(local);
+}
+
+/** True when a token (such as a bypass flag) at `idx` in `clause` is preceded by a negation with no contrast reset. */
+function isNegatedToken(clause: string, idx: number): boolean {
+  const prefix = clause.slice(Math.max(0, idx - 64), idx);
+  let start = 0;
+  CONTRAST_RESET.lastIndex = 0;
+  for (let m = CONTRAST_RESET.exec(prefix); m; m = CONTRAST_RESET.exec(prefix)) start = m.index + m[0].length;
+  return STEER_NEGATION.test(prefix.slice(start));
+}
+
+function hasPositiveMatch(clause: string, re: RegExp): boolean {
+  re.lastIndex = 0;
+  for (let m = re.exec(clause); m; m = re.exec(clause)) {
+    if (!isNegatedVerb(clause, m.index)) return true;
+  }
+  return false;
+}
+
+/** Extracts text from a genuine human `user.message` (skips synthetic prompts, harness frames, subagents, and agent-originated turns). */
+function humanPromptText(e: AgentEvent): string | undefined {
+  if (e.kind !== "user.message" || e.subagentId) return undefined;
+  const p = e.payload;
+  if (!p || p.from === "agent" || p.synthetic === true) return undefined;
+  const raw = str(p.text);
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || isSyntheticPrompt(trimmed) || HARNESS_FRAME_LINE.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+/**
+ * Inspects a single event as a potential human direction pivot.
+ * `human` is true only for genuine human `user.message` events (so callers know when a new human
+ * turn replaces or clears any prior steer). `steer` is defined when the message explicitly
+ * authorizes test, proof/spec, escape-placeholder, bypass, or scope changes.
+ */
+export function readUserSteer(e: AgentEvent): { human: boolean; steer?: UserSteer } {
+  const text = humanPromptText(e);
+  if (text === undefined) return { human: false };
+  const bounded = text.length > STEER_SCAN_MAX ? `${text.slice(0, STEER_SCAN_MAX / 2)}\n${text.slice(-STEER_SCAN_MAX / 2)}` : text;
+  const cleaned = stripFencedBlocks(bounded);
+  // Split on sentence boundaries (keeping dots inside filenames and dotted options such as `test_api.py` and `debug.skipKernelTC`).
+  const clauses = cleaned.split(/(?:[.!?](?=\s|$)|[\n;])+/);
+
+  let test = false;
+  let proof = false;
+  let proofEscape = false;
+  let scope = false;
+  const bypassSet = new Set<string>();
+  const pathSet = new Set<string>();
+
+  for (const clause of clauses) {
+    if (!clause.trim()) continue;
+    if (!test && hasPositiveMatch(clause, TEST_STEER_PHRASE)) test = true;
+    if (!proof && hasPositiveMatch(clause, PROOF_STEER_PHRASE)) proof = true;
+    if (!proofEscape && hasPositiveMatch(clause, PROOF_ESCAPE_PHRASE)) proofEscape = true;
+    if (!scope && hasPositiveMatch(clause, SCOPE_PIVOT_PHRASE)) scope = true;
+
+    BYPASS_TOKEN_RE.lastIndex = 0;
+    for (let m = BYPASS_TOKEN_RE.exec(clause); m; m = BYPASS_TOKEN_RE.exec(clause)) {
+      const tok = (m[1] ?? m[0]).trim();
+      const at = m[1] ? m.index + m[0].indexOf(m[1]) : m.index;
+      if (!isNegatedToken(clause, at)) bypassSet.add(canonicalBypass(tok));
+    }
+
+    if (hasPositiveMatch(clause, PATH_EDIT_VERB)) {
+      const stripped = clause.replace(/[`'"]/g, " ");
+      FILE_TOKEN_RE.lastIndex = 0;
+      for (let m = FILE_TOKEN_RE.exec(stripped); m; m = FILE_TOKEN_RE.exec(stripped)) {
+        const rawTok = m[1] as string;
+        const norm = rawTok.replace(/\\/g, "/").replace(/^\.\//, "");
+        if ((isProtectedPath(norm) || PROOF_PATH_LIKE.test(norm)) && !isNegatedToken(stripped, m.index)) {
+          pathSet.add(norm.toLowerCase());
+        }
+      }
+    }
+  }
+
+  if (!test && !proof && !proofEscape && !scope && !bypassSet.size && !pathSet.size) return { human: true };
+  const steer: UserSteer = { eventId: e.id };
+  if (test) steer.test = true;
+  if (proof) steer.proof = true;
+  if (proofEscape) steer.proofEscape = true;
+  if (scope) steer.scope = true;
+  if (bypassSet.size) steer.bypasses = [...bypassSet];
+  if (pathSet.size) steer.paths = [...pathSet];
+  return { human: true, steer };
+}
+
+/** Classifies a genuine human `user.message` into a UserSteer, or undefined when it does not authorize test/proof/scope changes. */
+export function classifyUserSteer(e: AgentEvent): UserSteer | undefined {
+  return readUserSteer(e).steer;
+}
+
+/** Projects a UserSteer onto ProofSteer when it carries any proof-relevant authorization. */
+export function toProofSteer(steer: UserSteer | undefined): ProofSteer | undefined {
+  if (!steer) return undefined;
+  const statement = steer.proof || steer.scope ? true : undefined;
+  const escape = steer.proofEscape ? true : undefined;
+  const bypasses = steer.bypasses?.length ? steer.bypasses : undefined;
+  const proofPaths = steer.paths?.filter((p) => PROOF_PATH_LIKE.test(p));
+  const paths = proofPaths?.length ? proofPaths : undefined;
+  if (!statement && !escape && !bypasses && !paths) return undefined;
+  const out: ProofSteer = { eventId: steer.eventId };
+  if (statement) out.statement = true;
+  if (escape) out.escape = true;
+  if (bypasses) out.bypasses = bypasses;
+  if (paths) out.paths = paths;
+  return out;
+}
+
+/** Authorizing user.message id when `steer` covers a test/config/CI edit at `path`, else undefined. */
+function steerCoversTest(steer: UserSteer | undefined, path: string): string | undefined {
+  if (!steer) return undefined;
+  if (steer.test || steer.scope || steerPathMatches(path, steer.paths)) return steer.eventId;
+  return undefined;
 }
 
 export interface TamperTraceOpts {
@@ -298,6 +547,8 @@ interface Candidate {
   own: boolean;
   /** A file a shell call's diff picked up that the command never named: reported, never high. */
   unattributed?: boolean;
+  /** Authorizing human `user.message` event id when this change occurred under a matching steer. */
+  steeredBy?: string;
   toolUseId?: string;
   tool?: string;
   start?: AgentEvent;
@@ -329,6 +580,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
   const tests: number[] = [];
   const proof: { proof?: ProofState } = {};
   const log = proofLog();
+  let activeSteer: UserSteer | undefined;
   /** An earlier tool call named the file (read, ran or edited it), so it existed before this write. */
   const mentionedBefore = (path: string, i: number) => {
     const base = path.slice(path.lastIndexOf("/") + 1);
@@ -343,7 +595,13 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
     const cwd = opts.cwd ?? e.cwd;
     /** Still absolute (or above the root) after normalizing against a known repo root: a scratch file, not the repo's test. */
     const outsideRepo = (path: string) => !!cwd && /^(?:\/|[A-Za-z]:\/|~|\.\.\/)/.test(path);
-    if (e.kind === "tool.start") {
+    if (e.kind === "user.message") {
+      const u = readUserSteer(e);
+      if (u.human) {
+        activeSteer = u.steer;
+        proofSteer(proof, toProofSteer(activeSteer));
+      }
+    } else if (e.kind === "tool.start") {
       const id = str(p.toolUseId);
       if (id) starts.set(id, e);
       const cmd = shellCommand(str(p.tool), p.input);
@@ -366,7 +624,12 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
         const shape: TamperShape = w.op === "delete" ? "delete" : w.op === "append" ? "additive" : skips && w.op === "modify" ? "skip" : "unknown";
         // A whole-file write to a path no earlier call named is a new file, not an overwritten test.
         const fresh = w.op === "create" && !mentionedBefore(path, i);
-        cands.push({ i, e, path, via: "shell", shape, own: own || fresh, toolUseId: id, tool: str(p.tool), start: e });
+        const cand: Candidate = { i, e, path, via: "shell", shape, own: own || fresh, toolUseId: id, tool: str(p.tool), start: e };
+        if (!cand.own && shape !== "additive") {
+          const sb = steerCoversTest(activeSteer, path);
+          if (sb) cand.steeredBy = sb;
+        }
+        cands.push(cand);
       }
     } else if (e.kind === "file.change") {
       const raw = str(p.path);
@@ -387,13 +650,22 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
       if (prot && !outsideRepo(path) && !proofFile) {
         const shape = changeShape(op, str(p.diff), num(p.additions), num(p.deletions));
         const own = created.has(path) || (op === "delete" && ownDeleted.has(path) && ownDeleted.get(path) === id) || reworksOwnLines(ownLines, path, str(p.diff));
-        cands.push({ i, e, path, via: "file", shape, own, unattributed: origin === "unattributed" || undefined, toolUseId: id, tool: str(p.tool) ?? str(start?.payload?.tool), start });
+        const unattributed = origin === "unattributed" || undefined;
+        const cand: Candidate = { i, e, path, via: "file", shape, own, unattributed, toolUseId: id, tool: str(p.tool) ?? str(start?.payload?.tool), start };
+        if (!own && !unattributed && shape !== "additive") {
+          const sb = steerCoversTest(activeSteer, path);
+          if (sb) cand.steeredBy = sb;
+        }
+        cands.push(cand);
       }
       if (prot && (origin === "edit" || origin === "named")) addOwnLines(ownLines, path, str(p.diff));
       if (op === "add") created.add(path);
       if (op === "delete") created.delete(path);
     } else if (e.kind === "tool.end") proofEnd(proof, e, log.note);
-    else if (e.kind === "test.result") tests.push(i);
+    else if (e.kind === "test.result") {
+      tests.push(i);
+      activeSteer = undefined;
+    }
   });
   const proofFound = log.findings(proof.proof);
   if (!cands.length && !proofFound.length) return [];
@@ -419,7 +691,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
     const red = before !== undefined && failed(before) > 0;
     // Tests the agent's own source change broke: editing their expectations is info.
     const afterOwnChange = red && ownRegression(before);
-    const severity = !c.own && !c.unattributed && (c.shape === "skip" || (c.shape === "delete" && (red || flippedGreen)) || ((c.shape === "weaken" || c.shape === "unknown") && flippedGreen && !afterOwnChange)) ? "high" : "info";
+    const severity = !c.own && !c.unattributed && !c.steeredBy && (c.shape === "skip" || (c.shape === "delete" && (red || flippedGreen)) || ((c.shape === "weaken" || c.shape === "unknown") && flippedGreen && !afterOwnChange)) ? "high" : "info";
     const f: TestTamperFinding = {
       eventId: c.e.id,
       ts: c.e.ts,
@@ -433,6 +705,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
     };
     if (c.unattributed) f.attributed = false;
     if (afterOwnChange && (c.shape === "weaken" || c.shape === "unknown")) f.afterOwnChange = true;
+    if (c.steeredBy) f.steeredBy = c.steeredBy;
     if (c.toolUseId) f.toolUseId = c.toolUseId;
     if (c.tool) f.tool = c.tool;
     if (intent !== undefined) f.intent = intent;
@@ -466,6 +739,7 @@ export function detectTestTamperTrace(events: readonly AgentEvent[], opts: Tampe
     };
     if (x.hatch !== undefined) f.hatch = x.hatch;
     if (x.theorem !== undefined) f.theorem = x.theorem;
+    if (x.steeredBy !== undefined) f.steeredBy = x.steeredBy;
     if (id) f.toolUseId = id;
     if (tool) f.tool = tool;
     if (intent !== undefined) f.intent = intent;
@@ -551,6 +825,8 @@ export interface TamperState {
   flipMaybe: boolean;
   /** Writes to unprotected paths since the last test.result: none, all from one tool call (its id), or several (true). */
   unprotected: string | true | null;
+  /** Active human direction pivot, cleared on the next test.result or human user.message. */
+  steer?: UserSteer;
   /** Proofs and their checks (core/proof.ts), made at the first one. */
   proof?: ProofState;
 }
@@ -581,7 +857,14 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     if (shape === "skip" || (shape === "delete" && red)) s.high = true;
     else if ((shape === "weaken" || shape === "unknown") && red && !s.redOwn) s.flipCand = true;
   };
-  if (e.kind === "tool.start") {
+  if (e.kind === "user.message") {
+    const u = readUserSteer(e);
+    if (u.human) {
+      if (u.steer) s.steer = u.steer;
+      else delete s.steer;
+      proofSteer(s, toProofSteer(u.steer));
+    }
+  } else if (e.kind === "tool.start") {
     const id = str(p.toolUseId);
     const cmd = shellCommand(str(p.tool), p.input);
     if (cmd === undefined) return;
@@ -602,8 +885,8 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
       if (w.renamedTo !== undefined && isProtectedPath(normalizeTracePath(w.renamedTo, cwd))) continue;
       if (w.op === "create") {
         // New (the agent's own) unless an earlier call named it: left to the events, if it matters.
-        if (red && !s.redOwn) s.flipMaybe = true;
-      } else candidate(w.op === "delete" ? "delete" : w.op === "append" ? "additive" : skips && w.op === "modify" ? "skip" : "unknown");
+        if (red && !s.redOwn && !steerCoversTest(s.steer, path)) s.flipMaybe = true;
+      } else if (!steerCoversTest(s.steer, path)) candidate(w.op === "delete" ? "delete" : w.op === "append" ? "additive" : skips && w.op === "modify" ? "skip" : "unknown");
     }
   } else if (e.kind === "file.change") {
     const raw = str(p.path);
@@ -620,7 +903,7 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     if (origin === "vcs") prot = false;
     write(prot && origin !== "unattributed", id, origin === "edit" || origin === "named");
     const own = s.created.has(path) || (op === "delete" && !!s.ownDeleted?.has(path) && s.ownDeleted.get(path) === id) || reworksOwnLines(s.ownLines, path, str(p.diff));
-    if (prot && !outsideRepo(path) && !own && origin !== "unattributed" && !proofFile) candidate(changeShape(op, str(p.diff), num(p.additions), num(p.deletions)));
+    if (prot && !outsideRepo(path) && !own && origin !== "unattributed" && !proofFile && !steerCoversTest(s.steer, path)) candidate(changeShape(op, str(p.diff), num(p.additions), num(p.deletions)));
     if (prot && (origin === "edit" || origin === "named")) addOwnLines((s.ownLines ??= new Map()), path, str(p.diff));
     if (op === "add") s.created.add(path);
     if (op === "delete") s.created.delete(path);
@@ -643,5 +926,6 @@ export function foldTamper(s: TamperState, e: AgentEvent): void {
     s.lastPassed = num(p.passed);
     s.flipCand = s.flipMaybe = false;
     s.unprotected = null;
+    delete s.steer;
   }
 }

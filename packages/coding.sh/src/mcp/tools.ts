@@ -46,7 +46,7 @@ import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { BUCKETS, needYou, readWorkQueue, settleWorkFiles, SUPERVISION_RISKS, WORK_KINDS, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type Bucket, type SupervisionRisk, type WorkItem, type WorkKind } from "../core/work.ts";
+import { BUCKETS, needYou, readWorkQueue, settleWorkFiles, SUPERVISION_RISKS, WORK_KINDS, WORK_WINDOW_MS, workAsOf, workFiles, workItemJson, workJson, type Bucket, type SupervisionRisk, type WorkItem, type WorkKind } from "../core/work.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 import { maskStoreUrl } from "../core/store-url.ts";
@@ -528,8 +528,11 @@ function parseWorkList<T extends string>(raw: string | undefined, allowed: reado
  */
 async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const ctx = await c.store();
-  const now = c.now();
-  const since = when(a, "since", now, "7d")!;
+  const clock = c.now();
+  const age = storeIndexAge(ctx, clock);
+  const stale = age?.stale ? age : undefined;
+  const asOf = workAsOf(age, clock);
+  const since = when(a, "since", asOf, "7d")!;
   const all = a.all === true;
   const kinds = parseWorkList<WorkKind>(strArg(a, "kind"), WORK_KINDS, "kind");
   const buckets = parseWorkList<Bucket>(strArg(a, "bucket"), BUCKETS, "bucket");
@@ -537,13 +540,11 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const q = strArg(a, "q");
   const offset = cursorArg(a);
   const asked = numArg(a, "limit", 20);
-  const age = storeIndexAge(ctx, now);
-  const stale = age?.stale ? age : undefined;
   const id = strArg(a, "id");
   if (id) {
     // One item, shaped as an item of a page; limit and cursor do not apply.
-    const { item, sessions } = await workItemById(ctx, id, since, strArg(a, "since") ?? "7d", stale?.at ?? now);
-    await settleWorkFiles(ctx.index, [item], sessions, stale?.at ?? now);
+    const { item, sessions } = await workItemById(ctx, id, since, strArg(a, "since") ?? "7d", asOf);
+    await settleWorkFiles(ctx.index, [item], sessions, asOf);
     const one: Obj = { since: iso(since), items: [workItemJson(forShell(item, ctx.env))] };
     if (stale) one.asOf = iso(stale.at);
     return () => ({ ...one, ...indexField(age) });
@@ -555,12 +556,12 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     buckets,
     risks,
     q,
-    now: stale?.at ?? now,
+    now: asOf,
     overlay: readOverlay(ctx.paths.work),
     shortId: await shortIds(ctx),
   });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
-  await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
+  await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, asOf);
   const shown = { ...queue, items: queue.items.map((i) => forShell(i, ctx.env)) };
   return (limit: number): Obj => {
     const doc = workJson(shown, { since, limit: offset + limit, truncated });

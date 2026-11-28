@@ -101,6 +101,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}/rows`](#get-apisessionsidrows) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/tree`](#get-apisessionsidtree) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/proof`](#get-apisessionsidproof) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/steer`](#get-apisessionsidsteer) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
 | POST | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
@@ -1367,6 +1368,25 @@ curl -sS "$CSH/api/sessions/9f1c2e…/proof" -H "Authorization: Bearer $READ_KEY
 }
 ```
 
+### `GET /api/sessions/{id}/steer`
+
+Live steering advice for one session, computed purely from stored session stats and events with zero
+disk I/O. Returns `status` (`continue`, `nudge`, or `intervene`), `risk` (`low`, `medium`, or
+`high`), prioritized `directives`, an optional paste-ready `suggestedSteer`, and a `telemetry`
+snapshot.
+
+```sh
+curl -sS "$CSH/api/sessions/team%2Fchat-1/steer" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"sessionId":"team/chat-1","status":"continue","risk":"low","directives":[],"telemetry":{"checks":0,"unverifiedTailEdits":0,"maxUnverifiedEdits":0,"compactions":0,"deadEndStreak":0}}
+```
+
+- Each directive holds `kind`, `priority` (`high`, `medium`, or `low`), `reason`, `steerText`, and optional `evidence`.
+- Directive kinds cover `audit-tamper`, `answer-wait`, `break-oscillation`, `reset-context`, `target-single-file`, `verify-now`, `resolve-escapes`, and `break-dead-end`.
+- `suggestedSteer` combines the top one or two directives into one prompt and is omitted when `status` is `continue`.
+- Every returned text field is redacted before serialization. Missing or out-of-scope sessions return 404.
 ### `GET /api/sessions/{id}/replay`
 
 The session as numbered steps, and the files the agent touched as of any step, rebuilt from its own

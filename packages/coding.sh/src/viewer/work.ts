@@ -21,6 +21,7 @@ import {
   readWorkQueue,
   selectBatchAckTargets,
   settleWorkFiles,
+  workAsOf,
   workFiles,
   workItemJson,
   workJson,
@@ -132,7 +133,7 @@ export function indexDoc(age: IndexAge | undefined, work = false): { index?: { u
 }
 
 /** When the queue is judged: as of the last ingest while the index is old (as `coding.sh work` judges it), else now. */
-const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => (age?.stale ? age.at : now);
+const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => workAsOf(age, now);
 
 /**
  * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus four
@@ -274,14 +275,15 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
 
 /** POST /api/work/ack {"id":"w…"}: acknowledges the item's current cause, as `coding.sh work ack <id>` does. */
 export async function workAck(index: IndexStore, src: WorkSource, q: URLSearchParams, body: unknown): Promise<Record<string, unknown>> {
-  const now = src.now?.() ?? Date.now();
-  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
+  const clock = src.now?.() ?? Date.now();
+  const asOf = judgedAt(src, clock);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, asOf, { judged: asOf });
   const cause = item.bucket ? item.cause : undefined;
   if (!cause) return { id: item.id, acked: false, hidden: item.hidden ?? null };
   const overlay = readOverlay(src.overlay);
   addAck(overlay, cause.sessionId, cause.fingerprint);
-  writeOverlay(src.overlay, overlay, now);
-  const { item: after } = await findItem(index, src, item.id, q, now, { shortId: await shortener(index) });
+  writeOverlay(src.overlay, overlay, clock);
+  const { item: after } = await findItem(index, src, item.id, q, asOf, { judged: asOf, shortId: await shortener(index) });
   return { id: item.id, acked: true, bucket: cause.bucket, label: BUCKET_LABELS[cause.bucket], now: workItemJson(after) };
 }
 
@@ -367,13 +369,14 @@ export async function workSnooze(index: IndexStore, src: WorkSource, q: URLSearc
     if (e instanceof UsageError) throw new WorkApiError(400, e.message);
     throw e;
   }
-  const now = src.now?.() ?? Date.now();
-  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
-  const until = now + ms;
+  const clock = src.now?.() ?? Date.now();
+  const asOf = judgedAt(src, clock);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, asOf, { judged: asOf });
+  const until = clock + ms;
   if (dateMs(until) === undefined) throw new WorkApiError(400, "duration is outside the supported date range");
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
   const overlay = readOverlay(src.overlay);
   snoozeItem(overlay, item, { until, bucket });
-  writeOverlay(src.overlay, overlay, now);
+  writeOverlay(src.overlay, overlay, clock);
   return { id: item.id, snoozedUntil: new Date(until).toISOString(), bucket };
 }
