@@ -81,6 +81,12 @@ test each hit.
 | `events` | session | Events captured | `events<10` |
 | `tests.passed` | session | Passing tests seen | `tests.passed>0` |
 | `tests.failed` | session | Failing tests seen | `tests.failed>0` |
+| `risk` | session | Supervision risk level: `medium` or `high` | `risk:high` |
+| `risk.reason` | session | Supervision risk reason (`unverified-edits`, `tactic-oscillation`, `post-compaction-repeats`, `dead-end-loop`, `compaction-churn`) | `risk.reason:tactic-oscillation` |
+| `proof.lang` | session | Formal proof language: `lean`, `rocq`, `dafny`, `verus`, `isabelle`, `tla` or `tlc` | `proof.lang:lean` |
+| `proof.escapes` | session | Remaining proof escape hatches (`sorry`, `Admitted`, …) in proof sessions | `proof.escapes>0` |
+| `proof.oscillating` | session | Consecutive repeated failing proof checks in proof sessions | `proof.oscillating>=2` |
+| `unverified.edits` | session | Longest streak of file edits with no mechanical check in between | `unverified.edits>=5` |
 
 ### Cost and token keys
 
@@ -307,7 +313,7 @@ no-verification  6
 
 | Option | Default |
 |---|---|
-| Keys | `agent`, `model`, `provider`, `repo`, `launch`, `branch`, `flag`, `skill`, `hook`, `kind`, `tool`, `mcp` |
+| Keys | `agent`, `model`, `provider`, `repo`, `launch`, `branch`, `flag`, `skill`, `hook`, `risk`, `risk.reason`, `proof.lang`, `kind`, `tool`, `mcp` |
 | With no keys | `agent`, `model`, `repo`, `flag`, `skill`, `tool` |
 | `--limit` | 10 values per key |
 

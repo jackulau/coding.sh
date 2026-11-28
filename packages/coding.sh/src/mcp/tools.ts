@@ -80,7 +80,7 @@ const EXP_SESSION = { type: "string", description: "Default: the project's sessi
 const WHERE = {
   type: "string",
   description:
-    "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
+    "Query: key:value (AND; OR, (), - negates, a,b either, * wildcard, > >= < <= a..b on numbers; bare words search text). Keys: agent model repo branch title flag skill risk proof.lang cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event: tool kind ok mcp error.",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
 const SESSION_ID = { type: "string", minLength: 1, description: 'Id, prefix or "latest".' };

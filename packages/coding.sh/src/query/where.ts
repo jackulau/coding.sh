@@ -8,7 +8,7 @@
 // every surface. This file imports no store, so the CLI registry can load the
 // key docs for help without one.
 import { CONTEXT_FLAGS, isFailureFlag } from "../core/failure-flags.ts";
-import type { AgentEvent, Session } from "../schema/index.ts";
+import type { AgentEvent, ProofLang, Session, SupervisionRisk } from "../schema/index.ts";
 import { parseWhen } from "./time.ts";
 
 export type Op = ":" | ">" | ">=" | "<" | "<=";
@@ -116,6 +116,8 @@ export interface KeyDef {
   unit?: Unit;
   /** Text keys: equals (default) or contains (case-insensitive substring). */
   match?: "exact" | "contains";
+  /** Text keys with a fixed enum of allowed values (normalized to lowercase). */
+  choices?: readonly string[];
   /** Text keys: the one spelling stored values have, applied to each typed value (repo: windowsSpelling). */
   spell?: (raw: string) => string;
   /** Time keys: since = at or after, until = before. */
@@ -265,6 +267,13 @@ const sqlGroupPath = (dir: string, main: string): string => `coalesce(${main}, C
 
 const stat = (path: string) => `json_extract(s.stats, '$.${path}')`;
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const RISK_LEVELS: readonly SupervisionRisk[] = ["medium", "high"];
+const PROOF_LANGS: readonly ProofLang[] = ["lean", "rocq", "dafny", "verus", "isabelle", "tla", "tlc"];
+const proofNum = (s: Session, field: "escapeRemaining" | "oscillatingChecks"): number | undefined => {
+  const p = s.stats?.verification?.proof;
+  if (!p) return undefined;
+  return num(p[field]) ?? 0;
+};
 const tokensTotal = (s: Session): number | undefined => {
   const u = s.stats?.usage;
   if (!u) return undefined;
@@ -346,6 +355,70 @@ const KEY_LIST: KeyDef[] = [
   { name: "events", level: "session", type: "number", unit: "count", doc: "Events captured", example: "events<10", sql: [stat("events")], get: (s) => [num(s.stats?.events)] },
   { name: "tests.passed", level: "session", type: "number", unit: "count", doc: "Passing tests seen", example: "tests.passed>0", sql: [stat("testsPassed")], get: (s) => [num(s.stats?.testsPassed)] },
   { name: "tests.failed", level: "session", type: "number", unit: "count", doc: "Failing tests seen", example: "tests.failed>0", sql: [stat("testsFailed")], get: (s) => [num(s.stats?.testsFailed)] },
+  {
+    name: "risk",
+    level: "session",
+    type: "text",
+    choices: RISK_LEVELS,
+    doc: "Supervision risk level: medium or high",
+    example: "risk:high",
+    sql: [stat("contextHygiene.supervisionRisk")],
+    get: (s) => [s.stats?.contextHygiene?.supervisionRisk],
+    facet: {},
+  },
+  {
+    name: "risk.reason",
+    level: "session",
+    type: "text",
+    doc: "Supervision risk reason (unverified-edits, tactic-oscillation, post-compaction-repeats, dead-end-loop, compaction-churn)",
+    example: "risk.reason:tactic-oscillation",
+    sql: ["j.value"],
+    multi: { from: stat("contextHygiene.riskReasons"), prefix: "" },
+    get: (s) => s.stats?.contextHygiene?.riskReasons ?? [],
+    facet: {},
+  },
+  {
+    name: "proof.lang",
+    level: "session",
+    type: "text",
+    choices: PROOF_LANGS,
+    doc: "Formal proof language (lean, rocq, dafny, verus, isabelle, tla, tlc)",
+    example: "proof.lang:lean",
+    sql: ["j.value"],
+    multi: { from: stat("verification.proof.langs"), prefix: "" },
+    get: (s) => s.stats?.verification?.proof?.langs ?? [],
+    facet: {},
+  },
+  {
+    name: "proof.escapes",
+    level: "session",
+    type: "number",
+    unit: "count",
+    doc: "Remaining proof escape hatches (sorry, Admitted, ...) in proof sessions",
+    example: "proof.escapes>0",
+    sql: [`CASE WHEN json_type(s.stats, '$.verification.proof') = 'object' THEN coalesce(${stat("verification.proof.escapeRemaining")}, 0) END`],
+    get: (s) => [proofNum(s, "escapeRemaining")],
+  },
+  {
+    name: "proof.oscillating",
+    level: "session",
+    type: "number",
+    unit: "count",
+    doc: "Consecutive repeated failing proof checks in proof sessions",
+    example: "proof.oscillating>=2",
+    sql: [`CASE WHEN json_type(s.stats, '$.verification.proof') = 'object' THEN coalesce(${stat("verification.proof.oscillatingChecks")}, 0) END`],
+    get: (s) => [proofNum(s, "oscillatingChecks")],
+  },
+  {
+    name: "unverified.edits",
+    level: "session",
+    type: "number",
+    unit: "count",
+    doc: "Longest consecutive streak of file edits with no mechanical check in between",
+    example: "unverified.edits>=5",
+    sql: [stat("verification.maxUnverifiedEdits")],
+    get: (s) => [num(s.stats?.verification?.maxUnverifiedEdits)],
+  },
   {
     name: "tokens",
     level: "session",
@@ -446,12 +519,16 @@ export interface KeyGuide {
 export function keyGuide(): KeyGuide[] {
   const enumOf = (r: Record<string, HasDef>) => Object.entries(r).map(([value, d]) => ({ value, doc: d.doc }));
   return [
-    ...KEY_LIST.map((k): KeyGuide => ({
-      name: k.name, level: k.level, type: k.type, doc: k.doc, example: k.example,
-      ...(k.facet ? { facet: true as const } : {}),
-      ...(k.type === "bool" ? { values: [{ value: "true" }, { value: "false" }] } : {}),
-      ...(k.type === "time" ? { values: ["1h", "24h", "7d", "30d"].map((value) => ({ value })) } : {}),
-    })),
+    ...KEY_LIST.map((k): KeyGuide => {
+      const g: KeyGuide = {
+        name: k.name, level: k.level, type: k.type, doc: k.doc, example: k.example,
+        ...(k.facet ? { facet: true as const } : {}),
+        ...(k.type === "bool" ? { values: [{ value: "true" }, { value: "false" }] } : {}),
+        ...(k.type === "time" ? { values: ["1h", "24h", "7d", "30d"].map((value) => ({ value })) } : {}),
+      };
+      if (k.choices) g.values = k.choices.map((value) => ({ value }));
+      return g;
+    }),
     { name: "is", level: "session", type: "enum", doc: "Is a kind of session", example: "is:root", values: enumOf(IS) },
     { name: "has", level: "session", type: "enum", doc: "Has a field", example: "has:tests", values: enumOf(HAS) },
     { name: "sort", level: "query", type: "enum", doc: "Order by; - for descending", example: "sort:-cost", values: SORT_KEYS.flatMap((k) => [{ value: `-${k}` }, { value: k }]) },
@@ -648,6 +725,14 @@ function resolveValue(def: KeyDef, op: Op, part: Part, now: number, tzOffsetMin?
   if (text === "") throw bad("needs a value");
   if (def.type === "text") {
     if (op !== ":") throw bad(`compares text with ':' only, not '${op}'`);
+    if (def.choices) {
+      const lower = text.toLowerCase();
+      if (part.wild?.length || !def.choices.includes(lower)) {
+        throw bad(`must be one of ${def.choices.join(", ")}, got ${JSON.stringify(text)}`);
+      }
+      v.raw = lower;
+      return v;
+    }
     // `*` is a wildcard, quoted or not; `\*` inside quotes is a literal star.
     const wild = part.wild ?? starsIn(text);
     if (wild.length) {
