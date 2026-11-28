@@ -29,7 +29,7 @@ something here is out of date, open an issue.
 | Replay a coding session step by step, with files | Yes, `coding.sh replay` | No |
 | Online evals on live traffic | Yes, `coding.sh monitor` scores new sessions after they end | Yes |
 | Human annotation queues | Yes, `coding.sh review` and `#/review` | Yes |
-| Prompt management (named, versioned prompts) | No | Yes |
+| Prompt management (named, versioned prompts) | Local versioned prompts with labels (`coding.sh prompt`) | Yes |
 | Playground for a model call | Yes, in `coding.sh ui` | Yes |
 | Alerts and custom dashboards | Alerts (`coding.sh alert` to webhooks or commands); no custom dashboards | Yes |
 | SSO and RBAC | No; per-person keys on a team server | Yes; some RBAC is in the paid edition |
@@ -43,7 +43,7 @@ something here is out of date, open an issue.
   alerts integrate with Slack as well as webhooks.
 - **Hosted review workflows.** Annotation queues with roles let people who don't use a terminal
   label traces in one hosted app.
-- **Prompts.** Versioned prompts with labels, and a playground to try them.
+- **Team prompt UI.** Hosted prompt editing, version history, and a playground shared across a team.
 - **Integrations.** Many frameworks and model providers have a ready-made integration.
 
 If you run an LLM product in production and want one hosted place for traces, prompts and scores,
@@ -74,9 +74,10 @@ Langfuse's endpoint.
 
 ### Is coding.sh a self-hosted Langfuse alternative?
 
-For one developer or a small team working with coding agents, yes: it stores traces and runs evals
-on your machine, or on one `coding.sh serve` container for a team. It has no prompt management,
-custom dashboards or SSO, so it does not replace Langfuse for a production LLM product.
+For one developer or a small team working with coding agents, yes: it stores traces, versioned
+prompts, and evals on your machine, or on one `coding.sh serve` container for a team. It has no
+hosted prompt UI, custom dashboards or SSO, so it does not replace Langfuse for a production LLM
+product.
 
 ### Do both work with Claude Code?
 

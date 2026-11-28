@@ -25,7 +25,7 @@ something here is out of date, open an issue.
 | Replay a coding session step by step, with files | Yes, `coding.sh replay` | No |
 | Online scoring of live traffic | Yes, `coding.sh monitor` scores new sessions after they end | Yes |
 | Human review queues | Yes, `coding.sh review` and `#/review` | Yes |
-| Prompt management and playground | Playground for a model call in `coding.sh ui`; no prompt management | Yes |
+| Prompt management and playground | Local versioned prompts (`coding.sh prompt`) and a call playground in `coding.sh ui` | Yes |
 | PR comments with eval results | No (exit code only) | Yes, a GitHub Action |
 | SSO and audit logs | No | Enterprise |
 | MCP server | Yes, local | Yes, hosted |
@@ -62,8 +62,8 @@ coding.sh.
 
 ### Is there an open-source Braintrust alternative?
 
-For evals of agents and coding agents, coding.sh is one: MIT licensed and local. It has no prompt
-management, hosted UI or SSO.
+For evals of agents and coding agents, coding.sh is one: MIT licensed and local. It has no
+hosted team UI or SSO.
 
 ### How does coding.sh decide that a change helped?
 

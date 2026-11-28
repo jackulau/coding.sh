@@ -1265,6 +1265,85 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/dataset.ts"),
   },
   {
+    name: "prompt",
+    group: "Evaluate",
+    summary: "Store, version, label, render and diff local prompt templates",
+    actions: [
+      {
+        name: "set",
+        summary: "Save a text or chat prompt as a new immutable version (unchanged content reuses latest)",
+        args: [{ name: "name", desc: "Prompt name (1 to 80 letters, digits, '.', '_' or '-')", required: true }],
+        flags: [
+          { name: "text", type: "string", value: "<STR>", desc: "Text prompt template" },
+          { name: "file", type: "string", value: "<PATH>", desc: "Read text prompt template from this file" },
+          { name: "messages", type: "string", value: "<JSON|FILE>", desc: 'Chat prompt messages as JSON array of {"role","content"} or a JSON file' },
+          { name: "label", type: "list", commas: true, value: "<LABEL>", desc: "Attach label(s) to this version, e.g. production (repeatable, or a comma list: a,b)" },
+          { name: "config", type: "string", value: "<JSON|FILE>", desc: 'Optional model config JSON object or file, e.g. {"model":"claude-sonnet-4-5","temperature":0.2}' },
+          { name: "note", type: "string", value: "<TEXT>", desc: "Version note" },
+        ],
+        examples: [
+          "coding.sh prompt set triage --text 'Classify ticket: {{ticket}}' --label production",
+          "coding.sh prompt set triage --file prompts/triage.txt --config '{\"model\":\"claude-sonnet-4-5\",\"temperature\":0}' --label staging",
+          "coding.sh prompt set assistant --messages '[{\"role\":\"system\",\"content\":\"Be concise.\"},{\"role\":\"user\",\"content\":\"{{question}}\"}]'",
+        ],
+      },
+      {
+        name: "get",
+        summary: "Fetch a prompt by version or label and optionally render {{var}} placeholders",
+        args: [{ name: "name", desc: "Prompt name", required: true }],
+        flags: [
+          { name: "version", type: "string", value: "<VER>", desc: "Version to fetch, e.g. v1 (cannot be combined with --label)" },
+          { name: "label", type: "string", value: "<LABEL>", desc: "Label to resolve", default: "latest" },
+          { name: "var", type: "list", value: "<KEY=VAL>", desc: "Substitute {{KEY}} with VAL in a single pass (repeatable)" },
+          { name: "raw", type: "boolean", desc: "Print only the prompt text or chat messages JSON with no metadata lines" },
+        ],
+        examples: [
+          "coding.sh prompt get triage --label production",
+          "coding.sh prompt get triage --version v1 --var ticket='login fails' --raw",
+          "coding.sh prompt get triage --json",
+        ],
+      },
+      {
+        name: "list",
+        summary: "List stored prompts with latest version, count, active labels and updated time",
+        examples: ["coding.sh prompt list", "coding.sh prompt list --json"],
+      },
+      {
+        name: "label",
+        summary: "Move or delete a mutable label pointer on a prompt",
+        args: [
+          { name: "name", desc: "Prompt name", required: true },
+          { name: "label", desc: "Label name, e.g. production or staging", required: true },
+          { name: "version", desc: "Existing version to point at, e.g. v2 (omit with --delete)" },
+        ],
+        flags: [{ name: "delete", type: "boolean", desc: "Remove this label from the prompt" }],
+        examples: [
+          "coding.sh prompt label triage production v2",
+          "coding.sh prompt label triage staging --delete",
+        ],
+      },
+      {
+        name: "diff",
+        summary: "Show a line-by-line unified diff between two versions or labels of a prompt",
+        args: [
+          { name: "name", desc: "Prompt name", required: true },
+          { name: "a", desc: "First version or label (e.g. v1 or production)", required: true },
+          { name: "b", desc: "Second version or label (e.g. v2 or staging)", required: true },
+        ],
+        examples: [
+          "coding.sh prompt diff triage production staging",
+          "coding.sh prompt diff triage v1 v2 --json",
+        ],
+      },
+    ],
+    notes: [
+      "Prompts live locally under ~/.coding.sh/prompts/<name>/ as immutable content-hashed JSON versions (v1, v2, ...) plus mutable label pointers in labels.json.",
+      "Identical consecutive saves reuse the latest version without bumping the version number, while moving any given labels.",
+      "Variable substitution runs in a single pass, so a variable value containing {{other}} is never expanded again. Prompts are stored without redaction: keep secrets out of templates and pass them at runtime.",
+    ],
+    load: () => import("./commands/prompt.ts"),
+  },
+  {
     name: "exp",
     group: "Evaluate",
     summary: "Run a task over a dataset, compare experiments and sweep configs",
