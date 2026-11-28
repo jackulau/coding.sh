@@ -12,7 +12,11 @@ export type { ProofLang };
 /** All supported formal proof languages and TLC model configs. */
 export const PROOF_LANGS: readonly ProofLang[] = ["lean", "rocq", "dafny", "verus", "isabelle", "tla", "tlc"] as const;
 const PROOF_LANG_SET: ReadonlySet<string> = new Set(PROOF_LANGS);
-export const isProofLang = (lang: string): lang is ProofLang => PROOF_LANG_SET.has(lang);
+
+/** True when `lang` is one of the seven formal proof languages. */
+export function isProofLang(lang: string): lang is ProofLang {
+  return PROOF_LANG_SET.has(lang);
+}
 
 const BY_EXT = new Map<string, ProofLang>([["lean", "lean"], ["v", "rocq"], ["dfy", "dafny"], ["thy", "isabelle"], ["tla", "tla"]]);
 /** Build files that choose what a checker reads and with which options. */
@@ -64,6 +68,12 @@ export function proofLang(path: string, text = "", known?: ProofLang): ProofLang
 
 /** `_CoqProject`, `lakefile.lean`, an Isabelle `ROOT`, `dfyconfig.toml`. */
 export const isProofConfig = (path: string): boolean => PROOF_CONFIG.test(path);
+
+/** Files and folders named as specifications or statements. */
+export const isSpecNamed = (path: string): boolean => SPEC_NAMED.test(path);
+
+/** Test, example and scratch folders where proof escape hatches are expected. */
+export const isProofTestPath = (path: string): boolean => PROOF_TEST.test(path);
 
 /** How a language writes comments and strings. `cart`: Isabelle's cartouches, text that is not code. */
 export interface Syntax {
@@ -710,7 +720,7 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
   return check;
 }
 
-const LAKE_VALUE_FLAGS = new Set(["-d", "--dir", "-f", "--file", "-K", "-l", "--log-level", "--packages", "--package"]);
+const LAKE_VALUE_FLAGS = new Set(["-d", "--dir", "-f", "--file", "-K", "-l", "--log-level", "--packages", "--package", "-R", "-U", "-o", "--out"]);
 const DUNE_VALUE_FLAGS = new Set(["-j", "--jobs", "--display", "--root", "--profile", "--build-dir", "--workspace", "-p", "--only-packages", "--context", "-x"]);
 
 /** Positional arguments of a subcommand after `sub`, skipping flags and known flag values. */
@@ -1693,6 +1703,68 @@ function pathMap<T>() {
       for (let s: Slot<T> | undefined = r.head; s; s = s === r.tail ? undefined : s.next) if (!s.dead) yield [s.at.path, s.key, s.v];
   }
   return { get: (path: string, key: string) => slot(path, key)?.v, has: (path: string, key: string) => !!slot(path, key), set, del, move, entries };
+}
+
+/** True when a checker's output shows Rocq compilation or errors. */
+export const isRocqOutput = (text: string): boolean => ROCQ_OUT.test(text);
+
+/** True when a build output shows a proof checker ran. */
+export const isProofOutput = (text: string): boolean => PROOF_OUT.test(text);
+
+/** Scan a full proof or config file for escape hatches with comments and strings blanked. */
+export function scanProofEscapes(path: string, lang: ProofLang | undefined, text: string): { line: number; token: string }[] {
+  const sx = syntaxOf(path, lang);
+  const { code, bare } = scanProof(text, sx);
+  const cl = code.split("\n");
+  const bl = bare.split("\n");
+  const inType = lang === "rocq" ? moduleTypeLines(bl) : undefined;
+  const list = lang ? HATCHES[lang] : CONFIG_HATCHES;
+  const out: { line: number; token: string }[] = [];
+  for (let i = 0; i < cl.length; i++) {
+    const src = lang ? (inType?.[i] ? "" : (bl[i] ?? "")) : (cl[i] ?? "");
+    if (!src.trim()) continue;
+    for (const [name, re] of list) {
+      const n = src.match(re)?.length ?? 0;
+      for (let k = 0; k < n; k++) out.push({ line: i + 1, token: name });
+    }
+  }
+  return out;
+}
+
+/** True when a proof check runs a bare whole-project build rather than a targeted single-file check. */
+export function isWholeProjectCheck(check: ProofCheck, command: string): boolean {
+  if (check.path) return false;
+  if (!CHECKER_HINT.test(command)) return false;
+  const cmds = runCommands(command);
+  let cmd = "";
+  let args: string[] = [];
+  for (const c of cmds) {
+    const [u, a] = unwrap(c);
+    if (checkerLang(u, a)) [cmd, args] = [u, a];
+  }
+  if (!cmd) return false;
+  const sub = args.find((a) => !a.startsWith("-")) ?? "";
+  if (check.lang === "lean") {
+    if (cmd !== "lake" || (sub !== "build" && sub !== "test")) return false;
+    const subIdx = args.indexOf(sub);
+    for (let i = subIdx + 1; i < args.length; i++) {
+      const a = args[i] ?? "";
+      if (LAKE_VALUE_FLAGS.has(a)) {
+        i++;
+        continue;
+      }
+      if (!a.startsWith("-")) return false;
+    }
+    return true;
+  }
+  if (check.lang === "dafny") return sub === "verify" || sub === "build";
+  if (check.lang === "verus") {
+    if (cmd === "cargo") return !args.some((a) => /^--verify-(?:module|function|only-module)\b/.test(a));
+    return !args.some((a) => /\.rs$/.test(a));
+  }
+  if (check.lang === "isabelle") return sub === "build";
+  if (check.lang === "make" || check.lang === "dune") return true;
+  return false;
 }
 
 /**

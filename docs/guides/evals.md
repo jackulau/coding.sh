@@ -3101,7 +3101,7 @@ inconclusive run, and suggests `refine rollback` when the edit is applied.
 ### Mining failure patterns
 
 `coding.sh refine mine` ranks failure patterns across this repo's sessions since `--since` (30
-days), with no model call. It has four detectors:
+days), with no model call. It has five detectors:
 
 - **flag**: one pattern per session flag, with its diagnosis and severity.
 - **error-signature**: the first error line of a failed tool call, with numbers, paths, hex ids and
@@ -3111,14 +3111,27 @@ days), with no model call. It has four detectors:
   grouped when their character 5-grams overlap by a Jaccard of 0.6 or more.
 - **eval-failure**: failed eval runs, grouped by the first tool where the run left a passing attempt
   of the same task.
+- **proof-failure**: failed formal-verification checker runs (Lean, Rocq, Verus, Dafny, Isabelle,
+  TLA+ and TLC), normalized to stable proof error signatures such as `lean: simp made no progress`
+  or `proof: slow whole-project build`.
 
 A pattern counts when it is seen in at least 3 sessions over 2 days (`--min-support 3,2`).
-Sessions of coding.sh's own eval runs are left out of the first three. An eval run works in a
+Sessions of coding.sh's own eval runs are left out of the organic detectors. An eval run works in a
 scratch directory, so it belongs to this repo by its task: a task that starts from this repo, or a
 task of a suite under this repo's `evals/`. `--repo all` takes every run. Patterns are ranked by
 sessions times wasted tool calls, then severity, then count, and their ids are stable across runs.
 Everything printed is redacted. `refine mine --json > mined.json` and then
 `refine propose --mined mined.json` hands the patterns to the proposer.
+
+### Reviewing formal proofs
+
+`coding.sh proof <session>` summarizes formal-verification integrity for a session: detected
+languages, touched proof and spec files, escape hatches (`sorry`, `Admitted`, `axiom`, `assume`),
+checker runs, tamper findings, a verdict (`verified`, `incomplete`, `tampered`, or `no-proof`), and
+kernel audit hints.
+
+Pass `--check-disk` for a read-only static scan of touched proof files on disk, and `--strict` to
+exit 1 on `tampered` or `incomplete` verdicts in CI or review gates.
 
 ### Diagnosing sessions into Signals
 
