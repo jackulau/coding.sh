@@ -83,6 +83,13 @@ describe("buildProofReport", () => {
     assert.equal(r.verifyHints.length, 1);
     assert.match(r.verifyHints[0]!, /lake env lean Proof\/Add\.lean/);
     assert.match(r.verifyHints[0]!, /#print axioms/);
+    assert.equal(r.milestones, undefined);
+
+    const withMilestones = buildProofReport(session, events, { includeMilestones: true });
+    assert.deepEqual(withMilestones.milestones, [
+      { eventId: "s-lean-ok-3", ts: T0 + 4000, ok: false, lang: "lean", wholeProject: true, durationMs: 4200 },
+      { eventId: "s-lean-ok-6", ts: T0 + 7000, ok: true, lang: "lean", wholeProject: false, durationMs: 800 },
+    ]);
   });
 
   it("reports incomplete when sorry remains or when last check fails or no check passes", () => {

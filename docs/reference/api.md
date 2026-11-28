@@ -100,6 +100,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/rows`](#get-apisessionsidrows) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/tree`](#get-apisessionsidtree) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/proof`](#get-apisessionsidproof) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
 | POST | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
@@ -1335,6 +1336,33 @@ curl -sS "$CSH/api/sessions/9f1c2e…/tree" -H "Authorization: Bearer $READ_KEY"
        {"id": "9f1c2e…:sub:a2", "role": "fixer", "depth": 1, "usage": {"costUsd": 2.0},
         "toolCalls": 180, "toolErrors": 31, "flags": ["premature-completion"], "children": []}
      ]}
+  ]
+}
+```
+
+### `GET /api/sessions/{id}/proof`
+
+Trace-only formal-verification integrity report for one session, with no disk reads. Returns 404 when the session is missing or outside a scoped read key's project.
+
+- `verdict` is `verified`, `incomplete`, `tampered` or `no-proof`.
+- `specUntouched`, `specFilesTouched`, `escapes`, `checks`, `tamperFindings` and `verifyHints` match `coding.sh proof --json`, redacted before sending.
+- `milestones`, when proof checks ran, lists each proof check's `tool.end` event (`eventId`, `ts`, `ok`, `lang`, `wholeProject` and `durationMs`) in time order.
+
+```sh
+curl -sS "$CSH/api/sessions/9f1c2e…/proof" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "sessionId": "9f1c2e…", "langs": ["lean"], "proofFiles": ["Proof/Add.lean"],
+  "specFilesTouched": [], "specUntouched": true,
+  "escapes": {"added": 0, "removed": 1, "remaining": 0, "kinds": []},
+  "checks": {"total": 2, "passed": 1, "failed": 1, "wholeProject": 1, "lastOk": true, "medianMs": 2500},
+  "tamperFindings": [], "verdict": "verified",
+  "verifyHints": ["lake env lean Proof/Add.lean  # check single file; add '#print axioms <theorem>' to audit trusted axioms"],
+  "milestones": [
+    {"eventId": "ev-1", "ts": 1793872801000, "ok": false, "lang": "lean", "wholeProject": true, "durationMs": 4200},
+    {"eventId": "ev-2", "ts": 1793872804000, "ok": true, "lang": "lean", "wholeProject": false, "durationMs": 800}
   ]
 }
 ```
