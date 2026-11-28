@@ -124,14 +124,17 @@ export async function distill(o: DistillOptions): Promise<{ draws: DistillDraw[]
     mkdirSync(home, { recursive: true });
     const overlay = o.adapter.overlay ? await o.adapter.overlay(emptyBundle(o.adapter.id), cwd, { workDir: cwd, runRoot: cwd, home }) : { env: {}, flags: [] };
     const started = Date.now();
-    const out = await o.adapter.run({ cwd, instruction: DISTILL_BRIEF, ...(o.model ? { model: o.model } : {}), env: { ...(o.env ?? {}), ...overlay.env }, timeoutMs: o.timeoutMs ?? DISTILL_TIMEOUT_MS, flags: overlay.flags, runId: o.runId?.(i) ?? `distill-${i}` });
+    const limitMs = o.timeoutMs ?? DISTILL_TIMEOUT_MS;
+    const out = await o.adapter.run({ cwd, instruction: DISTILL_BRIEF, ...(o.model ? { model: o.model } : {}), env: { ...(o.env ?? {}), ...overlay.env }, timeoutMs: limitMs, flags: overlay.flags, runId: o.runId?.(i) ?? `distill-${i}` });
     const cost = out.usage?.costUsd;
     if (cost !== undefined) spent += cost;
     const d: DistillDraw = { draw: i, cwd, rejections: [], ...(cost !== undefined ? { costUsd: cost } : {}), durationMs: out.durationMs || Date.now() - started };
     draws.push(d);
     const file = join(cwd, "out", "SKILL.md");
     if (!existsSync(file) || !statSync(file).isFile()) {
-      d.error = `the distiller wrote no out/SKILL.md${out.timedOut ? " (it ran out of time)" : out.exitCode ? ` (it exited ${out.exitCode}: ${(out.stderrTail || out.stdoutTail).trim().slice(-300)})` : ""}`;
+      const limitSec = Math.round(limitMs / 1000);
+      const limitText = limitSec >= 60 && limitSec % 60 === 0 ? `${limitSec / 60} minute` : `${limitSec} second`;
+      d.error = `the distiller wrote no out/SKILL.md${out.timedOut ? ` (it ran out of time after the ${limitText} limit)` : out.exitCode ? ` (it exited ${out.exitCode}: ${(out.stderrTail || out.stdoutTail).trim().slice(-300)})` : ""}`;
       continue;
     }
     const skill = parseSkill(readFileSync(file, "utf8"));

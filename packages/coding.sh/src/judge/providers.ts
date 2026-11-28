@@ -43,6 +43,26 @@ export class ProviderError extends Error {
   }
 }
 
+/** Wraps a provider so each call stops at `timeoutMs` without retrying past it. */
+export function withCallTimeout(provider: ChatProvider, timeoutMs: number | undefined): ChatProvider {
+  if (timeoutMs === undefined) return provider;
+  return {
+    name: provider.name,
+    model: provider.model,
+    params: provider.params,
+    async complete(req) {
+      const timer = AbortSignal.timeout(timeoutMs);
+      const signal = req.signal ? AbortSignal.any([req.signal, timer]) : timer;
+      try {
+        return await provider.complete({ ...req, signal });
+      } catch (e) {
+        if (timer.aborted && !req.signal?.aborted) throw new ProviderError(`${provider.name}: timed out after ${timeoutMs} ms (trial timeout)`);
+        throw e;
+      }
+    },
+  };
+}
+
 interface CommonOpts {
   model?: string;
   baseURL?: string;
