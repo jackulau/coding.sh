@@ -132,4 +132,24 @@ describe("MCP status work parity", () => {
     assert.match(String(outSt.next), /^review: `\/tmp\/out\.txt` \(outside \/work\/demo\), then `(?:coding\.sh|codingsh) work ack /);
     assert.deepEqual(outSt, outWk);
   });
+
+  test("MCP work tool filters by kind, bucket and q and rejects invalid filter values", async () => {
+    const byKind = await callTool(mcp, "work", { kind: "change", limit: 20 });
+    assert.deepEqual((byKind.items as { id: string }[]).map((i) => i.id).sort(), [workItemId("multi"), workItemId("outside")].sort());
+
+    const byBucket = await callTool(mcp, "work", { bucket: "review", limit: 20 });
+    assert.equal((byBucket.items as unknown[]).length, 2);
+
+    const byQ = await callTool(mcp, "work", { q: "outside repo", limit: 20 });
+    assert.deepEqual((byQ.items as { id: string }[]).map((i) => i.id), [workItemId("outside")]);
+
+    const noneBucket = await callTool(mcp, "work", { bucket: "failed", limit: 20 });
+    assert.deepEqual(noneBucket.items, []);
+
+    const badKind = await mcp.server.handle({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "work", arguments: { kind: "invalid" } } });
+    assert.equal((badKind!.result as { isError?: boolean }).isError, true);
+
+    const badBucket = await mcp.server.handle({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "work", arguments: { bucket: "invalid" } } });
+    assert.equal((badBucket!.result as { isError?: boolean }).isError, true);
+  });
 });

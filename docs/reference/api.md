@@ -146,6 +146,7 @@ same `CODING_SH_HOME` as the server.
 | POST | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
 | GET | [`/api/work`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | POST | [`/api/work/ack`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| POST | [`/api/work/ack-batch`](#post-apiworkack-batch) | ui token | ui |
 | POST | [`/api/work/snooze`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | GET | [`/api/work/{id}`](#get-apiworkid) | ui token | ui |
 
@@ -2271,10 +2272,13 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `agent` | a name, or several separated by commas |
 | `repo` | one repo |
 | `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
+| `kind` | only `research` or `change` items, like `--kind`: repeated, or a comma list |
+| `bucket` | only active items in these buckets, like `--bucket`: repeated, or a comma list (`blocked,failed`) |
+| `q` | trimmed case-insensitive substring match against title, repo, branch, id, workflow name or reason |
 | `all=1` | show hidden items, like `--all` |
 | `limit` | default 20, at most 1000 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, plus `members` (each listed item's session ids, main first, up to 50) and `hiddenBy` (hidden counts by `running`, `done`, `acked` or `snoozed`). A bad `since`, `limit`, `stage`, `kind` or `bucket` answers 400.
 
 `totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1` or `stage` lists them). The page's headings read "20 of 671" from it.
 
@@ -2290,6 +2294,13 @@ Item fields for workflow runs, replaced failures and linked worktrees:
 - `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
 - Both writes look the item up in the last 7 days, or the window in `?since=`. An item not in the window answers 404.
 - An id that is not an item id, or a duration that does not parse, answers 400. The body must be JSON, is capped at 1 KB, and the `Origin` must match the host.
+
+### `POST /api/work/ack-batch`
+
+Acknowledges matching active items in one `work.json` write, using `GET /api/work`'s query filters. Only `coding.sh ui` answers.
+
+- JSON body (capped at 16 KB, same-origin `Origin` required): one or more of `probablyClosed: true`, `group`, `bucket` or `ids`, plus optional `dryRun: true`.
+- Returns `{acked, ids}` (plus `dryRun: true` when previewing). Missing selectors or bad values answer 400.
 
 ### `GET /api/work/{id}`
 

@@ -6,8 +6,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { FLAGS } from "../../src/core/sessions.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { mkSession } from "../cli/_cmd.ts";
 import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts";
 import { FakeBlobs } from "./fakes.ts";
 import { workSessions } from "./_work.ts";
@@ -126,5 +128,56 @@ describe("Work page in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await p.waitFor("!document.querySelector('.work-item[data-bucket=blocked]')", "blocked item acknowledged");
     assert.match(await p.eval("document.querySelector('.work-notes').textContent"), /1 acknowledged/);
     assert.deepEqual(p.errors, []);
+  });
+
+  test("search q, kind filter, multi-duration snooze picker and batch-ack banners work in the UI", async () => {
+    const idx = new MemoryIndexStore();
+    const now = Date.now();
+    const MIN = 60e3;
+    const HOUR = 60 * MIN;
+    const seeded = [
+      mkSession("api-a", now - 20 * MIN, { endedAt: now - 15 * MIN, cwd: "/work/api", title: "retry gateway a", flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } } as never }),
+      mkSession("api-b", now - 21 * MIN, { endedAt: now - 16 * MIN, cwd: "/work/api", title: "retry gateway b", flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } } as never }),
+      mkSession("old-a", now - 16 * HOUR, { endedAt: undefined, cwd: "/work/old", title: "abandoned wait a", stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 15 * HOUR, toolUseId: "oa" } } as never }),
+      mkSession("old-b", now - 17 * HOUR, { endedAt: undefined, cwd: "/work/old", title: "abandoned wait b", stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 16 * HOUR, toolUseId: "ob" } } as never }),
+      mkSession("chg-1", now - 30 * MIN, { endedAt: now - 25 * MIN, cwd: "/work/web", title: "ship search filter", stats: { filesChanged: 2 } }),
+    ];
+    for (const s of seeded) await idx.upsertSession(s);
+    const bdir = mkdtempSync(join(tmpdir(), "work-batch-browser-"));
+    const srv = await startViewer({ index: idx, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any, work: { overlay: join(bdir, "work.json"), home: bdir, cwd: bdir } });
+    const bp = await browser.newPage();
+    try {
+      await bp.viewport(1280, 900);
+      await bp.goto(srv.url + "#/work");
+      await bp.waitFor("document.querySelector('.work-banners')", "batch banners");
+      assert.equal(await bp.eval("document.querySelector('[data-banner=group] [data-act=ack-batch]').textContent"), "Ack all 2");
+      assert.equal(await bp.eval("document.querySelector('[data-banner=probably-closed] [data-act=ack-batch]').textContent"), "Ack all 2");
+
+      // Kind filter syncs with URL hash.
+      await bp.eval("[...document.querySelectorAll('.work-kind-seg button')].find((b) => b.textContent === 'Changes').click()");
+      await bp.waitFor("location.hash === '#/work?kind=change' && document.querySelectorAll('.work-item').length === 1", "filtered to changes");
+
+      // Search input q syncs with URL hash.
+      await bp.eval("(() => { const f = document.querySelector('.work-filters'); f.q.value = 'ship search'; f.requestSubmit(); })()");
+      await bp.waitFor("location.hash.includes('q=ship+search') && document.querySelectorAll('.work-item').length === 1", "filtered by q");
+
+      // Snooze duration picker offers 30m, 1h, 4h, 1d and snoozes with chosen duration.
+      assert.deepEqual(await bp.eval("[...document.querySelectorAll('.work-snooze-dur option')].map((o) => o.value)"), ["30m", "1h", "4h", "1d"]);
+      await bp.eval("(() => { const s = document.querySelector('.work-snooze-dur'); s.value = '4h'; s.dispatchEvent(new Event('change')); document.querySelector('[data-act=snooze]').click(); })()");
+      await bp.waitFor("!document.querySelector('.work-item')", "snoozed for 4h");
+
+      // Reset filters and click both one-click Ack all banners.
+      await bp.goto(srv.url + "#/work");
+      await bp.waitFor("document.querySelector('[data-banner=group] [data-act=ack-batch]')", "group banner ready");
+      await bp.eval("document.querySelector('[data-banner=group] [data-act=ack-batch]').click()");
+      await bp.waitFor("!document.querySelector('[data-banner=group]')", "api 529 group acked");
+      await bp.eval("document.querySelector('[data-banner=probably-closed] [data-act=ack-batch]').click()");
+      await bp.waitFor("!document.querySelector('.work-item')", "probably closed cluster acked");
+      assert.deepEqual(bp.errors, []);
+    } finally {
+      await bp.close();
+      await srv.close();
+      rmSync(bdir, { recursive: true, force: true });
+    }
   });
 });

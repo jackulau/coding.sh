@@ -3,7 +3,7 @@
 // workFiles) so the items match `work --json` for the same store and filters. Ack and snooze
 // write the same work.json overlay the CLI writes (core/work-overlay.ts), with the CLI's rules.
 import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
-import { mainFilesChanged, stagesFlag } from "../cli/commands/work.ts";
+import { bucketsFlag, kindsFlag, mainFilesChanged, stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
 import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore } from "../core/types.ts";
@@ -11,7 +11,23 @@ import type { Session } from "../schema/index.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
-import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, settleWorkFiles, workFiles, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
+import {
+  BUCKET_LABELS,
+  BUCKETS,
+  buildWorkQueue,
+  itemWorkflowAgents,
+  readWorkQueue,
+  selectBatchAckTargets,
+  settleWorkFiles,
+  workFiles,
+  workItemJson,
+  workJson,
+  type Bucket,
+  type HiddenReason,
+  type Stage,
+  type WorkItem,
+  type WorkKind,
+} from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
 export interface WorkSource {
@@ -54,6 +70,9 @@ interface Filters {
   agents: string[];
   place?: ReturnType<typeof parsePlace>;
   stages: Stage[];
+  kinds: WorkKind[];
+  buckets: Bucket[];
+  q?: string;
 }
 
 function filtersOf(src: WorkSource, q: URLSearchParams, now: number): Filters {
@@ -70,15 +89,20 @@ function filtersOf(src: WorkSource, q: URLSearchParams, now: number): Filters {
   const repo = q.get("repo")?.trim();
   const home = src.home ?? process.env.HOME ?? process.env.USERPROFILE ?? "/";
   const place = repo ? parsePlace(repo, src.cwd ?? process.cwd(), home) : undefined;
-  // `stage=review,approval` or `stage=review&stage=approval`, parsed as `--stage` parses it.
+  // `stage`, `kind` and `bucket` accept repeated or comma-separated values, parsed as the CLI flags parse them.
   let stages: Stage[];
+  let kinds: WorkKind[];
+  let buckets: Bucket[];
   try {
     stages = stagesFlag({ flags: { stage: q.getAll("stage") } });
+    kinds = kindsFlag({ flags: { kind: q.getAll("kind") } });
+    buckets = bucketsFlag({ flags: { bucket: q.getAll("bucket") } });
   } catch (e) {
     if (e instanceof UsageError) throw new WorkApiError(400, e.message);
     throw e;
   }
-  return { since, sinceText, agents, place, stages };
+  const search = q.get("q")?.trim() || undefined;
+  return { since, sinceText, agents, place, stages, kinds, buckets, q: search };
 }
 
 function limitOf(q: URLSearchParams): number {
@@ -124,10 +148,10 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const all = q.get("all") === "1" || q.get("all") === "true" || f.stages.length > 0;
   const overlay = readOverlay(src.overlay);
   // Next steps name sessions by the shortest id that resolves, as `work --json` does.
-  const read = { since: f.since, agents: f.agents, place: f.place, overlay, now, shortId: await shortener(index) };
-  const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all, stages: f.stages });
-  // Without `all` (or with a stage filter) the queue lacks hidden items; the page still says why each one is hidden.
-  const every = all && !f.stages.length ? queue : buildWorkQueue(sessions, { ...read, all: true });
+  const read = { since: f.since, agents: f.agents, place: f.place, kinds: f.kinds, q: f.q, overlay, now, shortId: await shortener(index) };
+  const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all, stages: f.stages, buckets: f.buckets });
+  // Without `all` (or with a stage or bucket filter) the queue lacks hidden items; the page still says why each one is hidden.
+  const every = all && !f.stages.length && !f.buckets.length ? queue : buildWorkQueue(sessions, { ...read, all: true });
   const hiddenBy: Partial<Record<HiddenReason, number>> = {};
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   const shown = queue.items.slice(0, limit);
@@ -238,6 +262,76 @@ export async function workAck(index: IndexStore, src: WorkSource, q: URLSearchPa
   writeOverlay(src.overlay, overlay, now);
   const { item: after } = await findItem(index, src, item.id, q, now, { shortId: await shortener(index) });
   return { id: item.id, acked: true, bucket: cause.bucket, label: BUCKET_LABELS[cause.bucket], now: workItemJson(after) };
+}
+
+/**
+ * POST /api/work/ack-batch {"probablyClosed"?:true,"group"?:"api 529","bucket"?:"failed","ids"?:["w…"],"dryRun"?:true}:
+ * acknowledges all matching active items' current causes in one atomic work.json write.
+ */
+export async function workAckBatch(index: IndexStore, src: WorkSource, q: URLSearchParams, body: unknown): Promise<Record<string, unknown>> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new WorkApiError(400, "body must be a JSON object");
+  const fields = body as Record<string, unknown>;
+  let probablyClosed: boolean | undefined;
+  if (fields.probablyClosed !== undefined) {
+    if (typeof fields.probablyClosed !== "boolean") throw new WorkApiError(400, "probablyClosed must be a boolean");
+    if (fields.probablyClosed) probablyClosed = true;
+  }
+  let group: string | undefined;
+  if (fields.group !== undefined) {
+    if (typeof fields.group !== "string" || !fields.group.trim()) throw new WorkApiError(400, "group must be a non-empty string");
+    group = fields.group.trim();
+  }
+  let bucket: Bucket | undefined;
+  if (fields.bucket !== undefined) {
+    if (typeof fields.bucket !== "string") throw new WorkApiError(400, `bucket must be one of ${BUCKETS.join(", ")}`);
+    const norm = fields.bucket.trim().toLowerCase();
+    if (!(BUCKETS as readonly string[]).includes(norm)) throw new WorkApiError(400, `bucket must be one of ${BUCKETS.join(", ")}, got ${JSON.stringify(fields.bucket)}`);
+    bucket = norm as Bucket;
+  }
+  let ids: string[] | undefined;
+  if (fields.ids !== undefined) {
+    if (!Array.isArray(fields.ids) || !fields.ids.length || fields.ids.length > MAX_LIMIT) {
+      throw new WorkApiError(400, `ids must be an array of 1 to ${MAX_LIMIT} work item ids`);
+    }
+    const clean: string[] = [];
+    for (const raw of fields.ids) {
+      if (typeof raw !== "string" || !WORK_ITEM_ID.test(raw)) throw new WorkApiError(400, 'each entry in ids must be a work item id such as "w1a2b3c"');
+      clean.push(raw);
+    }
+    ids = clean;
+  }
+  let dryRun = false;
+  if (fields.dryRun !== undefined) {
+    if (typeof fields.dryRun !== "boolean") throw new WorkApiError(400, "dryRun must be a boolean");
+    dryRun = fields.dryRun;
+  }
+  if (!probablyClosed && group === undefined && bucket === undefined && ids === undefined) {
+    throw new WorkApiError(400, "ack-batch requires at least one of probablyClosed, group, bucket, or ids");
+  }
+  const clock = src.now?.() ?? Date.now();
+  const age = src.root ? indexAge(src.root, clock) : undefined;
+  const now = judgedAt(src, clock, age);
+  const f = filtersOf(src, q, now);
+  const overlay = readOverlay(src.overlay);
+  const { queue } = await readWorkQueue(index, {
+    since: f.since,
+    agents: f.agents,
+    place: f.place,
+    stages: f.stages,
+    kinds: f.kinds,
+    buckets: f.buckets,
+    q: f.q,
+    overlay,
+    now,
+  });
+  const targets = selectBatchAckTargets(queue.items, { probablyClosed, group, bucket, ids });
+  if (!dryRun && targets.length) {
+    for (const item of targets) addAck(overlay, item.cause!.sessionId, item.cause!.fingerprint);
+    writeOverlay(src.overlay, overlay, clock);
+  }
+  const out: Record<string, unknown> = { acked: targets.length, ids: targets.map((i) => i.id) };
+  if (dryRun) out.dryRun = true;
+  return out;
 }
 
 /** POST /api/work/snooze {"id":"w…","duration":"1h"}: hides the item for that long, as `coding.sh work snooze <id> 1h` does. */

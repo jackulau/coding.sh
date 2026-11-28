@@ -576,3 +576,98 @@ describe("viewer /api/work: settled files and ack short ids", () => {
     assert.equal(ackJson.now.causeShortId, listed.causeShortId);
   });
 });
+
+describe("viewer /api/work filters and POST /api/work/ack-batch", () => {
+  const MIN = 60e3;
+  const HOUR = 60 * MIN;
+  const now = Date.now();
+  let sb: Sandbox;
+  let index: SqliteIndexStore;
+  let v: Viewer;
+
+  const get = (path: string) => req(v.port, path, { token: v.token });
+  const post = (path: string, body: unknown) =>
+    req(v.port, path, { method: "POST", token: v.token, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  before(async () => {
+    sb = sandbox();
+    const sessions: Session[] = [
+      mkSession("api-1", now - 20 * MIN, { endedAt: now - 15 * MIN, cwd: "/work/api", title: "retry auth 1", flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } } as never }),
+      mkSession("api-2", now - 21 * MIN, { endedAt: now - 16 * MIN, cwd: "/work/api", title: "retry auth 2", flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } } as never }),
+      mkSession("old-1", now - 16 * HOUR, { endedAt: undefined, cwd: "/work/old", title: "stale prompt 1", stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 15 * HOUR, toolUseId: "o1" } } as never }),
+      mkSession("old-2", now - 17 * HOUR, { endedAt: undefined, cwd: "/work/old", title: "stale prompt 2", stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 16 * HOUR, toolUseId: "o2" } } as never }),
+      mkSession("rev-change", now - 30 * MIN, { endedAt: now - 25 * MIN, cwd: "/work/web", repo: { root: "/work/web", head: "", branch: "feat/search" } as never, title: "add search box", stats: { filesChanged: 2 } }),
+      mkSession("done-res", now - 40 * MIN, { endedAt: now - 35 * MIN, cwd: "/work/docs", title: "read design doc" }),
+    ];
+    await sb.seed(sessions);
+    const home = sb.env.CODING_SH_HOME!;
+    index = await SqliteIndexStore.open(join(home, "index.db"));
+    await index.migrate();
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      updateStatus: async () => ({ disabled: "test" }) as any,
+      work: { overlay: join(home, "work.json"), home: sb.env.HOME!, cwd: sb.env.HOME! },
+    });
+  });
+  after(async () => {
+    await v?.close();
+    await index?.close();
+    sb?.cleanup();
+  });
+
+  test("GET /api/work filters by kind, bucket and q and returns 400 on invalid kind or bucket", async () => {
+    const ch = await get("/api/work?kind=change");
+    assert.equal(ch.status, 200, ch.body);
+    assert.deepEqual(ch.json().items.map((i: { id: string }) => i.id), [workItemId("rev-change")]);
+
+    const res = await get("/api/work?kind=research&all=1");
+    assert.equal(res.status, 200, res.body);
+    assert.deepEqual(res.json().items.map((i: { id: string }) => i.id).sort(), [workItemId("api-1"), workItemId("api-2"), workItemId("done-res")].sort());
+
+    const b = await get("/api/work?bucket=failed");
+    assert.equal(b.status, 200, b.body);
+    assert.deepEqual(b.json().items.map((i: { id: string }) => i.id).sort(), [workItemId("api-1"), workItemId("api-2")].sort());
+
+    const q = await get("/api/work?q=feat/search");
+    assert.equal(q.status, 200, q.body);
+    assert.deepEqual(q.json().items.map((i: { id: string }) => i.id), [workItemId("rev-change")]);
+
+    assert.equal((await get("/api/work?kind=bogus")).status, 400);
+    assert.equal((await get("/api/work?bucket=bogus")).status, 400);
+  });
+
+  test("POST /api/work/ack-batch validates input, supports dryRun, and acks matching items atomically", async () => {
+    assert.equal((await post("/api/work/ack-batch", {})).status, 400);
+    assert.equal((await post("/api/work/ack-batch", { bucket: "bogus" })).status, 400);
+    assert.equal((await post("/api/work/ack-batch", { ids: ["not-an-id"] })).status, 400);
+    assert.equal((await get("/api/work/ack-batch")).status, 405);
+
+    const dry = await post("/api/work/ack-batch", { group: "api 529", dryRun: true });
+    assert.equal(dry.status, 200, dry.body);
+    assert.equal(dry.json().acked, 2);
+    assert.equal(dry.json().dryRun, true);
+    assert.deepEqual(dry.json().ids.sort(), [workItemId("api-1"), workItemId("api-2")].sort());
+    // Dry run did not modify queue.
+    assert.equal((await get("/api/work?bucket=failed")).json().items.length, 2);
+
+    const grp = await post("/api/work/ack-batch", { group: "api 529" });
+    assert.equal(grp.status, 200, grp.body);
+    assert.equal(grp.json().acked, 2);
+    assert.equal((await get("/api/work?bucket=failed")).json().items.length, 0);
+
+    const closed = await post("/api/work/ack-batch", { probablyClosed: true });
+    assert.equal(closed.status, 200, closed.body);
+    assert.equal(closed.json().acked, 2);
+    assert.deepEqual(closed.json().ids.sort(), [workItemId("old-1"), workItemId("old-2")].sort());
+
+    const byIds = await post("/api/work/ack-batch?q=search", { ids: [workItemId("rev-change")] });
+    assert.equal(byIds.status, 200, byIds.body);
+    assert.deepEqual(byIds.json(), { acked: 1, ids: [workItemId("rev-change")] });
+
+    const cliAfter = await runCmd(work, sb, { json: true, platform: CLI_PLATFORM });
+    assert.equal(cliAfter.error, undefined, cliAfter.error?.stack);
+    assert.equal(cliAfter.json.items.length, 0, "CLI sees every batch ack written by the viewer");
+  });
+});

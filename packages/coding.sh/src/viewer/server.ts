@@ -47,7 +47,7 @@ import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, Metr
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
 import { paths } from "../core/paths.ts";
-import { indexDoc, WORK_ITEM_ID, WorkApiError, workAck, workList, workShow, workSnooze, type WorkSource } from "./work.ts";
+import { indexDoc, WORK_ITEM_ID, WorkApiError, workAck, workAckBatch, workList, workShow, workSnooze, type WorkSource } from "./work.ts";
 import { indexAge } from "../core/ingest-health.ts";
 import { ScoreError } from "../scores/scores.ts";
 import { checkViewName, removeView, saveView, viewStore, ViewError } from "../query/views.ts";
@@ -1332,6 +1332,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           if (method !== "POST") throw new HttpError(405, "method not allowed");
           checkOrigin(req, ctx.checkHost);
           return sendJson(res, 200, await workAck(ctx.index, src, q, await readJson(req, res, 1024)));
+        }
+        if (id === "ack-batch") {
+          if (sub !== undefined) throw notFound();
+          if (method !== "POST") throw new HttpError(405, "method not allowed");
+          checkOrigin(req, ctx.checkHost);
+          return sendJson(res, 200, await workAckBatch(ctx.index, src, q, await readJson(req, res, 16 * 1024)));
         }
         if (id === "snooze") {
           if (sub !== undefined) throw notFound();
