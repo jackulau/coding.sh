@@ -2040,7 +2040,7 @@ coding.sh prompt set <NAME> [options]
 | `--note <TEXT>` |  | Version note. |
 
 ```sh
-coding.sh prompt set triage --text 'Classify ticket: {{ticket}}' --label production
+coding.sh prompt set triage --text 'Classify ticket ({{ticket}})' --label production
 coding.sh prompt set triage --file prompts/triage.txt --config '{"model":"claude-sonnet-4-5","temperature":0}' --label staging
 coding.sh prompt set assistant --messages '[{"role":"system","content":"Be concise."},{"role":"user","content":"{{question}}"}]'
 ```
