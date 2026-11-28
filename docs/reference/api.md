@@ -1757,10 +1757,11 @@ Adds or replaces a label. Body (JSON, up to 1 MB):
 | `criterion` | 1-100 characters of letters, digits and `_.:-`. Default: `outcome` |
 | `note` | Optional, up to 4,000 characters |
 
-There is one label per session, criterion and labeller, so labelling again replaces it. `by` is the
-basic-auth user name, the read key's `name` from `[serve.viewer] read_keys`, or else `reader:` and
-the first 12 hex characters of the key's sha256 (never the key). So each read key keeps its own
-labels.
+There is one label per session, criterion and labeller, so labelling again replaces it. With auth,
+`by` is the basic-auth user name, the read key's `name` from `[serve.viewer] read_keys`, or
+`reader:` plus the first 12 hex characters of the key's sha256 (never the key). In `coding.sh ui`
+and unauthenticated loopback `coding.sh serve`, `by` is the local OS username (falling back to
+`"local"`).
 
 ```sh
 curl -sS -X POST "$CSH/api/labels" \
@@ -1816,7 +1817,10 @@ Body (JSON, up to 1 MB):
 | `ts` | Epoch milliseconds. Default: now |
 | `id` | Score id. Default: one score per target, name, source and caller, so scoring again replaces it |
 
-`by` is the caller, as for labels. A value outside its config's `min`/`max` or `categories` gets 400.
+`by` is the caller, as for labels: the basic-auth user name, the read key's `name` or
+`reader:<hash>`, or in `coding.sh ui` and unauthenticated loopback `coding.sh serve`, the local OS
+username (falling back to `"local"`). A value outside its config's `min`/`max` or `categories` gets
+400.
 
 - Posting the same id with the same content again changes nothing and answers 200 with the stored score (its first `ts` kept).
 - A stored score keeps its type: a value of another type is a 400 unless the body gives `dataType` or the name has a config.
@@ -1944,8 +1948,11 @@ them.
 - A value that does not fit the config is a 400. `{"skip": true}` skips the item instead.
 - Both answer `{item, score, next}`, where `next` is the next pending item or `null` (a skip has
   no `score`). `{item}` is the item's number or its session id.
-- On `coding.sh serve` the caller is the read key's name: it is the score's `by`, `next` returns
-  only items assigned to that name or to no one, and an item assigned to another name is a 403.
+- On `coding.sh serve` with auth, the caller is the basic-auth user or read key (`name` or
+  `reader:<hash>`): it is the score's `by`, `next` returns only items assigned to it or no one, and
+  others answer 403.
+- In `coding.sh ui` and unauthenticated loopback `coding.sh serve`, the score's `by` is the local
+  OS username (falling back to `"local"`).
 - A project-scoped key gets only its project's items; others answer 404. An unknown queue or
   item is a 404, and a store without review queues (the Postgres and ClickHouse plugins) answers 501.
 
