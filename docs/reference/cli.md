@@ -49,6 +49,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`proof`](#codingsh-proof) | Explore | Review a session's formal-verification integrity (escapes, checks, spec changes) |
+| [`steer`](#codingsh-steer) | Explore | Advise whether to continue, nudge or intervene in a session, with a paste-ready steer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
@@ -679,6 +680,36 @@ coding.sh proof latest --strict --json
 - Verdicts: verified (proof files touched, at least one passing check, last check passed, zero remaining escapes and zero tamper findings), incomplete (remaining escapes, failing last check or zero passing checks), tampered (statement, spec or config tampered, or checker bypass flag used), or no-proof.
 - --check-disk scans touched proof files on disk with comments and strings blanked and executes no external checker.
 - --strict exits 1 on tampered or incomplete and 0 on verified or no-proof.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh steer`
+
+Advise whether to continue, nudge or intervene in a session, with a paste-ready steer.
+
+```text
+coding.sh steer <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--prompt` |  | Print only the suggested steer prompt on stdout (nothing when status is continue) |
+| `--strict` |  | Exit 1 when status is intervene, for scripts and orchestrators. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh steer latest
+coding.sh steer latest --fresh
+coding.sh steer 9f1c2e --prompt
+coding.sh steer latest --strict --json
+```
+
+- Statuses: continue (no intervention needed), nudge (medium-priority issue to correct), or intervene (high-priority risk, tamper finding, blocked wait, oscillation, or context degradation).
+- --prompt prints only suggestedSteer on stdout (or nothing with exit 0 when status is continue), ready to pipe into an orchestrator.
+- --strict exits 1 when status is intervene and 0 on continue or nudge.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh show`

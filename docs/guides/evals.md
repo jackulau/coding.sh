@@ -3133,6 +3133,23 @@ kernel audit hints.
 Pass `--check-disk` for a read-only static scan of touched proof files on disk, and `--strict` to
 exit 1 on `tampered` or `incomplete` verdicts in CI or review gates.
 
+### Live session steering
+
+`coding.sh steer <session>` reads live verification, formal proof loop, context hygiene, tamper, and
+wait telemetry to advise whether to `continue`, `nudge`, or `intervene`. When action is needed, it
+lists prioritized directives and a paste-ready `suggestedSteer` grounded in the session's files,
+failing commands, and proof goals.
+
+```sh
+coding.sh steer latest --fresh
+coding.sh steer latest --prompt
+coding.sh steer latest --strict --json
+```
+
+- Pass `--prompt` to print only `suggestedSteer` on stdout (nothing with exit 0 on `continue`), ready for scripts and orchestrators.
+- Pass `--strict` to exit 1 when `status` is `intervene`, and `--fresh` to ingest pending captures before advising.
+- The viewer and `coding.sh serve` expose the same pure report at `GET /api/sessions/{id}/steer`.
+
 ### Diagnosing sessions into Signals
 
 `coding.sh refine diagnose` asks a model what went wrong in each recent session (default: the last

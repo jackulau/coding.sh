@@ -26,6 +26,7 @@ import { isFailureFlag } from "../core/failure-flags.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
+import { buildSteerAdvice } from "../core/steer.ts";
 import { shortener } from "../core/session-ref.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { checkpointRuns, checkpointSessions, withSessions } from "../experiments/checkpoints.ts";
@@ -872,6 +873,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           worst: worst ? { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,
           tree: tree.roots.map(treeNode),
         });
+      }
+      if (sub === "steer") {
+        // Live telemetry steering advice derived purely from stored session stats and events (zero disk I/O).
+        const s = await visibleSession(ctx, sessionId);
+        const events = await ctx.index.listEvents(sessionId);
+        return sendJsonCompressed(req, res, buildSteerAdvice(s, events));
       }
       throw notFound();
     }
