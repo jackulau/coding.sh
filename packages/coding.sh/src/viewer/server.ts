@@ -24,6 +24,7 @@ import type { BlobStore, IndexStore, Label, Score, Session, SessionFilter } from
 import { MAX_DATE_MS } from "../core/dates.ts";
 import { isFailureFlag } from "../core/failure-flags.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
+import { buildProofReport } from "../core/proof-report.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
 import { shortener } from "../core/session-ref.ts";
@@ -872,6 +873,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           worst: worst ? { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,
           tree: tree.roots.map(treeNode),
         });
+      }
+      if (sub === "proof") {
+        // Trace-only formal-verification integrity report (no disk I/O; safe on `coding.sh serve`).
+        const s = await visibleSession(ctx, sessionId);
+        const events = await ctx.index.listEvents(sessionId);
+        return sendJsonCompressed(req, res, buildProofReport(s, events, { includeMilestones: true }));
       }
       throw notFound();
     }
