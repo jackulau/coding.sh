@@ -8386,20 +8386,28 @@ async function showWork(seq, query) {
   let acting = false;
   const draw = (doc, quiet) => {
     shown = doc;
-    const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
+    const surfacedRunning = !st.all && !st.stage && !!st.risk;
+    const shownRunning = surfacedRunning
+      ? (doc.totals && typeof doc.totals.hidden === "number" ? doc.totals.hidden : (doc.items || []).filter((i) => !i.bucket && i.hidden === "running").length)
+      : 0;
+    const remHiddenBy = surfacedRunning && shownRunning && doc.hiddenBy
+      ? Object.fromEntries(Object.entries(doc.hiddenBy).map(([k, v]) => [k, k === "running" ? Math.max(0, v - shownRunning) : v]).filter(([, v]) => v > 0))
+      : doc.hiddenBy;
+    const remHidden = surfacedRunning && shownRunning ? Math.max(0, (doc.hidden || 0) - shownRunning) : (doc.hidden || 0);
+    const hidden = remHidden ? plural(remHidden, "hidden item") + ": " + workHiddenReasons(remHiddenBy) : "";
     // How old the index is, in the CLI's words (an older server sends no `index`): in the line while fresh, a warning while old.
     const age = doc.index && doc.index.text ? h("span", { class: "index-age" + (doc.index.stale ? " warn" : "") }, indexText(doc.index.text)) : null;
     swap(meta, workCounts(doc.counts) + " · since " + st.since, age && !doc.index.stale ? [" · ", age] : null);
     stageSeg.hidden = stagesMeta.hidden = !doc.stages;
     if (doc.stages) stagesMeta.textContent = "Stages: " + workStages(doc.stages);
-    hiddenBtn.textContent = doc.hidden ? "Show hidden (" + fmtNum(doc.hidden) + ")" : "Show hidden";
+    hiddenBtn.textContent = remHidden ? "Show hidden (" + fmtNum(remHidden) + ")" : "Show hidden";
     const lines = age && doc.index.stale ? [h("p", { class: "meta" }, age)] : [];
     if (hidden && !st.all && doc.items.length) lines.push(h("p", { class: "meta" }, hidden + "."));
     if (doc.noPromptSignal && doc.noPromptSignal.length) lines.push(h("p", { class: "meta" }, "No prompt signal from " + doc.noPromptSignal.join(", ") + ": their waits show as stalled."));
     if (doc.truncated) lines.push(h("p", { class: "meta" }, "Read the newest sessions only: pick a shorter window."));
     swap(notes, lines);
     swap(slot, workBody(doc, st, go, act, showAll, actBatch));
-    if (!quiet) announce(doc.items.length ? workCounts(doc.counts) + (doc.hidden ? ", " + plural(doc.hidden, "hidden item") : "") : "Nothing needs you");
+    if (!quiet) announce(doc.items.length ? workCounts(doc.counts) + (remHidden ? ", " + plural(remHidden, "hidden item") : "") : "Nothing needs you");
   };
   const reload = async () => {
     let next;
@@ -8557,13 +8565,21 @@ function workBody(doc, st, go, act, showAll, actBatch) {
   const members = doc.members || {};
   // The moment the server wrote the reasons ("ended 2h ago"); ages on the cards count from it too.
   const now = Number.isFinite(Date.parse(doc.now)) ? Date.parse(doc.now) : Date.now();
-  // One pass over the items: each bucket's list in the CLI's order, the hidden ones last.
-  const groups = WORK_BUCKETS.concat([["hidden", "Hidden"]]);
+  // One pass over the items: each bucket's list in the CLI's order, with risk-surfaced running items under Running and the rest under Hidden.
+  const surfacedRunning = !st.all && !st.stage && !!st.risk;
+  const groups = WORK_BUCKETS.concat(surfacedRunning ? [["running", "Running"], ["hidden", "Hidden"]] : [["hidden", "Hidden"]]);
   const by = new Map(groups.map(([b]) => [b, []]));
-  for (const i of items) { const list = by.get(i.bucket || "hidden"); if (list) list.push(i); }
+  for (const i of items) {
+    const key = i.bucket || (surfacedRunning && i.hidden === "running" ? "running" : "hidden");
+    const list = by.get(key);
+    if (list) list.push(i);
+  }
   // The answer lists up to its limit; `totals` counts each bucket in the whole queue (an older server sends none).
   const totals = doc.totals || {};
-  const count = (b, n) => (typeof totals[b] === "number" && totals[b] > n ? fmtNum(n) + " of " + fmtNum(totals[b]) : fmtNum(n));
+  const count = (b, n) => {
+    const tot = b === "running" ? totals.hidden : totals[b];
+    return typeof tot === "number" && tot > n ? fmtNum(n) + " of " + fmtNum(tot) : fmtNum(n);
+  };
   const out = [];
   const banners = [];
   if (doc.groups && doc.groups.length) {

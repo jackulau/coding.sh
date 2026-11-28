@@ -610,21 +610,34 @@ describe("work --risk and proof status", () => {
       title: "plain docs tweak",
       stats: { filesChanged: 1 },
     });
-    await sb.seed([runHigh, revMed, clean]);
+    const failHigh = sess("fail-high", 10 * MIN, {
+      title: "failing proof build",
+      stats: {
+        filesChanged: 1,
+        testsFailed: 2,
+        contextHygiene: { supervisionRisk: "high", riskReasons: ["unverified-edits"] },
+      } as Extra["stats"],
+    });
+    const failLow = sess("fail-low", 12 * MIN, {
+      title: "ordinary test failure",
+      stats: { filesChanged: 1, testsFailed: 1 },
+    });
+    await sb.seed([runHigh, revMed, clean, failHigh, failLow]);
   });
   after(() => sb.cleanup());
 
   test("--risk filters high and medium,high including running items, and exits 2 on invalid values", async () => {
     const high = await runCmd(work, sb, { json: true, flags: { risk: ["high"] } });
     assert.equal(high.error, undefined, high.error?.stack);
-    assert.deepEqual(high.json.items.map((i: { id: string }) => i.id), [workItemId("run-high")]);
-    assert.equal(high.json.items[0].supervisionRisk, "high");
-    assert.deepEqual(high.json.items[0].riskReasons, ["tactic-oscillation", "unverified-edits"]);
-    assert.deepEqual(high.json.items[0].proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 });
+    assert.deepEqual(high.json.items.map((i: { id: string }) => i.id), [workItemId("fail-high"), workItemId("run-high")]);
+    const runHighItem = high.json.items.find((i: { id: string }) => i.id === workItemId("run-high"));
+    assert.equal(runHighItem.supervisionRisk, "high");
+    assert.deepEqual(runHighItem.riskReasons, ["tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(runHighItem.proof, { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 });
 
     const medHigh = await runCmd(work, sb, { json: true, flags: { risk: "medium,high" } });
     assert.equal(medHigh.error, undefined, medHigh.error?.stack);
-    assert.deepEqual(medHigh.json.items.map((i: { id: string }) => i.id).sort(), [workItemId("rev-med"), workItemId("run-high")].sort());
+    assert.deepEqual(medHigh.json.items.map((i: { id: string }) => i.id).sort(), [workItemId("fail-high"), workItemId("rev-med"), workItemId("run-high")].sort());
 
     const bad = await runCmd(work, sb, { json: true, flags: { risk: "hihg" } });
     assert.ok(bad.error instanceof UsageError);
@@ -637,11 +650,19 @@ describe("work --risk and proof status", () => {
 
     const cmd = findCommand("work")!;
     assert.deepEqual(cmd.flags!.find((f) => f.name === "risk")?.choices, [...SUPERVISION_RISKS]);
+    const ackAction = cmd.actions!.find((a) => a.name === "ack")!;
+    assert.deepEqual(ackAction.flags!.find((f) => f.name === "risk")?.choices, [...SUPERVISION_RISKS]);
   });
 
-  test("text list renders risk and proof badges when present and leaves clean rows unchanged", async () => {
+  test("text list renders risk-surfaced running items under Running (not Hidden) and badges when present", async () => {
+    const riskText = await runCmd(work, sb, { flags: { risk: "high" } });
+    assert.equal(riskText.error, undefined, riskText.error?.stack);
+    assert.match(riskText.stdout, /\nRunning\n/);
+    assert.doesNotMatch(riskText.stdout, /\nHidden\n/);
+
     const r = await runCmd(work, sb, { flags: { all: true } });
     assert.equal(r.error, undefined, r.error?.stack);
+    assert.match(r.stdout, /\nHidden\n/);
     assert.match(r.stdout, /risk:high \(tactic-oscillation\)/);
     assert.match(r.stdout, /lean 2 sorry/);
     assert.match(r.stdout, /risk:medium \(dead-end-loop\)/);
@@ -650,6 +671,32 @@ describe("work --risk and proof status", () => {
     const cleanBlock = r.stdout.slice(r.stdout.indexOf("plain docs tweak")).split("\n").slice(0, 3).join("\n");
     assert.doesNotMatch(cleanBlock, /risk:|sorry|escape/);
     assert.match(cleanBlock, /\n {10}finished \d+[smhd] ago with 1 file changed\n/);
+  });
+
+  test("work ack --bucket failed --risk high narrows batch acks and validates --risk", async () => {
+    const overlayPath = join(sb.env.CODING_SH_HOME!, "work.json");
+    const dry = await runCmd(work, sb, { action: "ack", flags: { bucket: "failed", risk: "high", "dry-run": true }, json: true });
+    assert.equal(dry.error, undefined, dry.error?.stack);
+    assert.equal(dry.json.dryRun, true);
+    assert.equal(dry.json.acked, 1);
+    assert.deepEqual(dry.json.items.map((i: { id: string }) => i.id), [workItemId("fail-high")]);
+    assert.equal(existsSync(overlayPath), false, "dry-run leaves work.json untouched");
+
+    const bad = await runCmd(work, sb, { action: "ack", flags: { bucket: "failed", risk: "bogus" }, json: true });
+    assert.ok(bad.error instanceof UsageError);
+    assert.equal(bad.error.reason, "invalid_argument");
+
+    const mixed = await runCmd(work, sb, { action: "ack", positionals: [workItemId("fail-high")], flags: { risk: "high" } });
+    assert.ok(mixed.error instanceof UsageError);
+    assert.equal(mixed.error.reason, "invalid_argument");
+
+    const applied = await runCmd(work, sb, { action: "ack", flags: { bucket: "failed", risk: "high" }, json: true });
+    assert.equal(applied.error, undefined, applied.error?.stack);
+    assert.equal(applied.json.acked, 1);
+    assert.deepEqual(applied.json.items.map((i: { id: string }) => i.id), [workItemId("fail-high")]);
+
+    const leftFailed = await runCmd(work, sb, { json: true, flags: { bucket: "failed" } });
+    assert.deepEqual(leftFailed.json.items.map((i: { id: string }) => i.id), [workItemId("fail-low")]);
   });
 
   test("work show prints Risk and Proof rows and coding.sh proof hint when present", async () => {
