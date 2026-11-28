@@ -472,7 +472,15 @@ than agents working alone. Each part maps onto what coding.sh already has:
 
 ## Datasets and experiments
 
-`coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
+`coding.sh dataset add|import|mine|filter|stats` keeps versioned cases with stable train/dev/test splits.
+
+### Mining and curating datasets
+
+`coding.sh dataset mine <name>` harvests matching sessions into a versioned dataset. Pass `--where`, `--since`, `--agent`, `--repo`, and `--limit` to scope sessions, `--min-turns`, `--min-score <name>=<val>`, and `--exclude-flagged` to filter quality, and `--dedupe-near <0..1>` to drop near-duplicate inputs by 5-shingle Jaccard similarity.
+
+Mined cases carry deterministic `difficulty` (`easy`, `medium`, or `hard`), `turns`, `toolCalls`, and `filesChanged` metadata derived from session stats, plus a `difficulty:<level>` tag. `--exclude-flagged` drops failure flags while keeping colon tags and context notes (`compaction`, `step-retried`, `resumed`).
+
+`coding.sh dataset stats <name>` reports version, case counts by split, kind, tag, and difficulty, input length min/median/max, and near-duplicate pair count at `--near-threshold` (default `0.8`). `coding.sh dataset filter <src> --out <dst>` writes a new immutable child dataset filtered by `--split`, `--tag`, `--difficulty`, `--min-chars`, `--max-chars`, `--dedupe-near`, and `--limit`.
 
 ### Case kinds: bad, guard, control
 
