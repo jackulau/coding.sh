@@ -1,6 +1,6 @@
 // `refine mine` (R2-5): failure patterns across a window of sessions, ranked,
 // with example sessions and an evidence count, as input for `refine propose`
-// (docs/research/prime-agent.md §5.3). Four deterministic detectors, all $0:
+// (docs/research/prime-agent.md §5.3). Five deterministic detectors, all $0:
 //
 //   flag                   one pattern per diagnosed session flag (taxonomy +
 //                          deterministic severity, as flagFindings)
@@ -17,10 +17,13 @@
 //   eval-failure           failed eval runs (RunResult.pass=false), grouped by
 //                          the first tool where the run left a passing attempt
 //                          of the same task
+//   proof-failure          failed formal-verification checker runs (Lean, Rocq,
+//                          Verus, Dafny, Isabelle, TLA+/TLC), normalized to
+//                          formal error signatures
 //
 // A pattern counts when it is seen in at least `minSupport.sessions` sessions
 // over `minSupport.days` UTC days (default 3 and 2). Sessions with a runId
-// (coding.sh's own eval runs) are left out of the first three. Under a repo
+// (coding.sh's own eval runs) are left out of the organic detectors. Under a repo
 // filter an eval run counts by its task (the repo the task starts from, or a
 // suite in the repo), since its session runs in a scratch directory. Ranking:
 // sessions × (wasted tool calls, else 1), then severity, then evidence count,
@@ -28,14 +31,17 @@
 // Everything that leaves this module goes through the redactor.
 import { createHash } from "node:crypto";
 import { isoMs } from "../core/dates.ts";
+import { checkOutcome, isProofOutput, isRocqOutput, isWholeProjectCheck, proofCheck, type ProofCheck } from "../core/proof.ts";
 import { createRedactor } from "../core/redact.ts";
 import { isSyntheticPrompt } from "../core/sessions.ts";
+import { shellCommand } from "../core/shell-diff.ts";
+import { isShellCall } from "../core/shell-tools.ts";
 import type { AgentEvent, IndexStore, RunResult } from "../core/types.ts";
 import type { Session } from "../schema/index.ts";
 import { flagFindings } from "./findings.ts";
 import type { Diagnosis } from "./severity.ts";
 
-export type MinedKind = "flag" | "error-signature" | "repeated-instruction" | "eval-failure" | "diagnosis";
+export type MinedKind = "flag" | "error-signature" | "repeated-instruction" | "eval-failure" | "proof-failure" | "diagnosis";
 
 export interface MinedExample {
   sessionId: string;
@@ -372,6 +378,139 @@ export function evalFailureFindings(runs: readonly RunResult[], sessions: Readon
   return [...groups].map(([k, hits]) => group("eval-failure", `eval:${k}`, `failed runs diverge at ${k}`, hits, { surface: "context-file", impact: { failedSessions: hits.length } }));
 }
 
+// ---------------------------------------------------------------- proof failures
+
+const PROOF_TIMEOUT_OUT = /\b(?:exec )?command timed out\b|\btimed out after\b|\bexit code 124\b|\bSIGTERM\b/i;
+const SLOW_WHOLE_BUILD_MS = 60_000;
+
+const PROOF_RULES: Record<string, readonly [RegExp, string][]> = {
+  lean: [
+    [/\(deterministic\)\s*timeout|maximum recursion depth|maxHeartbeats/i, "lean: deterministic timeout"],
+    [/simp made no progress/i, "lean: simp made no progress"],
+    [/omega could not prove/i, "lean: omega could not prove"],
+    [/unknown identifier|unknown constant/i, "lean: unknown identifier"],
+    [/application type mismatch|type mismatch/i, "lean: type mismatch"],
+    [/unsolved goals/i, "lean: unsolved goals"],
+    [/failed to synthesize/i, "lean: failed to synthesize instance"],
+    [/linarith failed/i, "lean: linarith failed"],
+    [/unknown tactic/i, "lean: unknown tactic"],
+    [/failed to show termination/i, "lean: termination failure"],
+    [/tactic ['"`]?[\w.]+['"`]? failed/i, "lean: tactic failed"],
+  ],
+  rocq: [
+    [/unable to unify|cannot unify/i, "rocq: unable to unify"],
+    [/the reference .* was not found|not found in the current environment/i, "rocq: reference not found"],
+    [/has type .* while it is expected to have type/i, "rocq: type mismatch"],
+    [/cannot find a physical path|cannot find library/i, "rocq: missing library"],
+    [/universe inconsistency/i, "rocq: universe inconsistency"],
+    [/cannot guess decreasing argument|recursive definition .* is ill-formed/i, "rocq: termination failure"],
+    [/attempt to save an incomplete proof|unfocused goals/i, "rocq: incomplete proof"],
+    [/no applicable tactic|tactic failure/i, "rocq: tactic failed"],
+  ],
+  verus: [
+    [/could not automatically infer triggers|automatically chose triggers|(?:quantifier|forall|exists)[^\n]{0,80}trigger|no trigger/i, "verus: quantifier trigger"],
+    [/assertion failed/i, "verus: assertion failed"],
+    [/postcondition not satisfied/i, "verus: postcondition failed"],
+    [/precondition not satisfied/i, "verus: precondition failed"],
+    [/invariant not satisfied/i, "verus: loop invariant"],
+    [/rlimit exceeded|resource limit/i, "verus: rlimit exceeded"],
+    [/cannot prove termination|decreases/i, "verus: decreases failure"],
+    [/arithmetic (?:underflow|overflow)/i, "verus: arithmetic overflow"],
+  ],
+  dafny: [
+    [/failure to decrease termination metric|cannot prove termination|\bdecreases\b/i, "dafny: decreases failure"],
+    [/loop invariant[^\n]*might not|invariant might not (?:hold|be maintained)/i, "dafny: loop invariant"],
+    [/postcondition[^\n]*might not hold|a postcondition could not be proved/i, "dafny: postcondition failed"],
+    [/precondition[^\n]*might not hold|a precondition for this call could not be proved/i, "dafny: precondition failed"],
+    [/assertion might not hold|assertion violation/i, "dafny: assertion failed"],
+    [/index out of range/i, "dafny: index out of range"],
+    [/verification timed out|rlimit/i, "dafny: verification timeout"],
+  ],
+  isabelle: [
+    [/failed to finish proof/i, "isabelle: failed to finish proof"],
+    [/failed to apply (?:initial )?proof method/i, "isabelle: proof method failed"],
+    [/type unification failed/i, "isabelle: type unification failed"],
+    [/undefined fact|unknown fact/i, "isabelle: unknown fact"],
+  ],
+  tlc: [
+    [/invariant [^\n]* is violated/i, "tlc: invariant violated"],
+    [/temporal properties were violated/i, "tlc: temporal property violated"],
+    [/deadlock reached/i, "tlc: deadlock reached"],
+  ],
+  tla: [
+    [/obligations? failed/i, "tla: proof obligation failed"],
+    [/invariant [^\n]* is violated/i, "tlc: invariant violated"],
+  ],
+};
+
+function proofFailureLang(check: ProofCheck, output: string): string | undefined {
+  if (check.lang !== "make" && check.lang !== "dune") return check.lang;
+  if (isRocqOutput(output)) return "rocq";
+  if (/\.lean:\d+:\d+:/m.test(output)) return "lean";
+  if (/\.dfy\(\d+,\d+\):/m.test(output)) return "dafny";
+  if (isProofOutput(output)) return "proof";
+  return undefined;
+}
+
+/** Normalize a failed formal-verification checker call into a stable proof-failure signature. */
+export function classifyProofFailure(check: ProofCheck, cmd: string, output: string, opts: { timedOut?: boolean; durationMs?: number } = {}): string | undefined {
+  const lang = proofFailureLang(check, output);
+  if (!lang) return undefined;
+  const whole = isWholeProjectCheck(check, cmd);
+  const timedOut = opts.timedOut === true || PROOF_TIMEOUT_OUT.test(output);
+  if (whole && (timedOut || (opts.durationMs !== undefined && opts.durationMs >= SLOW_WHOLE_BUILD_MS))) {
+    return "proof: slow whole-project build";
+  }
+  const rules = PROOF_RULES[lang];
+  if (rules) {
+    for (const [re, label] of rules) {
+      if (re.test(output)) return label;
+    }
+  }
+  if (whole) return "proof: slow whole-project build";
+  const line = firstErrorLine(output);
+  if (!line) return undefined;
+  const norm = normalizeErrorLine(line);
+  if (!norm || norm === "#" || norm === "'…'") return undefined;
+  return `${lang}: ${norm}`.slice(0, 200);
+}
+
+/** One finding per recurring formal-verification checker error signature across `sessions`. */
+export function proofFailureFindings(sessions: readonly Session[], events: ReadonlyMap<string, readonly AgentEvent[]>): MinedFinding[] {
+  const groups = new Map<string, Hit[]>();
+  for (const s of sessions) {
+    const starts = new Map<string, { check: ProofCheck; cmd: string }>();
+    for (const e of events.get(s.id) ?? []) {
+      const p = e.payload ?? {};
+      if (e.kind === "tool.start") {
+        const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+        const tool = typeof p.tool === "string" ? p.tool : undefined;
+        const cmd = shellCommand(tool, p.input);
+        if (id && cmd !== undefined && isShellCall(tool ?? "", p.input)) {
+          const check = proofCheck(cmd, p.input);
+          if (check) starts.set(id, { check, cmd });
+        }
+      } else if (e.kind === "tool.end" && !p.wrapper) {
+        const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+        const active = id ? starts.get(id) : undefined;
+        if (!active) continue;
+        starts.delete(id!);
+        const out = outputText(p.output ?? p.error);
+        const outcome = checkOutcome(active.check, p);
+        const timedOut = p.timedOut === true || (p.ok === false && PROOF_TIMEOUT_OUT.test(out));
+        if (outcome !== "red" && !timedOut) continue;
+        const sig = classifyProofFailure(active.check, active.cmd, out, { timedOut, durationMs: e.durationMs });
+        if (!sig) continue;
+        const line = firstErrorLine(out) ?? sig;
+        const hits = groups.get(sig) ?? [];
+        hits.push({ session: s, eventId: e.id, text: line.slice(0, 200) });
+        groups.set(sig, hits);
+      }
+    }
+  }
+  return [...groups].map(([sig, hits]) => group("proof-failure", `proof:${sig}`, sig, hits, { surface: "context-file", impact: { wastedToolCalls: hits.length } }));
+}
+
 // ---------------------------------------------------------------- ranking, mining
 
 export const rankScore = (f: MinedFinding): number => f.support.sessions * (f.impact.wastedToolCalls ?? 1);
@@ -445,7 +584,12 @@ export async function mineFindings(o: MineOptions): Promise<MineResult> {
   const sessions = listed.filter(ofAgent);
   const events = new Map<string, AgentEvent[]>();
   for (const s of sessions) events.set(s.id, await o.index.listEvents(s.id, { kinds: ["user.message", "tool.start", "tool.end"] }));
-  const all: MinedFinding[] = [...flagMined(sessions), ...errorSignatureFindings(sessions, events), ...repeatedInstructionFindings(sessions, events)];
+  const all: MinedFinding[] = [
+    ...flagMined(sessions),
+    ...errorSignatureFindings(sessions, events),
+    ...repeatedInstructionFindings(sessions, events),
+    ...proofFailureFindings(sessions, events),
+  ];
   let evalRuns = 0;
   if (o.evalRuns !== false && o.index.listRuns) {
     const runs = (await o.index.listRuns()).filter((r) => r.sessionId && (o.since === undefined || r.startedAt >= o.since));
@@ -483,7 +627,7 @@ function countAgents(sessions: readonly Session[]): { agent: string; sessions: n
   return [...n].map(([agent, k]) => ({ agent, sessions: k })).sort((a, b) => b.sessions - a.sessions || (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0));
 }
 
-const KIND_TEXT: Record<MinedKind, string> = { flag: "flag", "error-signature": "error", "repeated-instruction": "instruction", "eval-failure": "eval", diagnosis: "diagnosis" };
+const KIND_TEXT: Record<MinedKind, string> = { flag: "flag", "error-signature": "error", "repeated-instruction": "instruction", "eval-failure": "eval", "proof-failure": "proof", diagnosis: "diagnosis" };
 
 /** Plain-text lines for a terminal or a prompt: one per finding plus its first example. */
 export function formatFindings(xs: readonly MinedFinding[]): string[] {
