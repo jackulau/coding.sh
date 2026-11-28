@@ -70,6 +70,7 @@ Every command accepts these.
 | [`work`](#codingsh-work) | Explore | What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review |
 | [`eval`](#codingsh-eval) | Evaluate | Build eval suites from sessions, skills or cases, and run them |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
+| [`prompt`](#codingsh-prompt) | Evaluate | Store, version, label, render and diff local prompt templates |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
 | [`review`](#codingsh-review) | Evaluate | Queues of sessions to score by hand, one at a time, with one score config |
@@ -2068,6 +2069,133 @@ coding.sh dataset filter <SRC> [options]
 ```sh
 coding.sh dataset filter raw --out clean --split train,dev --difficulty medium,hard --dedupe-near 0.8
 coding.sh dataset filter raw --out short --min-chars 20 --max-chars 500 --dry-run
+```
+
+## `coding.sh prompt`
+
+Store, version, label, render and diff local prompt templates.
+
+```text
+coding.sh prompt <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`set`](#codingsh-prompt-set) | Save a text or chat prompt as a new immutable version (unchanged content reuses latest) |
+| [`get`](#codingsh-prompt-get) | Fetch a prompt by version or label and optionally render {{var}} placeholders |
+| [`list`](#codingsh-prompt-list) | List stored prompts with latest version, count, active labels and updated time |
+| [`label`](#codingsh-prompt-label) | Move or delete a mutable label pointer on a prompt |
+| [`diff`](#codingsh-prompt-diff) | Show a line-by-line unified diff between two versions or labels of a prompt |
+
+- Prompts live locally under ~/.coding.sh/prompts/&lt;name&gt;/ as immutable content-hashed JSON versions (v1, v2, ...) plus mutable label pointers in labels.json.
+- Identical consecutive saves reuse the latest version without bumping the version number, while moving any given labels.
+- Variable substitution runs in a single pass, so a variable value containing {{other}} is never expanded again. Prompts are stored without redaction: keep secrets out of templates and pass them at runtime.
+
+### `coding.sh prompt set`
+
+Save a text or chat prompt as a new immutable version (unchanged content reuses latest).
+
+```text
+coding.sh prompt set <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Prompt name (1 to 80 letters, digits, '.', '_' or '-') |
+
+| Option | Default | Description |
+|---|---|---|
+| `--text <STR>` |  | Text prompt template. |
+| `--file <PATH>` |  | Read text prompt template from this file. |
+| `--messages <JSON|FILE>` |  | Chat prompt messages as JSON array of {"role","content"} or a JSON file. |
+| `--label <LABEL>` |  | Attach label(s) to this version, e.g. production (repeatable, or a comma list: a,b) |
+| `--config <JSON|FILE>` |  | Optional model config JSON object or file, e.g. {"model":"claude-sonnet-4-5","temperature":0.2}. |
+| `--note <TEXT>` |  | Version note. |
+
+```sh
+coding.sh prompt set triage --text 'Classify ticket ({{ticket}})' --label production
+coding.sh prompt set triage --file prompts/triage.txt --config '{"model":"claude-sonnet-4-5","temperature":0}' --label staging
+coding.sh prompt set assistant --messages '[{"role":"system","content":"Be concise."},{"role":"user","content":"{{question}}"}]'
+```
+
+### `coding.sh prompt get`
+
+Fetch a prompt by version or label and optionally render {{var}} placeholders.
+
+```text
+coding.sh prompt get <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Prompt name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--version <VER>` |  | Version to fetch, e.g. v1 (cannot be combined with --label) |
+| `--label <LABEL>` | `latest` | Label to resolve. |
+| `--var <KEY=VAL>` |  | Substitute {{KEY}} with VAL in a single pass (repeatable) |
+| `--raw` |  | Print only the prompt text or chat messages JSON with no metadata lines. |
+
+```sh
+coding.sh prompt get triage --label production
+coding.sh prompt get triage --version v1 --var ticket='login fails' --raw
+coding.sh prompt get triage --json
+```
+
+### `coding.sh prompt list`
+
+List stored prompts with latest version, count, active labels and updated time.
+
+```text
+coding.sh prompt list
+```
+
+```sh
+coding.sh prompt list
+coding.sh prompt list --json
+```
+
+### `coding.sh prompt label`
+
+Move or delete a mutable label pointer on a prompt.
+
+```text
+coding.sh prompt label <NAME> <LABEL> [version] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Prompt name. |
+| `label` | yes | Label name, e.g. production or staging. |
+| `version` | no | Existing version to point at, e.g. v2 (omit with --delete) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--delete` |  | Remove this label from the prompt. |
+
+```sh
+coding.sh prompt label triage production v2
+coding.sh prompt label triage staging --delete
+```
+
+### `coding.sh prompt diff`
+
+Show a line-by-line unified diff between two versions or labels of a prompt.
+
+```text
+coding.sh prompt diff <NAME> <A> <B>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Prompt name. |
+| `a` | yes | First version or label (e.g. v1 or production) |
+| `b` | yes | Second version or label (e.g. v2 or staging) |
+
+```sh
+coding.sh prompt diff triage production staging
+coding.sh prompt diff triage v1 v2 --json
 ```
 
 ## `coding.sh exp`

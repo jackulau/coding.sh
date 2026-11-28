@@ -3425,6 +3425,23 @@ to `cases.jsonl`:
 `OPENAI_API_KEY`. Read the request file before you commit it: it holds the conversation up to the
 step.
 
+## Prompt registry
+
+`coding.sh prompt` stores text and chat templates locally under `~/.coding.sh/prompts/<name>/` as immutable content-hashed versions (`v1`, `v2`, ...) with mutable label pointers (`production`, `staging`, `latest`) in `labels.json`.
+
+```sh
+coding.sh prompt set triage --text 'Classify ticket: {{ticket}}' --label production
+coding.sh prompt set triage --file triage-v2.txt --config '{"model":"claude-sonnet-4-5"}' --label staging
+coding.sh prompt get triage --label production --var ticket='login timeout' --raw
+coding.sh prompt diff triage production staging
+coding.sh prompt label triage production v2
+```
+
+- **Immutable versions.** Identical consecutive saves reuse the latest version without bumping the number while moving any given `--label`.
+- **Single-pass rendering.** `{{var}}` placeholders substitute in one pass, so a value containing `{{other}}` stays literal. Missing variables fail cleanly.
+- **Chat and text.** Pass `--text`, `--file`, stdin or `--messages <JSON|FILE>` for `system`, `user` and `assistant` message arrays.
+- **Local storage.** Templates are saved without redaction so prompt wording stays exact; keep secrets out of templates and pass them at runtime.
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

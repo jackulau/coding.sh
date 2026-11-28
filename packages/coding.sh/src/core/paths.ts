@@ -85,5 +85,7 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     work: r + "work.json",
     /** Pinned hashes of each tool's description and schema (`coding.sh harness tools pin`, proxy/tool-drift.ts). */
     toolPins: r + "tool-pins.json",
+    /** Local versioned prompt templates and their labels (`coding.sh prompt`, src/prompts). */
+    prompts: r + "prompts",
   };
 }
