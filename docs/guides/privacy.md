@@ -35,7 +35,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `index.db` | The SQLite index of sessions and events. |
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
 | `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
-| `repos/` | Snapshots of the working tree before and after a session. They hold your files as they are, not redacted; files your `.gitignore` skips are left out. On Windows, paths over 260 characters are kept too. Your repo's own refs are never touched. |
+| `repos/` | Working-tree snapshots before and after a session, unredacted; `.gitignore` files stay out. Windows keeps paths over 260 characters. Your repo's refs stay untouched. |
 | `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with your `[capture]` rules. See [Replay recorded model calls](../how-to/replay-llm-calls.md#what-is-stored). |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
@@ -54,6 +54,9 @@ tool calls with their input and output, file changes, errors, model names, token
   your sessions anywhere.
 - **A repo's `redactPatterns` are literal text.** Regular expressions count only from your own
   config.
+- **Scorer names.** Scores, labels, viewer comments and review items store the local OS username
+  (`os.userInfo().username`, or `"local"`) in `by` across CLI, MCP, `coding.sh ui` and
+  unauthenticated loopback `coding.sh serve`. `export labels` includes `by`.
 
 ## Redaction
 
@@ -146,10 +149,9 @@ proxy has no auth: anyone who can reach its port can send calls through it.
 
 ## The raw spool
 
-The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
-what agents run on Windows) redacts the payload first, with `capture.redact` and
-`capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
-spool.
+The hook writes agent payloads to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
+used on Windows) redacts first with `capture.redact` and `capture.redactPatterns` from
+`config.toml`, so matched secrets never reach the spool.
 
 To stay fast, the node hook loads those rules only for a payload that may hold a secret, the only
 kind they would change, or when your `config.toml` sets other rules. If it can't load them, it
@@ -192,10 +194,10 @@ Purge looks in each of these places:
 | Where | What purge does |
 | --- | --- |
 | Events and the search index | Replaces the value with `[redacted:purged]`. |
-| Session titles and stats, labels, eval docs, settings | Replaces the value with `[redacted:purged]`. |
+| Session titles and stats, score comments and text values (labels included), eval docs, settings | Replaces the value with `[redacted:purged]`; leaves score `by` unchanged. |
 | Blobs | Rewrites them under a new hash, and every reference follows. |
 | Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
-| Recorded model calls (`llm-cache/`) | Waits for jobs still recording, then rewrites each recording that holds the value, keeping its replay keys. Deletes a torn or temp file holding it. |
+| Recorded model calls (`llm-cache/`) | Waits for live recording jobs, rewrites matching recordings while keeping replay keys, and deletes matching torn or temp files. |
 | Snapshots (`repos/`) | Names each snapshot repo that holds the value or that git can't read, and exits 1 until you delete it. It does not rewrite snapshots. |
 | `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |

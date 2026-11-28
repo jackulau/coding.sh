@@ -23,10 +23,10 @@ something here is out of date, open an issue.
 | Datasets, experiments, LLM judges | Yes | Yes |
 | Paired statistics on two runs (bootstrap interval) | Yes, `coding.sh exp compare` | Not found in their docs |
 | Replay a coding session step by step, with files | Yes, `coding.sh replay` | No |
-| Online evals on live traffic | No | Yes |
-| Human annotation queues, including pairwise | No | Yes |
+| Online evals on live traffic | Yes, `coding.sh monitor` scores new sessions after they end | Yes |
+| Human annotation queues, including pairwise | Queues via `coding.sh review` and `#/review`; no pairwise | Yes |
 | Failure clustering across traces | No | Yes (Insights, on paid plans) |
-| Alerts | No | Yes: Slack, PagerDuty, webhooks |
+| Alerts | Yes: `coding.sh alert` (webhooks and commands) | Yes: Slack, PagerDuty, webhooks |
 | SSO, SCIM, RBAC, audit logs | No | Enterprise |
 | Test runner integration | `exp compare --gate` exit code in CI | pytest, Vitest and Jest |
 | MCP server | Yes, local | Yes, hosted |
@@ -35,8 +35,8 @@ something here is out of date, open an issue.
 
 - **A hosted team workspace.** Nothing to run, traces from production and from every developer in
   one place, and enterprise controls when you need them.
-- **Production monitoring.** Online evaluators, alerts to Slack or PagerDuty, and clustering that
-  groups similar failures across many traces.
+- **Production monitoring.** Hosted online evaluators, built-in Slack and PagerDuty alerts, and
+  clustering that groups similar failures across many traces.
 - **Human review.** Annotation queues, including pairwise comparison of two outputs.
 - **LangChain and LangGraph.** Tracing for those frameworks needs almost no setup.
 - **Test frameworks.** Evals can run inside pytest, Vitest or Jest.
@@ -64,7 +64,8 @@ than coding.sh.
 ### Is there an open-source LangSmith alternative I can self-host?
 
 coding.sh is one, for agents and coding agents: MIT licensed, local by default, and one container
-for a team. It does not have LangSmith's annotation queues, alerts, failure clustering or SSO.
+for a team. It does not have LangSmith's pairwise review, failure clustering, Slack and PagerDuty
+integrations or SSO.
 
 ### Does LangSmith work with Claude Code?
 
