@@ -13,7 +13,8 @@ import { CliError } from "../../src/cli/output.ts";
 import { findCommand } from "../../src/cli/registry.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { readOverlay } from "../../src/core/work-overlay.ts";
-import { STAGES, workItemId } from "../../src/core/work.ts";
+import { BUCKETS, STAGES, WORK_KINDS, workItemId } from "../../src/core/work.ts";
+import { FLAGS } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { CLI } from "../_cli.ts";
 import { removeTestDir } from "../_rm.ts";
@@ -384,5 +385,189 @@ describe("work snooze under a stale index", () => {
     assert.ok(until >= beforeMs + 2 * HOUR - 5e3 && until <= Date.now() + 2 * HOUR + 5e3, z.json.snoozedUntil);
     const overlay = readOverlay(join(sb.env.CODING_SH_HOME!, "work.json"));
     assert.equal(overlay.snoozes.busy?.bucket, "review");
+  });
+});
+
+describe("work high-scale filters and batch ack", () => {
+  const HOUR = 60 * MIN;
+  let sb: Sandbox;
+
+  before(async () => {
+    sb = sandbox();
+    const sessions: Session[] = [];
+    // 6 active blocked items: 3 recent, 3 probably closed (>12h old).
+    for (let i = 1; i <= 3; i++) {
+      sessions.push(
+        sess(`blk-${i}`, (10 + i) * MIN, {
+          endedAt: undefined,
+          cwd: "/work/frontend",
+          repo: { root: "/work/frontend", head: "", branch: `feat/ui-${i}` } as Extra["repo"],
+          title: `approve UI patch ${i}`,
+          stats: { filesChanged: 1, latency: { wallMs: 5 * MIN }, waiting: { kind: "permission", at: now - (4 + i) * MIN, toolUseId: `b${i}`, text: "Run npm test" } } as Extra["stats"],
+        }),
+      );
+    }
+    for (let i = 1; i <= 3; i++) {
+      sessions.push(
+        sess(`stale-blk-${i}`, (16 + i) * HOUR, {
+          endedAt: undefined,
+          cwd: "/work/legacy",
+          repo: { root: "/work/legacy", head: "", branch: "main" } as Extra["repo"],
+          title: `abandoned terminal ${i}`,
+          stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - (14 + i) * HOUR, toolUseId: `sb${i}` } } as Extra["stats"],
+        }),
+      );
+    }
+    // 5 failed items on api 529 (research), 2 failed on tests (change), 1 workflow run.
+    for (let i = 1; i <= 5; i++) {
+      sessions.push(
+        sess(`api529-${i}`, (20 + i) * MIN, {
+          agent: i <= 3 ? "claude-code" : "codex",
+          endedAt: now - (15 + i) * MIN,
+          cwd: "/work/backend",
+          repo: { root: "/work/backend", head: "", branch: `fix/auth-${i}` } as Extra["repo"],
+          title: `retry auth endpoint ${i}`,
+          flags: [FLAGS.apiStall],
+          stats: { llmErrors: { count: 4, statusCode: 529 } } as Extra["stats"],
+        }),
+      );
+    }
+    for (let i = 1; i <= 2; i++) {
+      sessions.push(
+        sess(`testfail-${i}`, (30 + i) * MIN, {
+          endedAt: now - (25 + i) * MIN,
+          cwd: "/work/backend",
+          repo: { root: "/work/backend", head: "", branch: `fix/db-${i}` } as Extra["repo"],
+          title: `db migration test ${i}`,
+          stats: { filesChanged: 2, testsFailed: 2 },
+        }),
+      );
+    }
+    // Workflow run (2 agents, 1 failed).
+    sessions.push(
+      sess("wf-a1", 40 * MIN, {
+        endedAt: now - 35 * MIN,
+        cwd: "/work/backend",
+        parent: { sessionId: "orch", workflowId: "wf-scale-1", workflowName: "Nightly Audit", phase: "scan" },
+        stats: { testsFailed: 1 },
+      }),
+      sess("wf-a2", 40 * MIN, {
+        endedAt: now - 36 * MIN,
+        cwd: "/work/backend",
+        parent: { sessionId: "orch", workflowId: "wf-scale-1", workflowName: "Nightly Audit", phase: "scan" },
+      }),
+    );
+    // 8 review change items + 5 done research items (26+ items total).
+    for (let i = 1; i <= 8; i++) {
+      sessions.push(
+        sess(`rev-${i}`, (50 + i) * MIN, {
+          agent: i % 2 === 0 ? "codex" : "claude-code",
+          endedAt: now - (45 + i) * MIN,
+          cwd: i <= 4 ? "/work/frontend" : "/work/backend",
+          repo: { root: i <= 4 ? "/work/frontend" : "/work/backend", head: "", branch: `feat/batch-${i}` } as Extra["repo"],
+          title: `ship feature ${i}`,
+          stats: { filesChanged: i },
+        }),
+      );
+    }
+    for (let i = 1; i <= 5; i++) {
+      sessions.push(
+        sess(`res-${i}`, (70 + i) * MIN, {
+          endedAt: now - (65 + i) * MIN,
+          cwd: "/work/docs",
+          title: `investigate caching ${i}`,
+        }),
+      );
+    }
+    await sb.seed(sessions);
+  });
+  after(() => sb.cleanup());
+
+  test("work --kind, --bucket and --q filter across 25+ concurrent tasks and reject invalid values", async () => {
+    const changes = await runCmd(work, sb, { json: true, flags: { kind: "change", limit: 100 } });
+    assert.equal(changes.error, undefined, changes.error?.stack);
+    assert.equal(changes.json.items.length, 13, "3 blocked changes + 2 failed changes + 8 review changes");
+    assert.ok(changes.json.items.every((i: { kind?: string }) => i.kind === "change"));
+
+    const research = await runCmd(work, sb, { json: true, flags: { kind: "research", all: true, limit: 100 } });
+    assert.equal(research.error, undefined, research.error?.stack);
+    assert.equal(research.json.items.length, 11, "5 api529 + 1 workflow + 5 done research");
+    assert.ok(research.json.items.every((i: { kind?: string }) => i.kind === "research"));
+
+    const failedOnly = await runCmd(work, sb, { json: true, flags: { bucket: ["failed"], limit: 100 } });
+    assert.equal(failedOnly.error, undefined, failedOnly.error?.stack);
+    assert.equal(failedOnly.json.items.length, 8);
+    assert.ok(failedOnly.json.items.every((i: { bucket?: string }) => i.bucket === "failed"));
+
+    const queryWf = await runCmd(work, sb, { json: true, flags: { q: "nightly audit", limit: 100 } });
+    assert.equal(queryWf.error, undefined, queryWf.error?.stack);
+    assert.equal(queryWf.json.items.length, 1);
+    assert.equal(queryWf.json.items[0].workflow.name, "Nightly Audit");
+
+    const queryBranch = await runCmd(work, sb, { json: true, flags: { q: "fix/auth-", bucket: "failed", limit: 100 } });
+    assert.equal(queryBranch.error, undefined, queryBranch.error?.stack);
+    assert.equal(queryBranch.json.items.length, 5);
+
+    const badKind = await runCmd(work, sb, { json: true, flags: { kind: "chagne" } });
+    assert.ok(badKind.error instanceof UsageError);
+    assert.equal(badKind.error.suggestion, "--kind change");
+
+    const badBucket = await runCmd(work, sb, { json: true, flags: { bucket: "faield" } });
+    assert.ok(badBucket.error instanceof UsageError);
+    assert.equal(badBucket.error.suggestion, "--bucket failed");
+
+    const cmd = findCommand("work")!;
+    assert.deepEqual(cmd.flags!.find((f) => f.name === "kind")?.choices, [...WORK_KINDS]);
+    assert.deepEqual(cmd.flags!.find((f) => f.name === "bucket")?.choices, [...BUCKETS]);
+  });
+
+  test("work ack rejects mixing <id> with batch flags and requires a selector", async () => {
+    const mixed = await runCmd(work, sb, { action: "ack", positionals: [workItemId("rev-1")], flags: { bucket: "review" } });
+    assert.ok(mixed.error instanceof UsageError);
+    assert.equal(mixed.error.reason, "invalid_argument");
+
+    const mixedNarrow = await runCmd(work, sb, { action: "ack", positionals: [workItemId("rev-1")], flags: { repo: "frontend" } });
+    assert.ok(mixedNarrow.error instanceof UsageError);
+    assert.equal(mixedNarrow.error.reason, "invalid_argument");
+
+    const noSelector = await runCmd(work, sb, { action: "ack", flags: { repo: "frontend", "dry-run": true } });
+    assert.ok(noSelector.error instanceof UsageError);
+    assert.equal(noSelector.error.reason, "missing_argument");
+  });
+
+  test("work ack --dry-run previews without writing work.json, then --probably-closed, --group and --bucket ack in batch", async () => {
+    const overlayPath = join(sb.env.CODING_SH_HOME!, "work.json");
+    const dry = await runCmd(work, sb, { action: "ack", flags: { "probably-closed": true, "dry-run": true }, json: true });
+    assert.equal(dry.error, undefined, dry.error?.stack);
+    assert.equal(dry.json.acked, 3);
+    assert.equal(dry.json.dryRun, true);
+    assert.deepEqual(dry.json.items.map((i: { id: string }) => i.id).sort(), [workItemId("stale-blk-1"), workItemId("stale-blk-2"), workItemId("stale-blk-3")].sort());
+    assert.equal(existsSync(overlayPath), false, "dry-run leaves work.json untouched");
+
+    const closed = await runCmd(work, sb, { action: "ack", flags: { "probably-closed": true }, json: true });
+    assert.equal(closed.error, undefined, closed.error?.stack);
+    assert.equal(closed.json.acked, 3);
+    assert.equal(closed.json.dryRun, undefined);
+    assert.equal(existsSync(overlayPath), true);
+
+    // Narrow --group by --agent so only codex api 529 items are acked first.
+    const grpCodex = await runCmd(work, sb, { action: "ack", flags: { group: "api 529 x5", agent: "codex" }, json: true });
+    assert.equal(grpCodex.error, undefined, grpCodex.error?.stack);
+    assert.equal(grpCodex.json.acked, 2);
+
+    // Ack the remaining api 529 group items.
+    const grpRest = await runCmd(work, sb, { action: "ack", flags: { group: "api 529" }, json: true });
+    assert.equal(grpRest.error, undefined, grpRest.error?.stack);
+    assert.equal(grpRest.json.acked, 3);
+
+    // Ack review bucket narrowed by --repo frontend.
+    const revFe = await runCmd(work, sb, { action: "ack", flags: { bucket: "review", repo: "frontend" }, json: true });
+    assert.equal(revFe.error, undefined, revFe.error?.stack);
+    assert.equal(revFe.json.acked, 4);
+    assert.ok(revFe.json.items.every((i: { bucket: string; title: string | null }) => i.bucket === "review" && typeof i.title === "string"));
+
+    // Remaining review items should be the 4 backend ones.
+    const left = await runCmd(work, sb, { json: true, flags: { bucket: "review", limit: 100 } });
+    assert.equal(left.json.items.length, 4);
   });
 });

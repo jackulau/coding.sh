@@ -1380,13 +1380,16 @@ coding.sh work [action] [options]
 | Action | What it does |
 |---|---|
 | [`show`](#codingsh-work-show) | What one item is doing, what it waits on, its files and child sessions, and the next step |
-| [`ack`](#codingsh-work-ack) | Acknowledge an item's current cause: it leaves the queue until something new happens |
+| [`ack`](#codingsh-work-ack) | Acknowledge one item's current cause, or a batch matching --probably-closed, --group or --bucket |
 | [`snooze`](#codingsh-work-snooze) | Hide an item for a while; until then it shows only while it is in a more urgent bucket |
 
 | Option | Default | Description |
 |---|---|---|
 | `--all` |  | Also list hidden items: running, done, acknowledged or snoozed. |
 | `--stage <STAGES>` |  | Only items in these stages, hidden ones too (repeatable, or a comma list: review,approval) One of: `planning`, `executing`, `review`, `approval`, `done`. |
+| `--kind <KINDS>` |  | Only items of these kinds: research or change (repeatable, or a comma list) One of: `research`, `change`. |
+| `--bucket <BUCKETS>` |  | Only active items in these buckets (repeatable, or a comma list: blocked,failed) One of: `blocked`, `failed`, `stalled`, `turn`, `review`. |
+| `--q <TEXT>` |  | Only items matching this text in title, repo, branch, id, workflow name or reason. |
 | `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `7d` | Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date. |
@@ -1433,23 +1436,34 @@ coding.sh work show w3f9a1c --json
 
 ### `coding.sh work ack`
 
-Acknowledge an item's current cause: it leaves the queue until something new happens.
+Acknowledge one item's current cause, or a batch matching --probably-closed, --group or --bucket.
 
 ```text
-coding.sh work ack <ID> [options]
+coding.sh work ack [id] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `id` | yes | Work item id, or a session id in the item. |
+| `id` | no | Work item id, or a session id in the item (omit when using a batch selector) |
 
 | Option | Default | Description |
 |---|---|---|
-| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--probably-closed` |  | Acknowledge active items marked probably closed. |
+| `--group <TEXT>` |  | Acknowledge active items matching this failure group or cause (e.g. "api 529") |
+| `--bucket <BUCKET>` |  | Acknowledge active items in this bucket. One of: `blocked`, `failed`, `stalled`, `turn`, `review`. |
+| `--dry-run` |  | List the items that would be acknowledged without writing work.json. |
+| `--kind <KINDS>` |  | Narrow a batch ack to these kinds: research or change. One of: `research`, `change`. Repeatable. Takes a comma list too (a,b). |
+| `--q <TEXT>` |  | Narrow a batch ack to items matching this text. |
+| `-r, --repo <PATH>` |  | Narrow a batch ack to items in this directory or repo. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--since <WHEN>` | `7d` | Look items up among sessions started at or after this time. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh work ack w3f9a1c
+coding.sh work ack --probably-closed --dry-run
+coding.sh work ack --group "api 529"
+coding.sh work ack --bucket review --repo .
 ```
 
 ### `coding.sh work snooze`

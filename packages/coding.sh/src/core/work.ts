@@ -39,7 +39,8 @@ export type HiddenReason = "running" | "done" | "acked" | "snoozed";
 export const STAGES = ["planning", "executing", "review", "approval", "done"] as const;
 export type Stage = (typeof STAGES)[number];
 /** A change touched files; research stopped without changing one. */
-export type WorkKind = "research" | "change";
+export const WORK_KINDS = ["research", "change"] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
 
 /** A wait or a stall older than this may be a closed terminal that sent no session end. */
 export const PROBABLY_CLOSED_MS = 12 * 3600e3;
@@ -173,11 +174,19 @@ export interface WorkOptions {
   place?: Place;
   /** Only items in these stages, hidden ones included. */
   stages?: readonly Stage[];
+  /** Only items with one of these kinds (`research` or `change`). */
+  kinds?: readonly WorkKind[];
+  /** Only active items currently in one of these buckets. */
+  buckets?: readonly Bucket[];
+  /** Trimmed case-insensitive substring match against title, repo, branch, id, primaryId, workflow name or reason. */
+  q?: string;
   /** Whether a folder between a cwd and its repo root holds a `.git` file (a linked worktree). Default gitFileAt. */
   isCheckout?: (dir: string, root: string) => boolean;
   /** The id a next step prints for a session: core/session-ref.ts shortener, the shortest that resolves. Default the full id. */
   shortId?: (id: string) => string;
 }
+
+export type WorkQueueOptions = WorkOptions;
 
 export const workItemId = (rootId: string): string => `w${createHash("sha256").update(rootId).digest("hex").slice(0, 6)}`;
 
@@ -904,16 +913,69 @@ function supersede(built: readonly BuiltItem[]): void {
   }
 }
 
+/** True when `needle` (already trimmed and lowercased) appears in any searchable item field. */
+function matchesWorkQuery(item: WorkItem, needle: string): boolean {
+  const fields = [item.title, item.repo, item.branch, item.id, item.primaryId, item.workflow?.name, item.reason];
+  return fields.some((v) => v !== undefined && v.toLowerCase().includes(needle));
+}
+
+/** Criteria for selecting active work items to acknowledge as a batch. */
+export interface BatchAckSelector {
+  /** Active items marked probably closed (older than PROBABLY_CLOSED_MS). */
+  probablyClosed?: boolean;
+  /** Active items matching a failure group label (e.g. "api 529", "api 529 x4"), normalized cause text, or cause fingerprint. */
+  group?: string;
+  /** Active items currently in this bucket. */
+  bucket?: Bucket;
+  /** Explicit item ids to acknowledge. */
+  ids?: readonly string[];
+}
+
+const normalizeCauseText = (text: string): string => text.trim().toLowerCase().replace(/\s+/g, " ");
+const normalizeGroupText = (text: string): string => normalizeCauseText(text).replace(/\s+x\d+(?::.*)?$/, "");
+
+/**
+ * Selects active items with an ackable cause matching `selector`.
+ * Multiple selector fields narrow (AND); an empty selector returns [].
+ */
+export function selectBatchAckTargets(items: readonly WorkItem[], selector: BatchAckSelector): WorkItem[] {
+  const hasClosed = selector.probablyClosed === true;
+  const groupRaw = selector.group ? normalizeCauseText(selector.group) : "";
+  const groupNorm = groupRaw ? normalizeGroupText(groupRaw) : "";
+  const hasGroup = groupNorm.length > 0;
+  const hasBucket = selector.bucket !== undefined;
+  const idSet = selector.ids?.length ? new Set(selector.ids) : undefined;
+  if (!hasClosed && !hasGroup && !hasBucket && !idSet) return [];
+  return items.filter((item) => {
+    if (!item.bucket || !item.cause) return false;
+    if (hasClosed && item.probablyClosed !== true) return false;
+    if (hasBucket && item.bucket !== selector.bucket) return false;
+    if (idSet && !idSet.has(item.id)) return false;
+    if (hasGroup) {
+      const fpMatch = item.cause.fingerprint.toLowerCase() === groupRaw;
+      const failureMatch = item.cause.failure !== undefined && normalizeCauseText(item.cause.failure) === groupNorm;
+      if (!fpMatch && !failureMatch) return false;
+    }
+    return true;
+  });
+}
+
 /** The queue: items from sessions, bucketed, ordered, with the failed groups and the header's agents. */
 export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions = {}): WorkQueue {
   const now = opts.now ?? Date.now();
   const agents = opts.agents?.length ? new Set(opts.agents) : undefined;
   const place = opts.place;
-  const keep = (raw: RawItem): boolean => {
+  const kinds = opts.kinds?.length ? new Set(opts.kinds) : undefined;
+  const needle = opts.q?.trim().toLowerCase() || undefined;
+  const keep = (raw: RawItem, item: WorkItem): boolean => {
     if (agents && !raw.members.some((s) => agents.has(s.agent))) return false;
-    if (!place) return true;
-    const primary = raw.members.find((s) => s.id === raw.rootId) ?? raw.members.reduce((a, b) => (b.startedAt < a.startedAt ? b : a));
-    return matchesPlace(primary, place);
+    if (place) {
+      const primary = raw.members.find((s) => s.id === raw.rootId) ?? raw.members.reduce((a, b) => (b.startedAt < a.startedAt ? b : a));
+      if (!matchesPlace(primary, place)) return false;
+    }
+    if (kinds && (!item.kind || !kinds.has(item.kind))) return false;
+    if (needle && !matchesWorkQuery(item, needle)) return false;
+    return true;
   };
   const checkouts = rootCheckouts(sessions);
   // Every item is built, so an item outside the filter can still supersede one inside it.
@@ -921,7 +983,7 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const states = storePrStates(sessions);
   const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout, opts.shortId, states));
   supersede(built);
-  const all = built.filter((_, n) => keep(raws[n]!)).map((b) => b.item);
+  const all = built.filter((b, n) => keep(raws[n]!, b.item)).map((b) => b.item);
   all.sort(compare);
   const stages = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<Stage, number>;
   for (const i of all) stages[i.stage]++;
@@ -929,14 +991,18 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0])) as Record<Bucket, number>;
   for (const i of visible) counts[i.bucket!]++;
   const need = visible.filter((i) => (i.bucket === "blocked" || i.bucket === "failed") && !i.probablyClosed && !i.supersededBy).length;
+  const stageOnly = opts.stages?.length ? new Set(opts.stages) : undefined;
+  const bucketOnly = opts.buckets?.length ? new Set(opts.buckets) : undefined;
   const byCause = new Map<string, string[]>();
-  for (const i of visible) {
-    const f = i.bucket === "failed" ? i.cause?.failure : undefined;
-    if (f?.startsWith("api ")) byCause.set(f, [...(byCause.get(f) ?? []), i.id]);
+  if (!bucketOnly || bucketOnly.has("failed")) {
+    for (const i of visible) {
+      const f = i.bucket === "failed" ? i.cause?.failure : undefined;
+      if (f?.startsWith("api ")) byCause.set(f, [...(byCause.get(f) ?? []), i.id]);
+    }
   }
   const groups: WorkGroup[] = [...byCause].filter(([, ids]) => ids.length > 1).map(([cause, items]) => ({ bucket: "failed", cause, count: items.length, items }));
-  const only = opts.stages?.length ? new Set(opts.stages) : undefined;
-  const shown = only ? all.filter((i) => only.has(i.stage)) : opts.all ? all : visible;
+  const base = stageOnly ? all.filter((i) => stageOnly.has(i.stage)) : opts.all && !bucketOnly ? all : visible;
+  const shown = bucketOnly ? base.filter((i) => i.bucket !== undefined && bucketOnly.has(i.bucket)) : base;
   const shownIds = new Set(shown.flatMap((i) => i.sessionIds));
   const inView = sessions.filter((s) => shownIds.has(s.id));
   const signaled = new Set(inView.filter(reportsPrompts).map(promptAgent));
@@ -1159,6 +1225,9 @@ export interface WorkRead {
   agents?: readonly string[];
   place?: Place;
   stages?: readonly Stage[];
+  kinds?: readonly WorkKind[];
+  buckets?: readonly Bucket[];
+  q?: string;
   now?: number;
   overlay: WorkOverlay;
   /** WorkOptions.shortId: the id a next step prints for a session. */
@@ -1168,6 +1237,17 @@ export interface WorkRead {
 /** Loads the window's sessions and builds the queue. */
 export async function readWorkQueue(index: IndexStore, r: WorkRead): Promise<{ queue: WorkQueue; sessions: Session[]; truncated: boolean }> {
   const { sessions, truncated } = await loadWorkSessions(index, { since: r.since });
-  const queue = buildWorkQueue(sessions, { now: r.now, all: r.all, overlay: r.overlay, agents: r.agents, place: r.place, stages: r.stages, shortId: r.shortId });
+  const queue = buildWorkQueue(sessions, {
+    now: r.now,
+    all: r.all,
+    overlay: r.overlay,
+    agents: r.agents,
+    place: r.place,
+    stages: r.stages,
+    kinds: r.kinds,
+    buckets: r.buckets,
+    q: r.q,
+    shortId: r.shortId,
+  });
   return { queue, sessions, truncated };
 }
