@@ -56,12 +56,12 @@ tool calls with their input and output, file changes, errors, model names, token
   config.
 - **Scorer names.** Scores, labels, viewer comments and review items store the local OS username
   (`os.userInfo().username`, or `"local"`) in `by` across CLI, MCP, `coding.sh ui` and
-  unauthenticated loopback `coding.sh serve`. `export labels` includes `by`.
+  unauthenticated loopback `coding.sh serve`; `export labels` and `scores` include `by`.
 
 ## Redaction
 
-Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
-match becomes `[redacted:<kind>]`.
+Redaction runs at ingest (before the index, blobs or sinks) and on `export scores` text and
+comments. Matches become `[redacted:<kind>]`.
 
 - Values nested past 64 levels use the same rules. Past stack depth, the rest becomes
   `[redacted:too-deep]`, including in the spool.
@@ -71,7 +71,6 @@ match becomes `[redacted:<kind>]`.
   `\n` and keep each escape whole.
 - A quote at either end of a `redactPatterns` match stays, with its leading backslashes, so JSON
   still parses.
-- `export scores` redacts text values and comments (`[capture]` rules, secrets on); `by` stays unchanged.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
