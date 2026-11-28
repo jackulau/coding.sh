@@ -1,12 +1,16 @@
 // The MCP status tool judges a stale index as of its last ingest and settles changed files
 // on the top work items it returns, matching CLI `status` and the MCP `work` tool.
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import * as statusCmd from "../../src/cli/commands/status.ts";
+import * as workCmd from "../../src/cli/commands/work.ts";
 import { recordLastIngest } from "../../src/core/ingest-health.ts";
 import { workItemId } from "../../src/core/work.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { workList } from "../../src/viewer/work.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
 const MIN = 60e3;
@@ -183,5 +187,33 @@ describe("MCP status work parity", () => {
 
     const badRisk = await mcp.server.handle({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "work", arguments: { risk: "invalid" } } });
     assert.equal((badRisk!.result as { isError?: boolean }).isError, true);
+  });
+
+  test("CLI work, /api/work, and MCP work anchor relative since=1h to lastIngest when index is stale", async () => {
+    const cli = await runCmd(workCmd, sb, { json: true, flags: { since: "1h", limit: 20 } });
+    assert.equal(cli.error, undefined, cli.error?.stack);
+    const mcpRes = await callTool(mcp, "work", { since: "1h", limit: 20 });
+
+    const home = sb.env.CODING_SH_HOME!;
+    const idx = await SqliteIndexStore.open(join(home, "index.db"));
+    let apiRes: Record<string, unknown>;
+    try {
+      apiRes = await workList(
+        idx,
+        { overlay: join(home, "work.json"), root: home, home: sb.env.HOME!, cwd: sb.root, now: () => now },
+        new URLSearchParams("since=1h&limit=20"),
+      );
+    } finally {
+      await idx.close();
+    }
+
+    const expectedSince = new Date(lastIngest - HOUR).toISOString();
+    const expectedIds = [workItemId("multi"), workItemId("outside")].sort();
+    assert.equal(cli.json.since, expectedSince);
+    assert.equal(mcpRes.since, expectedSince);
+    assert.equal(apiRes.since, expectedSince);
+    assert.deepEqual((cli.json.items as { id: string }[]).map((i) => i.id).sort(), expectedIds);
+    assert.deepEqual((mcpRes.items as { id: string }[]).map((i) => i.id).sort(), expectedIds);
+    assert.deepEqual((apiRes.items as { id: string }[]).map((i) => i.id).sort(), expectedIds);
   });
 });

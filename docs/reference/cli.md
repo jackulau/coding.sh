@@ -1546,6 +1546,7 @@ coding.sh work ack [id] [options]
 | `--bucket <BUCKET>` |  | Acknowledge active items in this bucket. One of: `blocked`, `failed`, `stalled`, `turn`, `review`. |
 | `--dry-run` |  | List the items that would be acknowledged without writing work.json. |
 | `--kind <KINDS>` |  | Narrow a batch ack to these kinds: research or change. One of: `research`, `change`. Repeatable. Takes a comma list too (a,b). |
+| `--risk <LEVELS>` |  | Narrow a batch ack to items with this supervision risk (medium or high; repeatable, or a comma list) One of: `medium`, `high`. |
 | `--q <TEXT>` |  | Narrow a batch ack to items matching this text. |
 | `-r, --repo <PATH>` |  | Narrow a batch ack to items in this directory or repo. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
@@ -1557,6 +1558,7 @@ coding.sh work ack w3f9a1c
 coding.sh work ack --probably-closed --dry-run
 coding.sh work ack --group "api 529"
 coding.sh work ack --bucket review --repo .
+coding.sh work ack --bucket failed --risk high --dry-run
 ```
 
 ### `coding.sh work snooze`
