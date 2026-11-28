@@ -3,9 +3,10 @@
 // stays silent on non-proof sessions.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { proofCheck } from "../../src/core/proof.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
-import { findingId, formatFindings, mineFindings } from "../../src/refine/mine.ts";
+import { classifyProofFailure, findingId, formatFindings, mineFindings } from "../../src/refine/mine.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { sessionEvents } from "../helpers-decision.ts";
 
@@ -147,5 +148,19 @@ describe("refine mine proof-failure detector", () => {
     }));
     const np = await mineFindings({ index: await indexOf(nonProof) });
     assert.deepEqual(np.findings.filter((f) => f.kind === "proof-failure"), []);
+  });
+
+  it("does not classify a fast whole-project syntax error as a slow whole-project build", () => {
+    const check = proofCheck("lake build")!;
+    const syntaxOut = "Proof/Foo.lean:3:1: error: unexpected token '==='; expected command";
+    const fast = classifyProofFailure(check, "lake build", syntaxOut, { durationMs: 500 });
+    assert.ok(fast && fast.startsWith("lean: "), `expected normalized lean error, got ${fast}`);
+    assert.notEqual(fast, "proof: slow whole-project build");
+
+    const slow = classifyProofFailure(check, "lake build", syntaxOut, { durationMs: 65_000 });
+    assert.equal(slow, "proof: slow whole-project build");
+
+    const timedOut = classifyProofFailure(check, "lake build", "Error: command timed out", { timedOut: true, durationMs: 500 });
+    assert.equal(timedOut, "proof: slow whole-project build");
   });
 });

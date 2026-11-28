@@ -19,7 +19,11 @@ export function traceRoot(cwd: string | undefined): string | undefined {
 /** normalizeTracePath against a root from traceRoot: for many paths under one cwd, the cwd read once. */
 export function underTraceRoot(p: string, root: string | undefined): string {
   let s = unprivate(slashed(p));
-  if (root && (s === root || (s.startsWith(root) && s.charCodeAt(root.length) === 47))) s = s.slice(root.length + 1);
+  if (root) {
+    const drive = driveOf(root);
+    if (drive) s = onDrive(s, drive);
+    if (s === root || (s.startsWith(root) && s.charCodeAt(root.length) === 47)) s = s.slice(root.length + 1);
+  }
   return s.startsWith("./") ? s.replace(/^(?:\.\/)+/, "") : s;
 }
 

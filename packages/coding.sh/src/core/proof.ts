@@ -72,6 +72,20 @@ export const isProofConfig = (path: string): boolean => PROOF_CONFIG.test(path);
 /** Files and folders named as specifications or statements. */
 export const isSpecNamed = (path: string): boolean => SPEC_NAMED.test(path);
 
+/** Escape tokens that disable kernel or verifier checking rather than leaving a proof hole. */
+export const KERNEL_BYPASS_HATCHES: ReadonlySet<string> = new Set([
+  "debug.skipKernelTC",
+  "Unset Guard Checking",
+  "Unset Universe Checking",
+  "Unset Positivity Checking",
+  "bypass_check",
+  "{:verify false}",
+  "quick_and_dirty",
+  "skip_proofs",
+  "-type-in-type",
+  "no-verify",
+]);
+
 /** Test, example and scratch folders where proof escape hatches are expected. */
 export const isProofTestPath = (path: string): boolean => PROOF_TEST.test(path);
 
@@ -610,7 +624,7 @@ function checkerLang(cmd: string, args: string[]): string | undefined {
     case "make":
       return args.some((a) => /^(?:clean|cleanall|distclean|install|uninstall|help|doc|html|vos|vio|quick|-n|--dry-run|--just-print)$/.test(a)) ? undefined : "make";
     case "dune":
-      return sub === "build" || sub === "test" ? "dune" : undefined;
+      return sub === "build" || sub === "test" || sub === "runtest" ? "dune" : undefined;
   }
   return undefined;
 }
@@ -722,6 +736,72 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
 
 const LAKE_VALUE_FLAGS = new Set(["-d", "--dir", "-f", "--file", "-K", "-l", "--log-level", "--packages", "--package", "-R", "-U", "-o", "--out"]);
 const DUNE_VALUE_FLAGS = new Set(["-j", "--jobs", "--display", "--root", "--profile", "--build-dir", "--workspace", "-p", "--only-packages", "--context", "-x"]);
+const DAFNY_VALUE_FLAGS = new Set([
+  "-o",
+  "--output",
+  "-t",
+  "--target",
+  "--cores",
+  "--verification-time-limit",
+  "--resource-limit",
+  "--boogie",
+  "--boogie-filter",
+  "--filter-symbol",
+  "--filter-position",
+  "--solver-path",
+  "--standard-libraries",
+  "--library",
+  "--prelude",
+  "--plugin",
+]);
+const ISABELLE_VALUE_FLAGS = new Set(["-d", "-D", "-o", "-j", "-l", "-N", "-P", "-S", "-X", "-f", "-m", "-x"]);
+const MAKE_VALUE_FLAGS = new Set([
+  "-j",
+  "--jobs",
+  "-l",
+  "--load-average",
+  "--max-load",
+  "-f",
+  "--file",
+  "--makefile",
+  "-C",
+  "--directory",
+  "-I",
+  "--include-dir",
+  "-o",
+  "--old-file",
+  "--assume-old",
+  "-W",
+  "--what-if",
+  "--new-file",
+  "--assume-new",
+]);
+const WHOLE_MAKE_TARGETS = new Set(["all", "build", "check", "test"]);
+
+/** Non-flag, non-assignment targets passed to `make`. */
+function makeTargetNames(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") {
+      for (const rest of args.slice(i + 1)) if (!rest.includes("=")) out.push(rest);
+      break;
+    }
+    if (a.startsWith("-")) {
+      if (!a.includes("=") && MAKE_VALUE_FLAGS.has(a)) {
+        if (/^(?:-[jl]|--jobs|--load-average|--max-load)$/.test(a)) {
+          if (/^\d+(?:\.\d+)?$/.test(args[i + 1] ?? "")) i++;
+        } else {
+          i++;
+        }
+      }
+      continue;
+    }
+    if (a.includes("=")) continue;
+    out.push(a);
+  }
+  return out;
+}
 
 /** Positional arguments of a subcommand after `sub`, skipping flags and known flag values. */
 function subcommandPositionals(args: readonly string[], sub: string, valueFlags: ReadonlySet<string>): string[] {
@@ -747,9 +827,9 @@ function subcommandPositionals(args: readonly string[], sub: string, valueFlags:
 }
 
 /**
- * True when a proof checker command runs a bare whole-project build (such as `lake build` with no
- * target, bare `dune build`, bare `make`, `isabelle build -a`, or bare `cargo verus`) where
- * targeted single-file or single-target checks exist.
+ * True when a proof checker command runs a whole-project build (such as bare `lake build`,
+ * `lake test`, bare `dafny verify`, `isabelle build -D .` or `-a`, bare `make`, bare `dune build`
+ * or `dune runtest`, or bare `cargo verus`) rather than a targeted single-file, package, or target check.
  */
 export function isWholeProjectProofCheck(command: string): boolean {
   if (!CHECKER_HINT.test(command)) return false;
@@ -764,12 +844,41 @@ export function isWholeProjectProofCheck(command: string): boolean {
   }
   if (!lang) return false;
   const sub = args.find((a) => !a.startsWith("-")) ?? "";
-  if (cmd === "lake") return sub === "build" && subcommandPositionals(args, "build", LAKE_VALUE_FLAGS).length === 0;
-  if (cmd === "dune") return sub === "build" && subcommandPositionals(args, "build", DUNE_VALUE_FLAGS).length === 0;
-  if (cmd === "make") return makeTarget(args) === "";
-  if (cmd === "isabelle") return sub === "build" && (args.includes("-a") || args.includes("--all"));
+  if (cmd === "lake") return (sub === "build" || sub === "test") && subcommandPositionals(args, sub, LAKE_VALUE_FLAGS).length === 0;
+  if (cmd === "dune") {
+    if (sub !== "build" && sub !== "runtest" && sub !== "test") return false;
+    if (args.some((a) => a === "-p" || a === "--only-packages" || a.startsWith("--only-packages="))) return false;
+    return subcommandPositionals(args, sub, DUNE_VALUE_FLAGS).length === 0;
+  }
+  if (cmd === "make") {
+    const targets = makeTargetNames(args);
+    return targets.length === 0 || (targets.length === 1 && WHOLE_MAKE_TARGETS.has(targets[0]!));
+  }
+  if (cmd === "dafny") {
+    if (sub !== "verify" && sub !== "build") return false;
+    if (args.some((a) => /\.dfy$/i.test(a) || /^--(?:filter-(?:symbol|position)|boogie-filter)\b/.test(a))) return false;
+    return subcommandPositionals(args, sub, DAFNY_VALUE_FLAGS).length === 0;
+  }
+  if (cmd === "isabelle") {
+    if (sub !== "build") return false;
+    const wholeFlag = args.some((a) => a === "-a" || a === "--all" || a === "-D" || a.startsWith("-D"));
+    return wholeFlag && subcommandPositionals(args, "build", ISABELLE_VALUE_FLAGS).length === 0;
+  }
   if (cmd === "cargo" && sub === "verus") {
-    return !args.some((a) => a === "-p" || a === "--package" || a === "--verify-module" || a === "--verify-function" || a === "--verify-only-module" || a.startsWith("--verify-module=") || a.startsWith("--verify-function=") || a.endsWith(".rs"));
+    return !args.some(
+      (a) =>
+        a === "-p" ||
+        a === "--package" ||
+        a.startsWith("--package=") ||
+        /^-p./.test(a) ||
+        a === "--verify-module" ||
+        a === "--verify-function" ||
+        a === "--verify-only-module" ||
+        a.startsWith("--verify-module=") ||
+        a.startsWith("--verify-function=") ||
+        a.startsWith("--verify-only-module=") ||
+        a.endsWith(".rs"),
+    );
   }
   return false;
 }
@@ -857,20 +966,6 @@ export function checkOutcome(check: ProofCheck, end: Record<string, unknown>): "
   if (out.endsWith("…") || (!!end.cut && typeof end.cut === "object")) return undefined;
   return out.trim() && !check.filtered ? "green" : undefined;
 }
-
-/** Escape tokens that disable kernel or verifier checking rather than leaving a proof hole. */
-export const KERNEL_BYPASS_HATCHES: ReadonlySet<string> = new Set([
-  "debug.skipKernelTC",
-  "Unset Guard Checking",
-  "Unset Universe Checking",
-  "Unset Positivity Checking",
-  "bypass_check",
-  "{:verify false}",
-  "quick_and_dirty",
-  "skip_proofs",
-  "-type-in-type",
-  "no-verify",
-]);
 
 /** Canonical lowercase key for a checker bypass flag or config directive. */
 export function canonicalBypass(flag: string): string {
@@ -1851,40 +1946,9 @@ export function scanProofEscapes(path: string, lang: ProofLang | undefined, text
   return out;
 }
 
-/** True when a proof check runs a bare whole-project build rather than a targeted single-file check. */
-export function isWholeProjectCheck(check: ProofCheck, command: string): boolean {
-  if (check.path) return false;
-  if (!CHECKER_HINT.test(command)) return false;
-  const cmds = runCommands(command);
-  let cmd = "";
-  let args: string[] = [];
-  for (const c of cmds) {
-    const [u, a] = unwrap(c);
-    if (checkerLang(u, a)) [cmd, args] = [u, a];
-  }
-  if (!cmd) return false;
-  const sub = args.find((a) => !a.startsWith("-")) ?? "";
-  if (check.lang === "lean") {
-    if (cmd !== "lake" || (sub !== "build" && sub !== "test")) return false;
-    const subIdx = args.indexOf(sub);
-    for (let i = subIdx + 1; i < args.length; i++) {
-      const a = args[i] ?? "";
-      if (LAKE_VALUE_FLAGS.has(a)) {
-        i++;
-        continue;
-      }
-      if (!a.startsWith("-")) return false;
-    }
-    return true;
-  }
-  if (check.lang === "dafny") return sub === "verify" || sub === "build";
-  if (check.lang === "verus") {
-    if (cmd === "cargo") return !args.some((a) => /^--verify-(?:module|function|only-module)\b/.test(a));
-    return !args.some((a) => /\.rs$/.test(a));
-  }
-  if (check.lang === "isabelle") return sub === "build";
-  if (check.lang === "make" || check.lang === "dune") return true;
-  return false;
+/** Alias for `isWholeProjectProofCheck` so callers with a pre-parsed `ProofCheck` share one rule. */
+export function isWholeProjectCheck(_check: ProofCheck, command: string): boolean {
+  return isWholeProjectProofCheck(command);
 }
 
 /**

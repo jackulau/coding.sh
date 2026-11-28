@@ -1112,6 +1112,9 @@ export interface WorkLoad {
 /** The window `work`, `status` and the statusline read by default: sessions started in the last 7 days. */
 export const WORK_WINDOW_MS = 7 * 86400e3;
 
+/** The moment the work queue and its relative `since` window anchor to: the last ingest while the index is stale, else `now`. */
+export const workAsOf = (age: { stale?: boolean; at: number } | undefined, now = Date.now()): number => (age?.stale ? age.at : now);
+
 /** At most this many sessions are read for one queue. */
 export const WORK_SCAN_CAP = 20_000;
 /** At most this many parents outside the window are looked up. */

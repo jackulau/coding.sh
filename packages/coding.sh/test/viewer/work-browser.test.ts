@@ -241,9 +241,13 @@ describe("Work page in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       assert.equal(await rp.eval("document.querySelector('.work-risk').title"), "dead-end-loop");
       assert.equal(await rp.eval("document.querySelector('.work-proof').textContent"), "lean · verified");
 
-      // Click High risk filter: syncs risk=high in hash and surfaces still-running run-high.
+      // Click High risk filter: syncs risk=high in hash, surfaces still-running run-high under Running (not Hidden),
+      // and does not report the already-displayed running item as hidden.
       await rp.eval("[...document.querySelectorAll('.work-risk-seg button')].find((b) => b.textContent === 'High').click()");
       await rp.waitFor("location.hash === '#/work?risk=high' && document.querySelectorAll('.work-item').length === 1", "high risk filter");
+      assert.deepEqual(await rp.eval("[...document.querySelectorAll('.work-group h2')].map((h) => h.textContent.trim())"), ["Running 1"]);
+      assert.doesNotMatch(await rp.eval("document.querySelector('.work-notes').textContent"), /hidden item/i);
+      assert.equal(await rp.eval("[...document.querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.startsWith('Show hidden')).textContent"), "Show hidden");
       assert.equal(await rp.eval("document.querySelector('.work-risk').textContent"), "Risk: high");
       assert.equal(await rp.eval("document.querySelector('.work-risk').title"), "tactic-oscillation, unverified-edits");
       assert.equal(await rp.eval("document.querySelector('.work-proof').textContent"), "lean · 2 sorry");
