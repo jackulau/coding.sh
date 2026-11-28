@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { scoreNumber } from "../../alerts/measure.ts";
+import { isProofLang, PROOF_LANGS, type ProofLang } from "../../core/proof.ts";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import {
   computeDatasetStats,
@@ -14,6 +15,7 @@ import {
   type MinScoreFilter,
 } from "../../datasets/curate.ts";
 import { addCases, assignSplits, caseFromSession, createDataset, DatasetError, loadDatasetFile, slugify } from "../../datasets/dataset.ts";
+import { isProofStepOutcomeFilter, mineProofSteps, PROOF_STEP_OUTCOMES, type ProofStepOutcomeFilter } from "../../datasets/proof-mine.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { CaseKind, Dataset, Split } from "../../datasets/types.ts";
 import { findSessions } from "../../query/run.ts";
@@ -150,6 +152,23 @@ export async function run(c: CommandContext): Promise<number> {
     positiveInt(c.flags.limit, "limit");
     nonNegativeInt(c.flags["min-turns"], "min-turns");
     thresholdFlag(c.flags["dedupe-near"], "dedupe-near");
+    const proofSteps = c.flags["proof-steps"] === true;
+    const rawProofLangs = list(c.flags["proof-lang"]);
+    const rawProofOutcome = str(c.flags["proof-outcome"]);
+    if (rawProofLangs.length && !proofSteps) {
+      throw new UsageError("--proof-lang requires --proof-steps", { reason: "invalid_argument" });
+    }
+    if (rawProofOutcome !== undefined && !proofSteps) {
+      throw new UsageError("--proof-outcome requires --proof-steps", { reason: "invalid_argument" });
+    }
+    for (const lang of rawProofLangs) {
+      if (!isProofLang(lang)) {
+        throw new UsageError(`--proof-lang must be one of ${PROOF_LANGS.join(", ")}, got ${JSON.stringify(lang)}`, { reason: "invalid_argument" });
+      }
+    }
+    if (rawProofOutcome !== undefined && !isProofStepOutcomeFilter(rawProofOutcome)) {
+      throw new UsageError(`--proof-outcome must be one of ${PROOF_STEP_OUTCOMES.join(", ")}, got ${JSON.stringify(rawProofOutcome)}`, { reason: "invalid_argument" });
+    }
     for (const raw of list(c.flags["min-score"])) {
       try {
         parseMinScore(raw);
@@ -278,6 +297,9 @@ export async function run(c: CommandContext): Promise<number> {
         const dedupeNear = thresholdFlag(c.flags["dedupe-near"], "dedupe-near");
         const split = str(c.flags.split) as Split | undefined;
         const tags = list(c.flags.tag);
+        const proofSteps = c.flags["proof-steps"] === true;
+        const proofLangs = list(c.flags["proof-lang"]) as ProofLang[];
+        const proofOutcome = str(c.flags["proof-outcome"]) as ProofStepOutcomeFilter | undefined;
         const dryRun = c.flags["dry-run"] === true;
         const note = str(c.flags.note);
 
@@ -309,6 +331,24 @@ export async function run(c: CommandContext): Promise<number> {
         };
 
         const runMine = (existing: Dataset | undefined) => {
+          if (proofSteps) {
+            const proofOpts: Parameters<typeof mineProofSteps>[0] = {
+              sessions,
+              getEvents,
+              scores,
+              minScores,
+              excludeFlagged,
+            };
+            if (minTurns !== undefined) proofOpts.minTurns = minTurns;
+            if (dedupeNear !== undefined) proofOpts.dedupeNear = dedupeNear;
+            if (split) proofOpts.split = split;
+            if (tags.length) proofOpts.tags = tags;
+            if (limit !== undefined) proofOpts.limit = limit;
+            if (proofLangs.length) proofOpts.proofLangs = proofLangs;
+            if (proofOutcome !== undefined) proofOpts.outcome = proofOutcome;
+            if (existing) proofOpts.existing = existing.cases;
+            return mineProofSteps(proofOpts);
+          }
           const mineOpts: Parameters<typeof mineDatasetSessions>[0] = {
             sessions,
             getEvents,
@@ -325,11 +365,14 @@ export async function run(c: CommandContext): Promise<number> {
           return mineDatasetSessions(mineOpts);
         };
 
+        const matchedLabel = (n: number) =>
+          proofSteps ? `${plural(n, "proof step")} across ${plural(sessions.length, "session")}` : plural(n, "session");
+
         if (dryRun) {
           const existing = await store.getDataset(id);
           const report = await runMine(existing);
           if (out.json) {
-            out.data({
+            const doc: Record<string, unknown> = {
               outcome: "dry-run",
               dataset: { id, name },
               matched: report.matched,
@@ -337,9 +380,11 @@ export async function run(c: CommandContext): Promise<number> {
               dropped: report.dropped,
               droppedBy: report.droppedBy,
               duplicates: report.duplicates.length,
-            });
+            };
+            if (proofSteps) doc.sessions = sessions.length;
+            out.data(doc);
           } else {
-            out.print(`Matched ${plural(report.matched, "session")}: ${report.kept} kept, ${report.dropped} dropped`);
+            out.print(`Matched ${matchedLabel(report.matched)}: ${report.kept} kept, ${report.dropped} dropped`);
             const detail = formatBreakdown(report.droppedBy);
             if (detail) out.note(`Dropped: ${detail}`);
             out.note("Dry run: nothing written");
@@ -385,7 +430,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (!saved) {
           const outcome = existingWhenEmpty ? "unchanged" : "empty";
           if (out.json) {
-            out.data({
+            const doc: Record<string, unknown> = {
               outcome,
               dataset: existingWhenEmpty ? summary(existingWhenEmpty) : null,
               matched: report.matched,
@@ -393,9 +438,11 @@ export async function run(c: CommandContext): Promise<number> {
               dropped: report.dropped,
               droppedBy: report.droppedBy,
               duplicates: report.duplicates.length,
-            });
+            };
+            if (proofSteps) doc.sessions = sessions.length;
+            out.data(doc);
           } else {
-            out.note(`Matched ${plural(report.matched, "session")}: 0 kept, ${report.dropped} dropped`);
+            out.note(`Matched ${matchedLabel(report.matched)}: 0 kept, ${report.dropped} dropped`);
             const detail = formatBreakdown(report.droppedBy);
             if (detail) out.note(`Dropped: ${detail}`);
             if (existingWhenEmpty) out.ok(`${existingWhenEmpty.name} is unchanged`);
@@ -404,7 +451,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
 
         if (out.json) {
-          out.data({
+          const doc: Record<string, unknown> = {
             outcome: saved.created ? "created" : "unchanged",
             dataset: { ...summary(saved.ds), version: saved.version },
             matched: report.matched,
@@ -412,7 +459,9 @@ export async function run(c: CommandContext): Promise<number> {
             dropped: report.dropped,
             droppedBy: report.droppedBy,
             duplicates: report.duplicates.length,
-          });
+          };
+          if (proofSteps) doc.sessions = sessions.length;
+          out.data(doc);
         } else {
           const detail = formatBreakdown(report.droppedBy);
           if (detail) out.note(`Dropped ${report.dropped} (${detail})`);

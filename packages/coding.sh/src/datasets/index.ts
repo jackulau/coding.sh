@@ -3,5 +3,6 @@ export * from "./curate.ts";
 export * from "./dataset.ts";
 export * from "./hash.ts";
 export * from "./kinds.ts";
+export * from "./proof-mine.ts";
 export * from "./store.ts";
 export * from "./types.ts";
