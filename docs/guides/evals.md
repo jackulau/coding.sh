@@ -3142,12 +3142,21 @@ model call.
 ```sh
 coding.sh handoff latest > handoff.md
 coding.sh handoff 9f1c2e --out handoff.md --max-dead-ends 5
+coding.sh handoff --work w3f9a1c --out handoff.md
 coding.sh handoff latest --json
 ```
 
 The brief keeps the original goal, changed files, passing checks, unresolved failed approaches under
 Do Not Repeat, supervision risk signals when medium or high, and formal-proof status when present.
-`coding.sh work show` suggests `coding.sh handoff` on high-risk items.
+
+For multi-day work spanning several sessions, `coding.sh handoff --work <id>` stitches every session
+in that work item chronologically (`--since 30d` by default, `--max-sessions 20`). It preserves the
+original goal, notes any latest direction pivot, unions changed files, deduplicates Do Not Repeat
+dead ends, and rolls up proof status and context resets.
+
+`coding.sh work show <id>` prints a chronological `Timeline` section for multi-session work items
+(`timeline` in `--json`) and suggests `coding.sh handoff --work <id>` on multi-session high-risk
+items (or `coding.sh handoff <session>` on single-session high-risk items).
 
 ### Diagnosing sessions into Signals
 

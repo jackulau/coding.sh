@@ -2,9 +2,11 @@
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace, type Place } from "../../mcp/data.ts";
-import type { PullRequestRef, Session } from "../../schema/index.ts";
+import type { AgentEvent, PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { dateMs, isoMs } from "../../core/dates.ts";
+import { buildWorkTimeline, DEFAULT_MAX_WORK_SESSIONS, type WorkTimeline } from "../../core/handoff.ts";
+import { createRedactor } from "../../core/redact.ts";
 import type { IndexStore } from "../../core/types.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
@@ -386,9 +388,14 @@ export async function matchItem(ctx: Context, ref: string, since: number, overla
   return item && { item, sessions, shortId };
 }
 
-/** matchItem in the window of --since. Unknown: exit 1; an ambiguous prefix lists its candidates. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
-  const w = windowOf(c);
+/** matchItem in `w`. Unknown: exit 1; an ambiguous prefix lists its candidates. */
+export async function findWorkItem(
+  ctx: Context,
+  ref: string,
+  w: Window,
+  overlay: WorkOverlay,
+  now?: number,
+): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
   const found = await matchItem(ctx, ref, w.since, overlay, now, (r) =>
     resolveSession(ctx, r).catch((e: unknown) => {
       if (e instanceof CliError && e.reason === "not_found") return undefined;
@@ -402,6 +409,11 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
     throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
   return found;
+}
+
+/** matchItem in the window of --since. Unknown: exit 1; an ambiguous prefix lists its candidates. */
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
+  return findWorkItem(ctx, ref, windowOf(c), overlay, now);
 }
 
 /** A prefix several items' ids share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
@@ -438,6 +450,22 @@ async function show(c: CommandContext): Promise<number> {
     const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     // filesChanged covers every session of the item; the main session's own count is what `show <sessionId>` reports.
     const own = mainFilesChanged(item, byId);
+    let timeline: WorkTimeline | undefined;
+    if (item.sessionIds.length > 1) {
+      const memberSessions = item.sessionIds
+        .map((id) => byId.get(id))
+        .filter((s): s is Session => !!s)
+        .sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const eventsBySession = new Map<string, AgentEvent[]>();
+      for (const s of memberSessions.slice(-DEFAULT_MAX_WORK_SESSIONS)) {
+        eventsBySession.set(s.id, await ctx.index.listEvents(s.id));
+      }
+      const redactor = createRedactor({
+        redact: [...new Set(["secrets", ...ctx.config.capture.redact])],
+        patterns: ctx.config.capture.redactPatterns,
+      });
+      timeline = buildWorkTimeline(item, memberSessions, eventsBySession, { shortId, redact: redactor });
+    }
     if (out.json) {
       out.data({
         ...workItemJson(item),
@@ -453,6 +481,8 @@ async function show(c: CommandContext): Promise<number> {
           if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
           return row;
         }),
+        spanDays: timeline ? timeline.spanDays : undefined,
+        timeline: timeline ? timeline.entries : undefined,
         ...staleIndexField(stale),
         ...pendingField(backlog),
       });
@@ -511,9 +541,36 @@ async function show(c: CommandContext): Promise<number> {
       for (const s of children.slice(0, 10)) out.print(`    ${shortId(s.id)}  ${s.agent}  ${oneLine(s.title, 50)}`);
       if (children.length > 10) out.print(out.style(`    and ${children.length - 10} more: ${out.command(`coding.sh tree ${shortId(item.primaryId)}`)}`, "faint"));
     }
+    if (timeline && timeline.entries.length > 0) {
+      const firstDay = timeline.firstStartedAt?.slice(0, 10);
+      const lastDay = timeline.lastEndedAt?.slice(0, 10);
+      const span =
+        timeline.spanDays > 1 && firstDay && lastDay
+          ? `${plural(timeline.totalSessions, "session")} across ${plural(timeline.spanDays, "day")} (${firstDay} to ${lastDay})`
+          : firstDay
+            ? `${plural(timeline.totalSessions, "session")} on ${firstDay}`
+            : plural(timeline.totalSessions, "session");
+      out.row("Timeline", span, "none", true);
+      if (timeline.omittedSessions) {
+        out.print(out.style(`    (${plural(timeline.omittedSessions, "older session")} omitted)`, "faint"));
+      }
+      for (const e of timeline.entries) {
+        const meta: string[] = [plural(e.verificationChecks, "check")];
+        if (e.compactions > 0) meta.push(plural(e.compactions, "compaction"));
+        if (e.risk) meta.push(`risk:${e.risk}`);
+        if (e.proofVerdict) meta.push(`proof:${e.proofVerdict}`);
+        if (e.deadEnds > 0) meta.push(plural(e.deadEnds, "dead end"));
+        out.print(`    ${e.day}  ${e.shortId ?? e.sessionId}  ${e.agent}  ${meta.join(", ")}  ${oneLine(e.title, 48)}`);
+      }
+    }
     out.row("Next", nextText(item.next), "none", true);
     if (item.proof) out.next("Review proof integrity", `coding.sh proof ${shortId(item.primaryId)}`);
-    if (item.supervisionRisk === "high") out.next("Reset context with a clean handoff brief", `coding.sh handoff ${shortId(item.primaryId)}`);
+    if (item.supervisionRisk === "high") {
+      const handoffCmd = item.sessionIds.length > 1
+        ? `coding.sh handoff --work ${item.id}`
+        : `coding.sh handoff ${shortId(item.cause?.sessionId ?? item.primaryId)}`;
+      out.next("Reset context with a clean handoff brief", handoffCmd);
+    }
     return 0;
   });
 }
