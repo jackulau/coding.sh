@@ -31,7 +31,7 @@
 // Everything that leaves this module goes through the redactor.
 import { createHash } from "node:crypto";
 import { isoMs } from "../core/dates.ts";
-import { checkOutcome, isProofOutput, isRocqOutput, isWholeProjectCheck, proofCheck, type ProofCheck } from "../core/proof.ts";
+import { checkOutcome, isProofOutput, isRocqOutput, isWholeProjectProofCheck, proofCheck, type ProofCheck } from "../core/proof.ts";
 import { createRedactor } from "../core/redact.ts";
 import { isSyntheticPrompt } from "../core/sessions.ts";
 import { shellCommand } from "../core/shell-diff.ts";
@@ -456,7 +456,7 @@ function proofFailureLang(check: ProofCheck, output: string): string | undefined
 export function classifyProofFailure(check: ProofCheck, cmd: string, output: string, opts: { timedOut?: boolean; durationMs?: number } = {}): string | undefined {
   const lang = proofFailureLang(check, output);
   if (!lang) return undefined;
-  const whole = isWholeProjectCheck(check, cmd);
+  const whole = isWholeProjectProofCheck(cmd);
   const timedOut = opts.timedOut === true || PROOF_TIMEOUT_OUT.test(output);
   if (whole && (timedOut || (opts.durationMs !== undefined && opts.durationMs >= SLOW_WHOLE_BUILD_MS))) {
     return "proof: slow whole-project build";
@@ -467,7 +467,6 @@ export function classifyProofFailure(check: ProofCheck, cmd: string, output: str
       if (re.test(output)) return label;
     }
   }
-  if (whole) return "proof: slow whole-project build";
   const line = firstErrorLine(output);
   if (!line) return undefined;
   const norm = normalizeErrorLine(line);
@@ -479,7 +478,7 @@ export function classifyProofFailure(check: ProofCheck, cmd: string, output: str
 export function proofFailureFindings(sessions: readonly Session[], events: ReadonlyMap<string, readonly AgentEvent[]>): MinedFinding[] {
   const groups = new Map<string, Hit[]>();
   for (const s of sessions) {
-    const starts = new Map<string, { check: ProofCheck; cmd: string }>();
+    const starts = new Map<string, { check: ProofCheck; cmd: string; startTs: number }>();
     for (const e of events.get(s.id) ?? []) {
       const p = e.payload ?? {};
       if (e.kind === "tool.start") {
@@ -488,7 +487,7 @@ export function proofFailureFindings(sessions: readonly Session[], events: Reado
         const cmd = shellCommand(tool, p.input);
         if (id && cmd !== undefined && isShellCall(tool ?? "", p.input)) {
           const check = proofCheck(cmd, p.input);
-          if (check) starts.set(id, { check, cmd });
+          if (check) starts.set(id, { check, cmd, startTs: e.ts });
         }
       } else if (e.kind === "tool.end" && !p.wrapper) {
         const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
@@ -499,7 +498,8 @@ export function proofFailureFindings(sessions: readonly Session[], events: Reado
         const outcome = checkOutcome(active.check, p);
         const timedOut = p.timedOut === true || (p.ok === false && PROOF_TIMEOUT_OUT.test(out));
         if (outcome !== "red" && !timedOut) continue;
-        const sig = classifyProofFailure(active.check, active.cmd, out, { timedOut, durationMs: e.durationMs });
+        const durationMs = typeof e.durationMs === "number" ? e.durationMs : typeof p.durationMs === "number" ? p.durationMs : e.ts > active.startTs ? e.ts - active.startTs : undefined;
+        const sig = classifyProofFailure(active.check, active.cmd, out, { timedOut, durationMs });
         if (!sig) continue;
         const line = firstErrorLine(out) ?? sig;
         const hits = groups.get(sig) ?? [];
