@@ -49,7 +49,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`proof`](#codingsh-proof) | Explore | Review a session's formal-verification integrity (escapes, checks, spec changes) |
-| [`handoff`](#codingsh-handoff) | Explore | Build a deterministic $0 context-reset handoff brief for starting a fresh session |
+| [`handoff`](#codingsh-handoff) | Explore | Build a deterministic $0 context-reset handoff brief for a session or multi-day work item |
 | [`steer`](#codingsh-steer) | Explore | Advise whether to continue, nudge or intervene in a session, with a paste-ready steer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
@@ -685,31 +685,35 @@ coding.sh proof latest --strict --json
 
 ## `coding.sh handoff`
 
-Build a deterministic $0 context-reset handoff brief for starting a fresh session.
+Build a deterministic $0 context-reset handoff brief for a session or multi-day work item.
 
 ```text
-coding.sh handoff <SESSION> [options]
+coding.sh handoff [session] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
+| `session` | no | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest' (omit when using --work) |
 
 | Option | Default | Description |
 |---|---|---|
+| `-w, --work <ID>` |  | Aggregate every session of a work item (work id, prefix, or member session id) into a multi-day handoff brief. |
+| `--since <WHEN>` | `30d` | With --work: look the work item up among sessions started at or after this time. |
 | `-o, --out <FILE>` |  | Write the handoff Markdown (or JSON with --json) to FILE and print its path. |
-| `--max-dead-ends <N>` | `8` | Maximum unresolved failed approaches listed under Do Not Repeat. |
+| `--max-dead-ends <N>` |  | Maximum unresolved failed approaches listed under Do Not Repeat (default: 8 for a session, 10 for --work) |
+| `--max-sessions <N>` | `20` | With --work: maximum newest sessions shown in the timeline (original goal is preserved) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh handoff latest
-coding.sh handoff 9f1c2e --out handoff.md
-coding.sh handoff latest --max-dead-ends 5 --json
+coding.sh handoff --work w3f9a1c --out handoff.md
+coding.sh handoff 9f1c2e --max-dead-ends 5 --json
 ```
 
 - Deterministic and $0: runs locally over stored events with secret redaction and makes no model call.
 - Prints copy-paste-ready Markdown on stdout and status notes on stderr, so `coding.sh handoff latest > handoff.md` writes a clean brief.
-- Includes the original goal, changed files, passing checks, unresolved failed approaches under Do Not Repeat, supervision risk signals when medium or high, and formal-verification status when the session has proof activity.
+- Includes the original goal, changed files, passing checks, unresolved failed approaches under Do Not Repeat, supervision risk signals when medium or high, and formal-verification status when proof activity exists.
+- With --work &lt;id&gt;, stitches every session of the work item chronologically into a multi-day timeline with direction pivots, union of changed files, deduplicated Do Not Repeat dead ends, proof rollup, and context-reset counts.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh steer`
