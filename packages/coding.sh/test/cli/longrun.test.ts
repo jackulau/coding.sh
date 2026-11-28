@@ -127,17 +127,17 @@ describe("a 12-hour session", () => {
     assert.equal(all.events.length, all.eventCount);
   });
 
-  test("each sessions --json row is under 2.5 KB: stats without phases or turn times, derails without their event", () => {
+  test("each sessions --json row is under 3 KB: stats without phases or turn times, derails without their event", () => {
     const { sessions } = JSON.parse(cli("sessions", "--json", "--limit", "10")) as { sessions: Session[] };
     assert.ok(sessions.length >= 2);
     for (const s of sessions) {
       const bytes = Buffer.byteLength(JSON.stringify(s));
-      // Was 2 KB, then 2.25 KB. stats.retrieval, seven counts of fixed size (about 115 bytes), took
+      // Was 2 KB, then 2.25 KB, then 2.5 KB. stats.retrieval, seven counts of fixed size (about 115 bytes), took
       // the 12-hour session's row from 1,974 to 2,089 bytes, stats.waits (one kind here, five at
-      // most) to 2,205, and the counts in stats.turnsByModel (one model here), stats.edits and
-      // stats.shells to 2,323. Phases, derail events and each model's turn times (up to 500), which
-      // grow with the session, stay out.
-      assert.ok(bytes < 2560, `the row of ${s.id} is ${bytes} bytes`);
+      // most) to 2,205, the counts in stats.turnsByModel (one model here), stats.edits and
+      // stats.shells to 2,323, and stats.verification + stats.contextHygiene (fixed size) to 2,577.
+      // Phases, derail events and each model's turn times (up to 500), which grow with the session, stay out.
+      assert.ok(bytes < 3072, `the row of ${s.id} is ${bytes} bytes`);
       assert.equal(s.stats.phases, undefined);
       for (const t of Object.values(s.stats.turnsByModel ?? {})) assert.equal(t.durationsMs, undefined, "a row keeps each model's counts, not its turn times");
     }

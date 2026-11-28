@@ -23,11 +23,10 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - A session opens on its first failing step, or on its first prompt when nothing failed. First
   failure in the header, or `F`, goes back to it. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
-- `stats.prs` lists the PRs it opened, merged, closed or linked.
-- [`stats.retrieval`](https://coding.sh/docs/api/read#get-apisessionsid) counts reads and searches.
-- [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
-- [`stats.turnsByModel`](reference/api.md#get-apisessionsid) counts turns by model, and `stats.edits`
-  and `stats.shells` count edits and shell commands.
+- [`stats`](reference/api.md#get-apisessionsid) adds `stats.prs`, `stats.retrieval`, `stats.waits`,
+  `stats.turnsByModel`, `stats.edits` and `stats.shells`.
+- [`stats.verification`](reference/api.md#get-apisessionsid) and `stats.contextHygiene` track checks,
+  unverified edits, proof loops, compactions, failed repeats, dead ends and risk.
 - `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
