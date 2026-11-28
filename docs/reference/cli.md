@@ -49,6 +49,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`proof`](#codingsh-proof) | Explore | Review a session's formal-verification integrity (escapes, checks, spec changes) |
+| [`handoff`](#codingsh-handoff) | Explore | Build a deterministic $0 context-reset handoff brief for starting a fresh session |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
@@ -679,6 +680,35 @@ coding.sh proof latest --strict --json
 - Verdicts: verified (proof files touched, at least one passing check, last check passed, zero remaining escapes and zero tamper findings), incomplete (remaining escapes, failing last check or zero passing checks), tampered (statement, spec or config tampered, or checker bypass flag used), or no-proof.
 - --check-disk scans touched proof files on disk with comments and strings blanked and executes no external checker.
 - --strict exits 1 on tampered or incomplete and 0 on verified or no-proof.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh handoff`
+
+Build a deterministic $0 context-reset handoff brief for starting a fresh session.
+
+```text
+coding.sh handoff <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-o, --out <FILE>` |  | Write the handoff Markdown (or JSON with --json) to FILE and print its path. |
+| `--max-dead-ends <N>` | `8` | Maximum unresolved failed approaches listed under Do Not Repeat. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh handoff latest
+coding.sh handoff 9f1c2e --out handoff.md
+coding.sh handoff latest --max-dead-ends 5 --json
+```
+
+- Deterministic and $0: runs locally over stored events with secret redaction and makes no model call.
+- Prints copy-paste-ready Markdown on stdout and status notes on stderr, so `coding.sh handoff latest > handoff.md` writes a clean brief.
+- Includes the original goal, changed files, passing checks, unresolved failed approaches under Do Not Repeat, supervision risk signals when medium or high, and formal-verification status when the session has proof activity.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh show`

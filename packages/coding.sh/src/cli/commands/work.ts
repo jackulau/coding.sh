@@ -513,6 +513,7 @@ async function show(c: CommandContext): Promise<number> {
     }
     out.row("Next", nextText(item.next), "none", true);
     if (item.proof) out.next("Review proof integrity", `coding.sh proof ${shortId(item.primaryId)}`);
+    if (item.supervisionRisk === "high") out.next("Reset context with a clean handoff brief", `coding.sh handoff ${shortId(item.primaryId)}`);
     return 0;
   });
 }
