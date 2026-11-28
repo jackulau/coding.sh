@@ -94,6 +94,7 @@ describe("buildSession", () => {
       latency: { wallMs: events.at(-1)!.ts - events[0]!.ts, toolMs: 20, toolP95Ms: 10 },
       // Both Bash calls are shell calls; `cat x` failed for real.
       shells: { calls: 2, failed: 1 },
+      verification: { checks: 2, passed: 1, failed: 1, maxUnverifiedEdits: 3 },
     });
     assert.deepEqual(s.flags, []);
   });

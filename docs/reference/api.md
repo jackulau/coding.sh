@@ -640,8 +640,9 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
 ```
 
 The fields below are grouped by topic: cost, parent and model, model switches, proxy calls, API
-errors, waste and cache breaks, retrieval, launch and forks, hooks and redaction, memory and
-instruction files, unapproved actions, and tool errors and fold errors.
+errors, waste and cache breaks, retrieval, verification and context hygiene, launch and forks,
+hooks and redaction, memory and instruction files, unapproved actions, and tool errors and fold
+errors.
 
 **Cost.**
 
@@ -1057,6 +1058,34 @@ Limits:
 | `stats.turnsByModel.<model>.cancelNotRecorded` | Turns whose capture records no stopped turn: another agent's, a T3 Code thread built from T3 Code's own store, whatever agent ran it, or a Claude Code turn whose prompt has no text (`capture.mode = "metadata"`) or came from its OpenTelemetry export. On hook capture, also a Claude Code turn whose end the hooks have not seen, such as one still running or one stopped just before the session ended. `cancelled` does not count them. Absent when zero |
 | `stats.turnsByModel.<model>.durationsMs` | Each turn's time (ms), from its prompt to the end of its last work on any thread, waits on the person included. Up to 500. Absent when no turn did work |
 | `stats.edits`, `stats.shells` (`calls`, `failed`) | File edit calls and shell calls that ended, and how many failed for real, by the rule `stats.toolErrors` uses. A call two capture paths recorded counts once. `failed` is absent when zero, and each field when no such call ended |
+
+**Verification and proof loops.** `stats.verification` tracks mechanical checks (tests, typecheck,
+build, lint and formal proof checkers), unverified edit streaks and formal proof progress. Absent
+when the session had neither file edits nor verification checks nor proof activity.
+
+| Field | Meaning |
+|---|---|
+| `checks`, `passed`, `failed` | Mechanical verification runs and their pass and fail counts |
+| `maxUnverifiedEdits` | Longest consecutive streak of file edits with no mechanical check in between |
+| `unverifiedTailEdits` | File edits after the last mechanical check, or total edits when no check ran. Absent when zero |
+| `medianCheckMs` | Median check duration (ms) across checks with a valid duration. Absent when none |
+| `proof` | Present only when formal proof files or proof checkers appear (`lean`, `rocq`, `dafny`, `verus`, `isabelle`, `tla`, `tlc`) |
+| `proof.langs`, `proof.checks`, `proof.passed`, `proof.failed` | Sorted unique proof languages seen and proof checker outcomes |
+| `proof.escapeAdded`, `proof.escapeRemoved`, `proof.escapeRemaining` | Escape hatches (`sorry`, `Admitted`, `axiom`, `assume`, ...) added, removed and remaining across proof diffs. Each absent when zero |
+| `proof.oscillatingChecks` | Consecutive repeated failing proof checks with the same normalized file and error signature. Absent when zero |
+| `proof.wholeProjectChecks` | Bare whole-project proof builds (`lake build` with no target, bare `dune build`, ...) where targeted checks exist. Absent when zero |
+
+**Context hygiene.** `stats.contextHygiene` tracks long-horizon context degradation and
+supervision risk, complementing `stats.compactionRefetches`. Absent when every counter is zero and
+supervision risk is low.
+
+| Field | Meaning |
+|---|---|
+| `compactions` | Context compaction events seen. Absent when zero |
+| `postCompactionFailedRepeats` | Failed commands or edits from before a compaction repeated after compaction. Absent when zero |
+| `deadEndStreak` | Longest consecutive streak of real failed tool calls without recovery, recorded when 2 or more |
+| `failedOutputChars` | Total characters of real failing tool output injected into context. Absent when zero |
+| `supervisionRisk`, `riskReasons` | `medium` or `high` supervision risk with machine-readable reasons (`unverified-edits`, `tactic-oscillation`, `post-compaction-repeats`, `dead-end-loop`, `compaction-churn`). Both absent when risk is low |
 
 **Tool errors and fold errors.**
 

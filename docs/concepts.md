@@ -28,6 +28,10 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - [`stats.waits`](reference/api.md#get-apisessionsid) measures waiting on you.
 - [`stats.turnsByModel`](reference/api.md#get-apisessionsid) counts turns by model, and `stats.edits`
   and `stats.shells` count edits and shell commands.
+- [`stats.verification`](reference/api.md#get-apisessionsid) tracks mechanical checks, unverified
+  edit streaks and formal proof loops.
+- [`stats.contextHygiene`](reference/api.md#get-apisessionsid) tracks compactions, post-compaction
+  failed repeats, dead-end streaks and supervision risk.
 - `<id>` may be `latest`, a prefix or an `x_` alias; coding.sh prints the shortest id that works.
 - Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 

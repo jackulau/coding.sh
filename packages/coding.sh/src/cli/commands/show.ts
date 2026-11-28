@@ -389,6 +389,55 @@ export function retrievalRow(s: Session): [string, string] | undefined {
   return ["Retrieval", parts.join(", ")];
 }
 
+/**
+ * The Verify header row: checks, pass/fail counts, median latency, unverified edit streaks and
+ * formal proof loop stats. Absent when the session has no checks, fewer than 3 unverified edits
+ * and no proof activity.
+ */
+export function verifyRow(s: Session): [string, string] | undefined {
+  const v = s.stats.verification;
+  if (!v) return undefined;
+  const relevant = v.checks > 0 || v.maxUnverifiedEdits >= 3 || (v.unverifiedTailEdits ?? 0) >= 3 || !!v.proof;
+  if (!relevant) return undefined;
+  const parts: string[] = [];
+  if (v.checks > 0) {
+    const detail: string[] = [];
+    if (v.passed) detail.push(`${v.passed} passed`);
+    if (v.failed) detail.push(`${v.failed} failed`);
+    const med = v.medianCheckMs !== undefined ? `, median ${duration(v.medianCheckMs)}` : "";
+    parts.push(`${plural(v.checks, "check")} (${detail.join(", ")}${med})`);
+  }
+  if (v.maxUnverifiedEdits >= 3) parts.push(`max ${plural(v.maxUnverifiedEdits, "unverified edit")}`);
+  if (v.unverifiedTailEdits) parts.push(`${v.unverifiedTailEdits} unverified at end`);
+  if (v.proof) {
+    const p = v.proof;
+    const pp: string[] = [];
+    if (p.langs.length) pp.push(p.langs.join("/"));
+    if (p.checks) pp.push(`${p.passed}/${p.checks} passed`);
+    if (p.escapeRemaining) pp.push(`${p.escapeRemaining} escape remaining`);
+    else if (p.escapeRemoved) pp.push(`${p.escapeRemoved} escape removed`);
+    if (p.oscillatingChecks) pp.push(`${p.oscillatingChecks} oscillating`);
+    if (p.wholeProjectChecks) pp.push(`${p.wholeProjectChecks} whole-project`);
+    if (pp.length) parts.push(`proof: ${pp.join(", ")}`);
+  }
+  return ["Verify", parts.join("; ")];
+}
+
+/**
+ * The Context header row: supervision risk level, reasons and key context-hygiene counts.
+ * Absent when supervisionRisk is not set (low risk).
+ */
+export function contextHygieneRow(s: Session): [string, string] | undefined {
+  const h = s.stats.contextHygiene;
+  if (!h?.supervisionRisk) return undefined;
+  const head = `${h.supervisionRisk} risk${h.riskReasons?.length ? ` (${h.riskReasons.join(", ")})` : ""}`;
+  const parts: string[] = [head];
+  if (h.compactions) parts.push(plural(h.compactions, "compaction"));
+  if (h.postCompactionFailedRepeats) parts.push(plural(h.postCompactionFailedRepeats, "post-compaction repeat"));
+  if (h.deadEndStreak) parts.push(`dead-end streak ${h.deadEndStreak}`);
+  return ["Context", parts.join("; ")];
+}
+
 /** Skill use recomputed from the session's events (only the `skill:` tags are stored); undefined when it has none. */
 async function sessionSkills(index: IndexStore, s: Session): Promise<SkillUseReport | undefined> {
   if (!s.flags.some((f) => f.startsWith(SKILL_TAG_PREFIX))) return undefined;
@@ -635,6 +684,10 @@ export async function run(c: CommandContext): Promise<number> {
     rows.push(...wasteRows(s));
     const retrieval = retrievalRow(s);
     if (retrieval) rows.push(retrieval);
+    const verify = verifyRow(s);
+    if (verify) rows.push(verify);
+    const context = contextHygieneRow(s);
+    if (context) rows.push(context);
     const red = redactedRow(s);
     if (red) rows.push(red);
     const hooks = hookContextRow(s);

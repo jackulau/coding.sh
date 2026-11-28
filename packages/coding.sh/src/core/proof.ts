@@ -4,12 +4,15 @@
 // command; ProofState follows them over a session's events, and core/intent.ts turns it into
 // test-tamper findings and the flag. Pure: rules over text, no I/O.
 import { posix } from "node:path";
-import type { AgentEvent } from "../schema/index.ts";
+import type { AgentEvent, ProofLang } from "../schema/index.ts";
 import { exitCodeOf } from "./failing-command.ts";
 import { diffHunks, shellScript, simpleCommands, type DiffLine, type ShellDiffOrigin, type SimpleCommand } from "./shell-diff.ts";
 
-/** A proof language, or a TLC model config (`.cfg`). */
-export type ProofLang = "lean" | "rocq" | "dafny" | "verus" | "isabelle" | "tla" | "tlc";
+export type { ProofLang };
+/** All supported formal proof languages and TLC model configs. */
+export const PROOF_LANGS: readonly ProofLang[] = ["lean", "rocq", "dafny", "verus", "isabelle", "tla", "tlc"] as const;
+const PROOF_LANG_SET: ReadonlySet<string> = new Set(PROOF_LANGS);
+export const isProofLang = (lang: string): lang is ProofLang => PROOF_LANG_SET.has(lang);
 
 const BY_EXT = new Map<string, ProofLang>([["lean", "lean"], ["v", "rocq"], ["dfy", "dafny"], ["thy", "isabelle"], ["tla", "tla"]]);
 /** Build files that choose what a checker reads and with which options. */
@@ -177,6 +180,10 @@ const verilogLine = (text: string) => {
   const t = ssrBlanked(text);
   return VERILOG_LINE.test(t) && VERILOG_LINE.test(scanProof(t, SYNTAX.rocq).bare);
 };
+/** True when `text` has a Rocq sentence outside comments and strings. */
+export const hasRocqSentence = (text: string): boolean => ROCQ_SENTENCE.test(rocqText(text));
+/** True when `text` has a Verilog-only line outside Rocq comments and strings. */
+export const hasVerilogLine = (text: string): boolean => verilogLine(text);
 
 /** A hatch word on its own: not part of a hyphenated word (`sorry-free`). */
 const word = (w: string) => new RegExp(`(?<![A-Za-z]-)\\b${w}\\b(?!-[A-Za-z])`, "g");
@@ -519,6 +526,18 @@ const PROOF_OUT = new RegExp(
   `${ROCQ_OUT.source}|\\.lean:\\d+:\\d+:|Failed to finish proof|Unfinished session|\\.thy"|\\.dfy\\(\\d+,\\d+\\): Error|Dafny program verifier finished|verification results::|Model checking completed|is violated|TLC2 Version|Finished computing initial states|obligations? (?:failed|proved)`,
   "m",
 );
+/** Formal proof language identified from checker output, or undefined when the output shows none. */
+export function proofOutputLang(text: string): ProofLang | undefined {
+  if (!text || !PROOF_OUT.test(text)) return undefined;
+  if (ROCQ_OUT.test(text)) return "rocq";
+  if (/\.lean:\d+:\d+:/.test(text)) return "lean";
+  if (/\.dfy\(\d+,\d+\): Error|Dafny program verifier finished/.test(text)) return "dafny";
+  if (/verification results::/.test(text)) return "verus";
+  if (/Failed to finish proof|Unfinished session|\.thy"/.test(text)) return "isabelle";
+  if (/Model checking completed|TLC2 Version|Finished computing initial states|\bis violated\b/.test(text)) return "tlc";
+  if (/obligations? (?:failed|proved)/.test(text)) return "tla";
+  return undefined;
+}
 
 /** The command a wrapper runs: `timeout 600 lake build`, `opam exec -- coqc A.v`, `nice -n 10 lake build`. */
 function unwrap(c: SimpleCommand): [string, string[]] {
@@ -689,6 +708,60 @@ export function proofCheck(command: string, input?: unknown): ProofCheck | undef
   if (cmds.slice(at + 1).some((x) => FILTERS.has(x.cmd))) check.filtered = true;
   if (background) check.background = true;
   return check;
+}
+
+const LAKE_VALUE_FLAGS = new Set(["-d", "--dir", "-f", "--file", "-K", "-l", "--log-level", "--packages", "--package"]);
+const DUNE_VALUE_FLAGS = new Set(["-j", "--jobs", "--display", "--root", "--profile", "--build-dir", "--workspace", "-p", "--only-packages", "--context", "-x"]);
+
+/** Positional arguments of a subcommand after `sub`, skipping flags and known flag values. */
+function subcommandPositionals(args: readonly string[], sub: string, valueFlags: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  let pastSub = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") {
+      if (pastSub) out.push(...args.slice(i + 1));
+      break;
+    }
+    if (a.startsWith("-")) {
+      if (!a.includes("=") && valueFlags.has(a)) i++;
+      continue;
+    }
+    if (!pastSub) {
+      if (a === sub) pastSub = true;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/**
+ * True when a proof checker command runs a bare whole-project build (such as `lake build` with no
+ * target, bare `dune build`, bare `make`, `isabelle build -a`, or bare `cargo verus`) where
+ * targeted single-file or single-target checks exist.
+ */
+export function isWholeProjectProofCheck(command: string): boolean {
+  if (!CHECKER_HINT.test(command)) return false;
+  const cmds = runCommands(command);
+  let cmd = "";
+  let args: string[] = [];
+  let lang: string | undefined;
+  for (const c of cmds) {
+    const [uCmd, uArgs] = unwrap(c);
+    const l = checkerLang(uCmd, uArgs);
+    if (l) [cmd, args, lang] = [uCmd, uArgs, l];
+  }
+  if (!lang) return false;
+  const sub = args.find((a) => !a.startsWith("-")) ?? "";
+  if (cmd === "lake") return sub === "build" && subcommandPositionals(args, "build", LAKE_VALUE_FLAGS).length === 0;
+  if (cmd === "dune") return sub === "build" && subcommandPositionals(args, "build", DUNE_VALUE_FLAGS).length === 0;
+  if (cmd === "make") return makeTarget(args) === "";
+  if (cmd === "isabelle") return sub === "build" && (args.includes("-a") || args.includes("--all"));
+  if (cmd === "cargo" && sub === "verus") {
+    return !args.some((a) => a === "-p" || a === "--package" || a === "--verify-module" || a === "--verify-function" || a === "--verify-only-module" || a.startsWith("--verify-module=") || a.startsWith("--verify-function=") || a.endsWith(".rs"));
+  }
+  return false;
 }
 
 /** What a harness writes, at the start of a line, when a call went to the background or ran out of time. */

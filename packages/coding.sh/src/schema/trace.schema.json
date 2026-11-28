@@ -349,6 +349,40 @@
       ],
       "additionalProperties": false
     },
+    "ContextHygieneStats": {
+      "description": "Session.stats.contextHygiene: long-horizon context degradation and supervision risk signals\n(core/context-hygiene.ts). Complements `stats.compactionRefetches`. Absent when no signal is\nnon-zero and supervision risk is low.",
+      "type": "object",
+      "properties": {
+        "compactions": {
+          "description": "Context compaction events seen in the session. Absent when 0.",
+          "type": "number"
+        },
+        "postCompactionFailedRepeats": {
+          "description": "Failed commands or edits seen before a compaction that were repeated after compaction. Absent when 0.",
+          "type": "number"
+        },
+        "deadEndStreak": {
+          "description": "Longest consecutive run of real failed tool calls without recovery, recorded when at least 2.",
+          "type": "number"
+        },
+        "failedOutputChars": {
+          "description": "Total characters of real failing tool output injected into context. Absent when 0.",
+          "type": "number"
+        },
+        "supervisionRisk": {
+          "description": "Supervision risk level (`medium` or `high`). Absent when low.",
+          "$ref": "#/$defs/SupervisionRisk"
+        },
+        "riskReasons": {
+          "description": "Machine-readable reasons for `supervisionRisk` (`unverified-edits`, `tactic-oscillation`, `post-compaction-repeats`, `dead-end-loop`, `compaction-churn`). Present only when `supervisionRisk` is set.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "CostByTokenType": {
       "description": "USD by token type: cache reads, cache writes (1-hour writes included), uncached input and output.",
       "type": "object",
@@ -832,6 +866,70 @@
       ],
       "additionalProperties": false
     },
+    "ProofLang": {
+      "description": "A formal proof language, or a TLC model config (`.cfg`).",
+      "enum": [
+        "lean",
+        "rocq",
+        "dafny",
+        "verus",
+        "isabelle",
+        "tla",
+        "tlc"
+      ]
+    },
+    "ProofLoopStats": {
+      "description": "Session.stats.verification.proof: formal proof loop telemetry across Lean, Rocq, Dafny, Verus,\nIsabelle, TLA+ and TLC (core/verification.ts). Present only when formal proof files or proof\ncheckers appear in the session.",
+      "type": "object",
+      "properties": {
+        "langs": {
+          "description": "Sorted unique proof languages seen in proof file edits or proof checker commands.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProofLang"
+          }
+        },
+        "checks": {
+          "description": "Formal proof checker runs with a determined pass or fail outcome.",
+          "type": "number"
+        },
+        "passed": {
+          "description": "Formal proof checker runs that passed.",
+          "type": "number"
+        },
+        "failed": {
+          "description": "Formal proof checker runs that failed.",
+          "type": "number"
+        },
+        "escapeAdded": {
+          "description": "Escape hatches (`sorry`, `Admitted`, `axiom`, `assume`, ...) added across proof diffs. Absent when 0.",
+          "type": "number"
+        },
+        "escapeRemoved": {
+          "description": "Escape hatches removed across proof diffs. Absent when 0.",
+          "type": "number"
+        },
+        "escapeRemaining": {
+          "description": "Net escape hatches added and still present across proof files. Absent when 0.",
+          "type": "number"
+        },
+        "oscillatingChecks": {
+          "description": "Consecutive repeated failing proof checks with the same normalized file or error signature. Absent when 0.",
+          "type": "number"
+        },
+        "wholeProjectChecks": {
+          "description": "Bare whole-project proof builds (`lake build` with no target, bare `dune build`, ...) when targeted checks exist. Absent when 0.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "langs",
+        "checks",
+        "passed",
+        "failed"
+      ],
+      "additionalProperties": false
+    },
     "PullRequestRef": {
       "description": "One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls\nprinted or named (core/sessions.ts foldPrs; no network call).\n- `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.\n- `merged`: `gh pr merge` ran (not an `--auto` merge still waiting), or gh printed that it merged it.\n- `closed`: `gh pr close` ran.\n- `linked`: the session named it without changing it: a host tool linked or watched it (T3 Code's\n  `link_pull_request`), a `git push` or a `gh pr` command printed its URL. It never replaces another state.",
       "type": "object",
@@ -1150,6 +1248,14 @@
               "description": "Shell calls on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended.",
               "$ref": "#/$defs/CallTally"
             },
+            "verification": {
+              "description": "Mechanical verification checks, unverified edit streaks, check latency and proof loop stats (core/verification.ts). Unset when the session had neither edits nor checks nor proof activity.",
+              "$ref": "#/$defs/VerificationStats"
+            },
+            "contextHygiene": {
+              "description": "Long-horizon context degradation and supervision risk signals (core/context-hygiene.ts). Unset when no signal fired and risk is low.",
+              "$ref": "#/$defs/ContextHygieneStats"
+            },
             "foldError": {
               "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",
               "type": "string"
@@ -1379,6 +1485,13 @@
       ],
       "additionalProperties": false
     },
+    "SupervisionRisk": {
+      "description": "Deterministic supervision risk level for long-horizon context degradation (core/context-hygiene.ts).",
+      "enum": [
+        "medium",
+        "high"
+      ]
+    },
     "TurnTally": {
       "description": "One model's turns in Session.stats.turnsByModel (core/turn-stats.ts). A turn is a prompt the\nperson sent and the agent's work until their next prompt.",
       "type": "object",
@@ -1552,6 +1665,47 @@
           "$ref": "#/$defs/CostByTokenType"
         }
       },
+      "additionalProperties": false
+    },
+    "VerificationStats": {
+      "description": "Session.stats.verification: intermediate-step verification discipline and check latency\n(core/verification.ts). Absent when the session had neither file edits nor verification checks\nnor proof activity.",
+      "type": "object",
+      "properties": {
+        "checks": {
+          "description": "Mechanical verification checks run (tests, typecheck, build, lint and formal proof checkers).",
+          "type": "number"
+        },
+        "passed": {
+          "description": "Mechanical verification checks that passed.",
+          "type": "number"
+        },
+        "failed": {
+          "description": "Mechanical verification checks that failed.",
+          "type": "number"
+        },
+        "maxUnverifiedEdits": {
+          "description": "Longest consecutive streak of file edits with no mechanical check in between.",
+          "type": "number"
+        },
+        "unverifiedTailEdits": {
+          "description": "File edits after the last mechanical check, or total edits when no check ran. Absent when 0.",
+          "type": "number"
+        },
+        "medianCheckMs": {
+          "description": "Median duration of mechanical verification checks (ms). Absent when no check has a valid duration.",
+          "type": "number"
+        },
+        "proof": {
+          "description": "Formal verification proof loop stats. Present only when proof files or proof checkers appear.",
+          "$ref": "#/$defs/ProofLoopStats"
+        }
+      },
+      "required": [
+        "checks",
+        "passed",
+        "failed",
+        "maxUnverifiedEdits"
+      ],
       "additionalProperties": false
     },
     "WaitStats": {

@@ -401,6 +401,80 @@ export interface CallTally {
   failed?: number;
 }
 
+/** A formal proof language, or a TLC model config (`.cfg`). */
+export type ProofLang = "lean" | "rocq" | "dafny" | "verus" | "isabelle" | "tla" | "tlc";
+
+/**
+ * Session.stats.verification.proof: formal proof loop telemetry across Lean, Rocq, Dafny, Verus,
+ * Isabelle, TLA+ and TLC (core/verification.ts). Present only when formal proof files or proof
+ * checkers appear in the session.
+ */
+export interface ProofLoopStats {
+  /** Sorted unique proof languages seen in proof file edits or proof checker commands. */
+  langs: ProofLang[];
+  /** Formal proof checker runs with a determined pass or fail outcome. */
+  checks: number;
+  /** Formal proof checker runs that passed. */
+  passed: number;
+  /** Formal proof checker runs that failed. */
+  failed: number;
+  /** Escape hatches (`sorry`, `Admitted`, `axiom`, `assume`, ...) added across proof diffs. Absent when 0. */
+  escapeAdded?: number;
+  /** Escape hatches removed across proof diffs. Absent when 0. */
+  escapeRemoved?: number;
+  /** Net escape hatches added and still present across proof files. Absent when 0. */
+  escapeRemaining?: number;
+  /** Consecutive repeated failing proof checks with the same normalized file or error signature. Absent when 0. */
+  oscillatingChecks?: number;
+  /** Bare whole-project proof builds (`lake build` with no target, bare `dune build`, ...) when targeted checks exist. Absent when 0. */
+  wholeProjectChecks?: number;
+}
+
+/**
+ * Session.stats.verification: intermediate-step verification discipline and check latency
+ * (core/verification.ts). Absent when the session had neither file edits nor verification checks
+ * nor proof activity.
+ */
+export interface VerificationStats {
+  /** Mechanical verification checks run (tests, typecheck, build, lint and formal proof checkers). */
+  checks: number;
+  /** Mechanical verification checks that passed. */
+  passed: number;
+  /** Mechanical verification checks that failed. */
+  failed: number;
+  /** Longest consecutive streak of file edits with no mechanical check in between. */
+  maxUnverifiedEdits: number;
+  /** File edits after the last mechanical check, or total edits when no check ran. Absent when 0. */
+  unverifiedTailEdits?: number;
+  /** Median duration of mechanical verification checks (ms). Absent when no check has a valid duration. */
+  medianCheckMs?: number;
+  /** Formal verification proof loop stats. Present only when proof files or proof checkers appear. */
+  proof?: ProofLoopStats;
+}
+
+/** Deterministic supervision risk level for long-horizon context degradation (core/context-hygiene.ts). */
+export type SupervisionRisk = "medium" | "high";
+
+/**
+ * Session.stats.contextHygiene: long-horizon context degradation and supervision risk signals
+ * (core/context-hygiene.ts). Complements `stats.compactionRefetches`. Absent when no signal is
+ * non-zero and supervision risk is low.
+ */
+export interface ContextHygieneStats {
+  /** Context compaction events seen in the session. Absent when 0. */
+  compactions?: number;
+  /** Failed commands or edits seen before a compaction that were repeated after compaction. Absent when 0. */
+  postCompactionFailedRepeats?: number;
+  /** Longest consecutive run of real failed tool calls without recovery, recorded when at least 2. */
+  deadEndStreak?: number;
+  /** Total characters of real failing tool output injected into context. Absent when 0. */
+  failedOutputChars?: number;
+  /** Supervision risk level (`medium` or `high`). Absent when low. */
+  supervisionRisk?: SupervisionRisk;
+  /** Machine-readable reasons for `supervisionRisk` (`unverified-edits`, `tactic-oscillation`, `post-compaction-repeats`, `dead-end-loop`, `compaction-churn`). Present only when `supervisionRisk` is set. */
+  riskReasons?: string[];
+}
+
 /**
  * One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls
  * printed or named (core/sessions.ts foldPrs; no network call).
@@ -652,6 +726,10 @@ export interface Session {
     edits?: CallTally;
     /** Shell calls on every thread, and how many failed for real (core/turn-stats.ts). Unset when none ended. */
     shells?: CallTally;
+    /** Mechanical verification checks, unverified edit streaks, check latency and proof loop stats (core/verification.ts). Unset when the session had neither edits nor checks nor proof activity. */
+    verification?: VerificationStats;
+    /** Long-horizon context degradation and supervision risk signals (core/context-hygiene.ts). Unset when no signal fired and risk is low. */
+    contextHygiene?: ContextHygieneStats;
     /**
      * Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not
      * the agent's): the row then holds only what the events say directly (agent, start, end, cwd,
