@@ -3149,6 +3149,23 @@ The brief keeps the original goal, changed files, passing checks, unresolved fai
 Do Not Repeat, supervision risk signals when medium or high, and formal-proof status when present.
 `coding.sh work show` suggests `coding.sh handoff` on high-risk items.
 
+### Live session steering
+
+`coding.sh steer <session>` reads live verification, formal proof loop, context hygiene, tamper, and
+wait telemetry to advise whether to `continue`, `nudge`, or `intervene`. When action is needed, it
+lists prioritized directives and a paste-ready `suggestedSteer` grounded in the session's files,
+failing commands, and proof goals.
+
+```sh
+coding.sh steer latest --fresh
+coding.sh steer latest --prompt
+coding.sh steer latest --strict --json
+```
+
+- Pass `--prompt` to print only `suggestedSteer` on stdout (nothing with exit 0 on `continue`), ready for scripts and orchestrators.
+- Pass `--strict` to exit 1 when `status` is `intervene`, and `--fresh` to ingest pending captures before advising.
+- The viewer and `coding.sh serve` expose the same pure report at `GET /api/sessions/{id}/steer`.
+
 ### Diagnosing sessions into Signals
 
 `coding.sh refine diagnose` asks a model what went wrong in each recent session (default: the last
