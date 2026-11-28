@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { readUserSteer, toProofSteer } from "./intent.ts";
 import { createRedactor } from "./redact.ts";
 import {
   checkOutcome,
@@ -14,6 +15,7 @@ import {
   isRocqOutput,
   isSpecNamed,
   isWholeProjectCheck,
+  KERNEL_BYPASS_HATCHES,
   outText,
   proofChange,
   proofCheck,
@@ -21,12 +23,15 @@ import {
   proofLang,
   proofLog,
   proofStart,
+  proofSteer,
   proofWrite,
   readProofDiff,
   scanProofEscapes,
+  steerCoversBypass,
   type HasProof,
   type ProofCheck,
   type ProofLang,
+  type ProofSteer,
 } from "./proof.ts";
 import { normalizeTracePath, shellCommand, shellDiffOrigin, shellWrites } from "./shell-diff.ts";
 import { isShellCall } from "./shell-tools.ts";
@@ -76,24 +81,12 @@ export interface ProofReport {
   escapes: ProofEscapes;
   checks: ProofChecks;
   tamperFindings: ProofTamperFinding[];
+  /** Count of statement, spec, escape, or bypass changes explicitly authorized by a human user steer; omitted when 0. */
+  userSteeredChanges?: number;
   verdict: ProofVerdict;
   verifyHints: string[];
   diskCheck?: ProofDiskCheck;
 }
-
-/** Escape tokens that disable kernel or verifier checking rather than leaving a proof hole. */
-const KERNEL_BYPASS_HATCHES = new Set([
-  "debug.skipKernelTC",
-  "Unset Guard Checking",
-  "Unset Universe Checking",
-  "Unset Positivity Checking",
-  "bypass_check",
-  "{:verify false}",
-  "quick_and_dirty",
-  "skip_proofs",
-  "-type-in-type",
-  "no-verify",
-]);
 
 /** A `spec/` or `specs/` folder holding formal-verification files. */
 const PROOF_SPEC_DIR = /(?:^|\/)specs?\//i;
@@ -193,6 +186,8 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   const specFiles = new Set<string>();
   const bypassCalls: { flag: string; lang: string }[] = [];
   const durations: number[] = [];
+  let activeProofSteer: ProofSteer | undefined;
+  let steeredBypassCalls = 0;
 
   let escapesAdded = 0;
   let escapesRemoved = 0;
@@ -207,7 +202,13 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   for (const e of sorted) {
     const p = e.payload ?? {};
     const cwd = baseCwd ?? e.cwd;
-    if (e.kind === "tool.start") {
+    if (e.kind === "user.message") {
+      const u = readUserSteer(e);
+      if (u.human) {
+        activeProofSteer = toProofSteer(u.steer);
+        proofSteer(proof, activeProofSteer);
+      }
+    } else if (e.kind === "tool.start") {
       const id = str(p.toolUseId);
       if (id) starts.set(id, e);
       const tool = str(p.tool);
@@ -276,6 +277,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
         specFiles.add(finalPath);
       }
     } else if (e.kind === "tool.end") {
+      const preSteer = activeProofSteer;
       proofEnd(proof, e, log.note);
       const id = str(p.toolUseId);
       const active = id ? activeChecks.get(id) : undefined;
@@ -294,6 +296,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       const outcome = checkOutcome(check, p);
       const timedOut = p.timedOut === true || (p.ok === false && TIMED_OUT_TEXT.test(text));
       if (outcome === undefined && !timedOut) continue;
+      if (outcome !== undefined) activeProofSteer = undefined;
 
       checksTotal++;
       if (isWholeProjectCheck(check, cmd)) checksWholeProject++;
@@ -305,7 +308,8 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       }
 
       if (check.bypass) {
-        bypassCalls.push({ flag: check.bypass, lang: check.lang });
+        if (steerCoversBypass(preSteer, check.bypass)) steeredBypassCalls++;
+        else bypassCalls.push({ flag: check.bypass, lang: check.lang });
         if (outcome === "red" || timedOut) {
           checksFailed++;
           lastOk = false;
@@ -334,10 +338,16 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
 
   const tamperFindings: ProofTamperFinding[] = [];
   const seenBypass = new Set<string>();
+  let userSteeredChanges = 0;
+  let steeredLogBypasses = 0;
 
   for (const f of log.findings(proof.proof)) {
     if (f.kind === "statement") {
       if (f.path) specFiles.add(f.path);
+      if (f.steeredBy) {
+        userSteeredChanges++;
+        continue;
+      }
       const verb = f.shape === "weaken" ? "weakened" : f.shape === "delete" ? "deleted" : "changed";
       const target = f.theorem ? `statement ${f.theorem}` : "statement";
       const flip = f.flippedGreen ? " (turned failing check green)" : "";
@@ -346,6 +356,10 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       tamperFindings.push(item);
     } else if (f.kind === "spec") {
       if (f.path) specFiles.add(f.path);
+      if (f.steeredBy) {
+        userSteeredChanges++;
+        continue;
+      }
       const label = isProofConfig(f.path) ? "proof config" : "spec";
       const verb = f.shape === "weaken" ? "weakened" : f.shape === "delete" ? "deleted" : "changed";
       const flip = f.flippedGreen ? " (turned failing check green)" : "";
@@ -356,15 +370,27 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       if (f.path === "") {
         const flag = f.hatch ?? "bypass";
         seenBypass.add(flag);
+        if (f.steeredBy) {
+          userSteeredChanges++;
+          steeredLogBypasses++;
+          continue;
+        }
         tamperFindings.push({ kind: "bypass", detail: redact(`checker bypass flag ${flag} passed after failure`) });
       } else if (isProofConfig(f.path) || (f.hatch !== undefined && KERNEL_BYPASS_HATCHES.has(f.hatch))) {
         if (isProofConfig(f.path)) specFiles.add(f.path);
+        if (f.steeredBy) {
+          userSteeredChanges++;
+          continue;
+        }
         const item: ProofTamperFinding = { kind: "bypass", detail: redact(`verification bypass ${f.hatch ?? "unknown"} added`) };
         if (f.path) item.file = redact(f.path);
         tamperFindings.push(item);
+      } else if (f.steeredBy) {
+        userSteeredChanges++;
       }
     }
   }
+  if (steeredBypassCalls > steeredLogBypasses) userSteeredChanges += steeredBypassCalls - steeredLogBypasses;
 
   for (const b of bypassCalls) {
     if (seenBypass.has(b.flag)) continue;
@@ -405,7 +431,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict = "verified";
   }
 
-  return {
+  const report: ProofReport = {
     sessionId: session.id,
     langs: sortedLangs,
     proofFiles: sortedProofFiles,
@@ -417,6 +443,8 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict,
     verifyHints: buildVerifyHints(sortedLangs, sortedProofFiles, redact),
   };
+  if (userSteeredChanges > 0) report.userSteeredChanges = userSteeredChanges;
+  return report;
 }
 
 /**
