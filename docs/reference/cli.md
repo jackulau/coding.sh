@@ -558,7 +558,7 @@ coding.sh sessions [options]
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--view <NAME>` |  | Only sessions matching this saved view's query (coding.sh views list); with --where, both must hold. |
 | `--fields <PATHS>` |  | With --json: print only these fields, as a comma list of dotted paths (id,title,stats.usage.costUsd). A path through a list picks from each item. Repeatable. |
-| `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, launch, branch, flag, skill, hook, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
+| `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, launch, branch, flag, skill, hook, risk, risk.reason, proof.lang, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
@@ -570,7 +570,7 @@ coding.sh sessions --agent codex --since 7d
 ```
 
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).
-- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
+- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, risk, risk.reason, proof.lang, proof.escapes, proof.oscillating, unverified.edits, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: no stats.phases, no turn times in stats.turnsByModel, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has them all; --fields stats.phases, stats.turnsByModel or stats.derails prints them here.
 - In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.

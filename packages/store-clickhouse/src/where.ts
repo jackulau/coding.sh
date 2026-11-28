@@ -99,6 +99,12 @@ export const KEY_SQL: Record<string, string[]> = {
   events: [stat("events")],
   "tests.passed": [stat("testsPassed")],
   "tests.failed": [stat("testsFailed")],
+  risk: [jstr("stats", "contextHygiene.supervisionRisk")],
+  "risk.reason": ["f"],
+  "proof.lang": ["f"],
+  "proof.escapes": [`if(JSONType(stats, 'verification', 'proof') = 'Object', ifNull(${stat("verification.proof.escapeRemaining")}, 0), NULL)`],
+  "proof.oscillating": [`if(JSONType(stats, 'verification', 'proof') = 'Object', ifNull(${stat("verification.proof.oscillatingChecks")}, 0), NULL)`],
+  "unverified.edits": [stat("verification.maxUnverifiedEdits")],
   tokens: [`if(JSONType(stats, 'usage') = 'Object', ${tokens}, NULL)`],
   "tokens.in": [stat("usage.inputTokens")],
   "tokens.out": [stat("usage.outputTokens")],
@@ -167,6 +173,8 @@ export function assertSupported(n: Node): void {
 const MULTI_FROM: Record<string, string> = {
   // An empty array when the session recorded no checkpoint.
   "weights.checkpoint": "JSONExtract(stats, 'weightEdits', 'checkpoints', 'Array(String)')",
+  "risk.reason": "JSONExtract(stats, 'contextHygiene', 'riskReasons', 'Array(String)')",
+  "proof.lang": "JSONExtract(stats, 'verification', 'proof', 'langs', 'Array(String)')",
 };
 const multiFrom = (key: string): string => MULTI_FROM[key] ?? "flags";
 
