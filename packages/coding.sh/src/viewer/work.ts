@@ -11,7 +11,7 @@ import type { Session } from "../schema/index.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
-import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workFiles, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
+import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, settleWorkFiles, workFiles, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
 export interface WorkSource {
@@ -131,6 +131,8 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const hiddenBy: Partial<Record<HiddenReason, number>> = {};
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   const shown = queue.items.slice(0, limit);
+  // The shown items count and name their files as `work --json` and `work show` do (core/work.ts settleWorkFiles).
+  await settleWorkFiles(index, shown, sessions, now);
   // `counts` counts every stage and leaves hidden items out; the page's headings count what this answer lists.
   const totals: Record<string, number> = Object.fromEntries([...BUCKETS, "hidden"].map((b) => [b, 0]));
   for (const i of queue.items) totals[i.bucket ?? "hidden"] = (totals[i.bucket ?? "hidden"] ?? 0) + 1;
@@ -234,7 +236,7 @@ export async function workAck(index: IndexStore, src: WorkSource, q: URLSearchPa
   const overlay = readOverlay(src.overlay);
   addAck(overlay, cause.sessionId, cause.fingerprint);
   writeOverlay(src.overlay, overlay, now);
-  const { item: after } = await findItem(index, src, item.id, q, now);
+  const { item: after } = await findItem(index, src, item.id, q, now, { shortId: await shortener(index) });
   return { id: item.id, acked: true, bucket: cause.bucket, label: BUCKET_LABELS[cause.bucket], now: workItemJson(after) };
 }
 

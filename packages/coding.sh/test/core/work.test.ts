@@ -523,6 +523,17 @@ describe("a worktree nested in its repo", () => {
     // With no session at the root to compare branches with, the root stays.
     assert.equal(items.find((i) => i.primaryId === "alone")!.repo, "/work/other");
   });
+
+  test("the review git -C step quotes repo paths with spaces or shell metacharacters and leaves plain paths unquoted", () => {
+    const plain = queue([sess("plain", 5 * MIN, { cwd: "/work/demo", repo: repo("/work/demo", "main"), stats: { filesChanged: 1 } })]).items[0]!;
+    assert.equal(plain.next, `review: \`git -C /work/demo diff\`, then \`coding.sh work ack ${plain.id}\``);
+    const spaced = queue([sess("spaced", 5 * MIN, { cwd: "/work/my repo", repo: repo("/work/my repo", "main"), stats: { filesChanged: 1 } })]).items[0]!;
+    assert.equal(spaced.next, `review: \`git -C '/work/my repo' diff\`, then \`coding.sh work ack ${spaced.id}\``);
+    const meta = queue([sess("meta", 5 * MIN, { cwd: "/work/a;b $(id)", repo: repo("/work/a;b $(id)", "main"), stats: { filesChanged: 1 } })]).items[0]!;
+    assert.equal(meta.next, `review: \`git -C '/work/a;b $(id)' diff\`, then \`coding.sh work ack ${meta.id}\``);
+    const quoted = queue([sess("quoted", 5 * MIN, { cwd: "/work/it's", repo: repo("/work/it's", "main"), stats: { filesChanged: 1 } })]).items[0]!;
+    assert.equal(quoted.next, `review: \`git -C '/work/it'\\''s' diff\`, then \`coding.sh work ack ${quoted.id}\``);
+  });
 });
 
 test("a subagent's resume step names the session Claude Code can resume, not coding.sh's child id", () => {
