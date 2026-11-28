@@ -652,16 +652,21 @@ describe("work --risk and proof status", () => {
     assert.match(cleanBlock, /\n {10}finished \d+[smhd] ago with 1 file changed\n/);
   });
 
-  test("work show prints Risk and Proof rows and coding.sh proof hint when present", async () => {
+  test("work show prints Risk and Proof rows and coding.sh proof and handoff hints when present", async () => {
     const shown = await runCmd(work, sb, { action: "show", positionals: [workItemId("run-high")] });
     assert.equal(shown.error, undefined, shown.error?.stack);
     assert.match(shown.stdout, /Risk +high \(tactic-oscillation, unverified-edits\)/);
     assert.match(shown.stdout, /Proof +lean · 3 checks \(2 passed, 1 failed\), 2 escapes remaining/);
     assert.match(shown.stderr, /(?:coding\.sh|codingsh) proof run-high/);
+    assert.match(shown.stderr, /(?:coding\.sh|codingsh) handoff run-high/);
+
+    const medShown = await runCmd(work, sb, { action: "show", positionals: [workItemId("rev-med")] });
+    assert.equal(medShown.error, undefined, medShown.error?.stack);
+    assert.doesNotMatch(medShown.stderr, /handoff /);
 
     const cleanShown = await runCmd(work, sb, { action: "show", positionals: [workItemId("clean-rev")] });
     assert.equal(cleanShown.error, undefined, cleanShown.error?.stack);
     assert.doesNotMatch(cleanShown.stdout, /\bRisk\b|\bProof\b/);
-    assert.doesNotMatch(cleanShown.stderr, /proof /);
+    assert.doesNotMatch(cleanShown.stderr, /proof |handoff /);
   });
 });
