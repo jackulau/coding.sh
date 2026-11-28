@@ -7,7 +7,9 @@ import { bucketsFlag, kindsFlag, mainFilesChanged, risksFlag, stagesFlag } from 
 import { parsePlace } from "../mcp/data.ts";
 import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore } from "../core/types.ts";
-import type { Session } from "../schema/index.ts";
+import type { AgentEvent, Session } from "../schema/index.ts";
+import { buildWorkTimeline, DEFAULT_MAX_WORK_SESSIONS, type WorkTimeline } from "../core/handoff.ts";
+import { createRedactor } from "../core/redact.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
@@ -227,11 +229,24 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
   const now = judgedAt(src, clock, age);
   const overlay = readOverlay(src.overlay);
   // The window and the judgment as the list's: from the last ingest while the index is old.
-  const { item, items, sessions } = await findItem(index, src, id, q, now, { filtered: true, judged: now, shortId: await shortener(index), overlay });
+  const shortId = await shortener(index);
+  const { item, items, sessions } = await findItem(index, src, id, q, now, { filtered: true, judged: now, shortId, overlay });
   const byId = new Map(sessions.map((s) => [s.id, s]));
   // Before workItemJson: when it reads every session, workFiles sets the item's file count and review reason.
   const files = await workFiles(index, item, sessions, now);
   const children = item.sessionIds.filter((sid) => sid !== item.primaryId).map((sid) => byId.get(sid)).filter((s): s is Session => !!s);
+  let timeline: WorkTimeline | undefined;
+  if (item.sessionIds.length > 1) {
+    const memberSessions = item.sessionIds
+      .map((sid) => byId.get(sid))
+      .filter((s): s is Session => !!s)
+      .sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const eventsBySession = new Map<string, AgentEvent[]>();
+    for (const s of memberSessions.slice(-DEFAULT_MAX_WORK_SESSIONS)) {
+      eventsBySession.set(s.id, await index.listEvents(s.id));
+    }
+    timeline = buildWorkTimeline(item, memberSessions, eventsBySession, { shortId, redact: createRedactor() });
+  }
   const doc: Record<string, unknown> = {
     ...workItemJson(item),
     now: new Date(now).toISOString(),
@@ -245,6 +260,8 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
       if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
       return row;
     }),
+    spanDays: timeline ? timeline.spanDays : undefined,
+    timeline: timeline ? timeline.entries : undefined,
   };
   if (item.supersededBy) {
     // The newer item ended with no failure, so it is often hidden, or outside the filters.
