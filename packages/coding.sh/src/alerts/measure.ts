@@ -2,10 +2,13 @@
 // (viewer/metrics.ts): the same session rows (top-level sessions, each with its
 // subagents' spend rolled in), the same failure definition and the same cost sums.
 // score:<name> is the mean of that score on those sessions (src/scores).
-import type { IndexStore, MetricRow, Score } from "../core/types.ts";
+import type { IndexStore, MetricRow } from "../core/types.ts";
 import { parseWhere } from "../query/where.ts";
+import { scoreNumber } from "../scores/scores.ts";
 import { loadMetricRows, totalsOf } from "../viewer/metrics.ts";
 import { ALERT_WINDOWS, type AlertDef } from "./store.ts";
+
+export { scoreNumber };
 
 export const ALERT_MEASURES = ["failure-rate", "cost", "sessions"] as const;
 export type AlertMeasure = { kind: (typeof ALERT_MEASURES)[number] } | { kind: "flag"; flag: string } | { kind: "score"; name: string };
@@ -17,13 +20,6 @@ export function parseMeasure(s: string): AlertMeasure | undefined {
   const v = m?.[2]!.trim();
   if (!m || !v) return undefined;
   return m[1] === "flag" ? { kind: "flag", flag: v } : { kind: "score", name: v };
-}
-
-/** A score as a number: numeric as is, boolean as 1 or 0; categorical and text have none. */
-export function scoreNumber(s: Pick<Score, "dataType" | "value">): number | undefined {
-  if (s.dataType === "numeric" && typeof s.value === "number" && Number.isFinite(s.value)) return s.value;
-  if (s.dataType === "boolean" && typeof s.value === "boolean") return s.value ? 1 : 0;
-  return undefined;
 }
 
 /** The mean of the numbers the sessions' scores give; null when none has one. */

@@ -8063,21 +8063,25 @@ const EXPLORE_PANELS = [
   { id: "llm-p95", title: "p95 model call", value: (l, i) => l.llmP95Ms[i], total: (t) => t.llmP95Ms, fmt: fmtDuration, tick: fmtDurationTick, hint: "Over each session's own p95" },
 ];
 function pctFine(x) { return x > 0 && x < 0.1 ? (x * 100).toFixed(1) + "%" : pct(x); }
+function fmtScore(x) { return typeof x !== "number" ? "—" : Number.isInteger(x) ? String(x) : String(Math.round(x * 1000) / 1000); }
+const SCORE_MEASURE_RE = /^score:[\w.:/-]{1,100}$/;
 /** Parses #/explore's query into the API's params, dropping anything malformed. */
 function exploreState(query) {
   const since = query.get("since") || "30d";
   const raw = query.get("by");
   const by = raw === null ? "agent" : raw === "none" ? "" : raw;
+  const measure = (query.get("measure") || "").trim();
   return {
     where: (query.get("where") || "").trim().slice(0, WHERE_MAX),
     since: /^(\d{1,4}d|\d{1,16})$/.test(since) ? since : "30d",
     per: query.get("per") === "week" ? "week" : "day",
     by: EXPLORE_BY.some(([k]) => k === by) ? by : "agent",
     scope: query.get("scope") === "all" ? "all" : "top",
+    measure: SCORE_MEASURE_RE.test(measure) ? measure : "",
   };
 }
 function exploreHref(st) {
-  return "#/explore" + qs({ where: st.where, since: st.since === "30d" ? "" : st.since, per: st.per === "day" ? "" : st.per, by: st.by === "agent" ? "" : st.by || "none", scope: st.scope === "all" ? "all" : "" });
+  return "#/explore" + qs({ where: st.where, since: st.since === "30d" ? "" : st.since, per: st.per === "day" ? "" : st.per, by: st.by === "agent" ? "" : st.by || "none", scope: st.scope === "all" ? "all" : "", measure: st.measure || "" });
 }
 /** Local YYYY-MM-DD, the date axis lineChart labels. */
 function ymd(t) {
@@ -8140,9 +8144,19 @@ async function showExplore(seq, query) {
   const slot = h("div", { class: "mx-body" });
   view.append(slot);
   setView(view, false, keys);
-  let m;
+  let m, scoreNames = [];
   try {
-    m = await api("/api/metrics" + qs({ since: st.since, bucket: st.per, scope: st.scope, by: st.by || undefined, where: st.where || undefined, tz: new Date().getTimezoneOffset() }));
+    const [metricsDoc, cfgDoc, scoreDoc] = await Promise.all([
+      api("/api/metrics" + qs({ since: st.since, bucket: st.per, scope: st.scope, by: st.by || undefined, where: st.where || undefined, measure: st.measure || undefined, tz: new Date().getTimezoneOffset() })),
+      api("/api/score-configs").catch(() => ({ items: [] })),
+      api("/api/scores" + qs({ target: "session", limit: 500 })).catch(() => ({ items: [] })),
+    ]);
+    m = metricsDoc;
+    const names = new Set();
+    for (const c of cfgDoc.items || []) if (c.dataType === "numeric" || c.dataType === "boolean") names.add(c.name);
+    for (const s of scoreDoc.items || []) if (s.dataType === "numeric" || s.dataType === "boolean") names.add(s.name);
+    if (st.measure) names.add(st.measure.slice(6));
+    scoreNames = [...names].sort();
   } catch (e) {
     if (!current(seq)) return;
     meta.textContent = "";
@@ -8150,13 +8164,24 @@ async function showExplore(seq, query) {
     return;
   }
   if (!current(seq)) return;
+  if (scoreNames.length) {
+    const scoreSel = h("select", { class: "field", "aria-label": "Score", onchange: (e) => go({ measure: e.target.value }) },
+      h("option", { value: "" }, "None"),
+      scoreNames.map((name) => h("option", { value: "score:" + name }, name)));
+    scoreSel.value = st.measure;
+    controls.append(h("label", { class: "mx-by mx-score" }, h("span", { class: "meta" }, "Score"), scoreSel));
+  }
   const t = m.totals;
   const range = fmtDayRange(m.since, m.until - 1);
   meta.textContent = range + " · " + plural(t.sessions, "session") + (m.truncated ? " · first 100,000 only" : "");
   const dates = m.buckets.map(ymd);
   const lines = m.by ? m.series : [m.all];
   const color = seriesOf(lines.map((l) => l.key));
-  const panels = EXPLORE_PANELS.map((p) => {
+  const scoreName = st.measure ? st.measure.slice(6) : "";
+  const panelDefs = scoreName
+    ? [...EXPLORE_PANELS, { id: "score", title: "Score: " + scoreName, value: (l, i) => (l.scoreMean ? l.scoreMean[i] : null), total: (tt) => tt.scoreMean, fmt: fmtScore, tick: fmtScore, hint: plural(t.scoreCount || 0, "score") }]
+    : EXPLORE_PANELS;
+  const panels = panelDefs.map((p) => {
     // A bucket with nothing to measure (a rate with no sessions) breaks the line instead of bridging it.
     const series = lines.map((l) => {
       let gap = 0;
@@ -8164,7 +8189,9 @@ async function showExplore(seq, query) {
       return { name: l.key === "all" ? "All sessions" : l.key, cls: color.get(l.key) || "s-x", points };
     });
     const vals = series.flatMap((s) => s.points.map((q) => q.value)).filter((v) => typeof v === "number");
-    const ax = niceAxis(Math.max(0, ...vals), p.rate, p.whole);
+    const minVal = Math.min(0, ...vals);
+    const maxVal = Math.max(0, ...vals);
+    const ax = minVal < 0 ? { y: [minVal, maxVal], ticks: [minVal, (minVal + maxVal) / 2, maxVal] } : niceAxis(maxVal, p.rate, p.whole);
     const total = p.total(t);
     const chart = lineChart({ dates, y: ax.y, ticks: ax.ticks, small: true, series, fmtTick: p.tick, fmtValue: p.fmt, xLabels: 4, label: p.title + " per " + st.per + ", " + range + (total === null || total === undefined ? ", no data" : ", " + p.fmt(total) + " in all") });
     return h("figure", { class: "panel chart-card mx-panel", "data-panel": p.id },
@@ -8179,15 +8206,20 @@ async function showExplore(seq, query) {
   if (!t.sessions) {
     out.unshift(h("p", { class: "meta mx-empty", role: "status" }, st.where ? "No sessions match this filter in the range. Widen the range or clear the filter." : "No sessions in this range. Pick a longer range, or run an agent and come back."));
   }
-  if (m.by && m.series.length) out.push(exploreTable(st, m, color));
+  if (m.by && m.series.length) out.push(exploreTable(st, m, color, scoreName));
   if (t.pricedSessions && t.pricedSessions < t.sessions) out.push(h("p", { class: "meta" }, "Cost covers the " + fmtNum(t.pricedSessions) + " of " + plural(t.sessions, "session") + " with a price."));
   if (m.by === "flag") out.push(h("p", { class: "meta" }, "A session with several flags counts once in each row."));
   swap(slot, ...out);
   announce(plural(t.sessions, "session") + " in " + plural(m.buckets.length, st.per));
 }
-function exploreTable(st, m, color) {
+function exploreTable(st, m, color, scoreName) {
   const cols = ["Sessions", "Fail %", "Cost", "Tokens", "Tool err %", "p95 call", "TTFT"];
-  const cells = (tt) => [fmtNum(tt.sessions), tt.failureRate === undefined ? "—" : pct(tt.failureRate), tt.pricedSessions ? (tt.estimatedCostUsd ? "~" : "") + fmtCost(tt.costUsd) : "—", fmtCompact(tt.tokens), tt.toolErrorRate === undefined ? "—" : pctFine(tt.toolErrorRate), fmtDuration(tt.llmP95Ms) || "—", fmtDuration(tt.ttftP50Ms) || "—"];
+  if (scoreName) cols.push("Score: " + scoreName);
+  const cells = (tt) => {
+    const out = [fmtNum(tt.sessions), tt.failureRate === undefined ? "—" : pct(tt.failureRate), tt.pricedSessions ? (tt.estimatedCostUsd ? "~" : "") + fmtCost(tt.costUsd) : "—", fmtCompact(tt.tokens), tt.toolErrorRate === undefined ? "—" : pctFine(tt.toolErrorRate), fmtDuration(tt.llmP95Ms) || "—", fmtDuration(tt.ttftP50Ms) || "—"];
+    if (scoreName) out.push(tt.scoreMean === undefined ? "—" : fmtScore(tt.scoreMean));
+    return out;
+  };
   const row = (key, tt, name, href) => h("tr", null,
     h("th", { scope: "row" }, h("span", { class: "mx-key" }, name !== "total" ? swatch(color.get(key) || "s-x") : null, href ? h("a", { href, class: "truncate", title: "Open these sessions" }, key) : h("span", { class: "truncate" }, name))),
     cells(tt).map((c) => h("td", null, c)));

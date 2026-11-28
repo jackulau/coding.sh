@@ -327,6 +327,13 @@ export function scoreFilter(get: (k: string) => string | undefined): ScoreFilter
   return f;
 }
 
+/** A score as a number: numeric as is, boolean as 1 or 0; categorical and text have none. */
+export function scoreNumber(s: Pick<Score, "dataType" | "value">): number | undefined {
+  if (s.dataType === "numeric" && typeof s.value === "number" && Number.isFinite(s.value)) return s.value;
+  if (s.dataType === "boolean" && typeof s.value === "boolean") return s.value ? 1 : 0;
+  return undefined;
+}
+
 /** Who is scoring from the CLI or MCP: the OS user, as the viewer records labels. */
 export function whoami(): string {
   try {

@@ -6,7 +6,9 @@
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document. --scorecard prints
 // the model scorecard instead (stats-scorecard.ts).
-import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricsSpec, type MetricTotals } from "../../viewer/metrics.ts";
+import { bucketTimes, loadMetricRows, loadSessionScores, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, parseMetricMeasure, scoreMeasureName, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricsSpec, type MetricTotals } from "../../viewer/metrics.ts";
+import { cliError as scoreCliError } from "../../scores/cli.ts";
+import { ScoreError } from "../../scores/scores.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -112,12 +114,15 @@ function metricsErrorText(e: MetricsError): string {
 /** A one-line trend; blank cells for buckets with nothing to show. */
 export function sparkline(vals: readonly (number | null)[]): string {
   const nums = vals.filter((v): v is number => v !== null);
+  const min = Math.min(0, ...nums);
   const max = Math.max(0, ...nums);
-  return vals.map((v) => (v === null ? " " : max <= 0 ? BARS[0] : BARS[Math.min(BARS.length - 1, Math.round((v / max) * (BARS.length - 1)))])).join("");
+  const span = max - min;
+  return vals.map((v) => (v === null ? " " : span <= 0 ? BARS[0] : BARS[Math.max(0, Math.min(BARS.length - 1, Math.round(((v - min) / span) * (BARS.length - 1))))])).join("");
 }
 
 const pct = (x: number | undefined | null): string => (x === undefined || x === null ? "-" : `${(x * 100).toFixed(x < 0.1 && x > 0 ? 1 : 0)}%`);
 const ms = (x: number | undefined | null): string => (x === undefined || x === null ? "-" : duration(x));
+const fmtScore = (x: number): string => (Number.isInteger(x) ? String(x) : String(Math.round(x * 1000) / 1000));
 
 /** A measure as a table cell. */
 function cell(m: MetricMeasure, v: number | null): string {
@@ -126,6 +131,7 @@ function cell(m: MetricMeasure, v: number | null): string {
   if (m === "tokens") return tokens(v);
   if (m === "failure-rate" || m === "tool-error-rate") return pct(v);
   if (m === "llm-p95" || m === "ttft-p50") return ms(v);
+  if (scoreMeasureName(m) !== undefined) return fmtScore(v);
   return String(v);
 }
 
@@ -164,8 +170,17 @@ function bucketLabel(t: number, per: MetricBucket): string {
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const card = c.flags.scorecard === true ? scorecardBy(c) : undefined;
-  const measure = (str(c.flags.measure) ?? "sessions") as MetricMeasure;
-  if (!(METRIC_MEASURES as readonly string[]).includes(measure)) throw new UsageError(`--measure must be one of ${METRIC_MEASURES.join(", ")}`, { reason: "invalid_argument" });
+  const rawMeasure = str(c.flags.measure) ?? "sessions";
+  let measure: MetricMeasure;
+  try {
+    measure = parseMetricMeasure(rawMeasure);
+  } catch (e) {
+    const msg = rawMeasure.startsWith("score:")
+      ? `--measure: ${e instanceof Error ? e.message : String(e)}`
+      : `--measure must be one of ${METRIC_MEASURES.join(", ")}, or score:<name>, got ${JSON.stringify(rawMeasure)}`;
+    throw new UsageError(msg);
+  }
+  const scoreName = scoreMeasureName(measure);
   const by = str(c.flags.by) as MetricGroup | undefined;
   const per = (str(c.flags.per) ?? "day") as MetricBucket;
   const now = Date.now();
@@ -182,7 +197,7 @@ export async function run(c: CommandContext): Promise<number> {
     let m;
     let waits: Record<string, unknown> | undefined;
     try {
-      const spec = {
+      const spec: MetricsSpec = {
         since,
         until,
         bucket: per,
@@ -195,11 +210,13 @@ export async function run(c: CommandContext): Promise<number> {
       // its day but counts only the sessions at or after --since, as usage and sessions do.
       const buckets = bucketTimes(since, until, per, spec.tzOffsetMin);
       const { rows, truncated } = await loadMetricRows(ctx.index, spec);
-      m = metricsOf(rows, spec, buckets);
+      const scores = scoreName !== undefined ? await loadSessionScores(ctx.index, scoreName, rows) : undefined;
+      m = metricsOf(rows, spec, buckets, scores);
       if (truncated) m = { ...m, truncated };
       if (out.json) waits = await windowWaits(ctx.index, since, until, where);
     } catch (e) {
       if (e instanceof MetricsError) throw new UsageError(metricsErrorText(e), { reason: e.reason });
+      if (e instanceof ScoreError) throw scoreCliError(e);
       throw queryCliError(e);
     }
     if (out.json) {
@@ -223,21 +240,35 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
     const trend = (line: MetricLine) => sparkline(m.buckets.map((_, i) => measureAt(line, measure, i)));
+    const scoreCol = scoreName !== undefined ? `SCORE:${scoreName.toUpperCase()}` : undefined;
     if (by) {
-      out.table([by.toUpperCase(), ...header, `${measure.toUpperCase()} PER ${per.toUpperCase()}`], [
-        ...m.series.map((s) => [s.key, ...totalsCells(s.totals), trend(s)]),
-        ["total", ...totalsCells(m.totals), trend(m.all)],
-      ]);
+      const cols = [by.toUpperCase(), ...header];
+      if (scoreCol) cols.push(scoreCol);
+      cols.push(`${measure.toUpperCase()} PER ${per.toUpperCase()}`);
+      const makeRow = (label: string, totals: MetricTotals, line: MetricLine): string[] => {
+        const row = [label, ...totalsCells(totals)];
+        if (scoreCol) row.push(cell(measure, measureOf(totals, measure)));
+        row.push(trend(line));
+        return row;
+      };
+      out.table(cols, [...m.series.map((s) => makeRow(s.key, s.totals, s)), makeRow("total", m.totals, m.all)]);
       if (by === "flag") out.note("A session with several flags counts in each row; the total counts it once.");
     } else {
       // Newest first, like every list in the CLI; empty buckets stay so gaps show.
+      const cols = [per.toUpperCase(), ...header];
+      if (scoreCol) cols.push(scoreCol);
       const rows = m.buckets.map((t, i) => {
         const day = m.all;
         const one = (k: MetricMeasure) => cell(k, measureAt(day, k, i));
-        return [bucketLabel(t, per), one("sessions"), one("failure-rate"), day.costUsd[i] ? usd(day.costUsd[i]) : "-", one("tokens"), one("tool-calls"), one("tool-error-rate"), one("llm-p95"), one("ttft-p50")];
+        const row = [bucketLabel(t, per), one("sessions"), one("failure-rate"), day.costUsd[i] ? usd(day.costUsd[i]) : "-", one("tokens"), one("tool-calls"), one("tool-error-rate"), one("llm-p95"), one("ttft-p50")];
+        if (scoreCol) row.push(one(measure));
+        return row;
       });
-      out.table([per.toUpperCase(), ...header], [...rows.reverse(), ["total", ...totalsCells(m.totals)]]);
-      out.note(`${measure}: ${trend(m.all)}  ${cell(measure, measureOf(m.totals, measure))} in all`);
+      const totalRow = ["total", ...totalsCells(m.totals)];
+      if (scoreCol) totalRow.push(cell(measure, measureOf(m.totals, measure)));
+      out.table(cols, [...rows.reverse(), totalRow]);
+      const countNote = scoreName !== undefined ? ` (${plural(m.totals.scoreCount ?? 0, "score")})` : "";
+      out.note(`${measure}: ${trend(m.all)}  ${cell(measure, measureOf(m.totals, measure))} in all${countNote}`);
     }
     if (m.totals.pricedSessions && m.totals.pricedSessions < m.totals.sessions) out.note(`COST covers the ${m.totals.pricedSessions} of ${plural(m.totals.sessions, "session")} with a price.`);
     if (c.flags.all !== true && (await hasSubagents(ctx.index, since, until, where))) out.note(ROLLUP_NOTE);

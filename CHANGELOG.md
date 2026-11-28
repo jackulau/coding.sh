@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Scores.** `coding.sh export scores` streams typed scores as JSONL or CSV (with `--name`, `--source`, `--since`, `--until`, `--out` and text redaction). `GET /api/metrics?measure=score:<name>`, `coding.sh stats --measure score:<name>` and the viewer's Explore page compute bucketed and grouped means over numeric and boolean session scores. [API reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apimetrics)
 - **Compare.** `compare --signals` reads each signal within each arm too: `--json` adds `byArm` with each arm's AUROC, pairs, tasks and CI, the table prints one line per arm, and a signal whose arms' CIs sit on opposite sides of 0.5 is `differs-by-arm` instead of `no-signal`. [Eval methods](https://github.com/jackulau/coding.sh/blob/main/docs/reference/eval-methods.md)
 - **Work.** `coding.sh status` says how old the index is (`Index  updated 4m ago`). When no ingest has finished for 15 minutes and none runs, `work` judges waits and stalls as of the last ingest and says so in its header, so a stopped ingest no longer looks like a fleet of stalled agents. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
 - **Tool evals.** Each arm summary counts silent failures, failed trials with no rejected call, failed call or retry, and target calls per success. The arm table prints both when an arm has them. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md#6-metrics)
