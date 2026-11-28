@@ -2388,6 +2388,29 @@ export const COMMANDS: CommandSpec[] = [
     ],
     load: () => import("./commands/refine.ts"),
   },
+  {
+    name: "impact",
+    group: "Evaluate",
+    summary: "Validate workflow impact and local overhead: store footprint, surfaced issues, eval artifacts and before/after refinement results",
+    flags: [
+      { ...SINCE, default: "30d" },
+      { name: "repo", short: "r", type: "string", value: "<DIR|NAME>", desc: "Only sessions and refine ledgers for this repo: a directory path or a repo name" },
+      AGENT_ONE,
+      FRESH,
+    ],
+    examples: [
+      "coding.sh impact",
+      "coding.sh impact --since 90d --repo .",
+      "coding.sh impact --agent claude-code --json",
+    ],
+    notes: [
+      "Local overhead sums index.db (including WAL and SHM files), blobs/ and spool/ under CODING_SH_HOME, and counts recorded hook errors in spool/errors.log.",
+      "Flagged sessions count real failure flags only (colon tags and context-only flags such as compaction, step-retried and resumed are left out). Wasted spend adds the cost of flagged sessions and the cache-break extra USD of unflagged sessions.",
+      "Applied refinements come from live entries in the refine ledger (up to the 5 most recent), comparing organic sessions in the 14 days before and after appliedAt. Either side with fewer than 5 organic sessions is marked insufficient-data.",
+      PENDING_NOTE,
+    ],
+    load: () => import("./commands/impact.ts"),
+  },
   // ---------------------------------------------------------- Maintain
   {
     name: "gateway",

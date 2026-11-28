@@ -3378,3 +3378,21 @@ run again. Compare it against a control variant that resumes the unedited script
 runs, not against fresh baseline runs: `workflows compare` notes "no control fork" otherwise. With
 a control, it reports how often the control's outcome changed from its source run as the replay
 noise floor (`control.drift` in `--json`). Treat differences below that as replay drift.
+
+## Workflow impact
+
+`coding.sh impact` measures local store overhead alongside concrete catches, eval artifacts, and applied refinement outcomes across captured sessions.
+
+```sh
+coding.sh impact
+coding.sh impact --since 90d --repo .
+coding.sh impact --agent claude-code --json
+```
+
+The report covers three areas:
+
+- **Coverage and overhead**: session counts, active agents, disk footprint of `index.db`, `blobs/`, and `spool/`, and hook error counts from `spool/errors.log`.
+- **Issues surfaced**: test tampering catches, high and medium supervision risk sessions, unverified edit streaks (5 or more edits before a check), formal proof issues, and wasted spend.
+- **Applied refinements**: 14-day before and after comparisons over organic sessions for up to the 5 most recent live applies in the refine ledger.
+
+Each applied refinement compares failure rate, pushback rate, unverified edit streaks, median cost, and tool error rate before and after `appliedAt`. Either side with fewer than 5 organic sessions reports `insufficient-data` with no delta so small samples stay honest.
