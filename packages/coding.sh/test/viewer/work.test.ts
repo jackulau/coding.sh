@@ -477,3 +477,102 @@ describe("viewer /api/work: a big queue", () => {
     assert.equal(gunzip(r).items.length, 500);
   });
 });
+
+describe("viewer /api/work: settled files and ack short ids", () => {
+  const MIN = 60e3;
+  const now = Date.now();
+  let sb: Sandbox;
+  let index: SqliteIndexStore;
+  let v: Viewer;
+  type Extra = NonNullable<Parameters<typeof mkSession>[2]>;
+  const sess = (id: string, startAgo: number, extra: Extra = {}): Session => mkSession(id, now - startAgo, { cwd: "/work/demo", ...extra });
+  const fc = (id: string, sessionId: string, path: string, agoMs: number): AgentEvent => ({
+    id,
+    v: 0,
+    sessionId,
+    ts: now - agoMs,
+    agent: "claude-code",
+    kind: "file.change",
+    payload: { path, op: "modify" },
+  });
+  const FAILED_ID = "aa112233-4455-6677-8899-aabbccddeeff";
+  const repo = { root: "/work/demo", head: "", branch: "main" } as Extra["repo"];
+
+  before(async () => {
+    sb = sandbox();
+    await sb.seed(
+      [
+        // Two sessions touching overlapping files: sum is 4, distinct is 3.
+        sess("multi", 40 * MIN, { title: "two sessions edit a.ts", endedAt: now - 35 * MIN, repo, stats: { filesChanged: 2 } }),
+        sess("multi:sub:1", 39 * MIN, { endedAt: now - 34 * MIN, parent: { sessionId: "multi", subagentId: "1" }, repo, stats: { filesChanged: 2 } }),
+        // One session whose only edit is outside its repo: review next step names the file, not git diff.
+        sess("outside", 30 * MIN, { title: "edit outside repo", endedAt: now - 25 * MIN, repo, stats: { filesChanged: 1 } }),
+        // A failed item with a long UUID so shortener shortens its ref in `causeShortId`.
+        sess(FAILED_ID, 20 * MIN, { title: "failing test run", endedAt: now - 15 * MIN, stats: { testsFailed: 2 } }),
+      ],
+      [
+        fc("m1", "multi", "a.ts", 38 * MIN),
+        fc("m2", "multi", "b.ts", 37 * MIN),
+        fc("m3", "multi:sub:1", "a.ts", 36 * MIN),
+        fc("m4", "multi:sub:1", "c.ts", 35 * MIN),
+        fc("o1", "outside", "/tmp/external-notes.txt", 28 * MIN),
+      ],
+    );
+    const home = sb.env.CODING_SH_HOME!;
+    index = await SqliteIndexStore.open(join(home, "index.db"));
+    await index.migrate();
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      updateStatus: async () => ({ disabled: "test" }) as any,
+      work: { overlay: join(home, "work.json"), home: sb.env.HOME!, cwd: sb.env.HOME! },
+    });
+  });
+  after(async () => {
+    await v?.close();
+    await index?.close();
+    sb?.cleanup();
+  });
+
+  test("GET /api/work settles multi-session file counts and outside-repo review steps to match work --json", async () => {
+    const cliRes = await runCmd(work, sb, { json: true, platform: CLI_PLATFORM });
+    assert.equal(cliRes.error, undefined, cliRes.error?.stack);
+    const apiRes = await req(v.port, "/api/work", { token: v.token });
+    assert.equal(apiRes.status, 200, apiRes.body);
+    const apiItems = apiRes.json().items as Record<string, unknown>[];
+    const cliItems = cliRes.json.items as Record<string, unknown>[];
+
+    const multiApi = apiItems.find((i) => i.id === workItemId("multi"))!;
+    const multiCli = cliItems.find((i) => i.id === workItemId("multi"))!;
+    assert.equal(multiApi.filesChanged, 3);
+    assert.match(String(multiApi.reason), /with 3 files changed$/);
+    assert.match(String(multiApi.stageWhy), /^changed 3 files,/);
+    assert.equal(multiApi.filesChanged, multiCli.filesChanged);
+
+    const outApi = apiItems.find((i) => i.id === workItemId("outside"))!;
+    const outCli = cliItems.find((i) => i.id === workItemId("outside"))!;
+    assert.equal(outApi.next, `review: \`/tmp/external-notes.txt\` (outside /work/demo), then \`coding.sh work ack ${workItemId("outside")}\``);
+    assert.equal(outApi.next, outCli.next);
+  });
+
+  test("POST /api/work/ack sets shortened session refs on now, matching GET /api/work and work ack --json", async () => {
+    const id = workItemId(FAILED_ID);
+    const beforeItem = ((await req(v.port, `/api/work/${id}`, { token: v.token })).json()) as Record<string, unknown>;
+    const shortRef = String(beforeItem.causeShortId ?? "");
+    assert.ok(shortRef.length >= 8 && shortRef.length < FAILED_ID.length, `expected shortened ref, got ${shortRef}`);
+
+    const ack = await req(v.port, "/api/work/ack", {
+      method: "POST",
+      token: v.token,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    assert.equal(ack.status, 200, ack.body);
+    const ackJson = ack.json() as { acked: boolean; now: Record<string, unknown> };
+    assert.equal(ackJson.acked, true);
+    assert.equal(ackJson.now.causeShortId, shortRef);
+    const listed = ((await req(v.port, "/api/work?all=1", { token: v.token })).json().items as Record<string, unknown>[]).find((i) => i.id === id)!;
+    assert.equal(ackJson.now.causeShortId, listed.causeShortId);
+  });
+});

@@ -280,8 +280,8 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   that ran `cd <repo>` from a subfolder). So `show`, `work` and `work show` give one count for a
   session. When none of an item's changed files is inside its repo, the review step names the
   files (or `coding.sh work show <id>` for more than three) instead of a `git diff` that comes back
-  empty; `work`, `work --json` and the MCP `work` tool read the shown review items' files to say
-  the same.
+  empty; `work`, `work --json`, `GET /api/work`, and the MCP `work` and `status` tools read the
+  shown review items' files to say the same.
   The id is an item id or the id of any session in the item. An item id may be cut to a prefix of
   4 characters or more that only one item in the window starts with; a prefix that several
   share exits 1 and lists them. A session outside the window is still found by its id. An
@@ -301,9 +301,9 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   probably closed nor superseded, and its JSON a `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
 - The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
-  queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
-  command, so its items equal `work --json` for the same store and filters, outside PowerShell and
-  cmd (below). The agent, repo, since, stage and `all` filters live in the URL; `stage` filters as
+  queue through `GET /api/work`, which builds it with `readWorkQueue`, `settleWorkFiles` and
+  `workJson` like the command, so its items equal `work --json` for the same store and filters,
+  outside PowerShell and cmd (below). The agent, repo, since, stage and `all` filters live in the URL; `stage` filters as
   `--stage` does. Each item shows its stage and kind as chips with `stageWhy` as their title, and
   the header counts the stages. A server that sends no `stages` gets no chips and no stage filter. A
   run item shows the command's phase line, and its details list its agents under their phase with

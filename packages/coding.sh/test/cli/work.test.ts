@@ -11,6 +11,8 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as work from "../../src/cli/commands/work.ts";
 import { CliError } from "../../src/cli/output.ts";
 import { findCommand } from "../../src/cli/registry.ts";
+import { recordLastIngest } from "../../src/core/ingest-health.ts";
+import { readOverlay } from "../../src/core/work-overlay.ts";
 import { STAGES, workItemId } from "../../src/core/work.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { CLI } from "../_cli.ts";
@@ -347,5 +349,40 @@ describe("the CLI on an imported workflow run", () => {
     const stage = cli(["work", "--stage", "reveiw"]);
     assert.equal(stage.status, 2, stage.stderr);
     assert.match(stage.stderr, /--stage review/);
+  });
+});
+
+describe("work snooze under a stale index", () => {
+  const HOUR = 60 * MIN;
+  let sb: Sandbox;
+  const lastIngest = Date.now() - 3 * HOUR;
+  before(async () => {
+    sb = sandbox();
+    // Active 5 minutes before the last ingest: running as of then, stalled only if judged by wall-clock time.
+    const busy = mkSession("busy", lastIngest - 15 * MIN, {
+      endedAt: undefined,
+      cwd: "/work/demo",
+      title: "implement parser",
+      stats: { latency: { wallMs: 10 * MIN } } as Extra["stats"],
+    });
+    await sb.seed([busy]);
+    recordLastIngest(sb.env.CODING_SH_HOME!, "0.0.0", lastIngest);
+  });
+  after(() => sb.cleanup());
+
+  test("judges the item as of the last ingest so a running item is not snoozed under stalled", async () => {
+    const listed = await runCmd(work, sb, { json: true, flags: { all: true } });
+    assert.equal(listed.error, undefined, listed.error?.stack);
+    assert.equal(listed.json.counts.stalled, 0);
+
+    const beforeMs = Date.now();
+    const z = await runCmd(work, sb, { action: "snooze", positionals: ["busy", "2h"], json: true });
+    assert.equal(z.error, undefined, z.error?.stack);
+    assert.equal(z.json.id, workItemId("busy"));
+    assert.equal(z.json.bucket, "review");
+    const until = Date.parse(z.json.snoozedUntil);
+    assert.ok(until >= beforeMs + 2 * HOUR - 5e3 && until <= Date.now() + 2 * HOUR + 5e3, z.json.snoozedUntil);
+    const overlay = readOverlay(join(sb.env.CODING_SH_HOME!, "work.json"));
+    assert.equal(overlay.snoozes.busy?.bucket, "review");
   });
 });

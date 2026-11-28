@@ -115,6 +115,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Work.** `GET /api/work` and the MCP `status` tool settle shown items' changed files, `status` and `work snooze` judge a stale index as of its last ingest, `POST /api/work/ack` sets shortened session ids (`causeShortId`) as `work ack --json` does, and `git -C <repo> diff` quotes paths with spaces or shell metacharacters. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#surfaces)
 - **Refine.** `--trial-timeout` now reaches every refine call: `--proposer-command` (reporting the active limit on timeout), model proposers, decision-point continuations and judges, `refine distill`, `refine recheck`, and `refine diagnose`, keeping each command's default when omitted. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop))
 - **Cost.** `coding.sh work show`, `work --json` and the Work page count a session's whole cost when part of it is estimated from token counts. Before, an item, a workflow phase or an agent with some reported and some estimated cost counted only the estimated part. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#workflow-runs)
 - **Sessions.** When a shell line that reads files fails, `stats.retrieval` drops a file only when an error line names its base name whole. Before, an error about `data.ts` or `a.tsx` also dropped `a.ts`, so a file the agent read counted as not read. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid))

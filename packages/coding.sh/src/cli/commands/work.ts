@@ -447,8 +447,10 @@ async function snooze(c: CommandContext): Promise<number> {
   windowOf(c);
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
+    // Judged as the list was: an old index snoozes what `work` showed, not a stall that came of its age.
+    const asOf = staleIndex(ctx)?.at;
     const overlay = readOverlay(ctx.paths.work);
-    const { item } = await findItem(c, ctx, ref, overlay);
+    const { item } = await findItem(c, ctx, ref, overlay, asOf);
     const now = Date.now();
     const until = now + ms;
     if (dateMs(until) === undefined) throw new UsageError(`<DURATION> is outside the supported date range, got ${JSON.stringify(raw)}`, { reason: "invalid_argument" });
