@@ -3142,6 +3142,22 @@ kernel audit hints.
 Pass `--check-disk` for a read-only static scan of touched proof files on disk, and `--strict` to
 exit 1 on `tampered` or `incomplete` verdicts in CI or review gates.
 
+### Resetting context with a handoff brief
+
+When a long session accumulates compactions, dead ends, or oscillating checks, `coding.sh handoff
+<session>` builds a clean, deterministic $0 context-reset brief with full secret redaction and no
+model call.
+
+```sh
+coding.sh handoff latest > handoff.md
+coding.sh handoff 9f1c2e --out handoff.md --max-dead-ends 5
+coding.sh handoff latest --json
+```
+
+The brief keeps the original goal, changed files, passing checks, unresolved failed approaches under
+Do Not Repeat, supervision risk signals when medium or high, and formal-proof status when present.
+`coding.sh work show` suggests `coding.sh handoff` on high-risk items.
+
 ### Diagnosing sessions into Signals
 
 `coding.sh refine diagnose` asks a model what went wrong in each recent session (default: the last
