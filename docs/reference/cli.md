@@ -1809,6 +1809,9 @@ coding.sh dataset <action>
 | [`add`](#codingsh-dataset-add) | Add cases to a dataset (creates it when missing) |
 | [`import`](#codingsh-dataset-import) | Import cases from a JSONL, JSON or CSV file |
 | [`list`](#codingsh-dataset-list) | List datasets |
+| [`mine`](#codingsh-dataset-mine) | Mine captured sessions into a versioned dataset with quality and near-duplicate filters |
+| [`stats`](#codingsh-dataset-stats) | Inspect a dataset's composition, input lengths and near-duplicate pairs |
+| [`filter`](#codingsh-dataset-filter) | Materialize a filtered child dataset from an existing dataset |
 
 ### `coding.sh dataset add`
 
@@ -1859,6 +1862,93 @@ List datasets.
 
 ```text
 coding.sh dataset list
+```
+
+### `coding.sh dataset mine`
+
+Mine captured sessions into a versioned dataset with quality and near-duplicate filters.
+
+```text
+coding.sh dataset mine <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Dataset name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `-r, --repo <DIR|NAME>` |  | Only sessions in this repo or under this directory. |
+| `-n, --limit <N>` |  | Maximum cases to keep. |
+| `--min-turns <N>` |  | Only sessions with at least this many turns. |
+| `--min-score <NAME=VAL>` |  | Only sessions whose numeric or boolean score meets this minimum, e.g. quality=0.8 or quality&gt;=0.8 (repeatable) |
+| `--exclude-flagged` |  | Exclude sessions with a failure flag (notes compaction, step-retried and resumed, and colon tags are kept) |
+| `--dedupe-near <0..1>` |  | Drop near-duplicate inputs at or above this 5-shingle Jaccard similarity, e.g. 0.8 (in addition to exact dedup) |
+| `--split <SPLIT>` |  | Split for the mined cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
+| `--tag <TAG>` |  | Extra tag for every mined case (repeatable, or a comma list: a,b) |
+| `--note <TEXT>` |  | Version note. |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh dataset mine clean --where 'agent:claude-code' --min-turns 2 --exclude-flagged --dedupe-near 0.8
+coding.sh dataset mine high-score --min-score quality>=0.8 --limit 50 --dry-run
+```
+
+### `coding.sh dataset stats`
+
+Inspect a dataset's composition, input lengths and near-duplicate pairs.
+
+```text
+coding.sh dataset stats <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Dataset name or id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--version <VER>` |  | Dataset version (default: latest) |
+| `--near-threshold <0..1>` | `0.8` | 5-shingle Jaccard threshold for near-duplicate pair count. |
+
+```sh
+coding.sh dataset stats clean
+coding.sh dataset stats clean --near-threshold 0.7 --json
+```
+
+### `coding.sh dataset filter`
+
+Materialize a filtered child dataset from an existing dataset.
+
+```text
+coding.sh dataset filter <SRC> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `src` | yes | Source dataset name or id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-o, --out <DST>` |  | Destination dataset name (required) |
+| `--version <VER>` |  | Source dataset version (default: latest) |
+| `--split <SPLIT>` |  | Keep only cases in these splits (repeatable, or a comma list: train,dev) One of: `train`, `dev`, `test`. |
+| `--tag <TAG>` |  | Keep only cases carrying any of these tags (repeatable, or a comma list: a,b) |
+| `--difficulty <LEVEL>` |  | Keep only cases at these difficulty levels (repeatable, or a comma list: medium,hard) One of: `easy`, `medium`, `hard`. |
+| `--min-chars <N>` |  | Minimum input character length. |
+| `--max-chars <N>` |  | Maximum input character length. |
+| `--dedupe-near <0..1>` |  | Drop near-duplicate inputs at or above this 5-shingle Jaccard similarity, e.g. 0.8. |
+| `-n, --limit <N>` |  | Maximum cases to keep. |
+| `--note <TEXT>` |  | Version note. |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh dataset filter raw --out clean --split train,dev --difficulty medium,hard --dedupe-near 0.8
+coding.sh dataset filter raw --out short --min-chars 20 --max-chars 500 --dry-run
 ```
 
 ## `coding.sh exp`
