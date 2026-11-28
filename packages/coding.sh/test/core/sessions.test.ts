@@ -9,11 +9,14 @@ import {
   changeKey,
   detectFlags,
   FLAGS,
+  foldSession,
   isSyntheticPrompt,
   isVerifyCommand,
   latencyStats,
   percentile,
   rollupUsage,
+  sessionOf,
+  sessionState,
   similarInputs,
   writesToolCallAsText,
 } from "../../src/core/sessions.ts";
@@ -286,6 +289,76 @@ describe("failure detectors", () => {
       assert.ok(isVerifyCommand(cmd), cmd);
     }
     for (const cmd of ["git diff", "cat test.txt", "ls tests", "echo testing"]) assert.ok(!isVerifyCommand(cmd), cmd);
+  });
+
+  it("no-verification: proof checker commands clear the flag while unverified proof edits keep it", () => {
+    for (const cmd of [
+      "lake env lean Proof/Bound.lean",
+      "lake build",
+      "coqc Theories/Add.v",
+      "dafny verify src/Sort.dfy",
+      "verus src/lib.rs",
+      "cargo verus",
+      "isabelle build -D .",
+      "tlc MC.tla",
+      "tlapm Spec.tla",
+    ]) {
+      assert.ok(isVerifyCommand(cmd), `expected proof checker to verify: ${cmd}`);
+    }
+    for (const cmd of [
+      "make",
+      "make all",
+      "dune build",
+      'git commit -m "WIP; lake build"',
+      "coqc --version",
+      "dafny verify --no-verify src/Sort.dfy",
+    ]) {
+      assert.ok(!isVerifyCommand(cmd), `must not falsely treat as verify: ${cmd}`);
+    }
+
+    const leanEvents: AgentEvent[] = [
+      ev("session.start", {}, { sessionId: "proof-lean" }),
+      ev("user.message", { text: "Prove bound in Proof/Bound.lean." }, { sessionId: "proof-lean" }),
+      ev("file.change", {
+        path: "Proof/Bound.lean",
+        op: "modify",
+        diff: "--- a/Proof/Bound.lean\n+++ b/Proof/Bound.lean\n@@ -1,2 +1,2 @@\n theorem bound (n : Nat) : n <= n := by\n-  omega\n+  exact Nat.le_refl n\n",
+      }, { sessionId: "proof-lean" }),
+      ...bash("lake env lean Proof/Bound.lean", true, "lean-1").map((e) => ({ ...e, sessionId: "proof-lean" })),
+      ev("session.end", {}, { sessionId: "proof-lean" }),
+    ];
+    const fullLean = buildSession(leanEvents);
+    assert.ok(!fullLean.flags.includes(FLAGS.noVerification), `clean Lean session must not be flagged: ${fullLean.flags.join(",")}`);
+
+    const st = sessionState();
+    for (const e of leanEvents) foldSession(st, e);
+    const incLean = sessionOf(st);
+    assert.ok(!incLean.flags.includes(FLAGS.noVerification), `incremental fold must not flag clean Lean session: ${incLean.flags.join(",")}`);
+    assert.deepEqual(incLean.flags, fullLean.flags);
+
+    const rocqEvents: AgentEvent[] = [
+      ev("file.change", { path: "Theories/Add.v", op: "modify", diff: "@@ -1,2 +1,2 @@\n Lemma add0 : forall n, n + 0 = n.\n-Proof. auto. Qed.\n+Proof. intro n. lia. Qed.\n" }),
+      ...bash("coqc Theories/Add.v", true, "rocq-1"),
+    ];
+    assert.ok(!buildSession(rocqEvents).flags.includes(FLAGS.noVerification));
+
+    const dafnyEvents: AgentEvent[] = [
+      ev("file.change", { path: "src/Sort.dfy", op: "modify", diff: "@@ -1,2 +1,2 @@\n lemma SortedOk(n: nat) ensures n >= 0 {\n }\n" }),
+      ...bash("dafny verify src/Sort.dfy", true, "dafny-1"),
+    ];
+    assert.ok(!buildSession(dafnyEvents).flags.includes(FLAGS.noVerification));
+
+    const unverifiedLean = [
+      ev("file.change", { path: "Proof/Bound.lean", op: "modify" }),
+      ...bash("git status", true, "unv-1"),
+    ];
+    assert.ok(buildSession(unverifiedLean).flags.includes(FLAGS.noVerification));
+
+    const unverifiedTs = [
+      ev("file.change", { path: "src/app.ts", op: "modify" }),
+      ...bash("make", true, "unv-2"),
+    ];
+    assert.ok(buildSession(unverifiedTs).flags.includes(FLAGS.noVerification));
   });
 
   it("compaction", () => {

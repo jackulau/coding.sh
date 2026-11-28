@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { findCommand } from "../../src/cli/registry.ts";
 import { PROOF_LANGS } from "../../src/core/proof.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import { DatasetError } from "../../src/datasets/dataset.ts";
 import {
   extractSessionProofSteps,
@@ -563,5 +564,50 @@ describe("coding.sh dataset mine --proof-steps CLI", () => {
     const missingStepsOutcome = runCli(["dataset", "mine", "bad", "--proof-outcome", "stuck"]);
     assert.equal(missingStepsOutcome.status, 2);
     assert.match(missingStepsOutcome.stderr, /--proof-steps/);
+  });
+
+  it("keeps clean verified proof sessions under --proof-steps --exclude-flagged when folded via buildSession", async () => {
+    const repo = join(root, "proof-repo");
+    const cleanId = "cli-lean-folded-clean";
+    const events: AgentEvent[] = [
+      ev(cleanId, `${cleanId}-0`, Date.now() - 30_000, "session.start", {}, repo),
+      ...leanSolvedEvents(cleanId, { repoRoot: repo }).map((e, i) => ({
+        ...e,
+        ts: Date.now() - 25_000 + i * 100,
+        payload:
+          e.kind === "file.change"
+            ? { ...e.payload, path: `${repo.replace(/\\/g, "/")}/Proofs/CleanBound.lean` }
+            : e.kind === "tool.start"
+              ? { ...e.payload, input: { command: `lake env lean ${repo.replace(/\\/g, "/")}/Proofs/CleanBound.lean` } }
+              : e.payload,
+      })),
+    ];
+    const built = buildSession(events);
+    assert.equal(built.flags.includes("no-verification"), false, `clean Lean session should not have no-verification: ${built.flags.join(",")}`);
+
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      await index.upsertSession({ ...built, cwd: repo, repo: { root: repo, head: "aaa111" } });
+      await index.putEvents(events);
+    } finally {
+      await index.close();
+    }
+
+    const mined = runJson<{ outcome: string; sessions: number; kept: number; cases?: unknown[] }>([
+      "dataset",
+      "mine",
+      "proof-clean-only",
+      "--proof-steps",
+      "--proof-lang",
+      "lean",
+      "--exclude-flagged",
+    ]);
+    assert.equal(mined.outcome, "created");
+    const ds = await readDataset("proof-clean-only");
+    assert.ok(ds);
+    assert.ok(
+      ds.cases.some((c) => c.sourceSessionId === cleanId),
+      `expected clean verified Lean session ${cleanId} to be kept under --exclude-flagged`,
+    );
   });
 });

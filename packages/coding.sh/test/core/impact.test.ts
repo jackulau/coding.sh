@@ -9,8 +9,9 @@ import {
   measureStoreOverhead,
   type StoreOverhead,
 } from "../../src/core/impact.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import type { ApplyEntry, LedgerEntry, RollbackEntry } from "../../src/refine/ledger.ts";
-import type { Session } from "../../src/schema/index.ts";
+import type { AgentEvent, Session } from "../../src/schema/index.ts";
 
 const DAY_MS = 86_400_000;
 const BASE_TS = Date.UTC(2026, 9, 15, 12, 0, 0);
@@ -151,6 +152,41 @@ describe("computeImpact catches and window", () => {
     });
     assert.equal(report.catches.totalCostUsd, undefined);
     assert.equal(report.catches.wastedSpendUsd, undefined);
+  });
+
+  it("does not count clean verified proof sessions as flaggedSessions or wastedSpendUsd", () => {
+    const events: AgentEvent[] = [
+      { id: "p1", v: 0, sessionId: "s-lean-clean", ts: BASE_TS, agent: "claude-code", cwd: "/work/demo", kind: "session.start", payload: {} },
+      { id: "p2", v: 0, sessionId: "s-lean-clean", ts: BASE_TS + 100, agent: "claude-code", cwd: "/work/demo", kind: "user.message", payload: { text: "Prove bound in Proof/Bound.lean" } },
+      { id: "p3", v: 0, sessionId: "s-lean-clean", ts: BASE_TS + 200, agent: "claude-code", cwd: "/work/demo", kind: "llm.call", usage: { inputTokens: 1000, outputTokens: 200, costUsd: 1.25 }, payload: { ok: true } },
+      {
+        id: "p4",
+        v: 0,
+        sessionId: "s-lean-clean",
+        ts: BASE_TS + 300,
+        agent: "claude-code",
+        cwd: "/work/demo",
+        kind: "file.change",
+        payload: { path: "Proof/Bound.lean", op: "modify", diff: "--- a/Proof/Bound.lean\n+++ b/Proof/Bound.lean\n@@ -1,2 +1,2 @@\n theorem bound (n : Nat) : n <= n := by\n-  omega\n+  exact Nat.le_refl n\n" },
+      },
+      { id: "p5", v: 0, sessionId: "s-lean-clean", ts: BASE_TS + 400, agent: "claude-code", cwd: "/work/demo", kind: "tool.start", payload: { tool: "Bash", toolUseId: "l1", input: { command: "lake env lean Proof/Bound.lean" } } },
+      { id: "p6", v: 0, sessionId: "s-lean-clean", ts: BASE_TS + 500, agent: "claude-code", cwd: "/work/demo", kind: "tool.end", payload: { tool: "Bash", toolUseId: "l1", ok: true, exitCode: 0, output: "" } },
+      { id: "p7", v: 0, sessionId: "s-lean-clean", ts: BASE_TS + 600, agent: "claude-code", cwd: "/work/demo", kind: "session.end", payload: {} },
+    ];
+    const cleanProof = buildSession(events);
+    assert.deepEqual(cleanProof.flags, []);
+
+    const report = computeImpact({
+      since: BASE_TS - DAY_MS,
+      until: BASE_TS + DAY_MS,
+      sessions: [cleanProof],
+      overhead: ZERO_OVERHEAD,
+    });
+    assert.equal(report.catches.proofSessions, 1);
+    assert.equal(report.catches.flaggedSessions, 0);
+    assert.equal(report.catches.failureRate, 0);
+    assert.equal(report.catches.totalCostUsd, 1.25);
+    assert.equal(report.catches.wastedSpendUsd, 0);
   });
 });
 
