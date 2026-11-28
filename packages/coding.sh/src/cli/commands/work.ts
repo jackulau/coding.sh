@@ -1,4 +1,4 @@
-// coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
+// coding.sh work [--all] [--stage <list>] [--kind <list>] [--bucket <list>] [--q <text>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace, type Place } from "../../mcp/data.ts";
@@ -8,7 +8,28 @@ import { dateMs, isoMs } from "../../core/dates.ts";
 import type { IndexStore } from "../../core/types.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, BUCKETS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
+import {
+  BUCKET_LABELS,
+  BUCKETS,
+  buildWorkQueue,
+  countsLine,
+  itemWorkflowAgents,
+  loadWorkSessions,
+  selectBatchAckTargets,
+  settleWorkFiles,
+  STAGES,
+  stagesLine,
+  WORK_KINDS,
+  workFiles,
+  workItemJson,
+  workJson,
+  type Bucket,
+  type Stage,
+  type WorkItem,
+  type WorkKind,
+  type WorkPhase,
+  type WorkQueue,
+} from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, agentsWithoutSessions, autoIngest, emptyStateNext, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
 import { cliCommand, widerSince } from "../next-steps.ts";
@@ -51,6 +72,36 @@ export function stagesFlag(c: Pick<CommandContext, "flags">): Stage[] {
   return out;
 }
 
+/** `--kind`: the kinds named, repeated or as a comma list, each once. An unknown one is a usage error (exit 2). */
+export function kindsFlag(c: Pick<CommandContext, "flags">): WorkKind[] {
+  const out: WorkKind[] = [];
+  for (const raw of listFlag(c.flags.kind).flatMap((v) => v.split(","))) {
+    const v = raw.trim().toLowerCase();
+    if (!v) continue;
+    if (!(WORK_KINDS as readonly string[]).includes(v)) {
+      const near = suggest(v, WORK_KINDS);
+      throw new UsageError(`--kind must be one of ${WORK_KINDS.join(", ")}, got ${JSON.stringify(raw.trim())}`, { reason: "invalid_argument", suggestion: near ? `--kind ${near}` : undefined });
+    }
+    if (!out.includes(v as WorkKind)) out.push(v as WorkKind);
+  }
+  return out;
+}
+
+/** `--bucket`: the buckets named, repeated or as a comma list, each once. An unknown one is a usage error (exit 2). */
+export function bucketsFlag(c: Pick<CommandContext, "flags">): Bucket[] {
+  const out: Bucket[] = [];
+  for (const raw of listFlag(c.flags.bucket).flatMap((v) => v.split(","))) {
+    const v = raw.trim().toLowerCase();
+    if (!v) continue;
+    if (!(BUCKETS as readonly string[]).includes(v)) {
+      const near = suggest(v, BUCKETS);
+      throw new UsageError(`--bucket must be one of ${BUCKETS.join(", ")}, got ${JSON.stringify(raw.trim())}`, { reason: "invalid_argument", suggestion: near ? `--bucket ${near}` : undefined });
+    }
+    if (!out.includes(v as Bucket)) out.push(v as Bucket);
+  }
+  return out;
+}
+
 async function list(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
@@ -59,6 +110,9 @@ async function list(c: CommandContext): Promise<number> {
   const repo = str(c.flags.repo);
   const place = repo ? parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/") : undefined;
   const stages = stagesFlag(c);
+  const kinds = kindsFlag(c);
+  const buckets = bucketsFlag(c);
+  const qText = str(c.flags.q)?.trim() || undefined;
   // A stage filter lists hidden items too: --stage done lists what the queue hides.
   const all = c.flags.all === true || stages.length > 0;
   return withContext(c, async (ctx) => {
@@ -67,7 +121,7 @@ async function list(c: CommandContext): Promise<number> {
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
     // Next steps name sessions by the shortest id that resolves (core/session-ref.ts).
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at, shortId: await shortener(ctx.index) });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, kinds, buckets, q: qText, now: stale?.at, shortId: await shortener(ctx.index) });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
     await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
@@ -76,7 +130,7 @@ async function list(c: CommandContext): Promise<number> {
       out.data({ ...workJson(shown, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    await printQueue(c, ctx.index, shown, { limit, all, stages, window: w, place, truncated, backlog, stale });
+    await printQueue(c, ctx.index, shown, { limit, all, stages, kinds, buckets, q: qText, window: w, place, truncated, backlog, stale });
     return 0;
   });
 }
@@ -105,7 +159,12 @@ function widerWindow(since: number, now = Date.now()): string {
   return now - since < 30 * 86_400_000 ? "30d" : widerSince(since, now);
 }
 
-async function printQueue(c: CommandContext, index: IndexStore, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; place?: Place; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge }): Promise<void> {
+async function printQueue(
+  c: CommandContext,
+  index: IndexStore,
+  q: WorkQueue,
+  o: { limit: number; all: boolean; stages: readonly Stage[]; kinds: readonly WorkKind[]; buckets: readonly Bucket[]; q?: string; window: Window; place?: Place; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge },
+): Promise<void> {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
   out.print(`${out.style("Stages", "faint")}  ${stagesLine(q.stages)}`);
@@ -126,14 +185,19 @@ async function printQueue(c: CommandContext, index: IndexStore, q: WorkQueue, o:
   }
   for (const g of q.groups) out.print(out.style(`  ${g.cause} x${g.count}: ${g.items.join(", ")}`, "faint"));
   if (q.items.length > o.limit) out.note(`${q.items.length - o.limit} more: --limit ${q.items.length}`);
-  if (!shown.length && o.stages.length) {
+  if (!shown.length && o.stages.length && !o.buckets.length && !o.kinds.length && !o.q) {
     out.print("");
     out.print(`No items in ${o.stages.join(" or ")} since ${o.window.sinceText}.`);
     return;
   }
+  if (!shown.length && o.buckets.length) {
+    out.print("");
+    out.print(`No items in ${o.buckets.map((b) => BUCKET_LABELS[b].toLowerCase()).join(" or ")} since ${o.window.sinceText}.`);
+    return;
+  }
   if (!shown.length) {
     out.print("");
-    // A next step keeps the --repo and --agent given, so it looks at the same items, and the --since given unless it widens it.
+    // A next step keeps the filters given, so it looks at the same items, and the --since given unless it widens it.
     const agents = agentsFlag(c);
     const repo = str(c.flags.repo);
     const since = str(c.flags.since);
@@ -141,6 +205,8 @@ async function printQueue(c: CommandContext, index: IndexStore, q: WorkQueue, o:
     const repoFlag = repo ? ["--repo", repo] : [];
     const filters = [...repoFlag];
     if (agents.length) filters.push("--agent", agents.join(","));
+    if (o.kinds.length) filters.push("--kind", o.kinds.join(","));
+    if (o.q) filters.push("--q", o.q);
     if (q.hidden) {
       out.print(`Nothing needs you. ${plural(q.hidden, "item")} running, done, acknowledged or snoozed.`);
       if (!o.all) out.next("See every item", cliCommand(c.env, ["work", "--all", ...typedSince, ...filters]));
@@ -149,7 +215,8 @@ async function printQueue(c: CommandContext, index: IndexStore, q: WorkQueue, o:
     // An --agent with no session at all emptied it, not the window: drop it rather than look further back.
     const noneAtAll = agents.length > 0 && (await agentsWithoutSessions(index, agents)).length === agents.length;
     const where = `${agents.length ? ` from ${agents.join(" or ")}` : ""}${o.place ? ` in ${o.place.path ?? o.place.name ?? repo}` : ""}`;
-    out.print(noneAtAll ? `No sessions from ${agents.join(" or ")} in the store.` : where ? `No work items${where} since ${o.window.sinceText}.` : `No agent sessions since ${o.window.sinceText}.`);
+    const narrowed = o.stages.length || o.kinds.length || o.q;
+    out.print(noneAtAll ? `No sessions from ${agents.join(" or ")} in the store.` : narrowed ? `No work items match the filters since ${o.window.sinceText}.` : where ? `No work items${where} since ${o.window.sinceText}.` : `No agent sessions since ${o.window.sinceText}.`);
     const next = noneAtAll
       ? { label: "See every agent's items", command: cliCommand(c.env, ["work", ...typedSince, ...repoFlag]) }
       : { label: "Widen the window", command: cliCommand(c.env, ["work", "--since", widerWindow(o.window.since), ...filters]) };
@@ -410,14 +477,79 @@ export function mainFilesChanged(item: Pick<WorkItem, "primaryId" | "sessionIds"
 
 async function ack(c: CommandContext): Promise<number> {
   const { out } = c;
-  const ref = idArg(c);
-  windowOf(c);
+  const ref = c.positionals[0]?.trim();
+  const probablyClosed = c.flags["probably-closed"] === true;
+  const groupRaw = c.flags.group;
+  let group: string | undefined;
+  if (groupRaw !== undefined) {
+    const trimmed = str(groupRaw)?.trim();
+    if (!trimmed) throw new UsageError("--group needs a non-empty cause or failure group label", { reason: "invalid_argument" });
+    group = trimmed;
+  }
+  const bucketRaw = c.flags.bucket;
+  let bucket: Bucket | undefined;
+  if (bucketRaw !== undefined) {
+    const trimmed = str(bucketRaw)?.trim().toLowerCase();
+    if (!trimmed || !(BUCKETS as readonly string[]).includes(trimmed)) {
+      const near = trimmed ? suggest(trimmed, BUCKETS) : undefined;
+      throw new UsageError(`--bucket must be one of ${BUCKETS.join(", ")}, got ${JSON.stringify(str(bucketRaw)?.trim() ?? "")}`, { reason: "invalid_argument", suggestion: near ? `--bucket ${near}` : undefined });
+    }
+    bucket = trimmed as Bucket;
+  }
+  const dryRun = c.flags["dry-run"] === true;
+  const agents = agentsFlag(c);
+  const repo = str(c.flags.repo);
+  const kinds = kindsFlag(c);
+  const qText = str(c.flags.q)?.trim() || undefined;
+  const hasBatchSelector = probablyClosed || group !== undefined || bucket !== undefined;
+  const hasNarrowing = agents.length > 0 || repo !== undefined || kinds.length > 0 || qText !== undefined;
+  if (ref && (hasBatchSelector || hasNarrowing || dryRun)) {
+    throw new UsageError("Pass either <id> or batch flags (--probably-closed, --group, --bucket), not both", { reason: "invalid_argument" });
+  }
+  if (!ref && !hasBatchSelector) {
+    throw new UsageError(`Missing argument <ID>. Pass <id> or a batch selector (--probably-closed, --group, --bucket). Usage: ${out.command("coding.sh work ack <id>")}`, { reason: "missing_argument" });
+  }
+  const w = windowOf(c);
+  if (hasBatchSelector) {
+    const place = repo ? parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/") : undefined;
+    return withContext(c, async (ctx) => {
+      await autoIngest(ctx, readIngest(c));
+      const asOf = staleIndex(ctx)?.at;
+      const overlay = readOverlay(ctx.paths.work);
+      const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
+      const queue = buildWorkQueue(sessions, { overlay, agents, place, kinds, q: qText, now: asOf });
+      if (!queue.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
+      const targets = selectBatchAckTargets(queue.items, { probablyClosed: probablyClosed || undefined, group, bucket });
+      if (!dryRun && targets.length) {
+        for (const item of targets) addAck(overlay, item.cause!.sessionId, item.cause!.fingerprint);
+        writeOverlay(ctx.paths.work, overlay);
+      }
+      const items = targets.map((i) => ({ id: i.id, bucket: i.bucket!, title: i.title ?? null }));
+      if (out.json) {
+        const doc: Record<string, unknown> = { acked: targets.length, items };
+        if (dryRun) doc.dryRun = true;
+        out.data(doc);
+        return 0;
+      }
+      if (!targets.length) {
+        out.note(dryRun ? "Dry run: no matching work items to acknowledge." : "No matching work items to acknowledge.");
+        return 0;
+      }
+      if (dryRun) out.note(`Dry run: would acknowledge ${plural(targets.length, "work item")} (work.json unchanged):`);
+      else out.ok(`Acknowledged ${plural(targets.length, "work item")}`);
+      for (const item of targets.slice(0, 20)) {
+        out.print(`  ${out.style(item.id, "cyan")}  ${BUCKET_LABELS[item.bucket!].toLowerCase()}  ${oneLine(item.title ?? "(untitled)", 60)}`);
+      }
+      if (targets.length > 20) out.print(out.style(`  and ${targets.length - 20} more`, "faint"));
+      return 0;
+    });
+  }
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
     // Judged as the list was: an old index acknowledges what `work` showed, not a stall that came of its age.
     const asOf = staleIndex(ctx)?.at;
     const overlay = readOverlay(ctx.paths.work);
-    const { item } = await findItem(c, ctx, ref, overlay, asOf);
+    const { item } = await findItem(c, ctx, ref!, overlay, asOf);
     const cause = item.bucket ? item.cause : undefined;
     if (!cause) {
       if (out.json) out.data({ id: item.id, acked: false, hidden: item.hidden ?? null });

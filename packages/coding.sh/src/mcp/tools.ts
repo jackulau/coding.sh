@@ -46,7 +46,7 @@ import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type WorkItem } from "../core/work.ts";
+import { BUCKETS, needYou, readWorkQueue, settleWorkFiles, WORK_KINDS, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type Bucket, type WorkItem, type WorkKind } from "../core/work.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 import { maskStoreUrl } from "../core/store-url.ts";
@@ -508,6 +508,20 @@ async function workItemById(ctx: Context, id: string, since: number, sinceText: 
  */
 const forShell = (i: WorkItem, env: NodeJS.ProcessEnv): WorkItem => ({ ...i, next: codeSpansForShell(i.next, env) });
 
+function parseWorkList<T extends string>(raw: string | undefined, allowed: readonly T[], name: string): T[] | undefined {
+  if (raw === undefined) return undefined;
+  const out: T[] = [];
+  for (const part of raw.split(",")) {
+    const v = part.trim().toLowerCase();
+    if (!v) continue;
+    if (!(allowed as readonly string[]).includes(v)) {
+      throw new ToolError(`Invalid ${name} ${JSON.stringify(part.trim())}: use ${allowed.join(", ")}.`, { reason: "invalid_argument" });
+    }
+    if (!out.includes(v as T)) out.push(v as T);
+  }
+  return out.length ? out : undefined;
+}
+
 /**
  * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
  * A stale index judges waits and stalls as of its last ingest, as the CLI does.
@@ -517,6 +531,9 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const now = c.now();
   const since = when(a, "since", now, "7d")!;
   const all = a.all === true;
+  const kinds = parseWorkList<WorkKind>(strArg(a, "kind"), WORK_KINDS, "kind");
+  const buckets = parseWorkList<Bucket>(strArg(a, "bucket"), BUCKETS, "bucket");
+  const q = strArg(a, "q");
   const offset = cursorArg(a);
   const asked = numArg(a, "limit", 20);
   const age = storeIndexAge(ctx, now);
@@ -530,7 +547,16 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     if (stale) one.asOf = iso(stale.at);
     return () => ({ ...one, ...indexField(age) });
   }
-  const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work), shortId: await shortIds(ctx) });
+  const { queue, sessions, truncated } = await readWorkQueue(ctx.index, {
+    since,
+    all,
+    kinds,
+    buckets,
+    q,
+    now: stale?.at ?? now,
+    overlay: readOverlay(ctx.paths.work),
+    shortId: await shortIds(ctx),
+  });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
   await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
   const shown = { ...queue, items: queue.items.map((i) => forShell(i, ctx.env)) };
@@ -1644,11 +1670,14 @@ function toolDefs(): PagedTool[] {
     {
       name: "work",
       title: "What needs you",
-      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs, supersededBy. Paged; id reads one.",
+      description: "What needs you across agents (coding.sh work --json): reason, next, phases, PRs, supersededBy. Paged; id reads one.",
       inputSchema: input({
         since: SINCE("7d"),
-        all: { type: "boolean", default: false, description: "Also running, done and snoozed items." },
-        id: { type: "string", description: "Work id, prefix or session id." },
+        all: { type: "boolean", default: false, description: "Include hidden items." },
+        kind: { type: "string", description: "research|change." },
+        bucket: { type: "string", description: "blocked|failed|stalled|turn|review." },
+        q: { type: "string", description: "Text filter." },
+        id: { type: "string", description: "Work or session id/prefix." },
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
@@ -1664,12 +1693,13 @@ function toolDefs(): PagedTool[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version, update, data dir, 24h sessions, last capture per agent, spool, last error, index age, plan usage. Use when data looks missing or stale. work: counts and top 5 items needing you (7d); the work tool has the rest.",
+        "Health of coding.sh: version, update, home, 24h sessions, last capture, spool, error, index age, quota. Use when data looks missing/stale. work: top 5 items (7d); the work tool has the rest.",
       inputSchema: input({}),
       outputSchema: out(
         {
           version: S,
-          update: out({ latest: S, available: B, install: S, command: S }, ["available"]),
+          // update: { latest, available, install, command }
+          update: { type: "object" },
           home: S,
           last24h: out({ sessions: I, agents: arr(S) }),
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),

@@ -252,15 +252,17 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 
 ## Surfaces
 
-- `coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20] [--json]`.
+- `coding.sh work [--all] [--stage <list>] [--kind <list>] [--bucket <list>] [--q <text>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20] [--json]`.
   It runs the same automatic ingest as other reads first, so a fresh prompt shows up. The header
   gives the count of items per stage, and each row its stage and kind. A run item gets a phase
   line: each phase's name and its agents by state ("build: 2 running, 1 failed"). `--json` gives
   each item's `stage`, `kind` (when known) and `stageWhy`, a run's `workflow`, a failed item's
   `supersededBy`, and `stages`, the count per stage over every item in the window, hidden ones
   included. `--stage review,approval` lists only the items in those stages,
-  hidden ones too, so `--stage done` lists the done items the queue hides. An unknown stage exits 2
-  and names the stage it is closest to.
+  hidden ones too, so `--stage done` lists the done items the queue hides. `--kind` narrows to
+  `research` or `change`, `--bucket` narrows to active items in those buckets, and `--q` matches
+  substring text across title, repo, branch, id, workflow name and reason. An unknown stage, kind
+  or bucket exits 2 and suggests the closest name.
 - `coding.sh work show <id>`: the decision packet. What the item is doing, what it waits on (the
   redacted prompt text), for how long, its cost, the files it changed, its child sessions, and the
   next step: the agent and folder to answer in while it runs, or the resume command once it ended.
@@ -287,7 +289,10 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   share exits 1 and lists them. A session outside the window is still found by its id. An
   unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>` take the ids `work show`
-  takes. A bad duration exits 2.
+  takes. A bad duration exits 2. `coding.sh work ack` also accepts batch selectors
+  (`--probably-closed`, `--group <text>`, `--bucket <bucket>`) optionally narrowed by `--agent`,
+  `--repo`, `--kind`, `--q` and `--since`, with `--dry-run` to preview without writing `work.json`.
+  Mixing `<id>` with batch flags exits 2.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
   that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with
@@ -303,8 +308,7 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 - The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
   queue through `GET /api/work`, which builds it with `readWorkQueue`, `settleWorkFiles` and
   `workJson` like the command, so its items equal `work --json` for the same store and filters,
-  outside PowerShell and cmd (below). The agent, repo, since, stage and `all` filters live in the URL; `stage` filters as
-  `--stage` does. Each item shows its stage and kind as chips with `stageWhy` as their title, and
+  outside PowerShell and cmd (below). The agent, repo, since, stage, kind, q, bucket and `all` filters live in the URL; `stage`, `kind`, `bucket` and `q` filter as the CLI flags do. Each item shows its stage and kind as chips with `stageWhy` as their title, and
   the header counts the stages. A server that sends no `stages` gets no chips and no stage filter. A
   run item shows the command's phase line, and its details list its agents under their phase with
   the phase's cost (`workflowAgents` in the answer). A superseded failure links the item that
@@ -312,8 +316,9 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   to the answer: `updatedAt`, `stale`, and `text` in the command's words. The page shows the age in
   its header, or the stale line as a warning, and a stale index's queue is judged as of the last
   ingest, as the command judges it. The session list's header shows the same age from `GET
-  /api/ingest`. A server that sends none of these fields gets none of them. Ack and snooze buttons
-  post to `/api/work/ack` and `/api/work/snooze`, which write `work.json` by the command's rules. A
+  /api/ingest`. A server that sends none of these fields gets none of them. Ack, batch-ack banners
+  and the snooze duration picker (`30m`, `1h`, `4h`, `1d`) post to `/api/work/ack`,
+  `/api/work/ack-batch` and `/api/work/snooze`, which write `work.json` by the command's rules. A
   group's heading reads "119 of 671" when the answer lists only part of its bucket (`totals` counts
   each bucket before `limit` cuts the list), and Show all asks for up to 1,000 items. Each item
   links to its page, `#/w/<id>`, which reads `GET /api/work/<id>`: what `work show <id> --json`
@@ -331,8 +336,8 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   `status` tool's `rest` names that bin too. Under npx they name the npx form. The agent's own
   resume command stays as it is. The viewer's `GET /api/work` and `GET /api/work/<id>` leave
   `coding.sh` as it is on every platform.
-- The MCP `work` tool pages the queue as `work --json` gives it, with `limit` and `cursor`, and
-  the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
+- The MCP `work` tool pages the queue as `work --json` gives it, with `limit`, `cursor`, `kind`,
+  `bucket`, `q` and the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
   `work show` finds it (an item id, a prefix of one, or the id of a session in the item, hidden or
   not), shaped as an item of a page. An unknown id is a tool error, and so is a prefix several
   items share, which lists them newest first.

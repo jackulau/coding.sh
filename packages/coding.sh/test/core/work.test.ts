@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { buildSession, FLAGS } from "../../src/core/sessions.ts";
-import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, settleWorkFiles, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
+import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, selectBatchAckTargets, settleWorkFiles, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, WORK_KINDS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
 import { addAck, addSnooze, emptyOverlay, readOverlay, writeOverlay } from "../../src/core/work-overlay.ts";
 import type { AgentEvent, Session, Waiting } from "../../src/schema/index.ts";
 import { mkSession } from "../cli/_cmd.ts";
@@ -539,4 +539,149 @@ describe("a worktree nested in its repo", () => {
 test("a subagent's resume step names the session Claude Code can resume, not coding.sh's child id", () => {
   assert.equal(resumeCommand({ id: "1f2e3d4c-0000-4000-8000-000000000001:sub:a7e2b9c4d1f8a3e65", agent: "claude-code" }), "claude --resume 1f2e3d4c-0000-4000-8000-000000000001");
   assert.equal(resumeCommand({ id: "thr:sub:x", agent: "codex" }), "codex resume thr");
+});
+
+describe("high-scale filters and batch ack selection", () => {
+  const HOUR = 60 * MIN;
+  const repo = (root: string, branch: string) => ({ root, head: "", branch }) as never;
+
+  function scaleSessions(): Session[] {
+    const list: Session[] = [];
+    // 4 blocked (2 recent change, 2 probably closed no-change)
+    for (let i = 1; i <= 2; i++) {
+      list.push(
+        open(`blk-chg-${i}`, 2 * MIN, {
+          cwd: "/work/app",
+          repo: repo("/work/app", `feat/blk-${i}`),
+          title: `approve deploy ${i}`,
+          stats: { filesChanged: 1, waiting: wait("permission", ago(3 * MIN), `t-${i}`, "Allow Bash deploy") },
+        }),
+      );
+      list.push(
+        open(`blk-old-${i}`, 15 * HOUR, {
+          cwd: "/work/old",
+          repo: repo("/work/old", "main"),
+          title: `stale wait ${i}`,
+          stats: { waiting: wait("question", ago(14 * HOUR), `q-${i}`, "Which region?") },
+        }),
+      );
+    }
+    // 4 api 529 failed (research) + 2 failing tests (change) + 1 workflow run (failed)
+    for (let i = 1; i <= 4; i++) {
+      list.push(
+        sess(`api529-${i}`, (10 + i) * MIN, {
+          cwd: "/work/api",
+          repo: repo("/work/api", `fix/rate-${i}`),
+          title: `api worker ${i}`,
+          flags: [FLAGS.apiStall],
+          stats: { llmErrors: { count: 3, statusCode: 529 } as never },
+        }),
+      );
+    }
+    for (let i = 1; i <= 2; i++) {
+      list.push(
+        sess(`tfail-${i}`, (20 + i) * MIN, {
+          cwd: "/work/api",
+          repo: repo("/work/api", `fix/tests-${i}`),
+          title: `unit suite ${i}`,
+          stats: { filesChanged: 2, testsFailed: 2 },
+        }),
+      );
+    }
+    list.push(
+      sess("wf-1", 30 * MIN, {
+        cwd: "/work/api",
+        parent: { sessionId: "orch-root", workflowId: "run-99", workflowName: "Release Sweep", phase: "verify" },
+        stats: { testsFailed: 1 },
+      }),
+      sess("wf-2", 30 * MIN, {
+        cwd: "/work/api",
+        parent: { sessionId: "orch-root", workflowId: "run-99", workflowName: "Release Sweep", phase: "verify" },
+      }),
+    );
+    // 2 stalled + 2 turn + 8 review (change) + 6 done (research) = 29 items total
+    for (let i = 1; i <= 2; i++) {
+      list.push(open(`stall-${i}`, STALL_MS + (5 + i) * MIN, { agent: "codex", cwd: "/work/infra", title: `infra sync ${i}` }));
+      list.push(open(`turn-${i}`, (5 + i) * MIN, { cwd: "/work/docs", title: `draft rfc ${i}`, stats: { waiting: wait("turn", ago((4 + i) * MIN)) } }));
+    }
+    for (let i = 1; i <= 8; i++) {
+      list.push(
+        sess(`rev-${i}`, (40 + i) * MIN, {
+          cwd: "/work/app",
+          repo: repo("/work/app", `feat/pr-${i}`),
+          title: `refactor module ${i}`,
+          stats: { filesChanged: i },
+        }),
+      );
+    }
+    for (let i = 1; i <= 6; i++) {
+      list.push(sess(`done-${i}`, (60 + i) * MIN, { cwd: "/work/docs", title: `notes ${i}` }));
+    }
+    return list;
+  }
+
+  test("kinds, buckets and q filter across 29 concurrent items consistently", () => {
+    const sessions = scaleSessions();
+    assert.deepEqual([...WORK_KINDS], ["research", "change"]);
+
+    const changes = queue(sessions, { kinds: ["change"] });
+    assert.equal(changes.items.length, 12, "2 blocked + 2 failed + 8 review changes");
+    assert.ok(changes.items.every((i) => i.kind === "change"));
+    assert.equal(changes.counts.blocked, 2);
+    assert.equal(changes.counts.failed, 2);
+    assert.equal(changes.counts.review, 8);
+    assert.equal(changes.hidden, 0);
+
+    const research = queue(sessions, { kinds: ["research"], all: true });
+    assert.equal(research.items.length, 13, "4 api529 + 1 workflow + 2 turn + 6 done research");
+    assert.ok(research.items.every((i) => i.kind === "research"));
+    assert.equal(research.hidden, 6);
+
+    const failedOnly = queue(sessions, { buckets: ["failed"] });
+    assert.equal(failedOnly.items.length, 7);
+    assert.ok(failedOnly.items.every((i) => i.bucket === "failed"));
+    assert.equal(failedOnly.groups.length, 1);
+    assert.equal(failedOnly.groups[0]!.cause, "api 529");
+
+    const blockedOnly = queue(sessions, { buckets: ["blocked"] });
+    assert.equal(blockedOnly.items.length, 4);
+    assert.deepEqual(blockedOnly.groups, [], "failed API groups are omitted when failed bucket is excluded");
+
+    // q matches title, repo, branch, id, primaryId, workflow.name and reason (trimmed, case-insensitive).
+    assert.equal(queue(sessions, { q: "  RELEASE SWEEP " }).items.length, 1, "matches workflow.name");
+    assert.equal(queue(sessions, { q: "feat/pr-7" }).items.length, 1, "matches branch");
+    assert.equal(queue(sessions, { q: "/work/app" }).items.length, 10, "matches repo");
+    assert.equal(queue(sessions, { q: workItemId("rev-3").toUpperCase() }).items.length, 1, "matches id");
+    assert.equal(queue(sessions, { q: "TFAIL-2" }).items.length, 1, "matches primaryId");
+    assert.equal(queue(sessions, { q: "ALLOW BASH DEPLOY" }).items.length, 2, "matches reason");
+  });
+
+  test("selectBatchAckTargets selects probablyClosed, group, bucket, ids and ignores empty selectors", () => {
+    const q = queue(scaleSessions(), { all: true });
+    assert.deepEqual(selectBatchAckTargets(q.items, {}), []);
+    assert.deepEqual(selectBatchAckTargets(q.items, { probablyClosed: false }), []);
+
+    const closed = selectBatchAckTargets(q.items, { probablyClosed: true });
+    assert.deepEqual(closed.map((i) => i.primaryId).sort(), ["blk-old-1", "blk-old-2"]);
+
+    const byGroup = selectBatchAckTargets(q.items, { group: "api 529" });
+    assert.equal(byGroup.length, 4);
+    const byGroupLabel = selectBatchAckTargets(q.items, { group: "  API 529 x4 " });
+    assert.deepEqual(byGroupLabel.map((i) => i.id), byGroup.map((i) => i.id));
+
+    const oneFp = byGroup[0]!.cause!.fingerprint;
+    assert.deepEqual(selectBatchAckTargets(q.items, { group: oneFp }).map((i) => i.id), [byGroup[0]!.id]);
+
+    const reviewBucket = selectBatchAckTargets(q.items, { bucket: "review" });
+    assert.equal(reviewBucket.length, 8);
+    assert.ok(reviewBucket.every((i) => i.bucket === "review" && i.cause !== undefined));
+
+    // Combined narrowing: bucket + probablyClosed.
+    assert.equal(selectBatchAckTargets(q.items, { bucket: "failed", probablyClosed: true }).length, 0);
+    assert.equal(selectBatchAckTargets(q.items, { bucket: "blocked", probablyClosed: true }).length, 2);
+
+    // Explicit ids ignore hidden items that have no ackable cause.
+    const picked = selectBatchAckTargets(q.items, { ids: [workItemId("rev-1"), workItemId("done-1")] });
+    assert.deepEqual(picked.map((i) => i.id), [workItemId("rev-1")]);
+  });
 });
