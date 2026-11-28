@@ -46,7 +46,7 @@ import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { BUCKETS, needYou, readWorkQueue, settleWorkFiles, WORK_KINDS, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type Bucket, type WorkItem, type WorkKind } from "../core/work.ts";
+import { BUCKETS, needYou, readWorkQueue, settleWorkFiles, SUPERVISION_RISKS, WORK_KINDS, WORK_WINDOW_MS, workFiles, workItemJson, workJson, type Bucket, type SupervisionRisk, type WorkItem, type WorkKind } from "../core/work.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 import { maskStoreUrl } from "../core/store-url.ts";
@@ -533,6 +533,7 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const all = a.all === true;
   const kinds = parseWorkList<WorkKind>(strArg(a, "kind"), WORK_KINDS, "kind");
   const buckets = parseWorkList<Bucket>(strArg(a, "bucket"), BUCKETS, "bucket");
+  const risks = parseWorkList<SupervisionRisk>(strArg(a, "risk"), SUPERVISION_RISKS, "risk");
   const q = strArg(a, "q");
   const offset = cursorArg(a);
   const asked = numArg(a, "limit", 20);
@@ -552,6 +553,7 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     all,
     kinds,
     buckets,
+    risks,
     q,
     now: stale?.at ?? now,
     overlay: readOverlay(ctx.paths.work),
@@ -1676,6 +1678,7 @@ function toolDefs(): PagedTool[] {
         all: { type: "boolean", default: false, description: "Include hidden items." },
         kind: { type: "string", description: "research|change." },
         bucket: { type: "string", description: "blocked|failed|stalled|turn|review." },
+        risk: { type: "string", description: "medium|high." },
         q: { type: "string", description: "Text filter." },
         id: { type: "string", description: "Work or session id/prefix." },
         limit: LIMIT(20, 100),

@@ -180,4 +180,93 @@ describe("Work page in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       rmSync(bdir, { recursive: true, force: true });
     }
   });
+
+  test("supervision risk and proof chips render on cards and detail page, and risk filter syncs with URL hash", async () => {
+    const idx = new MemoryIndexStore();
+    const now = Date.now();
+    const MIN = 60e3;
+    const seeded = [
+      mkSession("run-high", now - 5 * MIN, {
+        endedAt: undefined,
+        cwd: "/work/lean",
+        title: "prove main theorem",
+        stats: {
+          filesChanged: 2,
+          latency: { wallMs: 4 * MIN },
+          contextHygiene: { supervisionRisk: "high", riskReasons: ["unverified-edits", "tactic-oscillation"] },
+          verification: {
+            checks: 3,
+            passed: 2,
+            failed: 1,
+            maxUnverifiedEdits: 4,
+            proof: { langs: ["lean"], checks: 3, passed: 2, failed: 1, escapeRemaining: 2 },
+          },
+        } as never,
+      }),
+      mkSession("rev-med", now - 20 * MIN, {
+        endedAt: now - 15 * MIN,
+        cwd: "/work/lean",
+        title: "prove helper lemma",
+        stats: {
+          filesChanged: 1,
+          contextHygiene: { supervisionRisk: "medium", riskReasons: ["dead-end-loop"] },
+          verification: {
+            checks: 2,
+            passed: 2,
+            failed: 0,
+            maxUnverifiedEdits: 1,
+            proof: { langs: ["lean"], checks: 2, passed: 2, failed: 0 },
+          },
+        } as never,
+      }),
+      mkSession("plain-rev", now - 30 * MIN, {
+        endedAt: now - 25 * MIN,
+        cwd: "/work/web",
+        title: "update readme",
+        stats: { filesChanged: 1 },
+      }),
+    ];
+    for (const s of seeded) await idx.upsertSession(s);
+    const rdir = mkdtempSync(join(tmpdir(), "work-risk-browser-"));
+    const srv = await startViewer({ index: idx, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any, work: { overlay: join(rdir, "work.json"), home: rdir, cwd: rdir } });
+    const rp = await browser.newPage();
+    try {
+      await rp.viewport(1280, 900);
+      await rp.goto(srv.url + "#/work");
+      await rp.waitFor("document.querySelectorAll('.work-item').length === 2", "initial two active items");
+
+      // rev-med shows Risk: medium and lean · verified; plain-rev shows neither.
+      assert.equal(await rp.eval("document.querySelectorAll('.work-risk').length"), 1);
+      assert.equal(await rp.eval("document.querySelector('.work-risk').textContent"), "Risk: medium");
+      assert.equal(await rp.eval("document.querySelector('.work-risk').title"), "dead-end-loop");
+      assert.equal(await rp.eval("document.querySelector('.work-proof').textContent"), "lean · verified");
+
+      // Click High risk filter: syncs risk=high in hash and surfaces still-running run-high.
+      await rp.eval("[...document.querySelectorAll('.work-risk-seg button')].find((b) => b.textContent === 'High').click()");
+      await rp.waitFor("location.hash === '#/work?risk=high' && document.querySelectorAll('.work-item').length === 1", "high risk filter");
+      assert.equal(await rp.eval("document.querySelector('.work-risk').textContent"), "Risk: high");
+      assert.equal(await rp.eval("document.querySelector('.work-risk').title"), "tactic-oscillation, unverified-edits");
+      assert.equal(await rp.eval("document.querySelector('.work-proof').textContent"), "lean · 2 sorry");
+
+      // Open detail page (#/w/<id>): shows risk and proof chips plus Risk and Proof rows.
+      await rp.eval("document.querySelector('.work-id').click()");
+      await rp.waitFor("document.querySelector('.work-page .work-kv')", "detail page");
+      assert.equal(await rp.eval("document.querySelector('.work-page .work-risk').textContent"), "Risk: high");
+      assert.equal(await rp.eval("document.querySelector('.work-page .work-proof').textContent"), "lean · 2 sorry");
+      const kv: string = await rp.eval("document.querySelector('.work-page .work-kv').textContent");
+      assert.match(kv, /Riskhigh \(tactic-oscillation, unverified-edits\)/);
+      assert.match(kv, /Prooflean · 3 checks \(2 passed, 1 failed\), 2 escapes remaining/);
+
+      // Click Medium+ on list: syncs risk=medium%2Chigh and shows both run-high and rev-med.
+      await rp.goto(srv.url + "#/work");
+      await rp.waitFor("document.querySelector('.work-risk-seg')", "risk selector");
+      await rp.eval("[...document.querySelectorAll('.work-risk-seg button')].find((b) => b.textContent === 'Medium+').click()");
+      await rp.waitFor("location.hash.includes('risk=medium') && document.querySelectorAll('.work-item').length === 2", "medium+ risk filter");
+      assert.deepEqual(rp.errors, []);
+    } finally {
+      await rp.close();
+      await srv.close();
+      rmSync(rdir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1419,6 +1419,7 @@ coding.sh work [action] [options]
 | `--stage <STAGES>` |  | Only items in these stages, hidden ones too (repeatable, or a comma list: review,approval) One of: `planning`, `executing`, `review`, `approval`, `done`. |
 | `--kind <KINDS>` |  | Only items of these kinds: research or change (repeatable, or a comma list) One of: `research`, `change`. |
 | `--bucket <BUCKETS>` |  | Only active items in these buckets (repeatable, or a comma list: blocked,failed) One of: `blocked`, `failed`, `stalled`, `turn`, `review`. |
+| `--risk <LEVELS>` |  | Only items with this supervision risk (medium or high, including running items; repeatable, or a comma list) One of: `medium`, `high`. |
 | `--q <TEXT>` |  | Only items matching this text in title, repo, branch, id, workflow name or reason. |
 | `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
@@ -1431,6 +1432,7 @@ coding.sh work
 coding.sh work --agent claude-code --since 24h
 coding.sh work --repo . --json
 coding.sh work --stage approval
+coding.sh work --risk high
 coding.sh work show w3f9a1c
 coding.sh work ack w3f9a1c
 ```

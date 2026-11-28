@@ -3,7 +3,7 @@
 // workFiles) so the items match `work --json` for the same store and filters. Ack and snooze
 // write the same work.json overlay the CLI writes (core/work-overlay.ts), with the CLI's rules.
 import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
-import { bucketsFlag, kindsFlag, mainFilesChanged, stagesFlag } from "../cli/commands/work.ts";
+import { bucketsFlag, kindsFlag, mainFilesChanged, risksFlag, stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
 import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore } from "../core/types.ts";
@@ -25,6 +25,7 @@ import {
   type Bucket,
   type HiddenReason,
   type Stage,
+  type SupervisionRisk,
   type WorkItem,
   type WorkKind,
 } from "../core/work.ts";
@@ -72,6 +73,7 @@ interface Filters {
   stages: Stage[];
   kinds: WorkKind[];
   buckets: Bucket[];
+  risks: SupervisionRisk[];
   q?: string;
 }
 
@@ -89,20 +91,22 @@ function filtersOf(src: WorkSource, q: URLSearchParams, now: number): Filters {
   const repo = q.get("repo")?.trim();
   const home = src.home ?? process.env.HOME ?? process.env.USERPROFILE ?? "/";
   const place = repo ? parsePlace(repo, src.cwd ?? process.cwd(), home) : undefined;
-  // `stage`, `kind` and `bucket` accept repeated or comma-separated values, parsed as the CLI flags parse them.
+  // `stage`, `kind`, `bucket` and `risk` accept repeated or comma-separated values, parsed as the CLI flags parse them.
   let stages: Stage[];
   let kinds: WorkKind[];
   let buckets: Bucket[];
+  let risks: SupervisionRisk[];
   try {
     stages = stagesFlag({ flags: { stage: q.getAll("stage") } });
     kinds = kindsFlag({ flags: { kind: q.getAll("kind") } });
     buckets = bucketsFlag({ flags: { bucket: q.getAll("bucket") } });
+    risks = risksFlag({ flags: { risk: q.getAll("risk") } });
   } catch (e) {
     if (e instanceof UsageError) throw new WorkApiError(400, e.message);
     throw e;
   }
   const search = q.get("q")?.trim() || undefined;
-  return { since, sinceText, agents, place, stages, kinds, buckets, q: search };
+  return { since, sinceText, agents, place, stages, kinds, buckets, risks, q: search };
 }
 
 function limitOf(q: URLSearchParams): number {
@@ -148,7 +152,7 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const all = q.get("all") === "1" || q.get("all") === "true" || f.stages.length > 0;
   const overlay = readOverlay(src.overlay);
   // Next steps name sessions by the shortest id that resolves, as `work --json` does.
-  const read = { since: f.since, agents: f.agents, place: f.place, kinds: f.kinds, q: f.q, overlay, now, shortId: await shortener(index) };
+  const read = { since: f.since, agents: f.agents, place: f.place, kinds: f.kinds, risks: f.risks, q: f.q, overlay, now, shortId: await shortener(index) };
   const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all, stages: f.stages, buckets: f.buckets });
   // Without `all` (or with a stage or bucket filter) the queue lacks hidden items; the page still says why each one is hidden.
   const every = all && !f.stages.length && !f.buckets.length ? queue : buildWorkQueue(sessions, { ...read, all: true });
@@ -320,6 +324,7 @@ export async function workAckBatch(index: IndexStore, src: WorkSource, q: URLSea
     stages: f.stages,
     kinds: f.kinds,
     buckets: f.buckets,
+    risks: f.risks,
     q: f.q,
     overlay,
     now,

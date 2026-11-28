@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentEvent, PullRequestRef, Session, Waiting } from "../schema/index.ts";
+import type { AgentEvent, ProofLang, PullRequestRef, Session, SupervisionRisk, Waiting } from "../schema/index.ts";
 import { shellQuote } from "../cli/args.ts";
 import { iso, isRunning, lastActivity, matchesPlace, type Place } from "../mcp/data.ts";
 import { worktreeRepo } from "../query/where.ts";
@@ -41,6 +41,19 @@ export type Stage = (typeof STAGES)[number];
 /** A change touched files; research stopped without changing one. */
 export const WORK_KINDS = ["research", "change"] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
+/** Deterministic supervision risk levels surfaced on work items (`medium` or `high`). */
+export const SUPERVISION_RISKS = ["medium", "high"] as const satisfies readonly SupervisionRisk[];
+export type { ProofLang, SupervisionRisk };
+
+/** Aggregated formal-verification proof loop telemetry across an item's member sessions. */
+export interface WorkProof {
+  langs: ProofLang[];
+  checks: number;
+  passed: number;
+  failed: number;
+  escapeRemaining?: number;
+  oscillatingChecks?: number;
+}
 
 /** A wait or a stall older than this may be a closed terminal that sent no session end. */
 export const PROBABLY_CLOSED_MS = 12 * 3600e3;
@@ -116,6 +129,12 @@ export interface WorkItem {
   kind?: WorkKind;
   /** The evidence for the stage, one short line: "changed 3 files, last active 12m ago" (the item's last activity, over all its sessions). */
   stageWhy: string;
+  /** Highest supervision risk across member sessions (`medium` or `high`). Absent when low. */
+  supervisionRisk?: SupervisionRisk;
+  /** Sorted unique supervision risk reasons across member sessions. Present only when `supervisionRisk` is set. */
+  riskReasons?: string[];
+  /** Aggregated formal-verification proof loop telemetry across member sessions. Absent when no member has proof activity. */
+  proof?: WorkProof;
 }
 
 /** Where a workflow agent is: still going, ended on a failure, or ended without one. */
@@ -178,6 +197,8 @@ export interface WorkOptions {
   kinds?: readonly WorkKind[];
   /** Only active items currently in one of these buckets. */
   buckets?: readonly Bucket[];
+  /** Only items with one of these supervision risk levels (`medium` or `high`), including still-running items. */
+  risks?: readonly SupervisionRisk[];
   /** Trimmed case-insensitive substring match against title, repo, branch, id, primaryId, workflow name or reason. */
   q?: string;
   /** Whether a folder between a cwd and its repo root holds a `.git` file (a linked worktree). Default gitFileAt. */
@@ -788,6 +809,50 @@ export function itemPrs(members: readonly Pick<Session, "stats">[]): PullRequest
   return [...byKey.values()].sort((a, b) => a.at - b.at || a.number - b.number);
 }
 
+const RISK_RANK: Record<SupervisionRisk, number> = { medium: 1, high: 2 };
+
+/** Highest supervision risk and sorted unique reasons across member sessions. Absent when low. */
+function riskOfItem(members: readonly Session[]): { supervisionRisk?: SupervisionRisk; riskReasons?: string[] } {
+  let best: SupervisionRisk | undefined;
+  const reasons = new Set<string>();
+  for (const s of members) {
+    const ch = s.stats.contextHygiene;
+    if (!ch?.supervisionRisk) continue;
+    if (!best || RISK_RANK[ch.supervisionRisk] > RISK_RANK[best]) best = ch.supervisionRisk;
+    for (const r of ch.riskReasons ?? []) if (r) reasons.add(r);
+  }
+  if (!best) return {};
+  const sorted = [...reasons].sort();
+  return sorted.length ? { supervisionRisk: best, riskReasons: sorted } : { supervisionRisk: best };
+}
+
+/** Aggregated formal-verification proof telemetry across member sessions. Absent when none has proof activity. */
+function proofOfItem(members: readonly Session[]): WorkProof | undefined {
+  const langs = new Set<ProofLang>();
+  let any = false;
+  let checks = 0;
+  let passed = 0;
+  let failed = 0;
+  let escapeRemaining = 0;
+  let oscillatingChecks = 0;
+  for (const s of members) {
+    const p = s.stats.verification?.proof;
+    if (!p) continue;
+    any = true;
+    for (const l of p.langs) langs.add(l);
+    checks += p.checks;
+    passed += p.passed;
+    failed += p.failed;
+    escapeRemaining += p.escapeRemaining ?? 0;
+    oscillatingChecks += p.oscillatingChecks ?? 0;
+  }
+  if (!any) return undefined;
+  const out: WorkProof = { langs: [...langs].sort(), checks, passed, failed };
+  if (escapeRemaining > 0) out.escapeRemaining = escapeRemaining;
+  if (oscillatingChecks > 0) out.oscillatingChecks = oscillatingChecks;
+  return out;
+}
+
 /** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
 export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string, prStates?: PrStates): WorkItem {
   return buildItem(raw, now, overlay, checkouts, isCheckout, shortId, prStates).item;
@@ -827,6 +892,11 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   if (cost > 0) item.costUsd = roundUsd(cost);
   const { prs, merged } = prsOfItem(members, primary, prStates);
   if (prs) item.prs = prs;
+  const risk = riskOfItem(members);
+  if (risk.supervisionRisk) item.supervisionRisk = risk.supervisionRisk;
+  if (risk.riskReasons) item.riskReasons = risk.riskReasons;
+  const proof = proofOfItem(members);
+  if (proof) item.proof = proof;
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
   if (raw.workflow) {
     item.workflow = { id: raw.workflow.id, phases: workflowPhases(agents) };
@@ -966,6 +1036,7 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const agents = opts.agents?.length ? new Set(opts.agents) : undefined;
   const place = opts.place;
   const kinds = opts.kinds?.length ? new Set(opts.kinds) : undefined;
+  const risks = opts.risks?.length ? new Set(opts.risks) : undefined;
   const needle = opts.q?.trim().toLowerCase() || undefined;
   const keep = (raw: RawItem, item: WorkItem): boolean => {
     if (agents && !raw.members.some((s) => agents.has(s.agent))) return false;
@@ -974,6 +1045,7 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
       if (!matchesPlace(primary, place)) return false;
     }
     if (kinds && (!item.kind || !kinds.has(item.kind))) return false;
+    if (risks && (!item.supervisionRisk || !risks.has(item.supervisionRisk))) return false;
     if (needle && !matchesWorkQuery(item, needle)) return false;
     return true;
   };
@@ -1001,7 +1073,13 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
     }
   }
   const groups: WorkGroup[] = [...byCause].filter(([, ids]) => ids.length > 1).map(([cause, items]) => ({ bucket: "failed", cause, count: items.length, items }));
-  const base = stageOnly ? all.filter((i) => stageOnly.has(i.stage)) : opts.all && !bucketOnly ? all : visible;
+  const base = stageOnly
+    ? all.filter((i) => stageOnly.has(i.stage))
+    : opts.all && !bucketOnly
+      ? all
+      : risks && !bucketOnly
+        ? all.filter((i) => i.bucket !== undefined || i.hidden === "running")
+        : visible;
   const shown = bucketOnly ? base.filter((i) => i.bucket !== undefined && bucketOnly.has(i.bucket)) : base;
   const shownIds = new Set(shown.flatMap((i) => i.sessionIds));
   const inView = sessions.filter((s) => shownIds.has(s.id));
@@ -1200,6 +1278,9 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
   if (i.costUsd !== undefined) out.costUsd = i.costUsd;
   if (i.prs) out.prs = i.prs.map((p) => defined({ url: p.url, repo: p.repo, number: p.number, state: p.state, at: iso(p.at) }));
   if (i.workflow) out.workflow = defined({ id: i.workflow.id, name: i.workflow.name || undefined, phases: i.workflow.phases.map((p) => ({ ...p })) });
+  if (i.supervisionRisk) out.supervisionRisk = i.supervisionRisk;
+  if (i.riskReasons?.length) out.riskReasons = [...i.riskReasons];
+  if (i.proof) out.proof = defined({ ...i.proof, langs: [...i.proof.langs] });
   return out;
 }
 
@@ -1227,6 +1308,7 @@ export interface WorkRead {
   stages?: readonly Stage[];
   kinds?: readonly WorkKind[];
   buckets?: readonly Bucket[];
+  risks?: readonly SupervisionRisk[];
   q?: string;
   now?: number;
   overlay: WorkOverlay;
@@ -1246,6 +1328,7 @@ export async function readWorkQueue(index: IndexStore, r: WorkRead): Promise<{ q
     stages: r.stages,
     kinds: r.kinds,
     buckets: r.buckets,
+    risks: r.risks,
     q: r.q,
     shortId: r.shortId,
   });

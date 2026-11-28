@@ -1642,7 +1642,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .work-stage[data-stage="review"], .work-stage[data-stage="approval"] { color: var(--warn-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent); }
 .work-stage[data-stage="done"] { color: var(--pass-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pass) 35%, transparent); }
 .seg[hidden], .meta[hidden] { display: none; }
-.work-stage-seg, .work-kind-seg { flex-wrap: wrap; max-width: 100%; }
+.work-stage-seg, .work-kind-seg, .work-risk-seg { flex-wrap: wrap; max-width: 100%; }
 /* One item's page (#/w/<id>): a long title stops at three lines; the facts read as prose, not code. */
 .work-page h1 { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .work-detail { padding: 0.8rem 1rem; min-width: 0; }
@@ -8255,6 +8255,8 @@ function workState(q) {
   const stage = q.get("stage") || "";
   const kind = q.get("kind") || "";
   const bucket = q.get("bucket") || "";
+  const riskParts = [...new Set((q.get("risk") || "").split(",").map((v) => v.trim().toLowerCase()).filter((v) => v === "medium" || v === "high"))];
+  const risk = riskParts.length === 2 ? "medium,high" : (riskParts[0] || "");
   const limit = Number(q.get("limit") || WORK_LIMIT);
   return {
     agent: clip(q.get("agent"), 200),
@@ -8265,14 +8267,15 @@ function workState(q) {
     stage: WORK_STAGES.includes(stage) ? stage : "",
     kind: WORK_KINDS.includes(kind) ? kind : "",
     bucket: WORK_BUCKETS.some(([b]) => b === bucket) ? bucket : "",
+    risk,
     limit: Number.isInteger(limit) && limit > 0 && limit <= WORK_MAX ? limit : WORK_LIMIT,
   };
 }
 function workHref(st) {
-  return "#/work" + qs({ agent: st.agent, repo: st.repo, q: st.q, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage, kind: st.kind, bucket: st.bucket, limit: st.limit === WORK_LIMIT ? "" : st.limit });
+  return "#/work" + qs({ agent: st.agent, repo: st.repo, q: st.q, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage, kind: st.kind, bucket: st.bucket, risk: st.risk, limit: st.limit === WORK_LIMIT ? "" : st.limit });
 }
 function workPath(st) {
-  return "/api/work" + qs({ agent: st.agent, repo: st.repo, q: st.q, since: st.since, all: st.all ? "1" : "", stage: st.stage, kind: st.kind, bucket: st.bucket, limit: st.limit });
+  return "/api/work" + qs({ agent: st.agent, repo: st.repo, q: st.q, since: st.since, all: st.all ? "1" : "", stage: st.stage, kind: st.kind, bucket: st.bucket, risk: st.risk, limit: st.limit });
 }
 /** An item's page, read with the list's window and filters (the stage and hidden toggle do not hide an item). */
 function workItemHref(id, st) {
@@ -8339,6 +8342,8 @@ async function showWork(seq, query) {
   const hiddenBtn = h("button", { class: "btn btn-sm", type: "button", "aria-pressed": String(st.all), onclick: () => go({ all: !st.all }) }, "Show hidden");
   const kindSeg = h("div", { class: "seg work-kind-seg", role: "group", "aria-label": "Kind" },
     [["", "All"], ["change", "Changes"], ["research", "Research"]].map(([v, label]) => h("button", { type: "button", "aria-pressed": String(st.kind === v), onclick: () => go({ kind: v }) }, label)));
+  const riskSeg = h("div", { class: "seg work-risk-seg", role: "group", "aria-label": "Risk" },
+    [["", "All risk"], ["high", "High"], ["medium,high", "Medium+"]].map(([v, label]) => h("button", { type: "button", "aria-pressed": String(st.risk === v), onclick: () => go({ risk: v }) }, label)));
   // Shown once the server says it knows stages (an older one sends none).
   const stageSeg = h("div", { class: "seg work-stage-seg", role: "group", "aria-label": "Stage", hidden: true },
     ["", ...WORK_STAGES].map((v) => h("button", { type: "button", "aria-pressed": String(st.stage === v), onclick: () => go({ stage: v }) }, v || "any stage")));
@@ -8346,7 +8351,7 @@ async function showWork(seq, query) {
   const controls = h("div", { class: "mx-controls" },
     h("div", { class: "seg", role: "group", "aria-label": "Sessions started in the last" },
       sinceOpts.map((v) => h("button", { type: "button", "aria-pressed": String(st.since === v), onclick: () => go({ since: v }) }, v))),
-    kindSeg, stageSeg, hiddenBtn, form);
+    kindSeg, riskSeg, stageSeg, hiddenBtn, form);
   const notes = h("div", { class: "work-notes" });
   append(view, [h("div", { class: "page-head" }, h("div", null, h("h1", { id: "work-h" }, "Work"), meta, stagesMeta)), controls, notes]);
   const slot = h("div", { class: "work-body" });
@@ -8505,7 +8510,7 @@ async function workAct(item, kind, button, since, duration = "1h") {
 async function workActBatch(payload, button, st) {
   if (button) button.disabled = true;
   try {
-    const r = await fetchJson("/api/work/ack-batch" + qs({ since: st.since, agent: st.agent, repo: st.repo, q: st.q, stage: st.stage, kind: st.kind, bucket: st.bucket }), {
+    const r = await fetchJson("/api/work/ack-batch" + qs({ since: st.since, agent: st.agent, repo: st.repo, q: st.q, stage: st.stage, kind: st.kind, bucket: st.bucket, risk: st.risk }), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const msg = r.acked ? "Acknowledged " + plural(r.acked, "item") : "No items to acknowledge";
@@ -8535,7 +8540,7 @@ function workError(e, go) {
 function workBody(doc, st, go, act, showAll, actBatch) {
   const items = doc.items || [];
   if (!items.length) {
-    const filtered = !!(st.agent || st.repo || st.stage || st.kind || st.q || st.bucket);
+    const filtered = !!(st.agent || st.repo || st.stage || st.kind || st.risk || st.q || st.bucket);
     if (doc.hidden && !st.all) {
       return h("div", { class: "panel empty" },
         h("h2", { text: "Nothing needs you" }),
@@ -8546,7 +8551,7 @@ function workBody(doc, st, go, act, showAll, actBatch) {
       h("h2", { text: filtered ? "No work items match these filters" : "No agent sessions since " + st.since }),
       h("p", { text: filtered ? "Clear the active filters, or widen the window." : "Items come from the sessions coding.sh captured in the window. Widen it, or run an agent and come back." }),
       h("div", { class: "work-actions" },
-        filtered ? h("button", { class: "btn", type: "button", onclick: () => go({ agent: "", repo: "", stage: "", kind: "", q: "", bucket: "" }) }, "Clear the filters") : null,
+        filtered ? h("button", { class: "btn", type: "button", onclick: () => go({ agent: "", repo: "", stage: "", kind: "", risk: "", q: "", bucket: "" }) }, "Clear the filters") : null,
         st.since !== "30d" ? h("button", { class: "btn", type: "button", onclick: () => go({ since: "30d" }) }, "Widen to 30 days") : null));
   }
   const members = doc.members || {};
@@ -8623,6 +8628,37 @@ function workPrsEl(prs, bare) {
     return [n ? ", " : null, url ? h("a", { class: "work-link work-pr", href: url, target: "_blank", rel: "noopener noreferrer", title: (p.repo ? p.repo + " " : "") + label }, label) : h("span", { class: "work-pr" }, label)];
   }));
 }
+/** Compact supervision risk badge ("Risk: high") with riskReasons tooltip. */
+function workRiskChip(i) {
+  if (!i.supervisionRisk) return null;
+  const tip = i.riskReasons && i.riskReasons.length ? i.riskReasons.join(", ") : "Supervision risk: " + i.supervisionRisk;
+  return h("span", { class: "badge work-risk " + (i.supervisionRisk === "high" ? "fail" : "warn"), "data-risk": i.supervisionRisk, title: tip }, "Risk: " + i.supervisionRisk);
+}
+/** Compact proof status text for detail rows and tooltips. */
+function workProofText(p) {
+  const langs = p.langs && p.langs.length ? p.langs.join(", ") : "proof";
+  const checks = p.checks > 0 ? plural(p.checks, "check") + " (" + (p.passed || 0) + " passed, " + (p.failed || 0) + " failed)" : "0 checks";
+  const parts = [checks];
+  if (p.escapeRemaining) parts.push(plural(p.escapeRemaining, "escape") + " remaining");
+  if (p.oscillatingChecks) parts.push(plural(p.oscillatingChecks, "oscillating check"));
+  return langs + " · " + parts.join(", ");
+}
+/** Compact formal-verification badge ("lean · 2 sorry", "lean · verified"). */
+function workProofChip(p) {
+  if (!p) return null;
+  const langs = p.langs && p.langs.length ? p.langs.join(", ") : "proof";
+  const esc = p.escapeRemaining || 0;
+  const isLean = p.langs && p.langs.length === 1 && p.langs[0] === "lean";
+  const status = esc > 0
+    ? esc + (isLean ? " sorry" : (esc === 1 ? " escape" : " escapes"))
+    : p.failed > 0
+      ? p.failed + " failed"
+      : p.passed > 0
+        ? "verified"
+        : "0 checks";
+  const tone = esc > 0 || p.failed > 0 ? "warn" : p.passed > 0 ? "pass" : "";
+  return h("span", { class: "badge work-proof" + (tone ? " " + tone : ""), title: workProofText(p) }, langs + " · " + status);
+}
 function workItemEl(i, ids, act, now = Date.now(), doc = {}, st = workState(new URLSearchParams())) {
   const tone = workTone(i);
   const at = Date.parse(i.since || i.lastActivity);
@@ -8649,6 +8685,8 @@ function workItemEl(i, ids, act, now = Date.now(), doc = {}, st = workState(new 
       // Where the item stands and what kind of work it is, with the evidence as the title.
       i.stage ? h("span", { class: "badge work-stage", "data-stage": i.stage, title: i.stageWhy || null }, i.stage) : null,
       i.kind ? h("span", { class: "badge work-kind", title: i.stageWhy || null }, i.kind) : null,
+      workRiskChip(i),
+      workProofChip(i.proof),
       i.probablyClosed ? h("span", { class: "badge warn" }, "probably closed") : null,
       i.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[i.hidden] || i.hidden) : null),
     h("p", { class: "work-reason" }, h("span", { class: "dot " + tone, "aria-hidden": "true" }), h("span", null, i.reason)),
@@ -8802,6 +8840,8 @@ function workItemPage(d, st, act) {
     h("div", { class: "work-head" },
       d.stage ? h("span", { class: "badge work-stage", "data-stage": d.stage, title: d.stageWhy || null }, d.stage) : null,
       d.kind ? h("span", { class: "badge work-kind", title: d.stageWhy || null }, d.kind) : null,
+      workRiskChip(d),
+      workProofChip(d.proof),
       d.probablyClosed ? h("span", { class: "badge warn" }, "probably closed") : null,
       d.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[d.hidden] || d.hidden) : null),
     h("p", { class: "work-reason" }, h("span", { class: "dot " + workTone(d), "aria-hidden": "true" }), h("span", null, d.reason)),
@@ -8810,6 +8850,8 @@ function workItemPage(d, st, act) {
   const facts = h("div", { class: "panel work-detail" }, h("dl", { class: "kv work-kv" },
     row("State", workStateText(d)),
     row("Stage", d.stage ? d.stage + (d.kind ? " · " + d.kind : "") + (d.stageWhy ? ": " + d.stageWhy : "") : ""),
+    d.supervisionRisk ? row("Risk", d.supervisionRisk + (d.riskReasons && d.riskReasons.length ? " (" + d.riskReasons.join(", ") + ")" : "")) : null,
+    d.proof ? row("Proof", workProofText(d.proof)) : null,
     w && w.text ? row("Prompt", oneLine(w.text)) : null,
     w ? row("Waiting", w.kind + " since ", ago(w.at)) : null,
     row("Agent", (d.agents && d.agents.length ? d.agents : [d.agent]).join(", ")),

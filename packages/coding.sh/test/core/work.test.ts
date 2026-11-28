@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { buildSession, FLAGS } from "../../src/core/sessions.ts";
-import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, selectBatchAckTargets, settleWorkFiles, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, WORK_KINDS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
+import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, selectBatchAckTargets, settleWorkFiles, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, SUPERVISION_RISKS, WORK_KINDS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
 import { addAck, addSnooze, emptyOverlay, readOverlay, writeOverlay } from "../../src/core/work-overlay.ts";
 import type { AgentEvent, Session, Waiting } from "../../src/schema/index.ts";
 import { mkSession } from "../cli/_cmd.ts";
@@ -683,5 +683,136 @@ describe("high-scale filters and batch ack selection", () => {
     // Explicit ids ignore hidden items that have no ackable cause.
     const picked = selectBatchAckTargets(q.items, { ids: [workItemId("rev-1"), workItemId("done-1")] });
     assert.deepEqual(picked.map((i) => i.id), [workItemId("rev-1")]);
+  });
+});
+
+describe("supervision risk and proof status", () => {
+  test("aggregates supervisionRisk, riskReasons, and proof across single and multi-session items, omitted when absent", () => {
+    assert.deepEqual([...SUPERVISION_RISKS], ["medium", "high"]);
+    const clean = sess("clean", 10 * MIN, { title: "plain change", stats: { filesChanged: 1 } });
+    const single = sess("single-proof", 8 * MIN, {
+      title: "verify lemma",
+      stats: {
+        filesChanged: 1,
+        contextHygiene: { supervisionRisk: "medium", riskReasons: ["unverified-edits"] },
+        verification: {
+          checks: 2,
+          passed: 2,
+          failed: 0,
+          maxUnverifiedEdits: 1,
+          proof: { langs: ["lean"], checks: 2, passed: 2, failed: 0 },
+        },
+      },
+    });
+    const parent = sess("multi-root", 15 * MIN, {
+      title: "prove theorem",
+      stats: {
+        filesChanged: 2,
+        contextHygiene: { supervisionRisk: "medium", riskReasons: ["unverified-edits", "compaction-churn"] },
+        verification: {
+          checks: 2,
+          passed: 1,
+          failed: 1,
+          maxUnverifiedEdits: 3,
+          proof: { langs: ["lean"], checks: 2, passed: 1, failed: 1, escapeRemaining: 2 },
+        },
+      },
+    });
+    const child = sess("multi-root:sub:1", 12 * MIN, {
+      parent: { sessionId: "multi-root", subagentId: "1" },
+      stats: {
+        contextHygiene: { supervisionRisk: "high", riskReasons: ["tactic-oscillation", "unverified-edits"] },
+        verification: {
+          checks: 1,
+          passed: 1,
+          failed: 0,
+          maxUnverifiedEdits: 0,
+          proof: { langs: ["rocq", "lean"], checks: 1, passed: 1, failed: 0, oscillatingChecks: 1 },
+        },
+      },
+    });
+
+    const q = queue([clean, single, parent, child]);
+    const byId = new Map(q.items.map((i) => [i.primaryId, i]));
+
+    const cleanItem = byId.get("clean")!;
+    assert.equal(cleanItem.supervisionRisk, undefined);
+    assert.equal(cleanItem.riskReasons, undefined);
+    assert.equal(cleanItem.proof, undefined);
+    const cleanJson = workItemJson(cleanItem);
+    assert.equal("supervisionRisk" in cleanJson, false);
+    assert.equal("riskReasons" in cleanJson, false);
+    assert.equal("proof" in cleanJson, false);
+
+    const singleItem = byId.get("single-proof")!;
+    assert.equal(singleItem.supervisionRisk, "medium");
+    assert.deepEqual(singleItem.riskReasons, ["unverified-edits"]);
+    assert.deepEqual(singleItem.proof, { langs: ["lean"], checks: 2, passed: 2, failed: 0 });
+    const singleJson = workItemJson(singleItem);
+    assert.equal("escapeRemaining" in (singleJson.proof as Record<string, unknown>), false);
+    assert.equal("oscillatingChecks" in (singleJson.proof as Record<string, unknown>), false);
+
+    const multiItem = byId.get("multi-root")!;
+    assert.equal(multiItem.supervisionRisk, "high");
+    assert.deepEqual(multiItem.riskReasons, ["compaction-churn", "tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(multiItem.proof, {
+      langs: ["lean", "rocq"],
+      checks: 3,
+      passed: 2,
+      failed: 1,
+      escapeRemaining: 2,
+      oscillatingChecks: 1,
+    });
+    const multiJson = workItemJson(multiItem);
+    assert.equal(multiJson.supervisionRisk, "high");
+    assert.deepEqual(multiJson.riskReasons, ["compaction-churn", "tactic-oscillation", "unverified-edits"]);
+    assert.deepEqual(multiJson.proof, multiItem.proof);
+  });
+
+  test("risks filter surfaces still-running high/medium risk sessions while keeping default unfiltered queue unchanged", () => {
+    const runningHigh = open("run-high", 2 * MIN, {
+      title: "long horizon drift",
+      stats: {
+        filesChanged: 3,
+        contextHygiene: { supervisionRisk: "high", riskReasons: ["post-compaction-repeats", "unverified-edits"] },
+      },
+    });
+    const runningClean = open("run-clean", 2 * MIN, { title: "steady work" });
+    const failedMed = sess("fail-med", 10 * MIN, {
+      title: "failing suite",
+      stats: {
+        testsFailed: 2,
+        contextHygiene: { supervisionRisk: "medium", riskReasons: ["dead-end-loop"] },
+      },
+    });
+    const reviewHigh = sess("rev-high", 15 * MIN, {
+      title: "risky review",
+      stats: {
+        filesChanged: 1,
+        contextHygiene: { supervisionRisk: "high", riskReasons: ["unverified-edits"] },
+      },
+    });
+    const doneHigh = sess("done-high", 20 * MIN, {
+      title: "done research",
+      stats: { contextHygiene: { supervisionRisk: "high", riskReasons: ["compaction-churn"] } },
+    });
+    const all = [runningHigh, runningClean, failedMed, reviewHigh, doneHigh];
+
+    // Default unfiltered queue hides runningHigh and doneHigh.
+    const def = queue(all);
+    assert.deepEqual(def.items.map((i) => i.primaryId).sort(), ["fail-med", "rev-high"]);
+
+    // risks: ["high"] surfaces still-running high-risk item alongside active high-risk items, leaving done hidden.
+    const highOnly = queue(all, { risks: ["high"] });
+    assert.deepEqual(highOnly.items.map((i) => i.primaryId).sort(), ["rev-high", "run-high"]);
+    assert.equal(highOnly.items.find((i) => i.primaryId === "run-high")!.hidden, "running");
+
+    // risks: ["medium", "high"] includes medium active + high active + high running.
+    const medPlus = queue(all, { risks: ["medium", "high"] });
+    assert.deepEqual(medPlus.items.map((i) => i.primaryId).sort(), ["fail-med", "rev-high", "run-high"]);
+
+    // With all: true, doneHigh is also included.
+    const highAll = queue(all, { risks: ["high"], all: true });
+    assert.deepEqual(highAll.items.map((i) => i.primaryId).sort(), ["done-high", "rev-high", "run-high"]);
   });
 });
