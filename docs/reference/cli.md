@@ -48,6 +48,7 @@ Every command accepts these.
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
+| [`proof`](#codingsh-proof) | Explore | Review a session's formal-verification integrity (escapes, checks, spec changes) |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a session and its subagents, or a whole run, as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
@@ -650,6 +651,35 @@ coding.sh views rm <NAME>
 ```sh
 coding.sh views rm codex-flagged
 ```
+
+## `coding.sh proof`
+
+Review a session's formal-verification integrity (escapes, checks, spec changes).
+
+```text
+coding.sh proof <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--check-disk` |  | Statically scan touched proof files on disk for remaining escape hatches (read-only) |
+| `--strict` |  | Exit 1 when the verdict is tampered or incomplete, for CI and review gates. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh proof latest
+coding.sh proof 9f1c2e --check-disk
+coding.sh proof latest --strict --json
+```
+
+- Verdicts: verified (proof files touched, at least one passing check, last check passed, zero remaining escapes and zero tamper findings), incomplete (remaining escapes, failing last check or zero passing checks), tampered (statement, spec or config tampered, or checker bypass flag used), or no-proof.
+- --check-disk scans touched proof files on disk with comments and strings blanked and executes no external checker.
+- --strict exits 1 on tampered or incomplete and 0 on verified or no-proof.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh show`
 
@@ -3795,7 +3825,7 @@ coding.sh refine <action>
 | [`run`](#codingsh-refine-run) | Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau |
 | [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
 | [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
-| [`mine`](#codingsh-refine-mine) | Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags and failed eval runs, with counts and example sessions ($0) |
+| [`mine`](#codingsh-refine-mine) | Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags, failed eval runs and recurring proof-checker failures, with counts and example sessions ($0) |
 | [`recheck`](#codingsh-refine-recheck) | Re-run a suite round's base and candidate under another model (a canary) and record the verdict; suggests a rollback when the edit regresses there |
 | [`distill`](#codingsh-refine-distill) | Hand a coding agent the raw runs of an experiment (or this repo's recent sessions) to analyze with its own code and write one skill; the skill is checked by the critics and ledgered as a candidate for refine test |
 | [`diagnose`](#codingsh-refine-diagnose) | Diagnose recent sessions with a model into Signals: cited problems grouped into issues, severity scored by code. Without an API key it prints a $0 plan |
@@ -4057,7 +4087,7 @@ coding.sh refine check --allow-protected-edit AGENTS.md:12
 
 ### `coding.sh refine mine`
 
-Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags and failed eval runs, with counts and example sessions ($0).
+Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags, failed eval runs and recurring proof-checker failures, with counts and example sessions ($0).
 
 ```text
 coding.sh refine mine [options]
