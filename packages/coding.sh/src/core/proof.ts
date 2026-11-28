@@ -967,10 +967,63 @@ export function checkOutcome(check: ProofCheck, end: Record<string, unknown>): "
   return out.trim() && !check.filtered ? "green" : undefined;
 }
 
+/** Canonical lowercase key for a checker bypass flag or config directive. */
+export function canonicalBypass(flag: string): string {
+  const lower = flag.trim().toLowerCase().replace(/^-o\s+/, "");
+  if (lower === "--no-verify" || lower === "-no-verify" || lower === "/noverify" || lower === "no-verify") return "no-verify";
+  if (lower === "--type-in-type" || lower === "-type-in-type") return "type-in-type";
+  return lower;
+}
+
+/** Active human direction pivot relevant to proofs, carried in ProofState until the next check or user turn. */
+export interface ProofSteer {
+  /** Authorizing user.message event id. */
+  eventId: string;
+  /** Covers theorem, lemma, specification, and build config edits. */
+  statement?: true;
+  /** Covers temporary proof hole placeholders (`sorry`, `Admitted`, `assume`, ...), excluding kernel bypasses. */
+  escape?: true;
+  /** Canonical bypass flags/directives literally requested by the user. */
+  bypasses?: string[];
+  /** Specific repo-relative paths or basenames authorized by the user (lowercased). */
+  paths?: string[];
+}
+
+/** True when `path` matches one of the lowercased paths or basenames authorized by a user steer. */
+export function steerPathMatches(path: string, paths: readonly string[] | undefined): boolean {
+  if (!paths?.length || !path) return false;
+  const norm = path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+  const base = norm.slice(norm.lastIndexOf("/") + 1);
+  for (const p of paths) {
+    if (norm === p || norm.endsWith(`/${p}`)) return true;
+    if (!p.includes("/") && base === p) return true;
+  }
+  return false;
+}
+
+/** Authorizing user.message id when a user steer literally requested `flag`, else undefined. */
+export function steerCoversBypass(steer: ProofSteer | undefined, flag: string): string | undefined {
+  if (!steer?.bypasses?.length) return undefined;
+  return steer.bypasses.includes(canonicalBypass(flag)) ? steer.eventId : undefined;
+}
+
+function steerCoversProofChange(steer: ProofSteer | undefined, path: string): string | undefined {
+  if (!steer) return undefined;
+  return steer.statement || steerPathMatches(path, steer.paths) ? steer.eventId : undefined;
+}
+
+function steerCoversHatch(steer: ProofSteer | undefined, hatch: string): string | undefined {
+  if (!steer) return undefined;
+  if (KERNEL_BYPASS_HATCHES.has(hatch)) return steerCoversBypass(steer, hatch);
+  return steer.escape ? steer.eventId : undefined;
+}
+
 /** What the session did to one proof, spec or build file. Statement keys are names; `#lines` and `#gone` stand for the file's lines and the file itself. */
 export interface ProofFile {
   /** Escape hatches the agent put in and has not taken out, by name. */
   sites?: Map<string, number>;
+  /** Escape hatches in `sites` authorized by a user steer, by name → authorizing user.message id. */
+  steeredSites?: Map<string, string>;
   /** Statements the agent changed: [text key before (null: the agent added it), text key now (null: removed)]. */
   stmts?: Map<string, [string | null, string | null]>;
   /** Pinned, spec-named and build files: each line's count put in minus taken out; UNREAD when a change could not be read. */
@@ -991,6 +1044,8 @@ export interface ProofFile {
   lang?: "verus" | "tlc";
   /** Changed keys since the last passing check, each with the number of outcomes read before the change. */
   touched?: Map<string, number>;
+  /** Keys whose latest change was authorized by a user steer: key → authorizing user.message id. */
+  steered?: Map<string, string>;
   /** Keys whose change turned a failing check green and that are still changed. */
   flipped?: Set<string>;
   /** Its path, kept once the log of changes (ProofState.log) holds it. */
@@ -1020,6 +1075,8 @@ export interface ProofRun {
   seq?: number;
   green?: true;
   flip?: true;
+  /** Active user steer when this check ended, so file.change events emitted by the same call read it. */
+  steer?: ProofSteer;
 }
 
 export interface ProofState {
@@ -1052,6 +1109,8 @@ export interface ProofState {
   tlc?: true;
   /** The `.tla` files changed (the last 8): a `.cfg` beside one is its model. */
   tla?: string[];
+  /** Active human direction pivot, cleared on the next check outcome or human user.message. */
+  steer?: ProofSteer;
 }
 /** The holder of the state, made on first use: core/intent.ts's TamperState. */
 export interface HasProof {
@@ -1062,9 +1121,9 @@ export type ProofShape = "weaken" | "delete" | "escape" | "unknown";
 /** What a trace reader is told as the state changes (core/intent.ts turns notes into findings). */
 export type ProofNote =
   | { kind: "check"; e: AgentEvent; flips: [string, string][]; before: string }
-  | { kind: "bypass"; e: AgentEvent; flag: string; before: string }
-  | { kind: "hatch"; e: AgentEvent; path: string; hatch: string; open: boolean }
-  | { kind: "change"; e: AgentEvent; path: string; key: string; shape: ProofShape; tampered: boolean; flip?: { before: string; after: string } }
+  | { kind: "bypass"; e: AgentEvent; flag: string; before: string; steeredBy?: string }
+  | { kind: "hatch"; e: AgentEvent; path: string; hatch: string; open: boolean; steeredBy?: string }
+  | { kind: "change"; e: AgentEvent; path: string; key: string; shape: ProofShape; tampered: boolean; flip?: { before: string; after: string }; steeredBy?: string }
   | { kind: "move"; from: string; to: string };
 type Note = ((n: ProofNote) => void) | undefined;
 
@@ -1076,8 +1135,8 @@ const OUTSIDE = /^(?:\/|[A-Za-z]:\/|~|\.\.\/)/;
 /** Docs, logs, proof build products, tool folders and paths outside the repo: changing them is not changing code. */
 const NOT_CODE = /(?:^|\/)\.[^/]+\/|\.(?:md|markdown|txt|rst|org|adoc|log|out|lock|vo|vos|vok|glob|aux|olean|ilean|hash|trace)$|^(?:\/|[A-Za-z]:\/|~|\.\.\/)/i;
 
-/** An escape hatch the agent put in is still there. A count below zero is one the agent took out of the file as the session found it. */
-const opened = (f: ProofFile) => [...(f.sites?.values() ?? [])].some((n) => n > 0);
+/** An escape hatch the agent put in is still there without user authorization. A count below zero is one the agent took out of the file as the session found it. */
+const opened = (f: ProofFile) => [...(f.sites?.entries() ?? [])].some(([h, n]) => n > 0 && !f.steeredSites?.has(h));
 /** The file holds an escape hatch the agent put in or a flipped change: its findings stand, so it is kept. */
 const pinned = (f: ProofFile) => !!f.flipped?.size || opened(f);
 
@@ -1121,11 +1180,17 @@ function settle(ps: ProofState, f: ProofFile): void {
 }
 
 const prune = (ps: ProofState, path: string, f: ProofFile) => {
-  if (!f.sites?.size && !f.stmts?.size && !f.lines?.size && !f.added && !f.gone && !f.lang && !f.touched?.size && !f.flipped?.size) ps.files?.delete(path);
+  if (!f.sites?.size && !f.steeredSites?.size && !f.stmts?.size && !f.lines?.size && !f.added && !f.gone && !f.lang && !f.touched?.size && !f.steered?.size && !f.flipped?.size) ps.files?.delete(path);
 };
 
 /** The state, made on first use with an empty log of changes. */
 const stateOf = (h: HasProof): ProofState => (h.proof ??= { log: [] });
+
+/** Record or clear the active human steer on ProofState without allocating ProofState when clearing. */
+export function proofSteer(h: HasProof, steer: ProofSteer | undefined): void {
+  if (steer) stateOf(h).steer = steer;
+  else if (h.proof) delete h.proof.steer;
+}
 
 /** The file is still the one at its path: not moved over, deleted or dropped. */
 const held = (ps: ProofState, f: ProofFile) => f.path !== undefined && ps.files?.get(f.path) === f;
@@ -1293,25 +1358,41 @@ const stampOf = (ps: ProofState, run: ProofRun | undefined) => (run?.seq !== und
 function touch(ps: ProofState, f: ProofFile, path: string, key: string, shape: ProofShape, e: AgentEvent, id: string | undefined, note: Note): void {
   const t = proofTampered(f, key);
   const run = runOf(ps, id);
+  const activeSteer = run ? run.steer : ps.steer;
+  const steeredBy = t ? steerCoversProofChange(activeSteer, path) : undefined;
   let flip: { before: string; after: string } | undefined;
   if (!t) {
     f.flipped?.delete(key);
+    f.steered?.delete(key);
+    if (f.steered && !f.steered.size) delete f.steered;
     settle(ps, f);
-  } else if (!run?.green) (f.touched ??= new Map()).set(key, stampOf(ps, run));
-  else if (run.flip && proofTampered(f, key, stampOf(ps, run))) {
-    (f.flipped ??= new Set()).add(key);
-    flip = { before: run.before as string, after: run.at };
+  } else {
+    if (steeredBy) {
+      (f.steered ??= new Map()).set(key, steeredBy);
+      f.flipped?.delete(key);
+      settle(ps, f);
+    } else {
+      f.steered?.delete(key);
+      if (f.steered && !f.steered.size) delete f.steered;
+    }
+    if (!run?.green) (f.touched ??= new Map()).set(key, stampOf(ps, run));
+    else if (run.flip && proofTampered(f, key, stampOf(ps, run))) {
+      if (!steeredBy) (f.flipped ??= new Set()).add(key);
+      flip = { before: run.before as string, after: run.at };
+    }
   }
   logChange(ps, f, path, key);
   if (!note) return;
   const n: Extract<ProofNote, { kind: "change" }> = { kind: "change", e, path, key, shape, tampered: t };
   if (flip) n.flip = flip;
+  if (steeredBy) n.steeredBy = steeredBy;
   note(n);
 }
 
 function closeSites(f: ProofFile, path: string, e: AgentEvent, note: Note): void {
   for (const [h, n] of f.sites ?? []) if (n > 0) note?.({ kind: "hatch", e, path, hatch: h, open: false });
   delete f.sites;
+  delete f.steeredSites;
 }
 
 /** A shell call starts: keep the proof check it runs until it ends. */
@@ -1356,13 +1437,18 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
   if ((check.lang === "make" || check.lang === "dune") && !was && !PROOF_OUT.test(text)) return;
   const seq = (ps.seq = (ps.seq ?? 0) + 1);
   run.seq = seq;
+  const activeSteer = ps.steer;
+  if (activeSteer) run.steer = activeSteer;
   const reds = (ps.reds ??= new Map());
   if (check.bypass) {
     const of = was ? key : verifyKey(check);
     const failed = of === undefined ? undefined : reds.get(of);
     if (out === "green" && of !== undefined && failed) {
-      ps.bypass = of;
-      note?.({ kind: "bypass", e, flag: check.bypass, before: failed.at });
+      const steeredBy = steerCoversBypass(activeSteer, check.bypass);
+      if (!steeredBy) ps.bypass = of;
+      const bn: Extract<ProofNote, { kind: "bypass" }> = { kind: "bypass", e, flag: check.bypass, before: failed.at };
+      if (steeredBy) bn.steeredBy = steeredBy;
+      note?.(bn);
     }
   } else if (out === "red") {
     reds.delete(key);
@@ -1382,7 +1468,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
       for (const [path, f, t] of since) {
         const at = f.touched?.get(t);
         if (at !== undefined && at >= was.seq && proofTampered(f, t, was.seq)) {
-          (f.flipped ??= new Set()).add(t);
+          if (!f.steered?.has(t)) (f.flipped ??= new Set()).add(t);
           flips.push([path, t]);
         }
       }
@@ -1402,6 +1488,7 @@ export function proofEnd(h: HasProof, e: AgentEvent, note?: Note): void {
     ps.green = {};
     if (flips.length) note?.({ kind: "check", e, flips, before: was?.at as string });
   }
+  delete ps.steer;
   if (!reds.size) delete ps.reds;
 }
 
@@ -1561,7 +1648,9 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
   const truncated = p.diffTruncated === true;
   const d = readProofDiff(path, lang, diff, truncated);
   if (d.rocq && lang === "rocq") ps.rocq = true;
-  if (!PROOF_TEST.test(path))
+  if (!PROOF_TEST.test(path)) {
+    const endedRun = runOf(ps, id);
+    const activeSteer = endedRun ? endedRun.steer : ps.steer;
     for (const [name, n] of d.hatches) {
       // Hatches put in minus taken out, from the file as the session found it: taking one out
       // and putting it back nets to zero. A change by anyone else only moves the count toward zero.
@@ -1571,9 +1660,24 @@ export function proofChange(h: HasProof, e: AgentEvent, t: ProofTarget, note?: N
       if (now === was) continue;
       if (now) (f.sites ??= new Map()).set(name, now);
       else f.sites?.delete(name);
-      if (was > 0 !== now > 0) note?.({ kind: "hatch", e, path, hatch: name, open: now > 0 });
+      const wasSteered = f.steeredSites?.get(name);
+      if (mine && n > 0 && now > 0) {
+        const sb = steerCoversHatch(activeSteer, name);
+        if (sb && (was <= 0 || wasSteered !== undefined)) (f.steeredSites ??= new Map()).set(name, sb);
+        else f.steeredSites?.delete(name);
+      } else if (now <= 0) {
+        f.steeredSites?.delete(name);
+      }
+      const nowSteered = now > 0 ? f.steeredSites?.get(name) : undefined;
+      if (was > 0 !== now > 0 || (now > 0 && wasSteered !== nowSteered)) {
+        const hn: Extract<ProofNote, { kind: "hatch" }> = { kind: "hatch", e, path, hatch: name, open: now > 0 };
+        if (nowSteered) hn.steeredBy = nowSteered;
+        note?.(hn);
+      }
     }
+  }
   if (f.sites && !f.sites.size) delete f.sites;
+  if (f.steeredSites && !f.steeredSites.size) delete f.steeredSites;
   settle(ps, f);
   if (op === "delete" && (!diff || truncated)) {
     if (mine) dropFile(ps, path, e, id, note);
@@ -1724,12 +1828,14 @@ export interface ProofFinding {
   theorem?: string;
   high: boolean;
   flippedGreen: boolean;
+  /** The authorizing human user.message id when this change followed an explicit user steer. */
+  steeredBy?: string;
   /** The failing and the passing check's tool.end. */
   before?: string;
   after?: string;
 }
 
-type Entry = { e: AgentEvent; shape: ProofShape; flip?: { before: string; after: string } };
+type Entry = { e: AgentEvent; shape: ProofShape; flip?: { before: string; after: string }; steeredBy?: string };
 
 /** A value by path and key; `at` holds the path, so a move renames many slots at once. */
 type Slot<T> = { key: string; v: T; at: PathKeys<T>; next?: Slot<T>; dead?: true };
@@ -1851,24 +1957,35 @@ export function isWholeProjectCheck(_check: ProofCheck, command: string): boolea
  * turned a failing check green and still stands.
  */
 export function proofLog(): { note: (n: ProofNote) => void; findings: (ps: ProofState | undefined) => ProofFinding[] } {
-  /** Hatches put in, by path and name: the event that put each in. */
-  const open = pathMap<AgentEvent>();
+  /** Hatches put in, by path and name: the event that put each in and any authorizing steer. */
+  const open = pathMap<{ e: AgentEvent; steeredBy?: string }>();
   const changes = pathMap<Entry[]>();
-  let bypass: { e: AgentEvent; flag: string; before: string } | undefined;
+  let bypass: { e: AgentEvent; flag: string; before: string; steeredBy?: string } | undefined;
   const note = (n: ProofNote) => {
     if (n.kind === "hatch") {
       if (!n.open) open.del(n.path, n.hatch);
-      else if (!open.has(n.path, n.hatch)) open.set(n.path, n.hatch, n.e);
+      else {
+        const prev = open.get(n.path, n.hatch);
+        if (!prev || prev.steeredBy !== n.steeredBy) {
+          const rec: { e: AgentEvent; steeredBy?: string } = { e: n.e };
+          if (n.steeredBy) rec.steeredBy = n.steeredBy;
+          open.set(n.path, n.hatch, rec);
+        }
+      }
     } else if (n.kind === "move") {
       open.move(n.from, n.to);
       changes.move(n.from, n.to);
-    } else if (n.kind === "bypass") bypass = { e: n.e, flag: n.flag, before: n.before };
-    else if (n.kind === "change") {
+    } else if (n.kind === "bypass") {
+      const b: { e: AgentEvent; flag: string; before: string; steeredBy?: string } = { e: n.e, flag: n.flag, before: n.before };
+      if (n.steeredBy) b.steeredBy = n.steeredBy;
+      bypass = b;
+    } else if (n.kind === "change") {
       const list = changes.get(n.path, n.key) ?? [];
       // Changes between two flips are one change: the last one says what it became.
       if (list.length && !list.at(-1)?.flip) list.pop();
       const entry: Entry = { e: n.e, shape: n.shape };
       if (n.flip) entry.flip = n.flip;
+      if (n.steeredBy) entry.steeredBy = n.steeredBy;
       list.push(entry);
       changes.set(n.path, n.key, list);
     } else
@@ -1879,18 +1996,30 @@ export function proofLog(): { note: (n: ProofNote) => void; findings: (ps: Proof
   };
   const findings = (ps: ProofState | undefined): ProofFinding[] => {
     const out: ProofFinding[] = [];
-    for (const [path, hatch, e] of open.entries())
-      if ((ps?.files?.get(path)?.sites?.get(hatch) ?? 0) > 0) out.push({ e, path, kind: "escape", shape: "escape", hatch, high: true, flippedGreen: false });
-    if (ps?.bypass && bypass)
-      out.push({ e: bypass.e, path: "", kind: "escape", shape: "escape", hatch: bypass.flag, high: true, flippedGreen: true, before: bypass.before, after: bypass.e.id });
+    for (const [path, hatch, rec] of open.entries()) {
+      const f = ps?.files?.get(path);
+      if ((f?.sites?.get(hatch) ?? 0) > 0) {
+        const steeredBy = f?.steeredSites?.get(hatch);
+        const item: ProofFinding = { e: rec.e, path, kind: "escape", shape: "escape", hatch, high: !steeredBy, flippedGreen: false };
+        if (steeredBy) item.steeredBy = steeredBy;
+        out.push(item);
+      }
+    }
+    if (bypass && (ps?.bypass || bypass.steeredBy)) {
+      const item: ProofFinding = { e: bypass.e, path: "", kind: "escape", shape: "escape", hatch: bypass.flag, high: !bypass.steeredBy && !!ps?.bypass, flippedGreen: true, before: bypass.before, after: bypass.e.id };
+      if (bypass.steeredBy) item.steeredBy = bypass.steeredBy;
+      out.push(item);
+    }
     for (const [path, key, list] of changes.entries()) {
       const f = ps?.files?.get(path);
       const now = !!f && proofTampered(f, key);
       const lastFlip = list.findLastIndex((x) => !!x.flip);
       list.forEach((x, i) => {
         if (!x.flip && !now) return;
-        const found: ProofFinding = { e: x.e, path, kind: key === "#lines" ? "spec" : "statement", shape: x.shape, high: i === lastFlip && !!f?.flipped?.has(key), flippedGreen: !!x.flip };
+        const high = !x.steeredBy && i === lastFlip && !!f?.flipped?.has(key);
+        const found: ProofFinding = { e: x.e, path, kind: key === "#lines" ? "spec" : "statement", shape: x.shape, high, flippedGreen: !!x.flip };
         if (!key.startsWith("#") && key !== "") found.theorem = key;
+        if (x.steeredBy) found.steeredBy = x.steeredBy;
         if (x.flip) {
           found.before = x.flip.before;
           found.after = x.flip.after;
