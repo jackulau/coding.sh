@@ -213,7 +213,7 @@ function clip(text: string, max: number): string {
 }
 
 function formatTs(ts: number): string {
-  return isoMs(ts) ?? new Date(ts).toISOString();
+  return isoMs(ts) ?? "-";
 }
 
 function isVerifyCmd(cmd: string | undefined): boolean {
@@ -838,7 +838,8 @@ function orderWorkSessions(item: Pick<WorkItem, "sessionIds">, sessions: readonl
 }
 
 function dayOf(ts: number): string {
-  return formatTs(ts).slice(0, 10);
+  const iso = isoMs(ts);
+  return iso ? iso.slice(0, 10) : "-";
 }
 
 function spanDaysBetween(firstTs: number, lastTs: number): number {
@@ -942,7 +943,8 @@ function buildTimelineEntry(
   };
   const sid = shortId?.(s.id);
   if (sid) entry.shortId = sid;
-  if (s.endedAt !== undefined) entry.endedAt = formatTs(s.endedAt);
+  const endedAt = isoMs(s.endedAt);
+  if (endedAt) entry.endedAt = endedAt;
   if (risk) entry.risk = risk;
   if (proofVerdict) entry.proofVerdict = proofVerdict;
   return entry;
@@ -982,13 +984,15 @@ export function buildWorkTimeline(
   const shown = ordered.length > maxSessions ? ordered.slice(-maxSessions) : ordered;
   const entries = shown.map((s) => buildTimelineEntry(s, sortedById.get(s.id) ?? [], redact, opts.shortId));
 
+  const firstStartedAt = isoMs(firstTs);
+  const lastEndedAt = isoMs(lastTs);
   const out: WorkTimeline = {
-    firstStartedAt: formatTs(firstTs),
-    lastEndedAt: formatTs(lastTs),
     spanDays: spanDaysBetween(firstTs, lastTs),
     totalSessions: ordered.length,
     entries,
   };
+  if (firstStartedAt) out.firstStartedAt = firstStartedAt;
+  if (lastEndedAt) out.lastEndedAt = lastEndedAt;
   if (ordered.length > shown.length) out.omittedSessions = ordered.length - shown.length;
   return out;
 }
