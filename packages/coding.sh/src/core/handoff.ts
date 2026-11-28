@@ -1,7 +1,8 @@
-// Deterministic $0 context-reset handoff packet for a single session.
-// Summarizes original goal, verified progress, unresolved dead ends, supervision
-// risk and formal-verification status with full secret redaction and no LLM call.
-import type { AgentEvent, ProofLang, Session } from "../schema/index.ts";
+// Deterministic $0 context-reset handoff packets for a single session or a multi-day
+// work item. Summarizes original goal, direction pivots, verified progress, unresolved
+// dead ends, supervision risk, multi-day timeline, and formal-verification status with
+// full secret redaction and no LLM call.
+import type { AgentEvent, ProofLang, Session, SupervisionRisk } from "../schema/index.ts";
 import { isFileEditTool, isShellCall } from "../adapters/_shared/tools.ts";
 import { isoMs } from "./dates.ts";
 import { failureState, foldFailure } from "./failures.ts";
@@ -10,13 +11,21 @@ import { buildProofReport, type ProofTamperFinding, type ProofVerdict } from "./
 import { createRedactor, type Redactor } from "./redact.ts";
 import { byTime, commandOf, isRealPrompt, isVerifyCommand } from "./sessions.ts";
 import { normalizeTracePath, shellCommand, shellWrites } from "./shell-diff.ts";
+import type { WorkItem } from "./work.ts";
 
 export const DEFAULT_MAX_DEAD_ENDS = 8;
+export const DEFAULT_MAX_WORK_DEAD_ENDS = 10;
+export const DEFAULT_MAX_WORK_SESSIONS = 20;
 export const DEFAULT_MAX_FILES = 40;
 const DEFAULT_MAX_CHECKS = 12;
 const GOAL_MAX = 1500;
+const TITLE_MAX = 120;
 const CMD_MAX = 200;
 const ERROR_MAX = 180;
+const DAY_MS = 86_400_000;
+/** Short acknowledgements skipped when looking for a meaningful direction pivot across sessions. */
+const TRIVIAL_ACK = /^(?:ok|okay|yes|yep|yeah|y|lgtm|thanks|thank you|thx|continue|go ahead|sounds good|proceed|do it|ship it)[.!?\s]*$/i;
+const RISK_RANK: Record<SupervisionRisk, number> = { medium: 1, high: 2 };
 
 /** Additional mechanical verification commands beyond sessions.ts VERIFY_COMMAND. */
 const EXTRA_VERIFY = /\b(?:go\s+(?:build|vet)|biome\s+(?:check|lint)|flake8|pylint|black\s+--check|prettier\s+--check|cargo\s+fmt\s+--check)\b/i;
@@ -91,6 +100,86 @@ export interface HandoffOptions {
   redact?: Redactor;
 }
 
+export type EventsBySession = ReadonlyMap<string, readonly AgentEvent[]> | Readonly<Record<string, readonly AgentEvent[]>>;
+
+export type WorkHandoffItem = Pick<WorkItem, "id" | "sessionIds"> &
+  Partial<Pick<WorkItem, "primaryId" | "title" | "repo" | "cwd" | "branch" | "agents" | "supervisionRisk" | "riskReasons" | "proof">>;
+
+export interface WorkTimelineEntry {
+  sessionId: string;
+  shortId?: string;
+  agent: string;
+  startedAt: string;
+  endedAt?: string;
+  day: string;
+  title: string;
+  turns: number;
+  compactions: number;
+  verificationChecks: number;
+  unverifiedTailEdits: number;
+  risk?: SupervisionRisk;
+  proofVerdict?: Exclude<ProofVerdict, "no-proof">;
+  deadEnds: number;
+  summary: string;
+}
+
+export interface WorkTimeline {
+  firstStartedAt?: string;
+  lastEndedAt?: string;
+  spanDays: number;
+  totalSessions: number;
+  omittedSessions?: number;
+  entries: WorkTimelineEntry[];
+}
+
+export interface WorkTimelineOptions {
+  maxSessions?: number;
+  shortId?: (id: string) => string;
+  redact?: Redactor;
+}
+
+export interface WorkContextResets {
+  compactions: number;
+  sessionHandoffs: number;
+  total: number;
+}
+
+export interface WorkHandoffRisk extends HandoffRisk {
+  sessionHandoffs?: number;
+  contextResets?: number;
+}
+
+export interface WorkHandoffProof extends HandoffProof {
+  oscillatingChecks?: number;
+}
+
+export interface WorkHandoffPacket {
+  workId: string;
+  title?: string;
+  repo?: string;
+  branch?: string;
+  agents: string[];
+  firstStartedAt?: string;
+  lastEndedAt?: string;
+  spanDays: number;
+  totalSessions: number;
+  omittedSessions?: number;
+  goal?: string;
+  latestDirection?: string;
+  timeline: WorkTimelineEntry[];
+  progress: HandoffProgress;
+  deadEnds: HandoffDeadEnd[];
+  risk?: WorkHandoffRisk;
+  contextResets: WorkContextResets;
+  proof?: WorkHandoffProof;
+  markdown: string;
+}
+
+export interface WorkHandoffOptions extends HandoffOptions {
+  maxSessions?: number;
+  shortId?: (id: string) => string;
+}
+
 interface OpenCall {
   tool: string;
   actionKey?: string;
@@ -124,7 +213,7 @@ function clip(text: string, max: number): string {
 }
 
 function formatTs(ts: number): string {
-  return isoMs(ts) ?? new Date(ts).toISOString();
+  return isoMs(ts) ?? "-";
 }
 
 function isVerifyCmd(cmd: string | undefined): boolean {
@@ -401,27 +490,37 @@ export function formatHandoffMarkdown(packet: Omit<HandoffPacket, "markdown"> | 
   return lines.join("\n");
 }
 
+interface TraceAccumulator {
+  filesSet: Set<string>;
+  passingByKey: Map<string, PassingAcc>;
+  deadEndsByKey: Map<string, DeadEndAcc>;
+  editsSinceCheck: number;
+  checksRun: number;
+  compactionsSeen: number;
+}
+
+function createAccumulator(): TraceAccumulator {
+  return {
+    filesSet: new Set(),
+    passingByKey: new Map(),
+    deadEndsByKey: new Map(),
+    editsSinceCheck: 0,
+    checksRun: 0,
+    compactionsSeen: 0,
+  };
+}
+
 /**
- * Builds a deterministic, fully redacted context-reset handoff packet for a session.
- * Pure: performs no disk, git, or network I/O and makes no LLM calls.
+ * Folds one chronologically sorted session's events into `acc`.
+ * Per-session call-tracking maps stay local so toolUseIds never collide across sessions,
+ * while files, passing checks, dead ends and tail edits accumulate across sessions.
  */
-export function buildHandoff(
-  session: Pick<Session, "id" | "agent" | "cwd" | "repo" | "title" | "stats">,
-  events: readonly AgentEvent[],
-  opts: HandoffOptions = {},
-): HandoffPacket {
-  const maxDeadEnds = opts.maxDeadEnds ?? DEFAULT_MAX_DEAD_ENDS;
-  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
-  const redactor = opts.redact ?? createRedactor();
-  const redact = (s: string) => redactor.string(s);
-
-  const sorted = byTime([...events]);
-  const baseCwd = session.repo?.root ?? session.cwd;
-
-  const filesSet = new Set<string>();
-  const passingByKey = new Map<string, PassingAcc>();
-  const deadEndsByKey = new Map<string, DeadEndAcc>();
-
+function foldSessionEvents(
+  sorted: readonly AgentEvent[],
+  baseCwd: string | undefined,
+  redact: (s: string) => string,
+  acc: TraceAccumulator,
+): void {
   const fState = failureState();
   const openCalls = new Map<string, OpenCall>();
   const seenStartIds = new Set<string>();
@@ -431,13 +530,11 @@ export function buildHandoff(
   const currentFailed = new Map<string, Set<string>>();
   const preCompactFailed = new Map<string, Set<string>>();
 
-  let editsSinceCheck = 0;
-
   const markResolved = (scope: string, key: string | undefined): void => {
     if (!key) return;
     currentFailed.get(scope)?.delete(key);
     preCompactFailed.get(scope)?.delete(key);
-    const existing = deadEndsByKey.get(key);
+    const existing = acc.deadEndsByKey.get(key);
     if (existing) existing.resolved = true;
   };
 
@@ -450,10 +547,10 @@ export function buildHandoff(
     scopeSet(currentFailed, scope).add(key);
 
     const errTail = extractErrorTail(e.payload, redact);
-    const existing = deadEndsByKey.get(key);
+    const existing = acc.deadEndsByKey.get(key);
     if (existing) {
       existing.count++;
-      existing.lastTs = e.ts;
+      existing.lastTs = Math.max(existing.lastTs, e.ts);
       existing.resolved = false;
       if (repeatedAfterCompact) existing.postCompactionRepeat = true;
       if (errTail) existing.error = errTail;
@@ -467,7 +564,7 @@ export function buildHandoff(
         resolved: false,
       };
       if (errTail) entry.error = errTail;
-      deadEndsByKey.set(key, entry);
+      acc.deadEndsByKey.set(key, entry);
     }
   };
 
@@ -477,6 +574,7 @@ export function buildHandoff(
     const cwd = baseCwd ?? e.cwd;
 
     if (e.kind === "context.compact") {
+      acc.compactionsSeen++;
       const cur = currentFailed.get(scope);
       if (cur?.size) {
         const pre = scopeSet(preCompactFailed, scope);
@@ -490,15 +588,15 @@ export function buildHandoff(
       const raw = str(p.path);
       if (!raw) continue;
       const rel = normalizeTracePath(raw, cwd);
-      if (rel) filesSet.add(rel);
+      if (rel) acc.filesSet.add(rel);
       const moved = str(p.movedTo);
       if (moved) {
         const movedRel = normalizeTracePath(moved, cwd);
-        if (movedRel) filesSet.add(movedRel);
+        if (movedRel) acc.filesSet.add(movedRel);
       }
       const id = str(p.toolUseId);
       if (id) fileChangeIds.add(id);
-      editsSinceCheck++;
+      acc.editsSinceCheck++;
       continue;
     }
 
@@ -506,7 +604,8 @@ export function buildHandoff(
       const id = str(p.toolUseId);
       if (id && countedTestIds.has(id)) continue;
       if (id) countedTestIds.add(id);
-      editsSinceCheck = 0;
+      acc.editsSinceCheck = 0;
+      acc.checksRun++;
       const failed = num(p.failed) ?? 0;
       if (failed === 0) {
         const runner = str(p.runner);
@@ -515,7 +614,7 @@ export function buildHandoff(
           ? passed !== undefined ? `${runner} (${passed} passed)` : runner
           : passed !== undefined ? `tests (${passed} passed)` : "tests";
         const key = `test:${(runner ?? "tests").toLowerCase()}`;
-        passingByKey.set(key, {
+        acc.passingByKey.set(key, {
           command: clip(redact(label), CMD_MAX),
           at: formatTs(e.ts),
           outcome: "passed",
@@ -539,7 +638,7 @@ export function buildHandoff(
       if (cmd) {
         for (const w of shellWrites(cmd)) {
           const target = normalizeTracePath(w.renamedTo ?? w.path, cwd);
-          if (target) filesSet.add(target);
+          if (target) acc.filesSet.add(target);
         }
       }
       const call = classifyCall(e, cwd);
@@ -563,9 +662,9 @@ export function buildHandoff(
         const rawPath = editPathOf(p.input);
         if (rawPath) {
           const rel = normalizeTracePath(rawPath, cwd);
-          if (rel) filesSet.add(rel);
+          if (rel) acc.filesSet.add(rel);
         }
-        if (!(id && fileChangeIds.has(id))) editsSinceCheck++;
+        if (!(id && fileChangeIds.has(id))) acc.editsSinceCheck++;
         markResolved(scope, call.actionKey);
       } else if (!failure || failure.cls === "real") {
         recordDeadEnd(scope, call, e);
@@ -576,10 +675,11 @@ export function buildHandoff(
     if (call.proof) {
       const outcome = checkOutcome(call.proof, p);
       if (outcome === "green" && !call.proof.bypass) {
-        editsSinceCheck = 0;
+        acc.editsSinceCheck = 0;
+        acc.checksRun++;
         if (id) countedTestIds.add(id);
         if (call.actionKey) {
-          passingByKey.set(call.actionKey, {
+          acc.passingByKey.set(call.actionKey, {
             command: clip(redact(call.display), CMD_MAX),
             at: formatTs(e.ts),
             outcome: "passed",
@@ -589,8 +689,9 @@ export function buildHandoff(
           markResolved(scope, call.actionKey);
         }
       } else if (outcome === "red" || p.ok === false) {
-        editsSinceCheck = 0;
-        if (call.actionKey) passingByKey.delete(call.actionKey);
+        acc.editsSinceCheck = 0;
+        acc.checksRun++;
+        if (call.actionKey) acc.passingByKey.delete(call.actionKey);
         if (!failure || failure.cls === "real") recordDeadEnd(scope, call, e);
       }
       continue;
@@ -598,11 +699,12 @@ export function buildHandoff(
 
     if (call.verify) {
       if (p.interrupted === true || failure?.cls === "interrupted") continue;
-      editsSinceCheck = 0;
+      acc.editsSinceCheck = 0;
+      acc.checksRun++;
       if (p.ok !== false) {
         if (id) countedTestIds.add(id);
         if (call.actionKey) {
-          passingByKey.set(call.actionKey, {
+          acc.passingByKey.set(call.actionKey, {
             command: clip(redact(call.display), CMD_MAX),
             at: formatTs(e.ts),
             outcome: "passed",
@@ -612,7 +714,7 @@ export function buildHandoff(
           markResolved(scope, call.actionKey);
         }
       } else if (!failure || failure.cls === "real") {
-        if (call.actionKey) passingByKey.delete(call.actionKey);
+        if (call.actionKey) acc.passingByKey.delete(call.actionKey);
         recordDeadEnd(scope, call, e);
       }
       continue;
@@ -624,20 +726,10 @@ export function buildHandoff(
       recordDeadEnd(scope, call, e);
     }
   }
+}
 
-  const filesChanged = [...new Set([...filesSet].map(redact))].sort().slice(0, maxFiles);
-  const passingChecks: HandoffCheck[] = [...passingByKey.values()]
-    .sort((a, b) => a.ts - b.ts)
-    .slice(-DEFAULT_MAX_CHECKS)
-    .map(({ command, at, outcome, kind }) => ({ command, at, outcome, kind }));
-
-  const progress: HandoffProgress = { filesChanged, passingChecks };
-  const tailEdits = session.stats.verification !== undefined
-    ? session.stats.verification.unverifiedTailEdits
-    : editsSinceCheck > 0 ? editsSinceCheck : undefined;
-  if (tailEdits !== undefined && tailEdits > 0) progress.unverifiedTailEdits = tailEdits;
-
-  const deadEnds: HandoffDeadEnd[] = [...deadEndsByKey.values()]
+function finalizeDeadEnds(deadEndsByKey: ReadonlyMap<string, DeadEndAcc>, maxDeadEnds: number): HandoffDeadEnd[] {
+  return [...deadEndsByKey.values()]
     .filter((d) => !d.resolved)
     .sort((a, b) => Number(b.postCompactionRepeat) - Number(a.postCompactionRepeat) || b.count - a.count || b.lastTs - a.lastTs)
     .slice(0, maxDeadEnds)
@@ -651,6 +743,45 @@ export function buildHandoff(
       if (d.postCompactionRepeat) item.postCompactionRepeat = true;
       return item;
     });
+}
+
+function finalizePassingChecks(passingByKey: ReadonlyMap<string, PassingAcc>): HandoffCheck[] {
+  return [...passingByKey.values()]
+    .sort((a, b) => a.ts - b.ts)
+    .slice(-DEFAULT_MAX_CHECKS)
+    .map(({ command, at, outcome, kind }) => ({ command, at, outcome, kind }));
+}
+
+/**
+ * Builds a deterministic, fully redacted context-reset handoff packet for a session.
+ * Pure: performs no disk, git, or network I/O and makes no LLM calls.
+ */
+export function buildHandoff(
+  session: Pick<Session, "id" | "agent" | "cwd" | "repo" | "title" | "stats">,
+  events: readonly AgentEvent[],
+  opts: HandoffOptions = {},
+): HandoffPacket {
+  const maxDeadEnds = opts.maxDeadEnds ?? DEFAULT_MAX_DEAD_ENDS;
+  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
+  const redactor = opts.redact ?? createRedactor();
+  const redact = (s: string) => redactor.string(s);
+
+  const sorted = byTime([...events]);
+  const baseCwd = session.repo?.root ?? session.cwd;
+
+  const acc = createAccumulator();
+  foldSessionEvents(sorted, baseCwd, redact, acc);
+
+  const filesChanged = [...new Set([...acc.filesSet].map(redact))].sort().slice(0, maxFiles);
+  const passingChecks = finalizePassingChecks(acc.passingByKey);
+
+  const progress: HandoffProgress = { filesChanged, passingChecks };
+  const tailEdits = session.stats.verification !== undefined
+    ? session.stats.verification.unverifiedTailEdits
+    : acc.editsSinceCheck > 0 ? acc.editsSinceCheck : undefined;
+  if (tailEdits !== undefined && tailEdits > 0) progress.unverifiedTailEdits = tailEdits;
+
+  const deadEnds = finalizeDeadEnds(acc.deadEndsByKey, maxDeadEnds);
 
   const base: Omit<HandoffPacket, "markdown"> = {
     sessionId: session.id,
@@ -674,5 +805,635 @@ export function buildHandoff(
   if (proof) base.proof = proof;
 
   const markdown = redact(formatHandoffMarkdown(base));
+  return { ...base, markdown };
+}
+
+// ------------------------------------------------------------ multi-day work timeline & handoff
+
+function eventsFor(eventsBySession: EventsBySession | undefined, sessionId: string): readonly AgentEvent[] {
+  if (!eventsBySession) return [];
+  if (eventsBySession instanceof Map) return eventsBySession.get(sessionId) ?? [];
+  const rec = eventsBySession as Readonly<Record<string, readonly AgentEvent[]>>;
+  return rec[sessionId] ?? [];
+}
+
+function isOrganicSession(s: Session): boolean {
+  return !s.parent?.subagentId && !s.id.includes(":sub:");
+}
+
+function orderWorkSessions(item: Pick<WorkItem, "sessionIds">, sessions: readonly Session[]): Session[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const picked: Session[] = [];
+  const seen = new Set<string>();
+  for (const id of item.sessionIds) {
+    if (seen.has(id)) continue;
+    const s = byId.get(id);
+    if (s) {
+      seen.add(id);
+      picked.push(s);
+    }
+  }
+  const base = picked.length > 0 ? picked : [...sessions];
+  return base.sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+function dayOf(ts: number): string {
+  const iso = isoMs(ts);
+  return iso ? iso.slice(0, 10) : "-";
+}
+
+function spanDaysBetween(firstTs: number, lastTs: number): number {
+  const firstDay = Date.parse(`${dayOf(firstTs)}T00:00:00.000Z`);
+  const lastDay = Date.parse(`${dayOf(Math.max(firstTs, lastTs))}T00:00:00.000Z`);
+  if (!Number.isFinite(firstDay) || !Number.isFinite(lastDay)) return 1;
+  return Math.max(1, Math.floor((lastDay - firstDay) / DAY_MS) + 1);
+}
+
+function inferProofVerdictFromStats(s: Session): Exclude<ProofVerdict, "no-proof"> | undefined {
+  const p = s.stats.verification?.proof;
+  if (!p) return undefined;
+  if (s.flags.includes("test-tamper")) return "tampered";
+  if ((p.escapeRemaining ?? 0) > 0 || p.passed === 0 || p.failed > 0) return "incomplete";
+  return "verified";
+}
+
+function firstLine(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const line = text.split(/\r?\n/).find((l) => l.trim());
+  return line?.trim();
+}
+
+function summarizeTimelineEntry(
+  s: Session,
+  acc: TraceAccumulator,
+  compactions: number,
+  verificationChecks: number,
+  unverifiedTailEdits: number,
+  deadEndCount: number,
+  risk: SupervisionRisk | undefined,
+  proofVerdict: Exclude<ProofVerdict, "no-proof"> | undefined,
+  redact: (s: string) => string,
+): string {
+  const parts: string[] = [];
+  const filesCount = acc.filesSet.size > 0 ? acc.filesSet.size : (s.stats.filesChanged ?? 0);
+  if (filesCount > 0) parts.push(`${filesCount} ${filesCount === 1 ? "file" : "files"}`);
+
+  const v = s.stats.verification;
+  if (v && v.checks > 0) {
+    parts.push(`${v.passed}/${v.checks} ${v.checks === 1 ? "check" : "checks"} passed`);
+  } else if (verificationChecks > 0) {
+    const passed = acc.passingByKey.size;
+    parts.push(passed > 0 ? `${passed}/${verificationChecks} ${verificationChecks === 1 ? "check" : "checks"} passed` : `${verificationChecks} ${verificationChecks === 1 ? "check" : "checks"}`);
+  }
+
+  if (compactions > 0) parts.push(`${compactions} ${compactions === 1 ? "compaction" : "compactions"}`);
+  if (risk) parts.push(`risk:${risk}`);
+  if (proofVerdict) parts.push(`proof:${proofVerdict}`);
+  if (deadEndCount > 0) parts.push(`${deadEndCount} dead ${deadEndCount === 1 ? "end" : "ends"}`);
+  if (unverifiedTailEdits > 0) parts.push(`${unverifiedTailEdits} unverified tail ${unverifiedTailEdits === 1 ? "edit" : "edits"}`);
+
+  if (!parts.length) {
+    const turns = s.stats.turns ?? 0;
+    parts.push(turns > 0 ? `${turns} ${turns === 1 ? "turn" : "turns"}` : "no changes recorded");
+  }
+  return clip(redact(parts.join(", ")), ERROR_MAX);
+}
+
+function buildTimelineEntry(
+  s: Session,
+  sortedEvents: readonly AgentEvent[],
+  redact: (s: string) => string,
+  shortId?: (id: string) => string,
+): WorkTimelineEntry {
+  const acc = createAccumulator();
+  if (sortedEvents.length > 0) {
+    foldSessionEvents(sortedEvents, s.repo?.root ?? s.cwd, redact, acc);
+  }
+  const compactions = Math.max(s.stats.contextHygiene?.compactions ?? 0, acc.compactionsSeen);
+  const verificationChecks = s.stats.verification?.checks ?? (acc.checksRun > 0 ? acc.checksRun : (s.stats.testsPassed ?? 0) + (s.stats.testsFailed ?? 0));
+  const unverifiedTailEdits = s.stats.verification?.unverifiedTailEdits ?? (sortedEvents.length > 0 ? acc.editsSinceCheck : 0);
+  const unresolvedDeadEnds = [...acc.deadEndsByKey.values()].filter((d) => !d.resolved).length;
+  const deadEnds = sortedEvents.length > 0 ? unresolvedDeadEnds : (s.stats.contextHygiene?.deadEndStreak ? 1 : 0);
+  const risk = s.stats.contextHygiene?.supervisionRisk;
+
+  let proofVerdict: Exclude<ProofVerdict, "no-proof"> | undefined;
+  if (sortedEvents.length > 0) {
+    const proof = buildProofSummary(s, sortedEvents, redact);
+    proofVerdict = proof?.verdict;
+  }
+  proofVerdict ??= inferProofVerdictFromStats(s);
+
+  const goalLine = sortedEvents.length > 0 ? firstLine(extractGoal(s, sortedEvents, redact)) : undefined;
+  const rawTitle = s.title?.trim() || goalLine || "(untitled)";
+  const title = clip(redact(rawTitle).replace(/\s+/g, " ").trim(), TITLE_MAX);
+  const summary = summarizeTimelineEntry(s, acc, compactions, verificationChecks, unverifiedTailEdits, deadEnds, risk, proofVerdict, redact);
+
+  const entry: WorkTimelineEntry = {
+    sessionId: s.id,
+    agent: s.agent,
+    startedAt: formatTs(s.startedAt),
+    day: dayOf(s.startedAt),
+    title,
+    turns: s.stats.turns ?? 0,
+    compactions,
+    verificationChecks,
+    unverifiedTailEdits,
+    deadEnds,
+    summary,
+  };
+  const sid = shortId?.(s.id);
+  if (sid) entry.shortId = sid;
+  const endedAt = isoMs(s.endedAt);
+  if (endedAt) entry.endedAt = endedAt;
+  if (risk) entry.risk = risk;
+  if (proofVerdict) entry.proofVerdict = proofVerdict;
+  return entry;
+}
+
+/**
+ * Builds a chronological multi-day continuity timeline for a work item.
+ * Orders sessions by `startedAt` ascending, computes multi-day span across ALL member
+ * sessions, and caps `entries` to the newest `maxSessions` (default 20).
+ */
+export function buildWorkTimeline(
+  item: Pick<WorkItem, "id" | "sessionIds">,
+  sessions: readonly Session[],
+  eventsBySession?: EventsBySession,
+  opts: WorkTimelineOptions = {},
+): WorkTimeline {
+  const maxSessions = opts.maxSessions ?? DEFAULT_MAX_WORK_SESSIONS;
+  const redactor = opts.redact ?? createRedactor();
+  const redact = (s: string) => redactor.string(s);
+
+  const ordered = orderWorkSessions(item, sessions);
+  if (!ordered.length) {
+    return { spanDays: 0, totalSessions: 0, entries: [] };
+  }
+
+  let lastTs = ordered[0]!.startedAt;
+  const sortedById = new Map<string, AgentEvent[]>();
+  for (const s of ordered) {
+    const evs = byTime([...eventsFor(eventsBySession, s.id)]);
+    sortedById.set(s.id, evs);
+    const evLast = evs.length ? evs[evs.length - 1]!.ts : s.startedAt;
+    const candidate = Math.max(s.startedAt, s.endedAt ?? s.startedAt, evLast);
+    if (candidate > lastTs) lastTs = candidate;
+  }
+
+  const firstTs = ordered[0]!.startedAt;
+  const shown = ordered.length > maxSessions ? ordered.slice(-maxSessions) : ordered;
+  const entries = shown.map((s) => buildTimelineEntry(s, sortedById.get(s.id) ?? [], redact, opts.shortId));
+
+  const firstStartedAt = isoMs(firstTs);
+  const lastEndedAt = isoMs(lastTs);
+  const out: WorkTimeline = {
+    spanDays: spanDaysBetween(firstTs, lastTs),
+    totalSessions: ordered.length,
+    entries,
+  };
+  if (firstStartedAt) out.firstStartedAt = firstStartedAt;
+  if (lastEndedAt) out.lastEndedAt = lastEndedAt;
+  if (ordered.length > shown.length) out.omittedSessions = ordered.length - shown.length;
+  return out;
+}
+
+function normalizePromptCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?\s]+$/g, "")
+    .trim();
+}
+
+interface PromptPick {
+  eventId?: string;
+  text: string;
+}
+
+function extractWorkGoals(
+  item: WorkHandoffItem,
+  ordered: readonly Session[],
+  sortedById: ReadonlyMap<string, readonly AgentEvent[]>,
+  redact: (s: string) => string,
+): { goal?: string; latestDirection?: string } {
+  const organic = ordered.filter(isOrganicSession);
+  const searchOrder = organic.length > 0 ? [organic, ordered] : [ordered];
+
+  let first: PromptPick | undefined;
+  for (const pool of searchOrder) {
+    for (const s of pool) {
+      for (const e of sortedById.get(s.id) ?? []) {
+        if (!isRealPrompt(e) || e.payload.from === "agent") continue;
+        const text = str(e.payload.text);
+        if (!text) continue;
+        const task = extractTaskPrompt(text);
+        if (task) {
+          first = { eventId: e.id, text: task };
+          break;
+        }
+      }
+      if (first) break;
+    }
+    if (first) break;
+  }
+  if (!first) {
+    for (const s of ordered) {
+      for (const e of sortedById.get(s.id) ?? []) {
+        if (!isRealPrompt(e)) continue;
+        const text = str(e.payload.text);
+        if (!text) continue;
+        const task = extractTaskPrompt(text);
+        if (task) {
+          first = { eventId: e.id, text: task };
+          break;
+        }
+      }
+      if (first) break;
+    }
+  }
+  if (!first) {
+    const fallbackTitle = item.title?.trim() || ordered.find((s) => s.title?.trim())?.title?.trim();
+    if (fallbackTitle) first = { text: fallbackTitle };
+  }
+
+  let latest: PromptPick | undefined;
+  for (const pool of searchOrder) {
+    for (let i = pool.length - 1; i >= 0; i--) {
+      const s = pool[i]!;
+      const evs = sortedById.get(s.id) ?? [];
+      for (let j = evs.length - 1; j >= 0; j--) {
+        const e = evs[j]!;
+        if (!isRealPrompt(e) || e.payload.from === "agent") continue;
+        const text = str(e.payload.text);
+        if (!text) continue;
+        const task = extractTaskPrompt(text);
+        if (!task || TRIVIAL_ACK.test(task)) continue;
+        latest = { eventId: e.id, text: task };
+        break;
+      }
+      if (latest) break;
+    }
+    if (latest) break;
+  }
+
+  const goal = first ? clip(redact(first.text), GOAL_MAX) : undefined;
+  let latestDirection: string | undefined;
+  if (latest && first) {
+    const sameEvent = first.eventId !== undefined && first.eventId === latest.eventId;
+    const sameText = normalizePromptCompare(first.text) === normalizePromptCompare(latest.text);
+    if (!sameEvent && !sameText) {
+      latestDirection = clip(redact(latest.text), GOAL_MAX);
+    }
+  }
+  return { goal, latestDirection };
+}
+
+function namespaceEventsForProof(ordered: readonly Session[], sortedById: ReadonlyMap<string, readonly AgentEvent[]>): AgentEvent[] {
+  const merged: AgentEvent[] = [];
+  for (const s of ordered) {
+    for (const e of sortedById.get(s.id) ?? []) {
+      const tid = str(e.payload?.toolUseId);
+      if (tid) {
+        merged.push({ ...e, payload: { ...e.payload, toolUseId: `${s.id}\u0000${tid}` } });
+      } else {
+        merged.push(e);
+      }
+    }
+  }
+  return byTime(merged);
+}
+
+function buildWorkProofRollup(
+  item: WorkHandoffItem,
+  ordered: readonly Session[],
+  sortedById: ReadonlyMap<string, readonly AgentEvent[]>,
+  redact: (s: string) => string,
+): WorkHandoffProof | undefined {
+  const merged = namespaceEventsForProof(ordered, sortedById);
+  const firstWithRepo = ordered.find((s) => s.repo?.root) ?? ordered[0];
+  const proofTarget: Pick<Session, "id" | "cwd" | "repo"> = {
+    id: item.id,
+    cwd: item.cwd ?? firstWithRepo?.cwd,
+    repo: item.repo ? { root: item.repo, head: firstWithRepo?.repo?.head ?? "", branch: item.branch } : firstWithRepo?.repo,
+  };
+  const oscillating = ordered.reduce((sum, s) => sum + (s.stats.verification?.proof?.oscillatingChecks ?? 0), 0) || (item.proof?.oscillatingChecks ?? 0);
+
+  const fromEvents = merged.length > 0 ? buildProofSummary(proofTarget, merged, redact) : undefined;
+  if (fromEvents) {
+    const out: WorkHandoffProof = { ...fromEvents };
+    if (oscillating > 0) out.oscillatingChecks = oscillating;
+    return out;
+  }
+
+  // Fallback when only aggregated stats exist (e.g. stats-only work items).
+  const langs = new Set<ProofLang>(item.proof?.langs ?? []);
+  let hasStatsProof = !!item.proof;
+  let escapesRemaining = 0;
+  let passed = 0;
+  let failed = 0;
+  let tampered = false;
+  for (const s of ordered) {
+    const p = s.stats.verification?.proof;
+    if (!p) continue;
+    hasStatsProof = true;
+    for (const l of p.langs) langs.add(l);
+    escapesRemaining += p.escapeRemaining ?? 0;
+    passed += p.passed;
+    failed += p.failed;
+    if (s.flags.includes("test-tamper")) tampered = true;
+  }
+  if (!hasStatsProof) return undefined;
+  if (escapesRemaining === 0 && item.proof?.escapeRemaining) escapesRemaining = item.proof.escapeRemaining;
+  if (passed === 0 && failed === 0 && item.proof) {
+    passed = item.proof.passed;
+    failed = item.proof.failed;
+  }
+  const verdict: Exclude<ProofVerdict, "no-proof"> = tampered ? "tampered" : escapesRemaining > 0 || passed === 0 || failed > 0 ? "incomplete" : "verified";
+  const out: WorkHandoffProof = {
+    verdict,
+    langs: [...langs].sort(),
+    specUntouched: !tampered,
+    escapesRemaining,
+    escapeKinds: [],
+    tamperFindings: [],
+    verifyHints: [],
+  };
+  if (oscillating > 0) out.oscillatingChecks = oscillating;
+  return out;
+}
+
+function buildWorkRiskRollup(
+  item: WorkHandoffItem,
+  ordered: readonly Session[],
+  contextResets: WorkContextResets,
+): WorkHandoffRisk | undefined {
+  let level: SupervisionRisk | undefined = item.supervisionRisk;
+  const reasons = new Set<string>(item.riskReasons ?? []);
+  let postCompactionFailedRepeats = 0;
+  let deadEndStreak = 0;
+  for (const s of ordered) {
+    const ch = s.stats.contextHygiene;
+    if (!ch) continue;
+    if (ch.supervisionRisk && (!level || RISK_RANK[ch.supervisionRisk] > RISK_RANK[level])) {
+      level = ch.supervisionRisk;
+    }
+    for (const r of ch.riskReasons ?? []) if (r) reasons.add(r);
+    postCompactionFailedRepeats += ch.postCompactionFailedRepeats ?? 0;
+    if ((ch.deadEndStreak ?? 0) > deadEndStreak) deadEndStreak = ch.deadEndStreak!;
+  }
+  if (!level) return undefined;
+  const risk: WorkHandoffRisk = {
+    level,
+    reasons: [...reasons].sort(),
+  };
+  if (contextResets.compactions > 0) risk.compactions = contextResets.compactions;
+  if (contextResets.sessionHandoffs > 0) risk.sessionHandoffs = contextResets.sessionHandoffs;
+  if (contextResets.total > 0) risk.contextResets = contextResets.total;
+  if (postCompactionFailedRepeats > 0) risk.postCompactionFailedRepeats = postCompactionFailedRepeats;
+  if (deadEndStreak > 0) risk.deadEndStreak = deadEndStreak;
+  return risk;
+}
+
+function cell(text: string, max = 80): string {
+  return clip(text.replace(/[\r\n]+/g, " ").replace(/\|/g, "/").replace(/\s+/g, " ").trim(), max);
+}
+
+/** Formats a multi-day WorkHandoffPacket into a copy-paste-ready Markdown brief for a fresh session. */
+export function formatWorkHandoffMarkdown(packet: Omit<WorkHandoffPacket, "markdown"> | WorkHandoffPacket): string {
+  const titlePart = packet.title ? ` — ${packet.title}` : "";
+  const lines: string[] = [
+    "# Work Handoff",
+    "",
+    "Continue this work item in a fresh session. Keep the verified progress below and avoid repeating failed approaches.",
+    "",
+    `- **Work:** \`${packet.workId}\`${titlePart}`,
+  ];
+
+  if (packet.repo) {
+    const branchPart = packet.branch ? ` (\`${packet.branch}\`)` : "";
+    lines.push(`- **Repo:** \`${packet.repo}\`${branchPart}`);
+  } else if (packet.branch) {
+    lines.push(`- **Branch:** \`${packet.branch}\``);
+  }
+
+  const sessWord = packet.totalSessions === 1 ? "session" : "sessions";
+  const dayWord = packet.spanDays === 1 ? "day" : "days";
+  const rangePart =
+    packet.firstStartedAt && packet.lastEndedAt
+      ? packet.firstStartedAt.slice(0, 10) === packet.lastEndedAt.slice(0, 10)
+        ? ` (${packet.firstStartedAt.slice(0, 10)})`
+        : ` (${packet.firstStartedAt.slice(0, 10)} to ${packet.lastEndedAt.slice(0, 10)})`
+      : "";
+  lines.push(`- **Span:** ${packet.totalSessions} ${sessWord} across ${packet.spanDays} ${dayWord}${rangePart}`);
+
+  if (packet.agents.length) {
+    lines.push(`- **Agents:** ${packet.agents.join(", ")}`);
+  }
+
+  const cr = packet.contextResets;
+  const compWord = cr.compactions === 1 ? "compaction" : "compactions";
+  const hoWord = cr.sessionHandoffs === 1 ? "session handoff" : "session handoffs";
+  lines.push(`- **Context resets:** ${cr.total} (${cr.compactions} ${compWord}, ${cr.sessionHandoffs} ${hoWord})`);
+
+  if (packet.risk) {
+    const reasonText = packet.risk.reasons.length ? ` (${packet.risk.reasons.join(", ")})` : "";
+    lines.push(`- **Supervision risk:** \`${packet.risk.level}\`${reasonText}`);
+  }
+
+  lines.push("", "## Goal", "");
+  if (packet.goal && packet.latestDirection) {
+    lines.push(`**Original goal:** ${packet.goal}`);
+    lines.push("");
+    lines.push(`**Latest direction:** ${packet.latestDirection}`);
+  } else {
+    lines.push(packet.goal ?? "(no user prompt recorded)");
+  }
+
+  lines.push("", "## Multi-Day Timeline", "");
+  if (packet.timeline.length) {
+    if (packet.omittedSessions && packet.omittedSessions > 0) {
+      lines.push(
+        `_Showing newest ${packet.timeline.length} of ${packet.totalSessions} sessions (${packet.omittedSessions} older omitted; original goal preserved from the first session)._`,
+        "",
+      );
+    }
+    lines.push("| Date | Session | Agent | Checks | Compactions | Status | Summary |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+    for (const e of packet.timeline) {
+      const idLabel = `\`${e.shortId ?? e.sessionId}\``;
+      const flags: string[] = [];
+      if (e.risk) flags.push(`risk:${e.risk}`);
+      if (e.proofVerdict) flags.push(`proof:${e.proofVerdict}`);
+      const status = flags.length ? flags.join(", ") : "ok";
+      lines.push(
+        `| ${e.day} | ${idLabel} | ${cell(e.agent, 24)} | ${e.verificationChecks} | ${e.compactions} | ${status} | ${cell(e.summary, 90)} |`,
+      );
+    }
+  } else {
+    lines.push("No sessions recorded.");
+  }
+
+  lines.push("", "## Files Changed", "");
+  if (packet.progress.filesChanged.length) {
+    for (const f of packet.progress.filesChanged) lines.push(`- \`${f}\``);
+  } else {
+    lines.push("None recorded.");
+  }
+  if (packet.progress.unverifiedTailEdits && packet.progress.unverifiedTailEdits > 0) {
+    const n = packet.progress.unverifiedTailEdits;
+    lines.push("", `- **Unverified tail edits:** ${n} edit${n === 1 ? "" : "s"} after the last check`);
+  }
+
+  lines.push("", "## Passing Checks", "");
+  if (packet.progress.passingChecks.length) {
+    for (const c of packet.progress.passingChecks) {
+      lines.push(`- \`${c.command}\` (${c.outcome} at ${c.at})`);
+    }
+  } else {
+    lines.push("None recorded.");
+  }
+
+  if (packet.proof) {
+    lines.push("", "## Formal Proofs", "");
+    const langText = packet.proof.langs.length ? ` (${packet.proof.langs.join(", ")})` : "";
+    lines.push(`- **Verdict:** \`${packet.proof.verdict}\`${langText}`);
+    lines.push(`- **Spec files:** ${packet.proof.specUntouched ? "untouched" : "modified"}`);
+    const kindText = packet.proof.escapeKinds.length ? ` (${packet.proof.escapeKinds.join(", ")})` : "";
+    lines.push(`- **Remaining escapes:** ${packet.proof.escapesRemaining}${kindText}`);
+    if (packet.proof.oscillatingChecks) {
+      lines.push(`- **Oscillating checks:** ${packet.proof.oscillatingChecks}`);
+    }
+    if (packet.proof.tamperFindings.length) {
+      lines.push("- **Tamper findings:**");
+      for (const f of packet.proof.tamperFindings) {
+        const where = f.file ? `\`${f.file}\`: ` : "";
+        lines.push(`  - [${f.kind}] ${where}${f.detail}`);
+      }
+    }
+    if (packet.proof.verifyHints.length) {
+      lines.push("- **Verify hints:**");
+      for (const h of packet.proof.verifyHints) lines.push(`  - \`${h}\``);
+    }
+  }
+
+  if (packet.deadEnds.length) {
+    lines.push("", "## Do Not Repeat", "");
+    for (const d of packet.deadEnds) {
+      const tags: string[] = [`failed ${d.count}x`];
+      if (d.postCompactionRepeat) tags.push("repeated after compaction");
+      const errPart = d.error ? `: ${d.error}` : "";
+      lines.push(`- \`${d.command}\` (${tags.join(", ")})${errPart}`);
+    }
+  }
+
+  lines.push("", "## Next Step", "");
+  lines.push("1. Inspect `git status` and `git diff` for the changed files before editing.");
+  if (packet.latestDirection) {
+    lines.push("2. Follow the latest direction above while staying consistent with the original goal.");
+  } else if (packet.deadEnds.length) {
+    lines.push("2. Avoid the failed approaches listed under Do Not Repeat and try a different strategy.");
+  } else {
+    lines.push("2. Continue from the verified state above and keep changes scoped to the goal.");
+  }
+  if (packet.proof && (packet.proof.escapesRemaining > 0 || packet.proof.verdict !== "verified")) {
+    lines.push("3. Eliminate remaining proof escapes without weakening specs, then run the verify hints above.");
+  } else if (packet.deadEnds.length && packet.latestDirection) {
+    lines.push("3. Avoid the failed approaches listed under Do Not Repeat and run verification checks after each edit.");
+  } else {
+    lines.push("3. Run verification checks after each focused edit.");
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Builds a deterministic, fully redacted cross-session multi-day handoff packet for a work item.
+ * Pure: performs no disk, git, or network I/O and makes no LLM calls.
+ */
+export function buildWorkHandoff(
+  item: WorkHandoffItem,
+  sessions: readonly Session[],
+  eventsBySession: EventsBySession = new Map(),
+  opts: WorkHandoffOptions = {},
+): WorkHandoffPacket {
+  const maxDeadEnds = opts.maxDeadEnds ?? DEFAULT_MAX_WORK_DEAD_ENDS;
+  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
+  const maxSessions = opts.maxSessions ?? DEFAULT_MAX_WORK_SESSIONS;
+  const redactor = opts.redact ?? createRedactor();
+  const redact = (s: string) => redactor.string(s);
+
+  const ordered = orderWorkSessions(item, sessions);
+  const sortedById = new Map<string, AgentEvent[]>();
+  const acc = createAccumulator();
+
+  let totalCompactions = 0;
+  for (const s of ordered) {
+    const sorted = byTime([...eventsFor(eventsBySession, s.id)]);
+    sortedById.set(s.id, sorted);
+    const beforeCompactions = acc.compactionsSeen;
+    foldSessionEvents(sorted, item.repo ?? s.repo?.root ?? item.cwd ?? s.cwd, redact, acc);
+    const seenInSession = acc.compactionsSeen - beforeCompactions;
+    totalCompactions += Math.max(s.stats.contextHygiene?.compactions ?? 0, seenInSession);
+  }
+
+  const timeline = buildWorkTimeline(item, ordered, sortedById, { maxSessions, shortId: opts.shortId, redact: redactor });
+  const { goal, latestDirection } = extractWorkGoals(item, ordered, sortedById, redact);
+
+  const filesChanged = [...new Set([...acc.filesSet].map(redact))].sort().slice(0, maxFiles);
+  const passingChecks = finalizePassingChecks(acc.passingByKey);
+  const progress: HandoffProgress = { filesChanged, passingChecks };
+  const newest = ordered[ordered.length - 1];
+  const tailEdits =
+    acc.editsSinceCheck > 0
+      ? acc.editsSinceCheck
+      : sortedById.get(newest?.id ?? "")?.length
+        ? undefined
+        : newest?.stats.verification?.unverifiedTailEdits;
+  if (tailEdits !== undefined && tailEdits > 0) progress.unverifiedTailEdits = tailEdits;
+
+  const deadEnds = finalizeDeadEnds(acc.deadEndsByKey, maxDeadEnds);
+
+  const sessionHandoffs = Math.max(0, ordered.length - 1);
+  const contextResets: WorkContextResets = {
+    compactions: totalCompactions,
+    sessionHandoffs,
+    total: totalCompactions + sessionHandoffs,
+  };
+
+  const agents = [...new Set([...(item.agents ?? []), ...ordered.map((s) => s.agent)])];
+  const base: Omit<WorkHandoffPacket, "markdown"> = {
+    workId: item.id,
+    agents,
+    spanDays: timeline.spanDays,
+    totalSessions: timeline.totalSessions,
+    timeline: timeline.entries,
+    progress,
+    deadEnds,
+    contextResets,
+  };
+
+  if (timeline.firstStartedAt) base.firstStartedAt = timeline.firstStartedAt;
+  if (timeline.lastEndedAt) base.lastEndedAt = timeline.lastEndedAt;
+  if (timeline.omittedSessions !== undefined) base.omittedSessions = timeline.omittedSessions;
+
+  const rawTitle = item.title?.trim() || ordered.find((s) => s.title?.trim())?.title?.trim();
+  if (rawTitle) base.title = clip(redact(rawTitle), TITLE_MAX);
+
+  const repoPath = item.repo ?? ordered.find((s) => s.repo?.root)?.repo?.root ?? item.cwd ?? ordered.find((s) => s.cwd)?.cwd;
+  if (repoPath) base.repo = redact(repoPath);
+
+  const branch = item.branch ?? [...ordered].reverse().find((s) => s.repo?.branch)?.repo?.branch;
+  if (branch) base.branch = redact(branch);
+
+  if (goal) base.goal = goal;
+  if (latestDirection) base.latestDirection = latestDirection;
+
+  const risk = buildWorkRiskRollup(item, ordered, contextResets);
+  if (risk) base.risk = risk;
+
+  const proof = buildWorkProofRollup(item, ordered, sortedById, redact);
+  if (proof) base.proof = proof;
+
+  const markdown = redact(formatWorkHandoffMarkdown(base));
   return { ...base, markdown };
 }

@@ -136,7 +136,7 @@ interface KeptEntry {
   sh: Set<string>;
 }
 
-class CaseDeduper {
+export class CaseDeduper {
   private readonly threshold: number | undefined;
   private readonly shingleSize: number;
   private readonly byHash = new Map<string, KeptEntry>();

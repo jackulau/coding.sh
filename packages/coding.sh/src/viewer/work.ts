@@ -7,7 +7,9 @@ import { bucketsFlag, kindsFlag, mainFilesChanged, risksFlag, stagesFlag } from 
 import { parsePlace } from "../mcp/data.ts";
 import { dateMs, isoMs } from "../core/dates.ts";
 import type { IndexStore } from "../core/types.ts";
-import type { Session } from "../schema/index.ts";
+import type { AgentEvent, Session } from "../schema/index.ts";
+import { buildWorkTimeline, DEFAULT_MAX_WORK_SESSIONS, type WorkTimeline } from "../core/handoff.ts";
+import { createRedactor } from "../core/redact.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, readOverlay, snoozeItem, writeOverlay, type WorkOverlay } from "../core/work-overlay.ts";
@@ -19,6 +21,7 @@ import {
   readWorkQueue,
   selectBatchAckTargets,
   settleWorkFiles,
+  workAsOf,
   workFiles,
   workItemJson,
   workJson,
@@ -130,7 +133,7 @@ export function indexDoc(age: IndexAge | undefined, work = false): { index?: { u
 }
 
 /** When the queue is judged: as of the last ingest while the index is old (as `coding.sh work` judges it), else now. */
-const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => (age?.stale ? age.at : now);
+const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => workAsOf(age, now);
 
 /**
  * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus four
@@ -227,11 +230,24 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
   const now = judgedAt(src, clock, age);
   const overlay = readOverlay(src.overlay);
   // The window and the judgment as the list's: from the last ingest while the index is old.
-  const { item, items, sessions } = await findItem(index, src, id, q, now, { filtered: true, judged: now, shortId: await shortener(index), overlay });
+  const shortId = await shortener(index);
+  const { item, items, sessions } = await findItem(index, src, id, q, now, { filtered: true, judged: now, shortId, overlay });
   const byId = new Map(sessions.map((s) => [s.id, s]));
   // Before workItemJson: when it reads every session, workFiles sets the item's file count and review reason.
   const files = await workFiles(index, item, sessions, now);
   const children = item.sessionIds.filter((sid) => sid !== item.primaryId).map((sid) => byId.get(sid)).filter((s): s is Session => !!s);
+  let timeline: WorkTimeline | undefined;
+  if (item.sessionIds.length > 1) {
+    const memberSessions = item.sessionIds
+      .map((sid) => byId.get(sid))
+      .filter((s): s is Session => !!s)
+      .sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const eventsBySession = new Map<string, AgentEvent[]>();
+    for (const s of memberSessions.slice(-DEFAULT_MAX_WORK_SESSIONS)) {
+      eventsBySession.set(s.id, await index.listEvents(s.id));
+    }
+    timeline = buildWorkTimeline(item, memberSessions, eventsBySession, { shortId, redact: createRedactor() });
+  }
   const doc: Record<string, unknown> = {
     ...workItemJson(item),
     now: new Date(now).toISOString(),
@@ -245,6 +261,8 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
       if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
       return row;
     }),
+    spanDays: timeline ? timeline.spanDays : undefined,
+    timeline: timeline ? timeline.entries : undefined,
   };
   if (item.supersededBy) {
     // The newer item ended with no failure, so it is often hidden, or outside the filters.
@@ -257,14 +275,15 @@ export async function workShow(index: IndexStore, src: WorkSource, id: string, q
 
 /** POST /api/work/ack {"id":"w…"}: acknowledges the item's current cause, as `coding.sh work ack <id>` does. */
 export async function workAck(index: IndexStore, src: WorkSource, q: URLSearchParams, body: unknown): Promise<Record<string, unknown>> {
-  const now = src.now?.() ?? Date.now();
-  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
+  const clock = src.now?.() ?? Date.now();
+  const asOf = judgedAt(src, clock);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, asOf, { judged: asOf });
   const cause = item.bucket ? item.cause : undefined;
   if (!cause) return { id: item.id, acked: false, hidden: item.hidden ?? null };
   const overlay = readOverlay(src.overlay);
   addAck(overlay, cause.sessionId, cause.fingerprint);
-  writeOverlay(src.overlay, overlay, now);
-  const { item: after } = await findItem(index, src, item.id, q, now, { shortId: await shortener(index) });
+  writeOverlay(src.overlay, overlay, clock);
+  const { item: after } = await findItem(index, src, item.id, q, asOf, { judged: asOf, shortId: await shortener(index) });
   return { id: item.id, acked: true, bucket: cause.bucket, label: BUCKET_LABELS[cause.bucket], now: workItemJson(after) };
 }
 
@@ -350,13 +369,14 @@ export async function workSnooze(index: IndexStore, src: WorkSource, q: URLSearc
     if (e instanceof UsageError) throw new WorkApiError(400, e.message);
     throw e;
   }
-  const now = src.now?.() ?? Date.now();
-  const { item } = await findItem(index, src, fieldsOf(body).id, q, now);
-  const until = now + ms;
+  const clock = src.now?.() ?? Date.now();
+  const asOf = judgedAt(src, clock);
+  const { item } = await findItem(index, src, fieldsOf(body).id, q, asOf, { judged: asOf });
+  const until = clock + ms;
   if (dateMs(until) === undefined) throw new WorkApiError(400, "duration is outside the supported date range");
   const bucket = item.bucket ?? item.cause?.bucket ?? "review";
   const overlay = readOverlay(src.overlay);
   snoozeItem(overlay, item, { until, bucket });
-  writeOverlay(src.overlay, overlay, now);
+  writeOverlay(src.overlay, overlay, clock);
   return { id: item.id, snoozedUntil: new Date(until).toISOString(), bucket };
 }
