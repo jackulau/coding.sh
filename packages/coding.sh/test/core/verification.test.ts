@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import { deserialize, serialize } from "node:v8";
 import * as show from "../../src/cli/commands/show.ts";
+import { buildProofReport } from "../../src/core/proof-report.ts";
 import { buildSession, foldSession, isFoldState, sessionOf, sessionState } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import { runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
@@ -268,5 +269,24 @@ describe("stats.verification", () => {
 
     const plainOut = await runCmd(show, sb, { positionals: ["show-plain"] });
     assert.equal(plainOut.stdout.includes("  Verify"), false, "single unverified edit without checks keeps show unchanged");
+  });
+
+  it("skips escapes in tests/, examples/, scratch/ and kernel-bypass hatches to match buildProofReport", () => {
+    const events: AgentEvent[] = [
+      ev("session.start", {}),
+      ...editFile("tests/Test.lean", "@@ -1,2 +1,3 @@\n theorem t : True := by\n+  sorry\n"),
+      ...editFile("examples/Demo.lean", "@@ -1,2 +1,3 @@\n theorem d : True := by\n+  sorry\n"),
+      ...editFile("scratch/Try.lean", "@@ -1,2 +1,3 @@\n theorem s : True := by\n+  sorry\n"),
+      ...editFile("Proof/Main.lean", "@@ -1,2 +1,3 @@\n+set_option debug.skipKernelTC true\n theorem m : True := by trivial\n"),
+      ...editFile("Proof/Real.lean", "@@ -1,2 +1,3 @@\n theorem r : True := by\n+  sorry\n"),
+      ...bash("lake env lean Proof/Real.lean", true, { durationMs: 400, output: "" }),
+      ev("session.end", {}),
+    ];
+    const s = buildSession(events);
+    const report = buildProofReport(s, events);
+    assert.equal(s.stats.verification?.proof?.escapeAdded, 1);
+    assert.equal(s.stats.verification?.proof?.escapeRemaining, 1);
+    assert.equal(s.stats.verification?.proof?.escapeAdded, report.escapes.added);
+    assert.equal(s.stats.verification?.proof?.escapeRemaining, report.escapes.remaining);
   });
 });

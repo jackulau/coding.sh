@@ -7,8 +7,11 @@ import {
   checkOutcome,
   hasRocqSentence,
   hasVerilogLine,
+  isProofConfig,
   isProofLang,
+  isProofTestPath,
   isWholeProjectProofCheck,
+  KERNEL_BYPASS_HATCHES,
   outText,
   proofCheck,
   proofLang,
@@ -232,6 +235,7 @@ function resolveProofLang(s: VerificationState, check: ProofCheck, out: string):
 }
 
 function recordProofFile(s: VerificationState, path: string, diff: string, truncated: boolean): void {
+  if (isProofConfig(path)) return;
   const known = s.proofFileLangs.get(path);
   let lang = proofLang(path, diff, known);
   if (lang === "rocq" && ((!known && !s.proofLangs.has("rocq")) || hasVerilogLine(diff)) && !hasRocqSentence(diff)) lang = undefined;
@@ -240,9 +244,10 @@ function recordProofFile(s: VerificationState, path: string, diff: string, trunc
   s.proofLangs.add(lang);
   setBoundedMap(s.proofFileLangs, path, lang, PROOF_FILES_MAX);
   if (lang === "tla") addBoundedSet(s.tlaFiles, path, 64);
-  if (!diff) return;
+  if (!diff || isProofTestPath(path)) return;
   const parsed = readProofDiff(path, lang, diff, truncated);
   for (const [hatch, delta] of parsed.hatches) {
+    if (KERNEL_BYPASS_HATCHES.has(hatch)) continue;
     if (delta > 0) s.escapeAdded += delta;
     else if (delta < 0) s.escapeRemoved += -delta;
     const key = `${path}\u0000${hatch}`;
