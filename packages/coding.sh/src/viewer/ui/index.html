@@ -600,6 +600,30 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .facts .lat-short { display: none; }
 @media (max-width: 560px) { .facts .lat-full { display: none; } .facts .lat-short { display: inline; } }
 .head-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; }
+/* Verification and context hygiene strip in the session header, and collapsible Proof Review card. */
+.vh-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.5rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.vh-sep { color: var(--text-faint); }
+.proof-card { flex: none; padding: 0.5rem var(--gutter) 0.6rem; box-shadow: inset 0 -1px 0 var(--line); background: var(--surface); }
+.proof-card > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; cursor: pointer; font-size: 12.5px; color: var(--text); list-style: none; }
+.proof-card > summary::-webkit-details-marker { display: none; }
+.proof-card > summary .caret { display: inline-block; transition: transform var(--dur-caret) var(--ease-out); color: var(--text-muted); }
+.proof-card[open] > summary .caret { transform: rotate(90deg); }
+.proof-title { font-weight: 540; }
+.proof-body { margin-top: 0.45rem; display: grid; gap: 0.45rem; max-height: 15rem; overflow-y: auto; }
+.proof-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.9rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.proof-tamper { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+.proof-tamper li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); background: var(--fail-wash); color: var(--fail-ink); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.proof-milestones { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.proof-ms {
+  display: inline-flex; align-items: center; gap: 0.25rem; height: 22px; padding: 0 0.5rem;
+  border-radius: 5px; font-family: var(--font-mono); font-size: 11.5px;
+  transition: background-color var(--dur-hover-out) ease-out, color var(--dur-hover-out) ease-out, box-shadow var(--dur-hover-out) ease-out, transform var(--dur-press) var(--ease-out);
+}
+.proof-ms:active { transform: scale(var(--press-scale)); }
+.proof-ms.is-pass { color: var(--pass-ink); background: var(--pass-wash); }
+.proof-ms.is-fail { color: var(--fail-ink); background: var(--fail-wash); }
+.proof-hints { display: grid; gap: 0.3rem; }
+.proof-hints .cmd { max-width: 100%; }
 /* Multi-agent run tree: the top-level agent and every subagent, with per-node numbers. */
 .run-tree { grid-column: 1 / -1; margin-top: 0.1rem; }
 .run-tree > summary { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 12px; color: var(--text-2); list-style: none; width: fit-content; }
@@ -1606,6 +1630,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .mx-key a:hover { text-decoration-color: var(--text-muted); }
   .bench-card:hover { background: color-mix(in srgb, var(--surface) 70%, var(--raised)); }
   .fail-row .open-sess:hover { text-decoration-color: var(--text-2); transition-duration: var(--dur-hover-in); }
+  .proof-ms:hover { box-shadow: inset 0 0 0 1px currentColor; transition-duration: var(--dur-hover-in); }
 }
 
 /* ---------- work ---------- */
@@ -6078,11 +6103,27 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
     if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
   };
+  const jumpEvent = (eid) => {
+    if (!eid) return;
+    if (chatOn) setChat(false);
+    if (rp.on) exitReplay();
+    const it = byEvent.get(eid);
+    if (it) {
+      selectItem(items.indexOf(it), true);
+      tl.focus({ preventScroll: true });
+      announceStep();
+      return;
+    }
+    if (hasMore) {
+      pendingLink = { id: eid, from: items[activeItem].id, hash: location.hash };
+      loadRest();
+    }
+  };
   const sessCmt = commentThread(ctx.comments, "session", session.id, [session.id], "Comments on this session");
   sessCmt.el.classList.add("cmt-session");
   tools.insertBefore(sessCmt.toggle, rpBtn);
   ctx.comments.subs.add({ alive: () => tl.isConnected, draw: () => renderWindow(true) });
-  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, sessCmt.el, rpBar, more, grid, chat, hint);
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan), proofReviewCard(session, seq, jumpEvent)].filter(Boolean), tools, sessCmt.el, rpBar, more, grid, chat, hint);
   rebuildRows();
   ctx.comments.load();
   // A link to a step opens its turn; a session with a failure opens on its first failure; a clean
@@ -6276,7 +6317,130 @@ function sessionHeader(s, labels, rel) {
         h("div", { class: "make-eval" },
           h("span", { class: "meta" }, "Make eval"),
           cmdBlock(evalCmd, "Copy eval command")))),
+    verificationHygieneStrip(s),
     runTreePanel(s, kids.length));
+}
+
+/** Compact additive summary strip in the session header when verification or supervision risk is noteworthy. */
+function verificationHygieneStrip(s) {
+  const st = s.stats || {};
+  const v = st.verification;
+  const ch = st.contextHygiene;
+  const hasVerify = !!(v && (v.checks > 0 || v.maxUnverifiedEdits >= 3 || v.proof));
+  const hasRisk = !!(ch && ch.supervisionRisk);
+  if (!hasVerify && !hasRisk) return null;
+  const parts = [];
+  if (v && (v.checks > 0 || v.proof)) {
+    const tone = v.checks > 0 ? (v.failed > 0 ? "warn" : "ok") : "muted";
+    const tip = v.medianCheckMs !== undefined ? "Median check duration: " + fmtDuration(v.medianCheckMs) : undefined;
+    parts.push(h("span", { class: "vh-item " + tone, "data-vh": "checks", title: tip },
+      "Checks: " + (v.passed || 0) + "/" + (v.checks || 0)));
+  }
+  if (v && v.maxUnverifiedEdits > 0) {
+    const cls = v.maxUnverifiedEdits >= 3 ? " warn" : "";
+    const tip = v.unverifiedTailEdits ? plural(v.unverifiedTailEdits, "unverified tail edit") : undefined;
+    parts.push(h("span", { class: "vh-item" + cls, "data-vh": "blind-streak", title: tip },
+      "max blind streak: " + v.maxUnverifiedEdits));
+  }
+  if (ch && ch.supervisionRisk) {
+    const reasons = Array.isArray(ch.riskReasons) && ch.riskReasons.length ? " (" + ch.riskReasons.join(", ") + ")" : "";
+    parts.push(h("span", {
+      class: "badge " + (ch.supervisionRisk === "high" ? "fail" : "warn"),
+      "data-vh": "risk",
+      "data-risk": ch.supervisionRisk,
+    }, "Risk: " + ch.supervisionRisk + reasons));
+  }
+  if (!parts.length) return null;
+  const nodes = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) nodes.push(h("span", { class: "vh-sep", "aria-hidden": "true" }, "·"));
+    nodes.push(parts[i]);
+  }
+  return h("div", { class: "vh-strip", role: "group", "aria-label": "Verification and context hygiene" }, nodes);
+}
+
+/**
+ * Collapsible Proof Review card at the top of the session timeline.
+ * Only mounted and fetched when `session.stats.verification.proof` is present.
+ */
+function proofReviewCard(s, seq, jumpEvent) {
+  const proofStat = s.stats && s.stats.verification && s.stats.verification.proof;
+  if (!proofStat) return null;
+  const summary = h("summary", { class: "proof-head" },
+    h("span", { class: "caret", "aria-hidden": "true" }, "▸"),
+    h("span", { class: "proof-title" }, "Proof Review"),
+    h("span", { class: "meta" }, "Loading…"));
+  const body = h("div", { class: "proof-body" });
+  const details = h("details", { class: "proof-card", open: true, "data-proof-card": "1" }, summary, body);
+
+  api("/api/sessions/" + encodeURIComponent(s.id) + "/proof", null, true).then((r) => {
+    if (!current(seq) || !details.isConnected) return;
+    const vCls = r.verdict === "verified" ? " pass" : r.verdict === "incomplete" ? " warn" : r.verdict === "tampered" ? " fail" : "";
+    const langsText = Array.isArray(r.langs) && r.langs.length ? r.langs.join(", ") : "";
+    swap(summary,
+      h("span", { class: "caret", "aria-hidden": "true" }, "▸"),
+      h("span", { class: "proof-title" }, "Proof Review"),
+      h("span", { class: "badge" + vCls, "data-proof": "verdict", "data-verdict": r.verdict }, r.verdict),
+      langsText ? h("span", { class: "meta", "data-proof": "langs" }, langsText) : null);
+
+    const esc = r.escapes || { added: 0, removed: 0, remaining: 0, kinds: [] };
+    const chk = r.checks || { total: 0, passed: 0, failed: 0, wholeProject: 0, lastOk: null };
+    const specFiles = Array.isArray(r.specFilesTouched) ? r.specFilesTouched : [];
+    const escKinds = Array.isArray(esc.kinds) && esc.kinds.length ? ": " + esc.kinds.join(", ") : "";
+    const escTitle = esc.added + " added, " + esc.removed + " removed";
+    const checkParts = [chk.passed + "/" + chk.total + " passed"];
+    if (chk.failed > 0) checkParts.push(chk.failed + " failed");
+    if (chk.wholeProject > 0) checkParts.push(chk.wholeProject + " whole-project");
+    if (chk.medianMs !== undefined) checkParts.push("median " + fmtDuration(chk.medianMs));
+
+    const facts = h("div", { class: "proof-facts" },
+      h("span", { class: r.specUntouched ? "ok" : "err", "data-proof": "spec", title: specFiles.length ? specFiles.join(", ") : undefined },
+        r.specUntouched ? "Spec untouched" : plural(specFiles.length, "spec file") + " touched"),
+      h("span", { class: esc.remaining > 0 ? "warn" : "ok", "data-proof": "escapes", title: escTitle },
+        esc.remaining === 0 ? "0 remaining" : esc.remaining + " remaining" + escKinds),
+      h("span", { "data-proof": "checks" }, "Checks: " + checkParts.join(" · ")));
+
+    const tamper = Array.isArray(r.tamperFindings) && r.tamperFindings.length
+      ? h("ul", { class: "proof-tamper", "aria-label": "Tamper findings" },
+          r.tamperFindings.map((f) => h("li", null,
+            h("span", { class: "badge fail" }, f.kind),
+            f.file ? h("code", null, f.file) : null,
+            h("span", null, f.detail))))
+      : null;
+
+    const milestones = Array.isArray(r.milestones) && r.milestones.length
+      ? h("div", { class: "proof-milestones", role: "group", "aria-label": "Proof check milestones" },
+          h("span", { class: "meta" }, "Milestones"),
+          r.milestones.map((m, idx) => {
+            const tip = [m.lang, m.wholeProject ? "whole-project" : "", m.durationMs !== undefined ? fmtDuration(m.durationMs) : ""].filter(Boolean).join(" · ");
+            return h("button", {
+              type: "button",
+              class: "proof-ms " + (m.ok ? "is-pass" : "is-fail"),
+              "data-event-id": m.eventId,
+              "data-ok": String(!!m.ok),
+              title: tip ? "Jump to check #" + (idx + 1) + " (" + tip + ")" : "Jump to check #" + (idx + 1),
+              onclick: () => jumpEvent(m.eventId),
+            }, "#" + (idx + 1) + " " + (m.ok ? "pass" : "fail"));
+          }))
+      : null;
+
+    const hints = Array.isArray(r.verifyHints) && r.verifyHints.length
+      ? h("div", { class: "proof-hints", "aria-label": "Verify hints" },
+          r.verifyHints.map((hint) => h("div", { class: "cmd" },
+            h("code", { text: hint }),
+            h("button", { class: "btn btn-sm", type: "button", "aria-label": "Copy verify hint", onclick: () => copy(hint, "verify hint") }, "Copy"))))
+      : null;
+
+    swap(body, facts, tamper, milestones, hints);
+  }).catch((e) => {
+    if (!current(seq) || !details.isConnected) return;
+    swap(summary,
+      h("span", { class: "caret", "aria-hidden": "true" }, "▸"),
+      h("span", { class: "proof-title" }, "Proof Review"));
+    swap(body, h("p", { class: "meta err" }, "Could not load proof report: " + e.message));
+  });
+
+  return details;
 }
 
 /**

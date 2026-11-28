@@ -68,6 +68,20 @@ export interface ProofDiskCheck {
   remainingEscapes: ProofDiskEscape[];
 }
 
+export interface ProofMilestone {
+  eventId: string;
+  ts: number;
+  ok: boolean;
+  lang: string;
+  wholeProject: boolean;
+  durationMs?: number;
+}
+
+export interface ProofReportOptions {
+  /** Include ordered proof-check `tool.end` milestones for timeline navigation. */
+  includeMilestones?: boolean;
+}
+
 export interface ProofReport {
   sessionId: string;
   langs: ProofLang[];
@@ -80,6 +94,7 @@ export interface ProofReport {
   verdict: ProofVerdict;
   verifyHints: string[];
   diskCheck?: ProofDiskCheck;
+  milestones?: ProofMilestone[];
 }
 
 /** A `spec/` or `specs/` folder holding formal-verification files. */
@@ -170,7 +185,11 @@ function buildVerifyHints(langs: readonly ProofLang[], proofFiles: readonly stri
  * Summarize a session's formal-verification integrity from its recorded events.
  * Pure: performs no disk or process I/O.
  */
-export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, events: readonly AgentEvent[]): ProofReport {
+export function buildProofReport(
+  session: Pick<Session, "id" | "cwd" | "repo">,
+  events: readonly AgentEvent[],
+  opts?: ProofReportOptions,
+): ProofReport {
   const sorted = events.map((e, i) => ({ e, i })).sort((a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || a.i - b.i).map((x) => x.e);
   const redactor = createRedactor();
   const redact = (s: string) => redactor.string(s);
@@ -187,6 +206,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
   const specFiles = new Set<string>();
   const bypassCalls: { flag: string; lang: string }[] = [];
   const durations: number[] = [];
+  const milestones: ProofMilestone[] = [];
 
   let escapesAdded = 0;
   let escapesRemoved = 0;
@@ -321,14 +341,19 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       if (outcome === undefined && !timedOut) continue;
 
       checksTotal++;
-      if (isWholeProjectProofCheck(cmd)) checksWholeProject++;
+      const wholeProject = isWholeProjectProofCheck(cmd);
+      if (wholeProject) checksWholeProject++;
 
+      let durationMs: number | undefined;
       if (typeof e.durationMs === "number" && Number.isFinite(e.durationMs) && e.durationMs >= 0) {
-        durations.push(e.durationMs);
+        durationMs = e.durationMs;
+        durations.push(durationMs);
       } else if (e.ts > startTs) {
-        durations.push(e.ts - startTs);
+        durationMs = e.ts - startTs;
+        durations.push(durationMs);
       }
 
+      let checkOk = false;
       if (check.bypass) {
         bypassCalls.push({ flag: check.bypass, lang: check.lang });
         if (outcome === "red" || timedOut) {
@@ -338,9 +363,23 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
       } else if (outcome === "green") {
         checksPassed++;
         lastOk = true;
+        checkOk = true;
       } else {
         checksFailed++;
         lastOk = false;
+      }
+
+      if (opts?.includeMilestones) {
+        const milestoneLang = isProofLang(check.lang) ? check.lang : isRocqOutput(text) ? "rocq" : check.lang;
+        const milestone: ProofMilestone = {
+          eventId: e.id,
+          ts: e.ts,
+          ok: checkOk,
+          lang: milestoneLang,
+          wholeProject,
+        };
+        if (durationMs !== undefined) milestone.durationMs = durationMs;
+        milestones.push(milestone);
       }
     }
   }
@@ -430,7 +469,7 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict = "verified";
   }
 
-  return {
+  const report: ProofReport = {
     sessionId: session.id,
     langs: sortedLangs,
     proofFiles: sortedProofFiles,
@@ -442,6 +481,8 @@ export function buildProofReport(session: Pick<Session, "id" | "cwd" | "repo">, 
     verdict,
     verifyHints: buildVerifyHints(sortedLangs, sortedProofFiles, redact),
   };
+  if (opts?.includeMilestones && milestones.length > 0) report.milestones = milestones;
+  return report;
 }
 
 /**
