@@ -91,6 +91,12 @@ export const KEY_SQL: Record<string, string[]> = {
   events: [stat("events")],
   "tests.passed": [stat("testsPassed")],
   "tests.failed": [stat("testsFailed")],
+  risk: [jstr("s.stats", "contextHygiene,supervisionRisk")],
+  "risk.reason": ["f.v"],
+  "proof.lang": ["f.v"],
+  "proof.escapes": [`(CASE WHEN json_typeof(s.stats::json #> '{verification,proof}') = 'object' THEN coalesce(${stat("verification,proof,escapeRemaining")}, 0) END)`],
+  "proof.oscillating": [`(CASE WHEN json_typeof(s.stats::json #> '{verification,proof}') = 'object' THEN coalesce(${stat("verification,proof,oscillatingChecks")}, 0) END)`],
+  "unverified.edits": [stat("verification,maxUnverifiedEdits")],
   tokens: [`(CASE WHEN json_typeof(s.stats::json -> 'usage') = 'object' THEN ${tokens} END)`],
   "tokens.in": [stat("usage,inputTokens")],
   "tokens.out": [stat("usage,outputTokens")],
@@ -158,6 +164,8 @@ export function assertSupported(n: Node): void {
 /** The JSON array a list-valued key reads, one row per item: the session's flags, unless the key is named here. */
 const MULTI_FROM: Record<string, string> = {
   "weights.checkpoint": jarr("s.stats", "weightEdits,checkpoints"),
+  "risk.reason": jarr("s.stats", "contextHygiene,riskReasons"),
+  "proof.lang": jarr("s.stats", "verification,proof,langs"),
 };
 const multiFrom = (key: string): string => MULTI_FROM[key] ?? "s.flags::json";
 

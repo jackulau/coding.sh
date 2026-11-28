@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -83,6 +83,13 @@ describe("buildProofReport", () => {
     assert.equal(r.verifyHints.length, 1);
     assert.match(r.verifyHints[0]!, /lake env lean Proof\/Add\.lean/);
     assert.match(r.verifyHints[0]!, /#print axioms/);
+    assert.equal(r.milestones, undefined);
+
+    const withMilestones = buildProofReport(session, events, { includeMilestones: true });
+    assert.deepEqual(withMilestones.milestones, [
+      { eventId: "s-lean-ok-3", ts: T0 + 4000, ok: false, lang: "lean", wholeProject: true, durationMs: 4200 },
+      { eventId: "s-lean-ok-6", ts: T0 + 7000, ok: true, lang: "lean", wholeProject: false, durationMs: 800 },
+    ]);
   });
 
   it("reports incomplete when sorry remains or when last check fails or no check passes", () => {
@@ -187,6 +194,24 @@ describe("buildProofReport", () => {
     assert.equal(r.verdict, "tampered");
     assert.ok(!JSON.stringify(r).includes(key), "secret is redacted everywhere in the report");
   });
+
+  it("matches idless proof checker calls identically to stats.verification.proof", () => {
+    const { session, events } = makeTrace("s-idless", [
+      ["session.start", {}],
+      ["file.change", { path: "Proof/Idless.lean", op: "modify", diff: diff("Proof/Idless.lean", " theorem t : 1 = 1 := by", "-  sorry", "+  rfl") }],
+      ["tool.start", { tool: "Bash", input: { command: "ls" } }],
+      ["tool.end", { tool: "Bash", ok: true, output: "Proof" }],
+      ["tool.start", { tool: "Bash", input: { command: "lake env lean Proof/Idless.lean" } }],
+      ["tool.end", { tool: "Bash", ok: true, output: "" }, { durationMs: 420 }],
+    ]);
+    const r = buildProofReport(session, events);
+    assert.equal(r.verdict, "verified");
+    assert.equal(r.checks.total, 1);
+    assert.equal(r.checks.passed, 1);
+    assert.equal(r.checks.lastOk, true);
+    assert.equal(r.checks.total, session.stats.verification?.proof?.checks);
+    assert.equal(r.checks.passed, session.stats.verification?.proof?.passed);
+  });
 });
 
 describe("verifyProofFilesOnDisk and attachDiskCheck", () => {
@@ -249,6 +274,63 @@ describe("verifyProofFilesOnDisk and attachDiskCheck", () => {
       assert.equal(withDisk.diskCheck?.remainingEscapes.length, 1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("escalates verified to tampered when attachDiskCheck finds a kernel-bypass hatch on disk", () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-proof-bypass-"));
+    try {
+      mkdirSync(join(dir, "Proof"), { recursive: true });
+      writeFileSync(
+        join(dir, "Proof", "Bypass.lean"),
+        ["set_option debug.skipKernelTC true", "theorem ok : 1 = 1 := by rfl"].join("\n"),
+      );
+      const { session, events } = makeTrace("s-disk-bypass", [
+        ["session.start", {}],
+        ["file.change", { path: "Proof/Bypass.lean", op: "modify", diff: diff("Proof/Bypass.lean", "+-- minor comment") }],
+        ["tool.start", { tool: "Bash", toolUseId: "c1", input: { command: "lake env lean Proof/Bypass.lean" } }],
+        ["tool.end", { tool: "Bash", toolUseId: "c1", ok: true, output: "" }],
+      ]);
+      const base = buildProofReport(session, events);
+      assert.equal(base.verdict, "verified");
+      const withDisk = attachDiskCheck(base, dir);
+      assert.equal(withDisk.verdict, "tampered");
+      assert.deepEqual(withDisk.diskCheck?.remainingEscapes, [{ file: "Proof/Bypass.lean", line: 1, token: "debug.skipKernelTC" }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never reads files outside repoRoot through directory junctions or file symlinks", () => {
+    const base = mkdtempSync(join(tmpdir(), "csh-proof-link-"));
+    const repoDir = join(base, "repo");
+    const outsideDir = join(base, "outside");
+    try {
+      mkdirSync(join(repoDir, "Proof"), { recursive: true });
+      mkdirSync(outsideDir, { recursive: true });
+      const outsideFile = join(outsideDir, "Secret.lean");
+      writeFileSync(outsideFile, "theorem leaked : False := by sorry\n");
+
+      // Directory junction (works unprivileged on Windows) or dir symlink on POSIX.
+      symlinkSync(outsideDir, join(repoDir, "linked"), process.platform === "win32" ? "junction" : "dir");
+      const junctionRes = verifyProofFilesOnDisk(repoDir, ["linked/Secret.lean"]);
+      assert.deepEqual(junctionRes, { scanned: 0, missing: 1, remainingEscapes: [] });
+
+      // File symlink when permitted by the OS.
+      let fileLinkCreated = false;
+      try {
+        symlinkSync(outsideFile, join(repoDir, "Proof", "Leak.lean"), "file");
+        fileLinkCreated = true;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "EPERM" && code !== "EACCES") throw err;
+      }
+      if (fileLinkCreated) {
+        const fileLinkRes = verifyProofFilesOnDisk(repoDir, ["Proof/Leak.lean"]);
+        assert.deepEqual(fileLinkRes, { scanned: 0, missing: 1, remainingEscapes: [] });
+      }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });
