@@ -553,6 +553,25 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/handoff.ts"),
   },
   {
+    name: "steer",
+    group: "Explore",
+    summary: "Advise whether to continue, nudge or intervene in a session, with a paste-ready steer",
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), the x_ alias coding.sh prints for one, or 'latest'", required: true }],
+    flags: [
+      { name: "prompt", type: "boolean", desc: "Print only the suggested steer prompt on stdout (nothing when status is continue)" },
+      { name: "strict", type: "boolean", desc: "Exit 1 when status is intervene, for scripts and orchestrators" },
+      FRESH,
+    ],
+    examples: ["coding.sh steer latest", "coding.sh steer latest --fresh", "coding.sh steer 9f1c2e --prompt", "coding.sh steer latest --strict --json"],
+    notes: [
+      "Statuses: continue (no intervention needed), nudge (medium-priority issue to correct), or intervene (high-priority risk, tamper finding, blocked wait, oscillation, or context degradation).",
+      "--prompt prints only suggestedSteer on stdout (or nothing with exit 0 when status is continue), ready to pipe into an orchestrator.",
+      "--strict exits 1 when status is intervene and 0 on continue or nudge.",
+      PENDING_NOTE,
+    ],
+    load: () => import("./commands/steer.ts"),
+  },
+  {
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
